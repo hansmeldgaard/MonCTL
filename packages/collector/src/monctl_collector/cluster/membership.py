@@ -1,176 +1,224 @@
-"""Cluster membership state tracking."""
+"""Cluster membership table — SWIM-style failure detection state machine.
+
+Each node tracks the status of every other node in the cluster:
+  ALIVE     — node is responding normally
+  SUSPECTED — direct ping failed; waiting for indirect probe result
+  DEAD      — indirect probe also failed; node is removed from the ring
+
+The membership table is merged via gossip: the node with the higher
+generation number always wins (prevents stale data from overwriting fresh).
+"""
 
 from __future__ import annotations
 
+import random
 import time
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import NamedTuple
 
 
-class PeerState(str, Enum):
+class MemberStatus(str, Enum):
     ALIVE = "ALIVE"
-    SUSPECT = "SUSPECT"
+    SUSPECTED = "SUSPECTED"
     DEAD = "DEAD"
 
 
 @dataclass
-class PeerInfo:
-    """Information about a peer in the cluster."""
-
-    collector_id: str
-    address: str
-    port: int
-    state: PeerState = PeerState.ALIVE
+class MemberInfo:
+    node_id: str
+    address: str                    # host:port for gRPC
+    status: MemberStatus = MemberStatus.ALIVE
+    generation: int = 0             # incremented on restart; higher wins during merge
     last_seen: float = field(default_factory=time.time)
-    suspect_since: float | None = None
-    incarnation: int = 0  # Monotonic counter to resolve conflicts
+    load_info: dict = field(default_factory=dict)  # NodeLoadInfo as dict
 
 
-@dataclass
-class MembershipEvent:
-    """A membership state change event for gossip dissemination."""
-
-    collector_id: str
-    state: PeerState
-    incarnation: int
-    timestamp: float = field(default_factory=time.time)
+class MemberEvent(NamedTuple):
+    """A state transition that occurred during a membership merge."""
+    node_id: str
+    old_status: MemberStatus
+    new_status: MemberStatus
 
 
 class MembershipTable:
-    """Tracks the membership state of all peers in the cluster."""
+    """Thread-safe (asyncio-compatible) SWIM membership state machine."""
 
-    def __init__(self, suspect_timeout: float = 15.0):
-        self.suspect_timeout = suspect_timeout
-        self._peers: dict[str, PeerInfo] = {}
-        self._recent_events: list[MembershipEvent] = []
-        self._max_recent_events = 100
+    def __init__(self, local_node_id: str) -> None:
+        self._local_id = local_node_id
+        self._members: dict[str, MemberInfo] = {}
 
-    def add_peer(self, collector_id: str, address: str, port: int) -> None:
-        """Add or update a peer."""
-        if collector_id in self._peers:
-            peer = self._peers[collector_id]
-            peer.address = address
-            peer.port = port
-        else:
-            self._peers[collector_id] = PeerInfo(
-                collector_id=collector_id,
+    # ── Lifecycle ────────────────────────────────────────────────────────────
+
+    def add_local(self, address: str, generation: int = 0) -> None:
+        """Register the local node (always ALIVE)."""
+        self._members[self._local_id] = MemberInfo(
+            node_id=self._local_id,
+            address=address,
+            status=MemberStatus.ALIVE,
+            generation=generation,
+            last_seen=time.time(),
+        )
+
+    # ── Merge (gossip) ────────────────────────────────────────────────────────
+
+    def merge(self, remote_members: list[dict]) -> list[MemberEvent]:
+        """Merge incoming gossip member list into local state.
+
+        Higher generation wins. For same generation, DEAD > SUSPECTED > ALIVE
+        (pessimistic: trust bad news).
+
+        Returns a list of MemberEvent for state transitions that occurred.
+        """
+        events: list[MemberEvent] = []
+        _STATUS_RANK = {
+            MemberStatus.ALIVE: 0,
+            MemberStatus.SUSPECTED: 1,
+            MemberStatus.DEAD: 2,
+        }
+
+        for r in remote_members:
+            node_id = r["node_id"]
+            if node_id == self._local_id:
+                continue  # Never update our own entry from remote gossip
+
+            remote_status = MemberStatus(r.get("status", "ALIVE"))
+            remote_gen = int(r.get("generation", 0))
+            remote_addr = r.get("address", "")
+            remote_load = r.get("load_info", {})
+            remote_last_seen = float(r.get("last_seen", time.time()))
+
+            existing = self._members.get(node_id)
+
+            if existing is None:
+                # New node — add it
+                self._members[node_id] = MemberInfo(
+                    node_id=node_id,
+                    address=remote_addr,
+                    status=remote_status,
+                    generation=remote_gen,
+                    last_seen=remote_last_seen,
+                    load_info=remote_load,
+                )
+                if remote_status != MemberStatus.DEAD:
+                    events.append(MemberEvent(node_id, MemberStatus.DEAD, remote_status))
+            else:
+                # Apply update if remote has higher generation, or same gen + worse status
+                if remote_gen > existing.generation or (
+                    remote_gen == existing.generation
+                    and _STATUS_RANK[remote_status] > _STATUS_RANK[existing.status]
+                ):
+                    old = existing.status
+                    existing.status = remote_status
+                    existing.generation = remote_gen
+                    existing.address = remote_addr or existing.address
+                    existing.load_info = remote_load or existing.load_info
+                    existing.last_seen = max(existing.last_seen, remote_last_seen)
+                    if old != remote_status:
+                        events.append(MemberEvent(node_id, old, remote_status))
+
+        return events
+
+    # ── Local state updates ───────────────────────────────────────────────────
+
+    def mark_alive(self, node_id: str, address: str = "", generation: int | None = None) -> None:
+        member = self._members.get(node_id)
+        if member is None:
+            self._members[node_id] = MemberInfo(
+                node_id=node_id,
                 address=address,
-                port=port,
+                status=MemberStatus.ALIVE,
+                generation=generation or 0,
             )
+        else:
+            member.status = MemberStatus.ALIVE
+            member.last_seen = time.time()
+            if address:
+                member.address = address
+            if generation is not None:
+                member.generation = max(member.generation, generation)
 
-    def mark_alive(self, collector_id: str) -> bool:
-        """Mark a peer as alive. Returns True if state changed."""
-        peer = self._peers.get(collector_id)
-        if peer is None:
-            return False
-        old_state = peer.state
-        peer.state = PeerState.ALIVE
-        peer.last_seen = time.time()
-        peer.suspect_since = None
-        if old_state != PeerState.ALIVE:
-            self._add_event(MembershipEvent(
-                collector_id=collector_id,
-                state=PeerState.ALIVE,
-                incarnation=peer.incarnation,
-            ))
-            return True
-        return False
+    def mark_suspected(self, node_id: str) -> None:
+        member = self._members.get(node_id)
+        if member and member.status == MemberStatus.ALIVE:
+            member.status = MemberStatus.SUSPECTED
 
-    def mark_suspect(self, collector_id: str) -> bool:
-        """Mark a peer as suspect. Returns True if state changed."""
-        peer = self._peers.get(collector_id)
-        if peer is None:
-            return False
-        if peer.state == PeerState.DEAD:
-            return False  # Don't go back from DEAD to SUSPECT
-        old_state = peer.state
-        if old_state != PeerState.SUSPECT:
-            peer.state = PeerState.SUSPECT
-            peer.suspect_since = time.time()
-            self._add_event(MembershipEvent(
-                collector_id=collector_id,
-                state=PeerState.SUSPECT,
-                incarnation=peer.incarnation,
-            ))
-            return True
-        return False
+    def mark_dead(self, node_id: str) -> None:
+        member = self._members.get(node_id)
+        if member:
+            member.status = MemberStatus.DEAD
 
-    def mark_dead(self, collector_id: str) -> bool:
-        """Mark a peer as dead. Returns True if state changed."""
-        peer = self._peers.get(collector_id)
-        if peer is None:
-            return False
-        old_state = peer.state
-        if old_state != PeerState.DEAD:
-            peer.state = PeerState.DEAD
-            self._add_event(MembershipEvent(
-                collector_id=collector_id,
-                state=PeerState.DEAD,
-                incarnation=peer.incarnation,
-            ))
-            return True
-        return False
+    def update_load(self, node_id: str, load_info: dict) -> None:
+        member = self._members.get(node_id)
+        if member:
+            member.load_info = load_info
+            member.last_seen = time.time()
 
-    def check_suspects(self) -> list[str]:
-        """Check if any SUSPECT peers should be marked DEAD.
+    def update_local_load(self, load_info: dict) -> None:
+        self.update_load(self._local_id, load_info)
 
-        Returns list of collector_ids that were promoted to DEAD.
+    # ── Queries ───────────────────────────────────────────────────────────────
+
+    def get_alive(self) -> list[MemberInfo]:
+        """Return all members currently in ALIVE status."""
+        return [m for m in self._members.values() if m.status == MemberStatus.ALIVE]
+
+    def get_suspected(self) -> list[MemberInfo]:
+        return [m for m in self._members.values() if m.status == MemberStatus.SUSPECTED]
+
+    def get_all(self) -> list[MemberInfo]:
+        return list(self._members.values())
+
+    def get(self, node_id: str) -> MemberInfo | None:
+        return self._members.get(node_id)
+
+    def get_random_peer(self, exclude: str | None = None) -> MemberInfo | None:
+        """Return a random ALIVE peer, excluding `exclude` (usually local node)."""
+        peers = [
+            m for m in self._members.values()
+            if m.status == MemberStatus.ALIVE and m.node_id != (exclude or self._local_id)
+        ]
+        return random.choice(peers) if peers else None
+
+    def get_k_random_peers(self, k: int, exclude: str | None = None) -> list[MemberInfo]:
+        """Return up to k distinct ALIVE peers for indirect probing."""
+        peers = [
+            m for m in self._members.values()
+            if m.status == MemberStatus.ALIVE and m.node_id != (exclude or self._local_id)
+        ]
+        return random.sample(peers, min(k, len(peers)))
+
+    def get_all_load_info(self) -> list[dict]:
+        """Return load info for all known alive nodes."""
+        return [
+            {"node_id": m.node_id, **m.load_info}
+            for m in self._members.values()
+            if m.status == MemberStatus.ALIVE
+        ]
+
+    def to_gossip_list(self) -> list[dict]:
+        """Serialize all members for inclusion in a GossipMessage."""
+        return [
+            {
+                "node_id": m.node_id,
+                "address": m.address,
+                "status": m.status.value,
+                "generation": m.generation,
+                "last_seen": m.last_seen,
+                "load_info": m.load_info,
+            }
+            for m in self._members.values()
+        ]
+
+    def check_suspects(self, suspicion_timeout: float) -> list[str]:
+        """Return node_ids that have been SUSPECTED longer than suspicion_timeout.
+
+        Called by the gossip protocol to decide when to mark a node DEAD.
         """
         now = time.time()
-        newly_dead: list[str] = []
-        for peer in self._peers.values():
-            if (
-                peer.state == PeerState.SUSPECT
-                and peer.suspect_since is not None
-                and (now - peer.suspect_since) >= self.suspect_timeout
-            ):
-                peer.state = PeerState.DEAD
-                newly_dead.append(peer.collector_id)
-                self._add_event(MembershipEvent(
-                    collector_id=peer.collector_id,
-                    state=PeerState.DEAD,
-                    incarnation=peer.incarnation,
-                ))
-        return newly_dead
-
-    def get_alive_peers(self) -> list[PeerInfo]:
-        """Get all peers in ALIVE state."""
-        return [p for p in self._peers.values() if p.state == PeerState.ALIVE]
-
-    def get_all_peers(self) -> list[PeerInfo]:
-        """Get all peers."""
-        return list(self._peers.values())
-
-    def get_peer(self, collector_id: str) -> PeerInfo | None:
-        return self._peers.get(collector_id)
-
-    def get_recent_events(self, since: float = 0) -> list[MembershipEvent]:
-        """Get recent membership events since a given timestamp."""
-        return [e for e in self._recent_events if e.timestamp > since]
-
-    def apply_events(self, events: list[dict]) -> None:
-        """Apply membership events received from gossip."""
-        for event_data in events:
-            collector_id = event_data["collector_id"]
-            state = PeerState(event_data["state"])
-            incarnation = event_data.get("incarnation", 0)
-
-            peer = self._peers.get(collector_id)
-            if peer is None:
-                continue
-
-            # Only apply if incarnation is >= current
-            if incarnation < peer.incarnation:
-                continue
-
-            if state == PeerState.ALIVE:
-                self.mark_alive(collector_id)
-            elif state == PeerState.SUSPECT:
-                self.mark_suspect(collector_id)
-            elif state == PeerState.DEAD:
-                self.mark_dead(collector_id)
-
-    def _add_event(self, event: MembershipEvent) -> None:
-        self._recent_events.append(event)
-        if len(self._recent_events) > self._max_recent_events:
-            self._recent_events = self._recent_events[-self._max_recent_events:]
+        timed_out = []
+        for m in self._members.values():
+            if m.status == MemberStatus.SUSPECTED:
+                if now - m.last_seen > suspicion_timeout:
+                    timed_out.append(m.node_id)
+        return timed_out

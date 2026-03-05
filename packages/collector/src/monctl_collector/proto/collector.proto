@@ -1,0 +1,209 @@
+syntax = "proto3";
+
+package collector;
+
+// CollectorPeer — gRPC service between cache-nodes (peer-to-peer)
+// and between poll-workers/forwarder and their local cache-node.
+service CollectorPeer {
+  // Cache operations (distributed key-value store)
+  rpc GetCache(CacheRequest)       returns (CacheResponse);
+  rpc PutCache(CachePutRequest)    returns (CachePutResponse);
+
+  // Cluster health (cache-node ↔ cache-node only)
+  rpc Ping(PingRequest)                    returns (PingResponse);
+  rpc GossipExchange(GossipMessage)        returns (GossipMessage);
+
+  // Job distribution (poll-worker → local cache-node)
+  rpc GetMyJobs(GetJobsRequest)            returns (GetJobsResponse);
+  rpc ReportExecution(ReportExecutionReq)  returns (ReportExecutionResp);
+  rpc RegisterWorker(RegisterWorkerReq)    returns (RegisterWorkerResp);
+
+  // Credential fetch (poll-worker → local cache-node)
+  rpc GetCredential(CredentialRequest)     returns (CredentialResponse);
+
+  // Result submission (poll-worker/forwarder → local cache-node)
+  rpc SubmitResult(SubmitResultRequest)    returns (SubmitResultResponse);
+
+  // App code distribution (poll-worker → local cache-node → peers)
+  rpc GetAppCode(AppCodeRequest)           returns (AppCodeResponse);
+
+  // Work-stealing (cache-node ↔ cache-node)
+  rpc OfferJob(OfferJobRequest)            returns (OfferJobResponse);
+  rpc ReclaimJob(ReclaimJobRequest)        returns (ReclaimJobResponse);
+}
+
+// ─── Cache ────────────────────────────────────────────────────────────────────
+
+message CacheRequest {
+  string key = 1;
+}
+
+message CacheResponse {
+  bool   found       = 1;
+  bytes  value       = 2;
+  double created_at  = 3;
+  int32  ttl         = 4;
+  string origin_node = 5;
+}
+
+message CachePutRequest {
+  string key         = 1;
+  bytes  value       = 2;
+  int32  ttl         = 3;
+  string origin_node = 4;
+  bool   is_replica  = 5;
+}
+
+message CachePutResponse {
+  bool success = 1;
+}
+
+// ─── Cluster / Gossip ─────────────────────────────────────────────────────────
+
+message PingRequest {
+  string node_id    = 1;
+  uint64 generation = 2;
+}
+
+message PingResponse {
+  string node_id    = 1;
+  uint64 generation = 2;
+}
+
+message MemberInfo {
+  string node_id            = 1;
+  string address            = 2;   // host:port
+  string status             = 3;   // "ALIVE" | "SUSPECTED" | "DEAD"
+  uint64 generation         = 4;
+  double last_seen          = 5;
+  float  load_score         = 6;
+  int32  worker_count       = 7;
+  float  effective_load     = 8;
+  float  deadline_miss_rate = 9;
+  int32  total_jobs         = 10;
+  int32  stolen_job_count   = 11;
+}
+
+message GossipMessage {
+  string            sender_id = 1;
+  repeated MemberInfo members = 2;
+}
+
+// ─── Job Distribution ─────────────────────────────────────────────────────────
+
+message AppInfo {
+  string app_id  = 1;
+  string version = 2;
+}
+
+message GetJobsRequest {
+  string            worker_id   = 1;
+  repeated AppInfo  loaded_apps = 2;   // apps the worker already has loaded
+}
+
+message JobWithProfile {
+  string job_id             = 1;
+  string device_id          = 2;
+  string device_host        = 3;
+  string app_id             = 4;
+  string app_version        = 5;
+  repeated string credential_names = 6;
+  int32  interval           = 7;
+  string parameters_json    = 8;
+  int32  max_execution_time = 9;
+  float  avg_execution_time = 10;
+  bool   is_heavy           = 11;
+  string role               = 12;
+}
+
+message GetJobsResponse {
+  repeated JobWithProfile jobs = 1;
+}
+
+message ReportExecutionReq {
+  string job_id         = 1;
+  float  execution_time = 2;
+  bool   error          = 3;
+  string error_message  = 4;
+}
+
+message ReportExecutionResp {
+  bool ok = 1;
+}
+
+message RegisterWorkerReq {
+  string           worker_id   = 1;
+  repeated AppInfo loaded_apps = 2;
+}
+
+message RegisterWorkerResp {
+  bool ok = 1;
+}
+
+// ─── Credentials ─────────────────────────────────────────────────────────────
+
+message CredentialRequest {
+  string credential_name = 1;
+}
+
+message CredentialResponse {
+  bool   found     = 1;
+  string type      = 2;
+  string data_json = 3;   // decrypted credential data as JSON
+}
+
+// ─── Result Submission ────────────────────────────────────────────────────────
+
+message SubmitResultRequest {
+  string job_id            = 1;
+  string device_id         = 2;
+  double timestamp         = 3;
+  string metrics_json      = 4;
+  string config_data_json  = 5;
+  string status            = 6;
+  bool   reachable         = 7;
+  string error_message     = 8;
+  int32  execution_time_ms = 9;
+  float  rtt_ms            = 10;
+  float  response_time_ms  = 11;
+}
+
+message SubmitResultResponse {
+  bool accepted = 1;
+}
+
+// ─── App Code ─────────────────────────────────────────────────────────────────
+
+message AppCodeRequest {
+  string app_id  = 1;
+  string version = 2;
+}
+
+message AppCodeResponse {
+  bool   found             = 1;
+  string code              = 2;
+  string checksum          = 3;
+  string requirements_json = 4;
+  string entry_class       = 5;
+}
+
+// ─── Work-Stealing ────────────────────────────────────────────────────────────
+
+message OfferJobRequest {
+  string         job_id    = 1;
+  JobWithProfile job       = 2;
+  string         from_node = 3;
+}
+
+message OfferJobResponse {
+  bool accepted = 1;
+}
+
+message ReclaimJobRequest {
+  string job_id    = 1;
+  string from_node = 2;
+}
+
+message ReclaimJobResponse {
+  bool ok = 1;
+}
