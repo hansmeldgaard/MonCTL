@@ -122,6 +122,10 @@ class AppVersion(Base):
     published_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default="now()"
     )
+    # Collector API fields — set when uploading poll app source code
+    source_code: Mapped[str | None] = mapped_column(Text)
+    requirements: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    entry_class: Mapped[str | None] = mapped_column(String(200))
 
     app: Mapped[App] = relationship(back_populates="versions")
 
