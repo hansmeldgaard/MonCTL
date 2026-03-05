@@ -1,0 +1,253 @@
+"""User management endpoints (admin only)."""
+
+from __future__ import annotations
+
+import uuid
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from monctl_central.dependencies import get_db, require_admin
+from monctl_central.storage.models import Tenant, User, UserTenant
+from monctl_common.utils import utc_now
+
+router = APIRouter()
+
+
+def _fmt_user(u: User) -> dict:
+    return {
+        "id": str(u.id),
+        "username": u.username,
+        "display_name": u.display_name,
+        "email": u.email,
+        "role": u.role,
+        "all_tenants": u.all_tenants,
+        "is_active": u.is_active,
+        "created_at": u.created_at.isoformat() if u.created_at else None,
+    }
+
+
+# ── Request models ───────────────────────────────────────────────────────────
+
+class CreateUserRequest(BaseModel):
+    username: str = Field(min_length=2, max_length=150)
+    password: str = Field(min_length=6)
+    role: str = Field(default="viewer", description="'admin' or 'viewer'")
+    display_name: str | None = None
+    email: str | None = None
+    all_tenants: bool = False
+
+
+class UpdateUserRequest(BaseModel):
+    role: str | None = None
+    display_name: str | None = None
+    email: str | None = None
+    all_tenants: bool | None = None
+    is_active: bool | None = None
+
+
+class AssignTenantRequest(BaseModel):
+    tenant_id: str
+
+
+# ── Endpoints ─────────────────────────────────────────────────────────────────
+
+@router.get("")
+async def list_users(
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_admin),
+):
+    """List all users (admin only)."""
+    users = (await db.execute(select(User).order_by(User.username))).scalars().all()
+    result = []
+    for u in users:
+        # Count tenant assignments
+        tenant_count = (await db.execute(
+            select(UserTenant).where(UserTenant.user_id == u.id)
+        )).scalars()
+        tenants = list(tenant_count)
+        row = _fmt_user(u)
+        row["tenant_count"] = len(tenants)
+        result.append(row)
+    return {"status": "success", "data": result}
+
+
+@router.post("", status_code=status.HTTP_201_CREATED)
+async def create_user(
+    request: CreateUserRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_admin),
+):
+    """Create a new user (admin only)."""
+    from monctl_central.auth.service import hash_password
+
+    # Check for duplicate username
+    existing = (
+        await db.execute(select(User).where(User.username == request.username))
+    ).scalar_one_or_none()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Username '{request.username}' already exists",
+        )
+
+    user = User(
+        username=request.username,
+        password_hash=hash_password(request.password),
+        role=request.role,
+        display_name=request.display_name,
+        email=request.email,
+        all_tenants=request.all_tenants,
+    )
+    db.add(user)
+    await db.flush()
+    return {"status": "success", "data": _fmt_user(user)}
+
+
+@router.get("/{user_id}")
+async def get_user(
+    user_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_admin),
+):
+    """Get a user by ID including their tenant assignments (admin only)."""
+    user = await db.get(User, uuid.UUID(user_id))
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    # Load tenant assignments
+    tenant_rows = (await db.execute(
+        select(UserTenant, Tenant)
+        .join(Tenant, UserTenant.tenant_id == Tenant.id)
+        .where(UserTenant.user_id == user.id)
+    )).all()
+    tenants = [{"id": str(t.id), "name": t.name} for _, t in tenant_rows]
+
+    data = _fmt_user(user)
+    data["tenants"] = tenants
+    return {"status": "success", "data": data}
+
+
+@router.put("/{user_id}")
+async def update_user(
+    user_id: str,
+    request: UpdateUserRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_admin),
+):
+    """Update a user (admin only)."""
+    user = await db.get(User, uuid.UUID(user_id))
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if request.role is not None:
+        user.role = request.role
+    if request.display_name is not None:
+        user.display_name = request.display_name
+    if request.email is not None:
+        user.email = request.email
+    if request.all_tenants is not None:
+        user.all_tenants = request.all_tenants
+    if request.is_active is not None:
+        user.is_active = request.is_active
+    user.updated_at = utc_now()
+
+    return {"status": "success", "data": _fmt_user(user)}
+
+
+@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_user(
+    user_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_admin),
+):
+    """Delete a user (admin only). Cannot delete yourself."""
+    if auth.get("user_id") == user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete your own account",
+        )
+
+    user = await db.get(User, uuid.UUID(user_id))
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    await db.delete(user)
+
+
+# ── Tenant assignment endpoints ───────────────────────────────────────────────
+
+@router.get("/{user_id}/tenants")
+async def get_user_tenants(
+    user_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_admin),
+):
+    """List tenants assigned to a user (admin only)."""
+    user = await db.get(User, uuid.UUID(user_id))
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    rows = (await db.execute(
+        select(UserTenant, Tenant)
+        .join(Tenant, UserTenant.tenant_id == Tenant.id)
+        .where(UserTenant.user_id == user.id)
+        .order_by(Tenant.name)
+    )).all()
+    tenants = [{"id": str(t.id), "name": t.name} for _, t in rows]
+    return {"status": "success", "data": tenants}
+
+
+@router.post("/{user_id}/tenants", status_code=status.HTTP_201_CREATED)
+async def assign_tenant(
+    user_id: str,
+    request: AssignTenantRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_admin),
+):
+    """Assign a tenant to a user (admin only)."""
+    user = await db.get(User, uuid.UUID(user_id))
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    tenant = await db.get(Tenant, uuid.UUID(request.tenant_id))
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    # Check if already assigned
+    existing = await db.get(
+        UserTenant, (uuid.UUID(user_id), uuid.UUID(request.tenant_id))
+    )
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Tenant already assigned to this user",
+        )
+
+    assoc = UserTenant(
+        user_id=uuid.UUID(user_id),
+        tenant_id=uuid.UUID(request.tenant_id),
+    )
+    db.add(assoc)
+    await db.flush()
+    return {"status": "success", "data": {"tenant_id": request.tenant_id}}
+
+
+@router.delete("/{user_id}/tenants/{tenant_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_tenant(
+    user_id: str,
+    tenant_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_admin),
+):
+    """Remove a tenant assignment from a user (admin only)."""
+    assoc = await db.get(
+        UserTenant, (uuid.UUID(user_id), uuid.UUID(tenant_id))
+    )
+    if assoc is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tenant assignment not found",
+        )
+    await db.delete(assoc)

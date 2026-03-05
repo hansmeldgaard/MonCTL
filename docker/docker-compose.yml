@@ -1,0 +1,155 @@
+services:
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_USER: monctl
+      POSTGRES_PASSWORD: monctl
+      POSTGRES_DB: monctl
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U monctl"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:latest
+    ports:
+      - "8428:8428"
+    command:
+      - "-retentionPeriod=2"
+      - "-search.latencyOffset=0s"
+    volumes:
+      - vmdata:/victoria-metrics-data
+
+  central:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.central
+    ports:
+      - "8443:8443"
+    environment:
+      MONCTL_DATABASE_URL: postgresql+asyncpg://monctl:monctl@postgres:5432/monctl
+      MONCTL_REDIS_URL: redis://redis:6379/0
+      MONCTL_VICTORIAMETRICS_URL: http://victoriametrics:8428
+      MONCTL_HOST: 0.0.0.0
+      MONCTL_PORT: 8443
+      MONCTL_DEBUG: "true"
+      MONCTL_ENCRYPTION_KEY: "528e5bc0e961f2e5ab7a531e02e6067cc661f4367f033398fe4e84284565f94e"
+      MONCTL_JWT_SECRET_KEY: "7f3a9c1d8e4b2f6a0d5c7e3b9a1f4d6c8e2b5a7d0f3c6e9b1a4d7f2c5e8b0a3"
+      MONCTL_ADMIN_USERNAME: "admin"
+      MONCTL_ADMIN_PASSWORD: "changeme"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      victoriametrics:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8443/v1/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  collector-1:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.collector
+    hostname: collector-01
+    environment:
+      MONCTL_COLLECTOR_CENTRAL_URL: http://central:8443
+      MONCTL_COLLECTOR_REGISTRATION_TOKEN: monctl_reg_test_token_123
+      MONCTL_COLLECTOR_LABELS: '{"region": "us-east", "environment": "test", "instance": "1"}'
+      MONCTL_COLLECTOR_HEARTBEAT_INTERVAL: "15"
+      MONCTL_COLLECTOR_PUSH_INTERVAL: "5"
+      MONCTL_COLLECTOR_VERIFY_SSL: "false"
+      MONCTL_COLLECTOR_BUFFER_PATH: /var/lib/monctl/buffer.db
+      MONCTL_COLLECTOR_LOG_LEVEL: DEBUG
+    volumes:
+      - collector1_data:/var/lib/monctl
+    depends_on:
+      central:
+        condition: service_healthy
+
+  collector-2:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.collector
+    hostname: collector-02
+    environment:
+      MONCTL_COLLECTOR_CENTRAL_URL: http://central:8443
+      MONCTL_COLLECTOR_REGISTRATION_TOKEN: monctl_reg_test_token_123
+      MONCTL_COLLECTOR_LABELS: '{"region": "us-east", "environment": "test", "instance": "2"}'
+      MONCTL_COLLECTOR_HEARTBEAT_INTERVAL: "15"
+      MONCTL_COLLECTOR_PUSH_INTERVAL: "5"
+      MONCTL_COLLECTOR_VERIFY_SSL: "false"
+      MONCTL_COLLECTOR_BUFFER_PATH: /var/lib/monctl/buffer.db
+      MONCTL_COLLECTOR_LOG_LEVEL: DEBUG
+    volumes:
+      - collector2_data:/var/lib/monctl
+    depends_on:
+      central:
+        condition: service_healthy
+
+  collector-3:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.collector
+    hostname: collector-03
+    environment:
+      MONCTL_COLLECTOR_CENTRAL_URL: http://central:8443
+      MONCTL_COLLECTOR_REGISTRATION_TOKEN: monctl_reg_test_token_123
+      MONCTL_COLLECTOR_LABELS: '{"region": "us-west", "environment": "test", "instance": "3"}'
+      MONCTL_COLLECTOR_HEARTBEAT_INTERVAL: "15"
+      MONCTL_COLLECTOR_PUSH_INTERVAL: "5"
+      MONCTL_COLLECTOR_VERIFY_SSL: "false"
+      MONCTL_COLLECTOR_BUFFER_PATH: /var/lib/monctl/buffer.db
+      MONCTL_COLLECTOR_LOG_LEVEL: DEBUG
+    volumes:
+      - collector3_data:/var/lib/monctl
+    depends_on:
+      central:
+        condition: service_healthy
+
+  collector-4:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.collector
+    hostname: collector-04
+    environment:
+      MONCTL_COLLECTOR_CENTRAL_URL: http://central:8443
+      MONCTL_COLLECTOR_REGISTRATION_TOKEN: monctl_reg_test_token_123
+      MONCTL_COLLECTOR_LABELS: '{"region": "us-west", "environment": "test", "instance": "3"}'
+      MONCTL_COLLECTOR_HEARTBEAT_INTERVAL: "15"
+      MONCTL_COLLECTOR_PUSH_INTERVAL: "5"
+      MONCTL_COLLECTOR_VERIFY_SSL: "false"
+      MONCTL_COLLECTOR_BUFFER_PATH: /var/lib/monctl/buffer.db
+      MONCTL_COLLECTOR_LOG_LEVEL: DEBUG
+    volumes:
+      - collector4_data:/var/lib/monctl
+    depends_on:
+      central:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  vmdata:
+  collector1_data:
+  collector2_data:
+  collector3_data:
+  collector4_data:

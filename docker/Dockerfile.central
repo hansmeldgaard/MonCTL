@@ -1,0 +1,52 @@
+# ---- Stage 1: Build the React frontend ----
+FROM node:20-alpine AS frontend-builder
+
+WORKDIR /frontend
+
+# Copy package files first for layer caching
+COPY packages/central/frontend/package.json packages/central/frontend/package-lock.json ./
+RUN npm ci
+
+# Copy source and build
+COPY packages/central/frontend/ ./
+RUN npm run build
+
+# ---- Stage 2: Install Python dependencies ----
+FROM python:3.11-slim AS builder
+
+WORKDIR /app
+
+# Install build dependencies
+RUN pip install --no-cache-dir hatch
+
+# Copy package files
+COPY packages/common/ /app/packages/common/
+COPY packages/central/ /app/packages/central/
+
+# Install packages
+RUN pip install --no-cache-dir /app/packages/common/ /app/packages/central/
+
+# ---- Stage 3: Runtime ----
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
+# Copy installed packages from builder
+COPY --from=builder /usr/local/lib/python3.11/site-packages/ /usr/local/lib/python3.11/site-packages/
+COPY --from=builder /usr/local/bin/ /usr/local/bin/
+
+# Copy built frontend into /app/static
+COPY --from=frontend-builder /frontend/dist /app/static
+
+# Copy alembic migration files (for auto-migration on startup)
+COPY packages/central/alembic/ /app/alembic/
+
+# Copy entrypoint
+COPY docker/central-entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+EXPOSE 8443
+
+ENTRYPOINT ["/app/entrypoint.sh"]

@@ -1,0 +1,36 @@
+[project]
+name = "monctl-collector"
+version = "0.1.0"
+description = "MonCTL distributed collector daemon"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "apscheduler>=3.10",
+    "pydantic>=2.5",
+    "pydantic-settings>=2.1",
+    "click>=8.1",
+    "aiosqlite>=0.19",
+    "structlog>=24.1",
+    "psutil>=5.9",
+    "pysnmp-lextudio>=6.2",
+    "monctl-common",
+    "monctl-sdk",
+]
+
+[project.scripts]
+monctl-collector = "monctl_collector.main:cli"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.2",
+    "mypy>=1.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/monctl_collector"]

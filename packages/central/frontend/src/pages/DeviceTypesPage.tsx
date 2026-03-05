@@ -1,0 +1,238 @@
+import { useState } from "react";
+import { Loader2, Plus, Server, Trash2 } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
+import { Button } from "@/components/ui/button.tsx";
+import { Input } from "@/components/ui/input.tsx";
+import { Label } from "@/components/ui/label.tsx";
+import { Badge } from "@/components/ui/badge.tsx";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table.tsx";
+import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
+import {
+  useCreateDeviceType,
+  useDeleteDeviceType,
+  useDeviceTypes,
+} from "@/api/hooks.ts";
+import { formatDate } from "@/lib/utils.ts";
+
+// Built-in (seeded) types that shouldn't be deleted
+const BUILTIN_TYPES = new Set([
+  "host", "network", "api", "database", "service",
+  "container", "virtual-machine", "storage", "printer", "iot",
+]);
+
+export function DeviceTypesPage() {
+  const { data: deviceTypes, isLoading } = useDeviceTypes();
+  const createType = useCreateDeviceType();
+  const deleteType = useDeleteDeviceType();
+
+  const [addOpen, setAddOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault();
+    setFormError(null);
+
+    if (!name.trim()) {
+      setFormError("Name is required.");
+      return;
+    }
+
+    try {
+      await createType.mutateAsync({
+        name: name.trim().toLowerCase().replace(/\s+/g, "-"),
+        description: description.trim() || undefined,
+      });
+      setName("");
+      setDescription("");
+      setAddOpen(false);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Failed to create device type");
+    }
+  }
+
+  async function handleDelete() {
+    if (!deleteTarget) return;
+    try {
+      await deleteType.mutateAsync(deleteTarget.id);
+      setDeleteTarget(null);
+    } catch {
+      // Error handled silently — type may be in use
+    }
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-lg font-semibold text-zinc-100">Device Types</h1>
+          <p className="text-sm text-zinc-500">
+            Define the categories of devices that can be monitored.
+          </p>
+        </div>
+        <Button size="sm" onClick={() => setAddOpen(true)} className="gap-1.5">
+          <Plus className="h-4 w-4" />
+          Add Type
+        </Button>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Server className="h-4 w-4" />
+            Device Types
+            <Badge variant="default" className="ml-auto">
+              {deviceTypes?.length ?? 0}
+            </Badge>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {!deviceTypes || deviceTypes.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
+              <Server className="mb-2 h-8 w-8 text-zinc-600" />
+              <p className="text-sm">No device types defined</p>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Description</TableHead>
+                  <TableHead>Created</TableHead>
+                  <TableHead className="w-16"></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {deviceTypes.map((dt) => {
+                  const isBuiltin = BUILTIN_TYPES.has(dt.name);
+                  return (
+                    <TableRow key={dt.id}>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="info" className="font-mono text-xs">
+                            {dt.name}
+                          </Badge>
+                          {isBuiltin && (
+                            <Badge variant="default" className="text-xs text-zinc-500">
+                              built-in
+                            </Badge>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-zinc-400 text-sm">
+                        {dt.description ?? <span className="text-zinc-600 italic">—</span>}
+                      </TableCell>
+                      <TableCell className="text-zinc-500 text-sm">
+                        {formatDate(dt.created_at)}
+                      </TableCell>
+                      <TableCell>
+                        {!isBuiltin && (
+                          <button
+                            onClick={() => setDeleteTarget({ id: dt.id, name: dt.name })}
+                            className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                            title="Delete"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Add Type Dialog */}
+      <Dialog open={addOpen} onClose={() => { setAddOpen(false); setFormError(null); }} title="Add Device Type">
+        <form onSubmit={handleCreate} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="dt-name">Name</Label>
+            <Input
+              id="dt-name"
+              placeholder="e.g. firewall, load-balancer"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoFocus
+            />
+            <p className="text-xs text-zinc-500">
+              Lowercase, hyphens allowed. Will be auto-formatted.
+            </p>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="dt-description">
+              Description <span className="font-normal text-zinc-500">(optional)</span>
+            </Label>
+            <Input
+              id="dt-description"
+              placeholder="Short description of this device category"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+            />
+          </div>
+          {formError && <p className="text-sm text-red-400">{formError}</p>}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => { setAddOpen(false); setFormError(null); }}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={createType.isPending}>
+              {createType.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              Add Type
+            </Button>
+          </DialogFooter>
+        </form>
+      </Dialog>
+
+      {/* Delete Confirm Dialog */}
+      <Dialog
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete Device Type"
+      >
+        <p className="text-sm text-zinc-400">
+          Are you sure you want to delete the device type{" "}
+          <span className="font-mono text-zinc-200">{deleteTarget?.name}</span>?
+          Devices already using this type will retain the value, but it will
+          no longer appear in the type selector.
+        </p>
+        <DialogFooter>
+          <Button variant="secondary" onClick={() => setDeleteTarget(null)}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={handleDelete}
+            disabled={deleteType.isPending}
+          >
+            {deleteType.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+            Delete
+          </Button>
+        </DialogFooter>
+      </Dialog>
+    </div>
+  );
+}

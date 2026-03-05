@@ -1,0 +1,28 @@
+FROM python:3.11-slim AS builder
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir hatch
+
+COPY packages/common/ /app/packages/common/
+COPY packages/sdk/ /app/packages/sdk/
+COPY packages/collector/ /app/packages/collector/
+
+RUN pip install --no-cache-dir /app/packages/common/ /app/packages/sdk/ /app/packages/collector/
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl iputils-ping && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /usr/local/lib/python3.11/site-packages/ /usr/local/lib/python3.11/site-packages/
+COPY --from=builder /usr/local/bin/ /usr/local/bin/
+
+RUN mkdir -p /var/lib/monctl /opt/monctl/apps
+
+COPY apps/ /opt/monctl/apps/
+
+COPY docker/collector-entrypoint.sh /app/entrypoint.sh
+
+ENTRYPOINT ["/app/entrypoint.sh"]
