@@ -17,6 +17,9 @@ from monctl_common.utils import hash_api_key
 _engine = None
 _session_factory = None
 
+# ClickHouse client singleton
+_ch_client = None
+
 
 def get_engine():
     global _engine
@@ -53,6 +56,25 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             raise
 
 
+def get_clickhouse():
+    """Return the ClickHouse client singleton."""
+    global _ch_client
+    if _ch_client is None:
+        from monctl_central.storage.clickhouse import ClickHouseClient
+
+        hosts = [h.strip() for h in settings.clickhouse_hosts.split(",") if h.strip()]
+        _ch_client = ClickHouseClient(
+            hosts=hosts,
+            port=settings.clickhouse_port,
+            database=settings.clickhouse_database,
+            cluster_name=settings.clickhouse_cluster,
+            async_insert=settings.clickhouse_async_insert,
+            username=settings.clickhouse_user,
+            password=settings.clickhouse_password,
+        )
+    return _ch_client
+
+
 # ---------------------------------------------------------------------------
 # API Key auth (existing — used by collectors and management CLI/Postman)
 # ---------------------------------------------------------------------------
@@ -70,8 +92,15 @@ async def get_api_key(credentials: HTTPAuthorizationCredentials = Depends(_http_
 
 
 async def _validate_api_key(token: str) -> dict:
-    """Shared logic for API key validation."""
+    """Shared logic for API key validation with Redis caching."""
     token_hash = hash_api_key(token)
+
+    # Check Redis cache first
+    from monctl_central.cache import get_cached_api_key, set_cached_api_key
+
+    cached = await get_cached_api_key(token_hash)
+    if cached is not None:
+        return cached
 
     from sqlalchemy import select, update
     from monctl_central.storage.models import ApiKey
@@ -96,19 +125,24 @@ async def _validate_api_key(token: str) -> dict:
                     detail="API key has expired",
                 )
 
-        # Update last_used_at
+        # Update last_used_at (batched via cache — only hits DB on cache miss)
         await session.execute(
             update(ApiKey).where(ApiKey.id == api_key.id).values(last_used_at=utc_now())
         )
         await session.commit()
 
-        return {
+        result_dict = {
             "key_type": api_key.key_type,
             "collector_id": str(api_key.collector_id) if api_key.collector_id else None,
             "scopes": api_key.scopes,
             "auth_type": "api_key",
             "tenant_ids": None,  # Management API keys see everything
         }
+
+        # Cache the result
+        await set_cached_api_key(token_hash, result_dict)
+
+        return result_dict
 
 
 async def require_collector_key(api_key: dict = Depends(get_api_key)) -> dict:
@@ -229,6 +263,32 @@ async def require_admin(auth: dict = Depends(require_auth)) -> dict:
             detail="Admin role required",
         )
     return auth
+
+
+async def require_collector_auth(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer_optional),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Auth for the /api/v1/ collector endpoints.
+
+    Accepts (in priority order):
+      1. Shared secret:  Authorization: Bearer <MONCTL_COLLECTOR_API_KEY env var>
+      2. Management API key (from DB, as per require_auth)
+      3. JWT cookie (admin session)
+
+    Configure on central: MONCTL_COLLECTOR_API_KEY=<some secret>
+    Configure on collector: CENTRAL_API_KEY=<same secret>
+    """
+    import os
+
+    shared_secret = os.environ.get("MONCTL_COLLECTOR_API_KEY", "")
+
+    if credentials and shared_secret and credentials.credentials == shared_secret:
+        return {"auth_type": "collector_shared_secret", "tenant_ids": None}
+
+    # Fall back to regular auth (JWT cookie or management API key)
+    return await require_auth(request, credentials, db)
 
 
 # ---------------------------------------------------------------------------

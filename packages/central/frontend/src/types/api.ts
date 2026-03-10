@@ -11,6 +11,7 @@ export interface AuthUser {
   user_id: string;
   username: string;
   role: string;
+  timezone: string;
   all_tenants?: boolean;
   tenant_ids?: string[] | null; // null = unrestricted, [] = see nothing, [ids] = specific
 }
@@ -26,6 +27,7 @@ export interface DeviceType {
   id: string;
   name: string;
   description: string | null;
+  category: string;
   created_at: string;
 }
 
@@ -34,16 +36,54 @@ export interface DeviceType {
 export interface Tenant {
   id: string;
   name: string;
+  metadata: Record<string, string>;
   created_at: string;
 }
 
+// ── Registration Tokens ──────────────────────────────────
+
+export interface RegistrationToken {
+  id: string;
+  name: string;
+  short_code: string | null;
+  one_time: boolean;
+  used: boolean;
+  cluster_id: string | null;
+  expires_at: string | null;
+  created_at: string;
+  token?: string; // Legacy, only present on creation response
+}
+
+// ── Credential Keys ──────────────────────────────────────
+
+export interface CredentialKey {
+  id: string;
+  name: string;
+  description: string | null;
+  is_secret: boolean;
+  created_at: string;
+}
+
+export interface CredentialValue {
+  key_id: string;
+  key_name: string;
+  value: string;
+  is_secret: boolean;
+}
+
 // ── Collector Groups ──────────────────────────────────────
+
+export interface CollectorGroupHealth {
+  status: "healthy" | "degraded" | "critical" | "empty";
+  message: string;
+}
 
 export interface CollectorGroup {
   id: string;
   name: string;
   description: string | null;
   collector_count: number;
+  health: CollectorGroupHealth;
   created_at: string;
 }
 
@@ -59,8 +99,36 @@ export interface Device {
   collector_group_id: string | null;
   collector_group_name: string | null;
   labels: Record<string, string>;
+  default_credential_id: string | null;
+  default_credential_name: string | null;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface DeviceListParams {
+  limit?: number;
+  offset?: number;
+  sort_by?: string;
+  sort_dir?: "asc" | "desc";
+  name?: string;
+  address?: string;
+  device_type?: string;
+  tenant_name?: string;
+  collector_group_name?: string;
+  label_key?: string;
+  label_value?: string;
+  collector_id?: string;
+}
+
+export interface PaginatedResponse<T> {
+  status: string;
+  data: T[];
+  meta: {
+    limit: number;
+    offset: number;
+    count: number;
+    total: number;
+  };
 }
 
 // ── Results ───────────────────────────────────────────────
@@ -79,6 +147,8 @@ export interface CheckResult {
   performance_data: Record<string, unknown> | null;
   executed_at: string;
   execution_time_ms: number | null;
+  started_at: string | null;
+  collector_name: string | null;
 }
 
 export interface DeviceResults {
@@ -109,6 +179,8 @@ export interface ResultRecord {
   performance_data: Record<string, unknown> | null;
   executed_at: string;
   execution_time_ms: number | null;
+  started_at: string | null;
+  collector_name: string | null;
 }
 
 // ── Collectors ────────────────────────────────────────────
@@ -123,6 +195,11 @@ export interface Collector {
   last_seen_at: string | null;
   group_id: string | null;
   group_name: string | null;
+  fingerprint: string | null;
+  approved_at: string | null;
+  approved_by: string | null;
+  rejected_reason: string | null;
+  registered_at: string | null;
 }
 
 // ── Assignments ───────────────────────────────────────────
@@ -257,9 +334,51 @@ export interface MonitoringCheckConfig {
   oid: string | null;
   credential_name: string | null;
   interval_seconds: number;
+  ping_count: number | null;
+  ping_timeout: number | null;
 }
 
 export interface MonitoringConfig {
   availability: MonitoringCheckConfig | null;
   latency: MonitoringCheckConfig | null;
+}
+
+// ── System Settings ──────────────────────────────────────
+
+export interface SystemSettings {
+  [key: string]: string;
+}
+
+// ── TLS Certificates ─────────────────────────────────────
+
+export interface TlsCertificateInfo {
+  id: string;
+  name: string;
+  is_self_signed: boolean;
+  subject_cn: string;
+  valid_from: string;
+  valid_to: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+// ── Templates ────────────────────────────────────────────
+
+export interface Template {
+  id: string;
+  name: string;
+  description: string | null;
+  config: {
+    apps?: { app_id: string; schedule_type: string; schedule_value: string; config: Record<string, unknown>; role?: string }[];
+    default_credential_id?: string;
+    labels?: Record<string, string>;
+  };
+  created_at: string;
+  updated_at: string;
+}
+
+// ── Credential Detail ────────────────────────────────────
+
+export interface CredentialDetail extends Credential {
+  values: { key_name: string; is_secret: boolean }[];
 }

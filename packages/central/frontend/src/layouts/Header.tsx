@@ -44,6 +44,9 @@ export function Header() {
             <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs text-zinc-500">
               {user.role}
             </span>
+            <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs text-zinc-500">
+              {user.timezone.replace(/_/g, " ")}
+            </span>
           </div>
         )}
         <Button variant="ghost" size="sm" onClick={() => void handleLogout()}>

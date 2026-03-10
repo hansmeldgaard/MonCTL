@@ -213,6 +213,8 @@ class PeerClient:
                     execution_time_ms=result.get("execution_time_ms", 0),
                     rtt_ms=result.get("rtt_ms") or 0.0,
                     response_time_ms=result.get("response_time_ms") or 0.0,
+                    started_at=result.get("started_at") or 0.0,
+                    collector_node=result.get("collector_node") or "",
                 ),
                 timeout=self._timeout,
             )

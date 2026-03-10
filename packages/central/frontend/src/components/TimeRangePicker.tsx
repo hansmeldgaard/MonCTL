@@ -63,7 +63,7 @@ export function rangeToTimestamps(r: TimeRangeValue): TimeRange {
   return { fromTs: r.fromTs, toTs: r.toTs };
 }
 
-export function rangeLabel(r: TimeRangeValue): string {
+export function rangeLabel(r: TimeRangeValue, timezone = "UTC"): string {
   if (r.type === "preset") {
     return PRESET_OPTIONS.find((o) => o.preset === r.preset)?.label ?? r.preset;
   }
@@ -71,8 +71,8 @@ export function rangeLabel(r: TimeRangeValue): string {
     return `Last ${r.value} ${UNIT_LABELS[r.unit].toLowerCase()}`;
   }
   // absolute
-  const from = r.fromTs ? new Date(r.fromTs).toLocaleString() : "beginning";
-  const to = r.toTs ? new Date(r.toTs).toLocaleString() : "now";
+  const from = r.fromTs ? new Date(r.fromTs).toLocaleString("en-US", { timeZone: timezone }) : "beginning";
+  const to = r.toTs ? new Date(r.toTs).toLocaleString("en-US", { timeZone: timezone }) : "now";
   return `${from} → ${to}`;
 }
 
@@ -92,9 +92,10 @@ interface TimeRangePickerProps {
   value: TimeRangeValue;
   onChange: (range: TimeRangeValue) => void;
   className?: string;
+  timezone?: string;
 }
 
-export function TimeRangePicker({ value, onChange, className }: TimeRangePickerProps) {
+export function TimeRangePicker({ value, onChange, className, timezone = "UTC" }: TimeRangePickerProps) {
   const [open, setOpen] = useState(false);
   const [customTab, setCustomTab] = useState<"relative" | "absolute">("relative");
 
@@ -138,7 +139,7 @@ export function TimeRangePicker({ value, onChange, className }: TimeRangePickerP
     setOpen(false);
   }
 
-  const label = rangeLabel(value);
+  const label = rangeLabel(value, timezone);
 
   return (
     <div ref={ref} className={cn("relative", className)}>

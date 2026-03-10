@@ -22,19 +22,24 @@ logger = structlog.get_logger()
 class CentralAPIClient:
     """Client for the MonCTL central server collector API (/api/v1/)."""
 
-    def __init__(self, base_url: str, api_key: str | None = None, timeout: int = 30) -> None:
+    def __init__(
+        self, base_url: str, api_key: str | None = None, timeout: int = 30, verify_ssl: bool = True,
+    ) -> None:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._timeout = aiohttp.ClientTimeout(total=timeout)
+        self._verify_ssl = verify_ssl
         self._session: aiohttp.ClientSession | None = None
 
     async def open(self) -> None:
         headers: dict[str, str] = {}
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
+        connector = aiohttp.TCPConnector(ssl=self._verify_ssl)
         self._session = aiohttp.ClientSession(
             headers=headers,
             timeout=self._timeout,
+            connector=connector,
         )
 
     async def close(self) -> None:
@@ -55,16 +60,19 @@ class CentralAPIClient:
     # ── Jobs ─────────────────────────────────────────────────────────────────
 
     async def get_jobs(
-        self, since: datetime | None = None
+        self, since: datetime | None = None, collector_id: str | None = None,
     ) -> tuple[list[JobDefinition], list[str]]:
         """Fetch active jobs from central. Returns (changed_jobs, deleted_ids).
 
         Pass `since` for delta-sync — only jobs updated after that timestamp
         are returned. Pass None to fetch all jobs (on startup).
+        Pass `collector_id` to filter jobs to the collector's group.
         """
         params: dict[str, str] = {}
         if since is not None:
             params["since"] = since.isoformat()
+        if collector_id:
+            params["collector_id"] = collector_id
 
         async with self._session.get(self._url("/jobs"), params=params) as resp:
             resp.raise_for_status()
@@ -151,7 +159,13 @@ class CentralAPIClient:
 
     # ── Heartbeat ─────────────────────────────────────────────────────────────
 
-    async def post_heartbeat(self, node_id: str, load_info: dict) -> bool:
+    async def post_heartbeat(
+        self,
+        node_id: str,
+        load_info: dict,
+        peer_address: str | None = None,
+        peer_states: dict[str, str] | None = None,
+    ) -> bool:
         """Send a heartbeat with current load information.
 
         Returns True on success.
@@ -164,6 +178,8 @@ class CentralAPIClient:
             "deadline_miss_rate": load_info.get("deadline_miss_rate", 0.0),
             "total_jobs": load_info.get("total_jobs", 0),
             "stolen_job_count": load_info.get("stolen_job_count", 0),
+            "peer_address": peer_address,
+            "peer_states": peer_states,
         }
         try:
             async with self._session.post(self._url("/heartbeat"), json=payload) as resp:
@@ -171,6 +187,30 @@ class CentralAPIClient:
         except aiohttp.ClientError as exc:
             logger.warning("heartbeat_failed", error=str(exc))
             return False
+
+    # ── Config / Peer Discovery ────────────────────────────────────────────
+
+    async def get_config(
+        self, collector_id: str, collector_api_key: str
+    ) -> dict:
+        """Fetch full config from central, including cluster peer info.
+
+        Uses the collector's individual API key (not the shared secret),
+        because the /v1/collectors/{id}/config endpoint requires it.
+        """
+        url = f"{self._base_url}/v1/collectors/{collector_id}/config"
+        headers = {"Authorization": f"Bearer {collector_api_key}"}
+        try:
+            async with self._session.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    return await resp.json()
+                logger.warning(
+                    "get_config_error", status=resp.status, collector_id=collector_id
+                )
+                return {}
+        except aiohttp.ClientError as exc:
+            logger.warning("get_config_failed", error=str(exc))
+            return {}
 
     # ── Health ────────────────────────────────────────────────────────────────
 

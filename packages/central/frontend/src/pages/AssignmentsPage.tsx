@@ -13,8 +13,10 @@ import {
 } from "@/components/ui/table.tsx";
 import { useAssignments } from "@/api/hooks.ts";
 import { formatDate } from "@/lib/utils.ts";
+import { useTimezone } from "@/hooks/useTimezone.ts";
 
 export function AssignmentsPage() {
+  const tz = useTimezone();
   const { data: assignments, isLoading } = useAssignments();
   const [search, setSearch] = useState("");
 
@@ -118,7 +120,7 @@ export function AssignmentsPage() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-zinc-500">
-                      {formatDate(assignment.created_at)}
+                      {formatDate(assignment.created_at, tz)}
                     </TableCell>
                   </TableRow>
                 ))}

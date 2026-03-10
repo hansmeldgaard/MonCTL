@@ -36,6 +36,7 @@ import {
 import type { User } from "@/types/api.ts";
 import { useAuth } from "@/hooks/useAuth.tsx";
 import { formatDate } from "@/lib/utils.ts";
+import { useTimezone } from "@/hooks/useTimezone.ts";
 
 // ── Role badge helper ────────────────────────────────────
 
@@ -56,6 +57,8 @@ interface AddUserDialogProps {
 
 function AddUserDialog({ open, onClose }: AddUserDialogProps) {
   const createUser = useCreateUser();
+  const { data: allTenantsList } = useTenants();
+  const assignTenant = useAssignTenantToUser();
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -63,6 +66,7 @@ function AddUserDialog({ open, onClose }: AddUserDialogProps) {
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("viewer");
   const [allTenants, setAllTenants] = useState(false);
+  const [selectedTenantIds, setSelectedTenantIds] = useState<Set<string>>(new Set());
   const [formError, setFormError] = useState<string | null>(null);
 
   function reset() {
@@ -72,12 +76,22 @@ function AddUserDialog({ open, onClose }: AddUserDialogProps) {
     setEmail("");
     setRole("viewer");
     setAllTenants(false);
+    setSelectedTenantIds(new Set());
     setFormError(null);
   }
 
   function handleClose() {
     reset();
     onClose();
+  }
+
+  function toggleTenant(tenantId: string) {
+    setSelectedTenantIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(tenantId)) next.delete(tenantId);
+      else next.add(tenantId);
+      return next;
+    });
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -94,7 +108,7 @@ function AddUserDialog({ open, onClose }: AddUserDialogProps) {
     }
 
     try {
-      await createUser.mutateAsync({
+      const result = await createUser.mutateAsync({
         username: username.trim(),
         password,
         role,
@@ -102,6 +116,17 @@ function AddUserDialog({ open, onClose }: AddUserDialogProps) {
         email: email.trim() || undefined,
         all_tenants: allTenants,
       });
+      // Assign selected tenants after user creation
+      if (!allTenants && selectedTenantIds.size > 0 && result.data) {
+        const userId = result.data.id;
+        for (const tenantId of selectedTenantIds) {
+          try {
+            await assignTenant.mutateAsync({ userId, tenantId });
+          } catch {
+            // tenant may already be assigned, skip
+          }
+        }
+      }
       reset();
       onClose();
     } catch (err) {
@@ -178,9 +203,36 @@ function AddUserDialog({ open, onClose }: AddUserDialogProps) {
           </div>
         </div>
 
-        {!allTenants && (
+        {!allTenants && allTenantsList && allTenantsList.length > 0 && (
+          <div className="space-y-1.5">
+            <Label>Assign Tenants</Label>
+            <div className="rounded-md border border-zinc-800 max-h-40 overflow-y-auto divide-y divide-zinc-800">
+              {allTenantsList.map((t) => (
+                <label
+                  key={t.id}
+                  className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-zinc-800/50 transition-colors"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedTenantIds.has(t.id)}
+                    onChange={() => toggleTenant(t.id)}
+                    className="rounded border-zinc-600 bg-zinc-800 text-brand-500 focus:ring-brand-500"
+                  />
+                  <span className="text-sm text-zinc-300">{t.name}</span>
+                </label>
+              ))}
+            </div>
+            {selectedTenantIds.size === 0 && (
+              <p className="text-xs text-zinc-500">
+                No tenants selected — user will see no devices.
+              </p>
+            )}
+          </div>
+        )}
+
+        {!allTenants && (!allTenantsList || allTenantsList.length === 0) && (
           <p className="text-xs text-zinc-500">
-            Without "All tenants", user will see no devices until tenants are assigned in the edit dialog.
+            No tenants exist yet. Create tenants first, or enable "All tenants".
           </p>
         )}
 
@@ -424,6 +476,7 @@ function EditUserDialog({ user, onClose }: EditUserDialogProps) {
 // ── Main Page ─────────────────────────────────────────────
 
 export function UsersPage() {
+  const tz = useTimezone();
   const { user: currentUser } = useAuth();
   const { data: users, isLoading } = useUsers();
   const deleteUser = useDeleteUser();
@@ -540,7 +593,7 @@ export function UsersPage() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-zinc-500 text-sm">
-                      {formatDate(u.created_at)}
+                      {formatDate(u.created_at, tz)}
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1">

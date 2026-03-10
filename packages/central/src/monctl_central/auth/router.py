@@ -73,6 +73,7 @@ async def login(
             "username": user.username,
             "role": user.role,
             "display_name": user.display_name,
+            "timezone": user.timezone,
         },
     }
 
@@ -126,6 +127,7 @@ async def refresh(
             "username": user.username,
             "role": user.role,
             "display_name": user.display_name,
+            "timezone": user.timezone,
         },
     }
 
@@ -171,6 +173,7 @@ async def get_me(request: Request, db: AsyncSession = Depends(get_db)):
             "user_id": user_id,
             "username": payload["username"],
             "role": role,
+            "timezone": user.timezone if user else "UTC",
             "all_tenants": all_tenants,
             "tenant_ids": tenant_ids,
         },

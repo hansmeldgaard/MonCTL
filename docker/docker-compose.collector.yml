@@ -1,0 +1,117 @@
+# docker-compose for one collector server (cache-node + 2 poll-workers + forwarder).
+#
+# Deploy to each VM with:
+#   rsync -avz packages/collector/ user@VM:/opt/monctl/collector/
+#   rsync -avz docker/docker-compose.collector.yml user@VM:/opt/monctl/collector/docker-compose.yml
+#   rsync -avz docker/Dockerfile.collector-v2 user@VM:/opt/monctl/collector/Dockerfile
+#   scp .env.collector user@VM:/opt/monctl/collector/.env
+#   ssh user@VM "cd /opt/monctl/collector && docker compose up -d"
+#
+# Required .env variables:
+#   NODE_ID          — unique name (e.g. collector-vm-01)
+#   CENTRAL_URL      — e.g. https://central.example.com or http://192.168.1.10:8443
+#   CENTRAL_API_KEY  — API key from central admin
+#   PEERS            — comma-separated host:port of other cache-nodes
+#                      e.g. 192.168.1.32:50051,192.168.1.33:50051
+
+services:
+
+  # ── Cache-node — cluster brain ────────────────────────────────────────────
+  cache-node:
+    build: .
+    image: monctl-collector:latest
+    command: monctl-cache-node
+    container_name: cache-node
+    hostname: ${NODE_ID:-collector-node}
+    ports:
+      - "50051:50051"           # gRPC: peer↔peer + worker→cache communication
+      - "50052:50052"           # HTTP: status endpoint for TUI
+    environment:
+      MONCTL_NODE_ID:           ${NODE_ID}
+      MONCTL_CENTRAL_URL:       ${CENTRAL_URL}
+      MONCTL_CENTRAL_API_KEY:   ${CENTRAL_API_KEY}
+      MONCTL_VERIFY_SSL:        ${VERIFY_SSL:-true}
+      MONCTL_GRPC_ADDRESS:      0.0.0.0:50051
+      MONCTL_PEERS:             ${PEERS:-}
+      MONCTL_ADVERTISE_ADDR:    ${MONCTL_ADVERTISE_ADDR:-}
+      MONCTL_DB_PATH:           /data/cache.db
+      MONCTL_SETUP_YAML:        /etc/monctl/setup.yaml
+    volumes:
+      - cache_data:/data
+      - /etc/monctl/setup.yaml:/etc/monctl/setup.yaml:ro
+    restart: unless-stopped
+    healthcheck:
+      # Python socket check — works in python:3.12-slim (no ss/nc needed)
+      test: ["CMD", "python", "-c",
+             "import socket,sys; s=socket.socket(); s.settimeout(1); r=s.connect_ex(('127.0.0.1',50051)); s.close(); sys.exit(r)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ── Poll-worker 1 ─────────────────────────────────────────────────────────
+  poll-worker-1:
+    build: .
+    image: monctl-collector:latest
+    command: monctl-poll-worker
+    container_name: poll-worker-1
+    environment:
+      MONCTL_CACHE_NODE:        cache-node:50051
+      MONCTL_WORKER_ID:         ${NODE_ID:-node}-worker-1
+      MONCTL_CENTRAL_URL:       ${CENTRAL_URL}
+      MONCTL_CENTRAL_API_KEY:   ${CENTRAL_API_KEY}
+      MONCTL_VERIFY_SSL:        ${VERIFY_SSL:-true}
+      MONCTL_APPS_DIR:          /data/apps
+      MONCTL_VENVS_DIR:         /data/venvs
+      MONCTL_DB_PATH:           /data/worker.db
+    volumes:
+      - app_data:/data          # shared venv volume (pip only runs once per requirements-hash)
+    depends_on:
+      cache-node:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Poll-worker 2 ─────────────────────────────────────────────────────────
+  poll-worker-2:
+    build: .
+    image: monctl-collector:latest
+    command: monctl-poll-worker
+    container_name: poll-worker-2
+    environment:
+      MONCTL_CACHE_NODE:        cache-node:50051
+      MONCTL_WORKER_ID:         ${NODE_ID:-node}-worker-2
+      MONCTL_CENTRAL_URL:       ${CENTRAL_URL}
+      MONCTL_CENTRAL_API_KEY:   ${CENTRAL_API_KEY}
+      MONCTL_VERIFY_SSL:        ${VERIFY_SSL:-true}
+      MONCTL_APPS_DIR:          /data/apps
+      MONCTL_VENVS_DIR:         /data/venvs
+      MONCTL_DB_PATH:           /data/worker.db
+    volumes:
+      - app_data:/data
+    depends_on:
+      cache-node:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Forwarder — ships results to central ──────────────────────────────────
+  forwarder:
+    build: .
+    image: monctl-collector:latest
+    command: monctl-forwarder
+    container_name: forwarder
+    environment:
+      MONCTL_NODE_ID:           ${NODE_ID}
+      MONCTL_CENTRAL_URL:       ${CENTRAL_URL}
+      MONCTL_CENTRAL_API_KEY:   ${CENTRAL_API_KEY}
+      MONCTL_VERIFY_SSL:        ${VERIFY_SSL:-true}
+      MONCTL_DB_PATH:           /data/cache.db   # same DB as cache-node
+    volumes:
+      - cache_data:/data        # shared with cache-node to read results buffer
+    depends_on:
+      cache-node:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  cache_data:      # cache-node SQLite + results buffer (shared with forwarder)
+  app_data:        # downloaded apps + shared venvs (shared between workers)

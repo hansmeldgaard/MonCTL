@@ -1,9 +1,10 @@
-import { useState } from "react";
-import { Loader2, Plus, Server, Trash2 } from "lucide-react";
+import { useState, useMemo } from "react";
+import { Loader2, Pencil, Plus, Server, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
+import { Select } from "@/components/ui/select.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import {
   Table,
@@ -16,10 +17,13 @@ import {
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import {
   useCreateDeviceType,
+  useUpdateDeviceType,
   useDeleteDeviceType,
   useDeviceTypes,
 } from "@/api/hooks.ts";
+import type { DeviceType } from "@/types/api.ts";
 import { formatDate } from "@/lib/utils.ts";
+import { useTimezone } from "@/hooks/useTimezone.ts";
 
 // Built-in (seeded) types that shouldn't be deleted
 const BUILTIN_TYPES = new Set([
@@ -27,17 +31,57 @@ const BUILTIN_TYPES = new Set([
   "container", "virtual-machine", "storage", "printer", "iot",
 ]);
 
+const CATEGORIES = [
+  "network", "server", "storage", "printer", "iot", "service", "database", "other",
+] as const;
+
+const CATEGORY_COLORS: Record<string, string> = {
+  network: "info",
+  server: "default",
+  storage: "default",
+  printer: "default",
+  iot: "default",
+  service: "info",
+  database: "info",
+  other: "default",
+};
+
 export function DeviceTypesPage() {
+  const tz = useTimezone();
   const { data: deviceTypes, isLoading } = useDeviceTypes();
   const createType = useCreateDeviceType();
+  const updateType = useUpdateDeviceType();
   const deleteType = useDeleteDeviceType();
 
   const [addOpen, setAddOpen] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [category, setCategory] = useState("other");
   const [formError, setFormError] = useState<string | null>(null);
 
+  // Edit state
+  const [editTarget, setEditTarget] = useState<DeviceType | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editCategory, setEditCategory] = useState("other");
+  const [editError, setEditError] = useState<string | null>(null);
+
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+
+  // Group device types by category
+  const grouped = useMemo(() => {
+    if (!deviceTypes) return [];
+    const map = new Map<string, DeviceType[]>();
+    for (const dt of deviceTypes) {
+      const cat = dt.category || "other";
+      if (!map.has(cat)) map.set(cat, []);
+      map.get(cat)!.push(dt);
+    }
+    // Sort categories in the order defined
+    return CATEGORIES
+      .filter((c) => map.has(c))
+      .map((c) => ({ category: c, types: map.get(c)! }));
+  }, [deviceTypes]);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -52,12 +96,42 @@ export function DeviceTypesPage() {
       await createType.mutateAsync({
         name: name.trim().toLowerCase().replace(/\s+/g, "-"),
         description: description.trim() || undefined,
+        category,
       });
       setName("");
       setDescription("");
+      setCategory("other");
       setAddOpen(false);
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Failed to create device type");
+    }
+  }
+
+  function openEdit(dt: DeviceType) {
+    setEditTarget(dt);
+    setEditName(dt.name);
+    setEditDescription(dt.description ?? "");
+    setEditCategory(dt.category || "other");
+    setEditError(null);
+  }
+
+  async function handleEdit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editTarget) return;
+    setEditError(null);
+    const isBuiltin = BUILTIN_TYPES.has(editTarget.name);
+    try {
+      await updateType.mutateAsync({
+        id: editTarget.id,
+        data: {
+          ...(isBuiltin ? {} : { name: editName.trim().toLowerCase().replace(/\s+/g, "-") }),
+          description: editDescription.trim() || undefined,
+          category: editCategory,
+        },
+      });
+      setEditTarget(null);
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : "Failed to update device type");
     }
   }
 
@@ -115,48 +189,74 @@ export function DeviceTypesPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
+                  <TableHead>Category</TableHead>
                   <TableHead>Description</TableHead>
                   <TableHead>Created</TableHead>
-                  <TableHead className="w-16"></TableHead>
+                  <TableHead className="w-20"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {deviceTypes.map((dt) => {
-                  const isBuiltin = BUILTIN_TYPES.has(dt.name);
-                  return (
-                    <TableRow key={dt.id}>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <Badge variant="info" className="font-mono text-xs">
-                            {dt.name}
-                          </Badge>
-                          {isBuiltin && (
-                            <Badge variant="default" className="text-xs text-zinc-500">
-                              built-in
-                            </Badge>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-zinc-400 text-sm">
-                        {dt.description ?? <span className="text-zinc-600 italic">—</span>}
-                      </TableCell>
-                      <TableCell className="text-zinc-500 text-sm">
-                        {formatDate(dt.created_at)}
-                      </TableCell>
-                      <TableCell>
-                        {!isBuiltin && (
-                          <button
-                            onClick={() => setDeleteTarget({ id: dt.id, name: dt.name })}
-                            className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                            title="Delete"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        )}
+                {grouped.map(({ category: cat, types }) => (
+                  <>
+                    <TableRow key={`header-${cat}`}>
+                      <TableCell colSpan={5} className="bg-zinc-800/30 py-1.5 px-3">
+                        <span className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+                          {cat}
+                        </span>
                       </TableCell>
                     </TableRow>
-                  );
-                })}
+                    {types.map((dt) => {
+                      const isBuiltin = BUILTIN_TYPES.has(dt.name);
+                      return (
+                        <TableRow key={dt.id}>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <Badge variant="info" className="font-mono text-xs">
+                                {dt.name}
+                              </Badge>
+                              {isBuiltin && (
+                                <Badge variant="default" className="text-xs text-zinc-500">
+                                  built-in
+                                </Badge>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={CATEGORY_COLORS[dt.category] === "info" ? "info" : "default"} className="text-xs">
+                              {dt.category}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-zinc-400 text-sm">
+                            {dt.description ?? <span className="text-zinc-600 italic">—</span>}
+                          </TableCell>
+                          <TableCell className="text-zinc-500 text-sm">
+                            {formatDate(dt.created_at, tz)}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => openEdit(dt)}
+                                className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer"
+                                title="Edit"
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </button>
+                              {!isBuiltin && (
+                                <button
+                                  onClick={() => setDeleteTarget({ id: dt.id, name: dt.name })}
+                                  className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                                  title="Delete"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </>
+                ))}
               </TableBody>
             </Table>
           )}
@@ -178,6 +278,14 @@ export function DeviceTypesPage() {
             <p className="text-xs text-zinc-500">
               Lowercase, hyphens allowed. Will be auto-formatted.
             </p>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="dt-category">Category</Label>
+            <Select id="dt-category" value={category} onChange={(e) => setCategory(e.target.value)}>
+              {CATEGORIES.map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </Select>
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="dt-description">
@@ -202,6 +310,52 @@ export function DeviceTypesPage() {
             <Button type="submit" disabled={createType.isPending}>
               {createType.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
               Add Type
+            </Button>
+          </DialogFooter>
+        </form>
+      </Dialog>
+
+      {/* Edit Type Dialog */}
+      <Dialog open={!!editTarget} onClose={() => setEditTarget(null)} title="Edit Device Type">
+        <form onSubmit={handleEdit} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="dt-edit-name">Name</Label>
+            <Input
+              id="dt-edit-name"
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              disabled={editTarget ? BUILTIN_TYPES.has(editTarget.name) : false}
+              autoFocus
+            />
+            {editTarget && BUILTIN_TYPES.has(editTarget.name) && (
+              <p className="text-xs text-zinc-500">Built-in type names cannot be changed.</p>
+            )}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="dt-edit-category">Category</Label>
+            <Select id="dt-edit-category" value={editCategory} onChange={(e) => setEditCategory(e.target.value)}>
+              {CATEGORIES.map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="dt-edit-description">Description</Label>
+            <Input
+              id="dt-edit-description"
+              value={editDescription}
+              onChange={(e) => setEditDescription(e.target.value)}
+              placeholder="Short description"
+            />
+          </div>
+          {editError && <p className="text-sm text-red-400">{editError}</p>}
+          <DialogFooter>
+            <Button type="button" variant="secondary" onClick={() => setEditTarget(null)}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={updateType.isPending}>
+              {updateType.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              Save
             </Button>
           </DialogFooter>
         </form>

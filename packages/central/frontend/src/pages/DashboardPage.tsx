@@ -59,7 +59,8 @@ function StatCard({
 }
 
 export function DashboardPage() {
-  const { data: devices, isLoading: devicesLoading } = useDevices();
+  const { data: devicesResponse, isLoading: devicesLoading } = useDevices();
+  const devices = devicesResponse?.data ?? [];
   const { data: collectors, isLoading: collectorsLoading } = useCollectors();
   const { data: alerts, isLoading: alertsLoading } = useActiveAlerts();
   const { data: latestResults } = useLatestResults();

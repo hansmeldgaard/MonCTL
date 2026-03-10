@@ -8,11 +8,8 @@ from datetime import datetime
 from sqlalchemy import (
     Boolean,
     DateTime,
-    Float,
     ForeignKey,
-    Index,
     Integer,
-    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -67,6 +64,11 @@ class Collector(Base):
         UUID(as_uuid=True), ForeignKey("collector_groups.id", ondelete="SET NULL"), nullable=True
     )
     peer_address: Mapped[str | None] = mapped_column(String(255))
+    reported_peer_states: Mapped[dict | None] = mapped_column(JSONB)
+    fingerprint: Mapped[str | None] = mapped_column(String(64), index=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approved_by: Mapped[str | None] = mapped_column(String(255))
+    rejected_reason: Mapped[str | None] = mapped_column(Text)
 
     cluster: Mapped[CollectorCluster | None] = relationship(back_populates="collectors")
     group: Mapped["CollectorGroup | None"] = relationship(back_populates="collectors", foreign_keys=[group_id])
@@ -137,6 +139,7 @@ class DeviceType(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
+    category: Mapped[str] = mapped_column(String(32), nullable=False, default="other")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default="now()"
     )
@@ -159,6 +162,9 @@ class Device(Base):
     collector_group_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("collector_groups.id", ondelete="SET NULL"), nullable=True
     )
+    default_credential_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("credentials.id", ondelete="SET NULL"), nullable=True
+    )
     labels: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(
@@ -170,6 +176,7 @@ class Device(Base):
 
     tenant: Mapped["Tenant | None"] = relationship(foreign_keys=[tenant_id])
     collector_group: Mapped["CollectorGroup | None"] = relationship(back_populates="devices", foreign_keys=[collector_group_id])
+    default_credential: Mapped["Credential | None"] = relationship(foreign_keys=[default_credential_id])
     assignments: Mapped[list["AppAssignment"]] = relationship(back_populates="device")
 
 
@@ -188,6 +195,37 @@ class Credential(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default="now()"
     )
+
+
+class CredentialKey(Base):
+    """Reusable credential field definitions (username, password, community, etc.)."""
+    __tablename__ = "credential_keys"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    is_secret: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default="now()"
+    )
+
+
+class CredentialValue(Base):
+    """A key-value pair belonging to a credential."""
+    __tablename__ = "credential_values"
+    __table_args__ = (UniqueConstraint("credential_id", "key_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    credential_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("credentials.id", ondelete="CASCADE"), nullable=False
+    )
+    key_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("credential_keys.id"), nullable=False
+    )
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+
+    credential: Mapped["Credential"] = relationship()
+    key: Mapped["CredentialKey"] = relationship()
 
 
 class AppAssignment(Base):
@@ -255,48 +293,8 @@ class ApiKey(Base):
     collector: Mapped[Collector | None] = relationship(back_populates="api_keys")
 
 
-class CheckResultRecord(Base):
-    __tablename__ = "check_results"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    assignment_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    collector_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    app_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    state: Mapped[int] = mapped_column(SmallInteger, nullable=False)
-    output: Mapped[str] = mapped_column(Text, nullable=False)
-    performance_data: Mapped[dict | None] = mapped_column(JSONB)
-    executed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    received_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default="now()"
-    )
-    execution_time: Mapped[float | None] = mapped_column(Float)
-
-    __table_args__ = (
-        Index("idx_check_results_assignment_time", "assignment_id", executed_at.desc()),
-        Index("idx_check_results_collector_time", "collector_id", executed_at.desc()),
-        Index("idx_check_results_state", "state", postgresql_where=(state > 0)),
-    )
-
-
-class EventRecord(Base):
-    __tablename__ = "events"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    collector_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    app_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
-    source: Mapped[str] = mapped_column(String(255), nullable=False)
-    severity: Mapped[str] = mapped_column(String(20), nullable=False)
-    message: Mapped[str] = mapped_column(Text, nullable=False)
-    data: Mapped[dict | None] = mapped_column(JSONB)
-    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    received_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default="now()"
-    )
-
-    __table_args__ = (
-        Index("idx_events_collector_time", "collector_id", occurred_at.desc()),
-        Index("idx_events_severity", "severity", occurred_at.desc()),
-    )
+# CheckResultRecord and EventRecord have been moved to ClickHouse.
+# See storage/clickhouse.py for the ClickHouse schema.
 
 
 class AlertRule(Base):
@@ -342,6 +340,7 @@ class RegistrationToken(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    short_code: Mapped[str | None] = mapped_column(String(8), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     one_time: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -360,6 +359,7 @@ class Tenant(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default="now()"
     )
@@ -377,6 +377,7 @@ class User(Base):
     email: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
     display_name: Mapped[str | None] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(20), nullable=False, default="viewer")
+    timezone: Mapped[str] = mapped_column(String(50), nullable=False, default="UTC")
     # Legacy single-tenant FK (kept for backward compat, not used for access control)
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True
@@ -422,3 +423,37 @@ class SnmpOid(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default="now()"
     )
+
+
+class SystemSetting(Base):
+    """Key-value system settings (e.g., retention policies)."""
+    __tablename__ = "system_settings"
+    key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="now()")
+
+
+class TlsCertificate(Base):
+    """TLS certificate for HTTPS termination."""
+    __tablename__ = "tls_certificates"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    cert_pem: Mapped[str] = mapped_column(Text, nullable=False)
+    key_pem_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    is_self_signed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    subject_cn: Mapped[str] = mapped_column(String(255), nullable=False)
+    valid_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    valid_to: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
+
+
+class Template(Base):
+    """Reusable monitoring template for bulk device configuration."""
+    __tablename__ = "templates"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    config: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")

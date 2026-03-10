@@ -18,12 +18,17 @@ dependencies = [
     "cryptography>=42.0.0",
     # Logging
     "structlog>=24.1",
+    # TUI
+    "textual>=1.0.0",
+    # Sync HTTP client (for TUI workers)
+    "httpx>=0.27.0",
 ]
 
 [project.scripts]
 monctl-cache-node    = "monctl_collector.entrypoints.cache_node:main"
 monctl-poll-worker   = "monctl_collector.entrypoints.poll_worker:main"
 monctl-forwarder     = "monctl_collector.entrypoints.forwarder_main:main"
+monctl-setup         = "monctl_collector.tui.app:main"
 
 [project.optional-dependencies]
 dev = [

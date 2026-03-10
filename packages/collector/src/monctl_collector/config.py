@@ -35,6 +35,7 @@ class CentralConfig:
     credential_refresh: int = 1800       # how often to refresh credentials (seconds)
     heartbeat_interval: int = 60         # how often to send heartbeat (seconds)
     timeout: int = 30                    # HTTP request timeout (seconds)
+    verify_ssl: bool = True              # set False for self-signed certificates
 
 
 @dataclass
@@ -69,8 +70,11 @@ class AppsConfig:
 @dataclass
 class CollectorConfig:
     node_id: str = ""                   # unique identifier for this cache-node
+    collector_id: str = ""              # UUID from central registration (for config/peer discovery)
+    collector_api_key: str = ""         # individual collector API key (from setup.yaml)
     listen_address: str = "0.0.0.0"
     listen_port: int = 50051            # gRPC port for peer and worker communication
+    advertise_address: str = ""         # external IP:port to advertise to peers (default: listen_address:listen_port)
     seeds: list[str] = field(default_factory=list)  # host:port of seed cache-nodes
     cluster: ClusterConfig = field(default_factory=ClusterConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
@@ -165,22 +169,58 @@ def load_config(yaml_path: str = "/etc/collector/config.yaml") -> CollectorConfi
         apps=apps,
     )
 
-    # Environment variable overrides (always win over YAML)
-    if node_id := os.environ.get("NODE_ID"):
-        cfg.node_id = node_id
-    if listen_port := os.environ.get("LISTEN_PORT"):
-        cfg.listen_port = int(listen_port)
-    if seeds_env := os.environ.get("SEEDS"):
-        cfg.seeds = [s.strip() for s in seeds_env.split(",") if s.strip()]
-    if central_url := os.environ.get("CENTRAL_URL"):
-        cfg.central.url = central_url
-    if api_key := os.environ.get("CENTRAL_API_KEY"):
-        cfg.central.api_key = api_key
-    if db_path := os.environ.get("CACHE_DB_PATH"):
-        cfg.cache.db_path = db_path
-    if apps_dir := os.environ.get("APPS_DIR"):
-        cfg.apps.apps_dir = apps_dir
-    if venvs_dir := os.environ.get("VENVS_DIR"):
-        cfg.apps.venvs_dir = venvs_dir
+    # Environment variable overrides (MONCTL_ prefix takes priority, fallback to bare name)
+    def _env(*names: str) -> str | None:
+        for n in names:
+            v = os.environ.get(n)
+            if v is not None:
+                return v
+        return None
+
+    if v := _env("MONCTL_NODE_ID", "NODE_ID"):
+        cfg.node_id = v
+    if v := _env("MONCTL_LISTEN_PORT", "LISTEN_PORT"):
+        cfg.listen_port = int(v)
+    if v := _env("MONCTL_PEERS", "MONCTL_SEEDS", "SEEDS"):
+        cfg.seeds = [s.strip() for s in v.split(",") if s.strip()]
+    if v := _env("MONCTL_CENTRAL_URL", "CENTRAL_URL"):
+        cfg.central.url = v
+    if v := _env("MONCTL_CENTRAL_API_KEY", "CENTRAL_API_KEY"):
+        cfg.central.api_key = v
+    if v := _env("MONCTL_VERIFY_SSL", "VERIFY_SSL"):
+        cfg.central.verify_ssl = v.lower() not in ("0", "false", "no")
+    if v := _env("MONCTL_DB_PATH", "CACHE_DB_PATH"):
+        cfg.cache.db_path = v
+    if v := _env("MONCTL_APPS_DIR", "APPS_DIR"):
+        cfg.apps.apps_dir = v
+    if v := _env("MONCTL_VENVS_DIR", "VENVS_DIR"):
+        cfg.apps.venvs_dir = v
+    if v := _env("MONCTL_GRPC_ADDRESS"):
+        # e.g. "0.0.0.0:50051" → parse port
+        parts = v.rsplit(":", 1)
+        if len(parts) == 2:
+            cfg.listen_address = parts[0]
+            cfg.listen_port = int(parts[1])
+    if v := _env("MONCTL_ADVERTISE_ADDR", "ADVERTISE_ADDR"):
+        cfg.advertise_address = v  # e.g. "192.168.1.31:50051"
+
+    # Read collector_id and individual API key from setup.yaml (written by monctl-setup TUI)
+    setup_path = Path(_env("MONCTL_SETUP_YAML") or "/etc/monctl/setup.yaml")
+    if setup_path.exists():
+        try:
+            with setup_path.open() as f:
+                setup = yaml.safe_load(f) or {}
+            if not cfg.collector_id and setup.get("collector_id"):
+                cfg.collector_id = setup["collector_id"]
+            if not cfg.collector_api_key and setup.get("api_key"):
+                cfg.collector_api_key = setup["api_key"]
+        except Exception:
+            pass
+
+    # Explicit env overrides for collector identity
+    if v := _env("MONCTL_COLLECTOR_ID"):
+        cfg.collector_id = v
+    if v := _env("MONCTL_COLLECTOR_API_KEY"):
+        cfg.collector_api_key = v
 
     return cfg

@@ -1,19 +1,15 @@
 import { NavLink } from "react-router-dom";
 import {
   Activity,
+  AppWindow,
   Bell,
-  Building2,
   ChevronLeft,
   ChevronRight,
-  Cpu,
-  KeyRound,
+  FileText,
   LayoutDashboard,
   ListChecks,
   Monitor,
-  Network,
-  Server,
   Settings,
-  Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils.ts";
 
@@ -25,14 +21,10 @@ interface SidebarProps {
 const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard", end: true },
   { to: "/devices", icon: Monitor, label: "Devices", end: false },
-  { to: "/device-types", icon: Server, label: "Device Types", end: false },
-  { to: "/collectors", icon: Cpu, label: "Collectors", end: false },
+  { to: "/apps", icon: AppWindow, label: "Apps", end: false },
   { to: "/assignments", icon: ListChecks, label: "Assignments", end: false },
-  { to: "/credentials", icon: KeyRound, label: "Credentials", end: false },
-  { to: "/snmp-oids", icon: Network, label: "SNMP OIDs", end: false },
+  { to: "/templates", icon: FileText, label: "Templates", end: false },
   { to: "/alerts", icon: Bell, label: "Alerts", end: false },
-  { to: "/users", icon: Users, label: "Users", end: false },
-  { to: "/tenants", icon: Building2, label: "Tenants", end: false },
   { to: "/settings", icon: Settings, label: "Settings", end: false },
 ];
 

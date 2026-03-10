@@ -1,0 +1,35 @@
+/* monctl-setup TUI — dark theme */
+
+Screen {
+    background: $surface;
+}
+
+#app-header {
+    dock: top;
+    height: 3;
+    background: $primary-darken-3;
+    color: $text;
+    text-align: center;
+    padding: 1 0;
+    text-style: bold;
+}
+
+TabbedContent {
+    height: 1fr;
+}
+
+TabPane {
+    padding: 0;
+}
+
+ContentSwitcher {
+    height: 1fr;
+}
+
+#app-footer {
+    dock: bottom;
+    height: 1;
+    background: $primary-darken-3;
+    color: $text-muted;
+    text-align: center;
+}

@@ -181,6 +181,22 @@ async def create_app(
     }
 
 
+class UpdateAppRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    app_type: str | None = None
+    config_schema: dict | None = None
+
+
+class CreateVersionRequest(BaseModel):
+    version: str
+    source_code: str
+    requirements: list[str] = Field(default_factory=list)
+    entry_class: str | None = None
+
+
+# --- Assignment routes must be registered BEFORE /{app_id} to avoid path conflict ---
+
 @router.get("/assignments")
 async def list_assignments(
     db: AsyncSession = Depends(get_db),
@@ -387,3 +403,106 @@ async def delete_assignment(
                 .where(Collector.group_id == device.collector_group_id)
                 .values(config_version=Collector.config_version + 1, updated_at=utc_now())
             )
+
+
+# --- Parameterized /{app_id} routes AFTER literal routes to avoid path conflicts ---
+
+
+@router.put("/{app_id}")
+async def update_app(
+    app_id: str,
+    request: UpdateAppRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Update app metadata."""
+    app = await db.get(App, uuid.UUID(app_id))
+    if app is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App not found")
+    if request.name is not None:
+        app.name = request.name
+    if request.description is not None:
+        app.description = request.description
+    if request.app_type is not None:
+        app.app_type = request.app_type
+    if request.config_schema is not None:
+        app.config_schema = request.config_schema
+    await db.flush()
+    return {
+        "status": "success",
+        "data": {"id": str(app.id), "name": app.name},
+    }
+
+
+@router.delete("/{app_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_app(
+    app_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Delete an app and all its versions/assignments (cascade)."""
+    app = await db.get(App, uuid.UUID(app_id))
+    if app is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App not found")
+    await db.delete(app)
+    await db.flush()
+
+
+@router.get("/{app_id}/versions/{version_id}")
+async def get_app_version(
+    app_id: str,
+    version_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Get version details including source code."""
+    stmt = select(AppVersion).where(
+        AppVersion.id == uuid.UUID(version_id),
+        AppVersion.app_id == uuid.UUID(app_id),
+    )
+    result = await db.execute(stmt)
+    version = result.scalar_one_or_none()
+    if version is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Version not found")
+    return {
+        "status": "success",
+        "data": {
+            "id": str(version.id),
+            "version": version.version,
+            "source_code": version.source_code,
+            "requirements": version.requirements or [],
+            "entry_class": version.entry_class,
+            "checksum": version.checksum_sha256,
+            "published_at": version.published_at.isoformat() if version.published_at else None,
+        },
+    }
+
+
+@router.post("/{app_id}/versions", status_code=status.HTTP_201_CREATED)
+async def create_app_version(
+    app_id: str,
+    request: CreateVersionRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Upload a new version of an app."""
+    import hashlib
+
+    app = await db.get(App, uuid.UUID(app_id))
+    if app is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App not found")
+    checksum = hashlib.sha256(request.source_code.encode()).hexdigest()
+    version = AppVersion(
+        app_id=app.id,
+        version=request.version,
+        source_code=request.source_code,
+        requirements=request.requirements,
+        entry_class=request.entry_class,
+        checksum_sha256=checksum,
+    )
+    db.add(version)
+    await db.flush()
+    return {
+        "status": "success",
+        "data": {"id": str(version.id), "version": version.version, "checksum": checksum},
+    }

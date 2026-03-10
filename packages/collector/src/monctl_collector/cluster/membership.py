@@ -48,6 +48,10 @@ class MembershipTable:
         self._local_id = local_node_id
         self._members: dict[str, MemberInfo] = {}
 
+    @property
+    def members(self) -> dict[str, MemberInfo]:
+        return self._members
+
     # ── Lifecycle ────────────────────────────────────────────────────────────
 
     def add_local(self, address: str, generation: int = 0) -> None:
@@ -59,6 +63,17 @@ class MembershipTable:
             generation=generation,
             last_seen=time.time(),
         )
+
+    def add_seed(self, node_id: str, address: str) -> None:
+        """Add a seed peer (initially ALIVE — will be confirmed via gossip)."""
+        if node_id not in self._members:
+            self._members[node_id] = MemberInfo(
+                node_id=node_id,
+                address=address,
+                status=MemberStatus.ALIVE,
+                generation=0,
+                last_seen=0.0,  # will be updated on first gossip round
+            )
 
     # ── Merge (gossip) ────────────────────────────────────────────────────────
 
@@ -142,6 +157,10 @@ class MembershipTable:
         member = self._members.get(node_id)
         if member and member.status == MemberStatus.ALIVE:
             member.status = MemberStatus.SUSPECTED
+
+    def remove(self, node_id: str) -> None:
+        """Remove a node entirely from the membership table."""
+        self._members.pop(node_id, None)
 
     def mark_dead(self, node_id: str) -> None:
         member = self._members.get(node_id)

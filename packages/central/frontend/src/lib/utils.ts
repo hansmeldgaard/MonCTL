@@ -6,7 +6,7 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export function formatDate(dateStr: string | null | undefined): string {
+export function formatDate(dateStr: string | null | undefined, timezone = "UTC"): string {
   if (!dateStr) return "—";
   const date = new Date(dateStr);
   if (isNaN(date.getTime())) return "—";
@@ -18,6 +18,7 @@ export function formatDate(dateStr: string | null | undefined): string {
     minute: "2-digit",
     second: "2-digit",
     hour12: false,
+    timeZone: timezone,
   }).format(date);
 }
 

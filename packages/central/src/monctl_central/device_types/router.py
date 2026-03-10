@@ -18,11 +18,13 @@ router = APIRouter()
 class CreateDeviceTypeRequest(BaseModel):
     name: str = Field(description="Unique type name, e.g. 'host', 'network', 'api'")
     description: str | None = Field(default=None, description="Optional description")
+    category: str = Field(default="other", description="Category: network, server, storage, printer, iot, service, database, other")
 
 
 class UpdateDeviceTypeRequest(BaseModel):
     name: str | None = None
     description: str | None = None
+    category: str | None = None
 
 
 def _fmt(dt: DeviceType) -> dict:
@@ -30,6 +32,7 @@ def _fmt(dt: DeviceType) -> dict:
         "id": str(dt.id),
         "name": dt.name,
         "description": dt.description,
+        "category": dt.category,
         "created_at": dt.created_at.isoformat() if dt.created_at else None,
     }
 
@@ -60,7 +63,7 @@ async def create_device_type(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Device type '{request.name}' already exists",
         )
-    dt = DeviceType(name=request.name, description=request.description)
+    dt = DeviceType(name=request.name, description=request.description, category=request.category)
     db.add(dt)
     await db.flush()
     return {"status": "success", "data": _fmt(dt)}
@@ -81,6 +84,8 @@ async def update_device_type(
         dt.name = request.name
     if request.description is not None:
         dt.description = request.description
+    if request.category is not None:
+        dt.category = request.category
     return {"status": "success", "data": _fmt(dt)}
 
 

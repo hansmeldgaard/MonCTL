@@ -165,11 +165,28 @@ async def get_credential(
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
-    """Get credential metadata by ID (no secret values)."""
+    """Get credential metadata by ID including its key composition (no secret values)."""
+    from monctl_central.storage.models import CredentialValue, CredentialKey
+
     cred = await db.get(Credential, uuid.UUID(credential_id))
     if cred is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Credential not found")
-    return {"status": "success", "data": _format_credential(cred)}
+
+    # Fetch credential values with their key definitions
+    stmt = (
+        select(CredentialValue, CredentialKey)
+        .join(CredentialKey, CredentialValue.key_id == CredentialKey.id)
+        .where(CredentialValue.credential_id == cred.id)
+    )
+    rows = (await db.execute(stmt)).all()
+    values = [
+        {"key_name": row.CredentialKey.name, "is_secret": row.CredentialKey.is_secret}
+        for row in rows
+    ]
+
+    data = _format_credential(cred)
+    data["values"] = values
+    return {"status": "success", "data": data}
 
 
 @router.put("/{credential_id}")

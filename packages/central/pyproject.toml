@@ -13,6 +13,8 @@ dependencies = [
     "alembic>=1.13",
     # Redis
     "redis[hiredis]>=5.0",
+    # ClickHouse
+    "clickhouse-connect>=0.7",
     # HTTP client
     "httpx>=0.27",
     # Scheduling

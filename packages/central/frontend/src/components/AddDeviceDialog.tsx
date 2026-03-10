@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { Select } from "@/components/ui/select.tsx";
-import { useCreateDevice, useCollectorGroups, useDeviceTypes, useTenants } from "@/api/hooks.ts";
+import { useCreateDevice, useCollectorGroups, useCredentials, useDeviceTypes, useTenants } from "@/api/hooks.ts";
 
 interface AddDeviceDialogProps {
   open: boolean;
@@ -16,6 +16,7 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
   const { data: deviceTypes } = useDeviceTypes();
   const { data: tenants } = useTenants();
   const { data: collectorGroups } = useCollectorGroups();
+  const { data: credentials } = useCredentials();
   const createDevice = useCreateDevice();
 
   const [name, setName] = useState("");
@@ -23,6 +24,7 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
   const [deviceType, setDeviceType] = useState("host");
   const [tenantId, setTenantId] = useState("");
   const [collectorGroupId, setCollectorGroupId] = useState("");
+  const [credentialId, setCredentialId] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   function reset() {
@@ -31,6 +33,7 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
     setDeviceType("host");
     setTenantId("");
     setCollectorGroupId("");
+    setCredentialId("");
     setError(null);
   }
 
@@ -48,6 +51,16 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
       return;
     }
 
+    if (!tenantId) {
+      setError("Tenant is required.");
+      return;
+    }
+
+    if (!collectorGroupId) {
+      setError("Collector Group is required.");
+      return;
+    }
+
     try {
       await createDevice.mutateAsync({
         name: name.trim(),
@@ -55,6 +68,7 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
         device_type: deviceType,
         tenant_id: tenantId || undefined,
         collector_group_id: collectorGroupId || undefined,
+        default_credential_id: credentialId || undefined,
       });
       reset();
       onClose();
@@ -116,42 +130,55 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
           </Select>
         </div>
 
-        {/* Tenant (only if tenants exist) */}
-        {tenants && tenants.length > 0 && (
-          <div className="space-y-1.5">
-            <Label htmlFor="device-tenant">
-              Tenant <span className="text-zinc-500 font-normal">(optional)</span>
-            </Label>
-            <Select
-              id="device-tenant"
-              value={tenantId}
-              onChange={(e) => setTenantId(e.target.value)}
-            >
-              <option value="">— No tenant —</option>
-              {tenants.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </Select>
-          </div>
-        )}
+        {/* Tenant */}
+        <div className="space-y-1.5">
+          <Label htmlFor="device-tenant">Tenant</Label>
+          <Select
+            id="device-tenant"
+            value={tenantId}
+            onChange={(e) => setTenantId(e.target.value)}
+          >
+            <option value="">— Select tenant —</option>
+            {(tenants ?? []).map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </Select>
+        </div>
 
-        {/* Collector Group (only if groups exist) */}
-        {collectorGroups && collectorGroups.length > 0 && (
+        {/* Collector Group */}
+        <div className="space-y-1.5">
+          <Label htmlFor="device-cgroup">Collector Group</Label>
+          <Select
+            id="device-cgroup"
+            value={collectorGroupId}
+            onChange={(e) => setCollectorGroupId(e.target.value)}
+          >
+            <option value="">— Select collector group —</option>
+            {(collectorGroups ?? []).map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.name}
+              </option>
+            ))}
+          </Select>
+        </div>
+
+        {/* Default Credential (only if credentials exist) */}
+        {credentials && credentials.length > 0 && (
           <div className="space-y-1.5">
-            <Label htmlFor="device-cgroup">
-              Collector Group <span className="text-zinc-500 font-normal">(optional)</span>
+            <Label htmlFor="device-credential">
+              Default Credential <span className="text-zinc-500 font-normal">(optional)</span>
             </Label>
             <Select
-              id="device-cgroup"
-              value={collectorGroupId}
-              onChange={(e) => setCollectorGroupId(e.target.value)}
+              id="device-credential"
+              value={credentialId}
+              onChange={(e) => setCredentialId(e.target.value)}
             >
-              <option value="">— No group —</option>
-              {collectorGroups.map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.name}
+              <option value="">— No credential —</option>
+              {credentials.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
                 </option>
               ))}
             </Select>

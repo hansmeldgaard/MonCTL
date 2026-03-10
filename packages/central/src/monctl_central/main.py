@@ -6,7 +6,6 @@ import asyncio
 import os
 import uuid
 from contextlib import asynccontextmanager
-from datetime import timedelta
 from pathlib import Path
 
 import structlog
@@ -20,6 +19,198 @@ from monctl_central.dependencies import get_engine, get_session_factory
 logger = structlog.get_logger()
 
 
+def _get_builtin_apps():
+    """Return list of (name, description, source_code, entry_class, requirements) for built-in apps."""
+    ping_check_code = '''\
+"""ICMP ping check — measures reachability and round-trip time."""
+import asyncio
+import time
+from monctl_collector.polling.base import BasePoller
+from monctl_collector.jobs.models import PollContext, PollResult
+
+
+class Poller(BasePoller):
+    async def poll(self, context: PollContext) -> PollResult:
+        host = context.device_host or context.parameters.get("host", "")
+        count = context.parameters.get("count", 3)
+        timeout = context.parameters.get("timeout", 5)
+        start = time.time()
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "ping", "-c", str(count), "-W", str(timeout), host,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=timeout * count + 5
+            )
+            output = stdout.decode()
+            execution_ms = int((time.time() - start) * 1000)
+
+            if proc.returncode == 0:
+                rtt = self._parse_rtt(output)
+                loss = self._parse_loss(output)
+                return PollResult(
+                    job_id=context.job.job_id,
+                    device_id=context.job.device_id,
+                    collector_node=context.node_id,
+                    timestamp=time.time(),
+                    metrics=[
+                        {"name": "rtt_ms", "value": rtt},
+                        {"name": "packet_loss_pct", "value": loss},
+                    ],
+                    config_data=None,
+                    status="ok" if loss < 100 else "critical",
+                    reachable=True,
+                    error_message=None,
+                    execution_time_ms=execution_ms,
+                    rtt_ms=rtt,
+                )
+            else:
+                return PollResult(
+                    job_id=context.job.job_id,
+                    device_id=context.job.device_id,
+                    collector_node=context.node_id,
+                    timestamp=time.time(),
+                    metrics=[{"name": "packet_loss_pct", "value": 100.0}],
+                    config_data=None,
+                    status="critical",
+                    reachable=False,
+                    error_message=f"Ping failed: {stderr.decode().strip() or 'no response'}",
+                    execution_time_ms=execution_ms,
+                )
+        except asyncio.TimeoutError:
+            execution_ms = int((time.time() - start) * 1000)
+            return PollResult(
+                job_id=context.job.job_id,
+                device_id=context.job.device_id,
+                collector_node=context.node_id,
+                timestamp=time.time(),
+                metrics=[],
+                config_data=None,
+                status="critical",
+                reachable=False,
+                error_message=f"Ping timed out after {timeout * count}s",
+                execution_time_ms=execution_ms,
+            )
+
+    def _parse_rtt(self, output: str) -> float:
+        """Extract avg RTT from ping output."""
+        for line in output.splitlines():
+            if "avg" in line and "/" in line:
+                parts = line.split("=")
+                if len(parts) >= 2:
+                    vals = parts[-1].strip().split("/")
+                    if len(vals) >= 2:
+                        try:
+                            return float(vals[1])
+                        except ValueError:
+                            pass
+        return 0.0
+
+    def _parse_loss(self, output: str) -> float:
+        """Extract packet loss percentage from ping output."""
+        for line in output.splitlines():
+            if "packet loss" in line or "loss" in line:
+                for part in line.split(","):
+                    part = part.strip()
+                    if "%" in part:
+                        try:
+                            return float(part.split("%")[0].strip().split()[-1])
+                        except (ValueError, IndexError):
+                            pass
+        return 0.0
+'''
+
+    port_check_code = '''\
+"""TCP port check — tests if a port is open and measures response time."""
+import asyncio
+import time
+from monctl_collector.polling.base import BasePoller
+from monctl_collector.jobs.models import PollContext, PollResult
+
+
+class Poller(BasePoller):
+    async def poll(self, context: PollContext) -> PollResult:
+        host = context.device_host or context.parameters.get("host", "")
+        port = int(context.parameters.get("port", 443))
+        timeout = context.parameters.get("timeout", 5)
+        start = time.time()
+
+        try:
+            _, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, port),
+                timeout=timeout,
+            )
+            response_ms = round((time.time() - start) * 1000, 2)
+            writer.close()
+            await writer.wait_closed()
+            execution_ms = int((time.time() - start) * 1000)
+
+            return PollResult(
+                job_id=context.job.job_id,
+                device_id=context.job.device_id,
+                collector_node=context.node_id,
+                timestamp=time.time(),
+                metrics=[
+                    {"name": "response_time_ms", "value": response_ms},
+                    {"name": "port_open", "value": 1},
+                ],
+                config_data=None,
+                status="ok",
+                reachable=True,
+                error_message=None,
+                execution_time_ms=execution_ms,
+                response_time_ms=response_ms,
+            )
+        except (asyncio.TimeoutError, OSError, ConnectionRefusedError) as exc:
+            execution_ms = int((time.time() - start) * 1000)
+            is_timeout = isinstance(exc, asyncio.TimeoutError)
+            return PollResult(
+                job_id=context.job.job_id,
+                device_id=context.job.device_id,
+                collector_node=context.node_id,
+                timestamp=time.time(),
+                metrics=[{"name": "port_open", "value": 0}],
+                config_data=None,
+                status="critical",
+                reachable=False,
+                error_message=f"Port {port} {'timed out' if is_timeout else 'refused/unreachable'}: {exc}",
+                execution_time_ms=execution_ms,
+            )
+'''
+
+    snmp_check_code = '''\
+"""SNMP check placeholder — requires pysnmp for full implementation."""
+import time
+from monctl_collector.polling.base import BasePoller
+from monctl_collector.jobs.models import PollContext, PollResult
+
+
+class Poller(BasePoller):
+    async def poll(self, context: PollContext) -> PollResult:
+        return PollResult(
+            job_id=context.job.job_id,
+            device_id=context.job.device_id,
+            collector_node=context.node_id,
+            timestamp=time.time(),
+            metrics=[],
+            config_data=None,
+            status="unknown",
+            reachable=False,
+            error_message="SNMP check not yet implemented — upload source code via PUT /api/v1/apps/snmp_check/code",
+            execution_time_ms=0,
+        )
+'''
+
+    return [
+        ("ping_check", "Built-in ICMP ping check", ping_check_code, "Poller", []),
+        ("port_check", "Built-in TCP port check", port_check_code, "Poller", []),
+        ("snmp_check", "Built-in SNMP check (v1/v2c/v3)", snmp_check_code, "Poller", []),
+    ]
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan: startup and shutdown."""
@@ -27,9 +218,11 @@ async def lifespan(app: FastAPI):
     if not settings.instance_id:
         settings.instance_id = str(uuid.uuid4())[:8]
 
+    role = settings.role  # "api", "scheduler", or "all"
     logger.info(
         "central_starting",
         instance_id=settings.instance_id,
+        role=role,
         host=settings.host,
         port=settings.port,
     )
@@ -39,141 +232,140 @@ async def lifespan(app: FastAPI):
 
     factory = get_session_factory()
 
-    # Seed admin user if MONCTL_ADMIN_PASSWORD is set and no users exist
-    if settings.admin_password:
-        from monctl_central.auth.service import hash_password
+    # Seed defaults (only on api/all roles)
+    if role in ("api", "all"):
+        # Seed admin user
+        if settings.admin_password:
+            from monctl_central.auth.service import hash_password
 
+            async with factory() as session:
+                existing = (await session.execute(select(User).limit(1))).scalar_one_or_none()
+                if existing is None:
+                    admin = User(
+                        username=settings.admin_username,
+                        password_hash=hash_password(settings.admin_password),
+                        role="admin",
+                        display_name="Administrator",
+                    )
+                    session.add(admin)
+                    await session.commit()
+                    logger.info("admin_user_created", username=settings.admin_username)
+
+        # Seed device types (name, description, category)
+        _DEFAULT_DEVICE_TYPES = [
+            ("host", "Generic server, VM, or physical machine", "server"),
+            ("network", "Network device — router, switch, firewall, access point", "network"),
+            ("api", "HTTP API endpoint or web service", "service"),
+            ("database", "Database server — PostgreSQL, MySQL, Redis, etc.", "database"),
+            ("service", "Application service or microservice", "service"),
+            ("container", "Docker container or Kubernetes pod", "server"),
+            ("virtual-machine", "Hypervisor-managed virtual machine", "server"),
+            ("storage", "Storage array, NAS, or SAN device", "storage"),
+            ("printer", "Printer or print server", "printer"),
+            ("iot", "IoT or embedded device", "iot"),
+        ]
         async with factory() as session:
-            existing = (await session.execute(select(User).limit(1))).scalar_one_or_none()
-            if existing is None:
-                admin = User(
-                    username=settings.admin_username,
-                    password_hash=hash_password(settings.admin_password),
-                    role="admin",
-                    display_name="Administrator",
-                )
-                session.add(admin)
+            count = (await session.execute(select(DeviceType).limit(1))).scalar_one_or_none()
+            if count is None:
+                for name, description, category in _DEFAULT_DEVICE_TYPES:
+                    session.add(DeviceType(name=name, description=description, category=category))
                 await session.commit()
-                logger.info("admin_user_created", username=settings.admin_username)
+                logger.info("device_types_seeded", count=len(_DEFAULT_DEVICE_TYPES))
 
-    # Seed default device types if none exist
-    _DEFAULT_DEVICE_TYPES = [
-        ("host", "Generic server, VM, or physical machine"),
-        ("network", "Network device — router, switch, firewall, access point"),
-        ("api", "HTTP API endpoint or web service"),
-        ("database", "Database server — PostgreSQL, MySQL, Redis, etc."),
-        ("service", "Application service or microservice"),
-        ("container", "Docker container or Kubernetes pod"),
-        ("virtual-machine", "Hypervisor-managed virtual machine"),
-        ("storage", "Storage array, NAS, or SAN device"),
-        ("printer", "Printer or print server"),
-        ("iot", "IoT or embedded device"),
-    ]
-    async with factory() as session:
-        count = (await session.execute(select(DeviceType).limit(1))).scalar_one_or_none()
-        if count is None:
-            for name, description in _DEFAULT_DEVICE_TYPES:
-                session.add(DeviceType(name=name, description=description))
+        # Seed built-in apps with source code
+        _BUILTIN_APPS = _get_builtin_apps()
+        async with factory() as session:
+            for app_name, desc, source_code, entry_class, requirements in _BUILTIN_APPS:
+                existing_app = (
+                    await session.execute(select(App).where(App.name == app_name))
+                ).scalar_one_or_none()
+                if existing_app is None:
+                    app_obj = App(name=app_name, description=desc, app_type="builtin")
+                    session.add(app_obj)
+                    await session.flush()
+                    import hashlib as _hl
+                    checksum = _hl.sha256(source_code.encode()).hexdigest()
+                    session.add(AppVersion(
+                        app_id=app_obj.id,
+                        version="1.0.0",
+                        checksum_sha256=checksum,
+                        source_code=source_code,
+                        entry_class=entry_class,
+                        requirements=requirements,
+                    ))
+                else:
+                    # Update existing app version if source_code is missing
+                    from sqlalchemy.orm import selectinload
+                    stmt = select(App).options(selectinload(App.versions)).where(App.name == app_name)
+                    app_row = (await session.execute(stmt)).scalar_one_or_none()
+                    if app_row and app_row.versions:
+                        v = app_row.versions[0]
+                        if not v.source_code:
+                            import hashlib as _hl
+                            v.source_code = source_code
+                            v.entry_class = entry_class
+                            v.requirements = requirements
+                            v.checksum_sha256 = _hl.sha256(source_code.encode()).hexdigest()
             await session.commit()
-            logger.info("device_types_seeded", count=len(_DEFAULT_DEVICE_TYPES))
+            logger.info("builtin_apps_seeded")
 
-    # Seed built-in monitoring apps (ping_check, port_check, snmp_check)
-    _BUILTIN_APPS = [
-        ("ping_check", "Built-in ICMP ping check"),
-        ("port_check", "Built-in TCP port check"),
-        ("snmp_check", "Built-in SNMP check (v1/v2c/v3)"),
-    ]
-    async with factory() as session:
-        for app_name, desc in _BUILTIN_APPS:
-            existing_app = (
-                await session.execute(select(App).where(App.name == app_name))
-            ).scalar_one_or_none()
-            if existing_app is None:
-                app_obj = App(name=app_name, description=desc, app_type="builtin")
-                session.add(app_obj)
-                await session.flush()
-                session.add(AppVersion(
-                    app_id=app_obj.id,
-                    version="1.0.0",
-                    checksum_sha256="0" * 64,
-                    archive_path=None,
-                ))
-        await session.commit()
-        logger.info("builtin_apps_seeded")
+    # ── ClickHouse schema init ─────────────────────────────────────────────
+    from monctl_central.dependencies import get_clickhouse
 
-    # ── Collector health monitor ──────────────────────────────────────────────
-    # Runs every 60 s; marks collectors that haven't sent a heartbeat in 90 s as
-    # DOWN and bumps the config_version of their surviving group siblings so those
-    # collectors re-fetch config and pick up the redistributed assignments.
+    ch = None
+    try:
+        ch = get_clickhouse()
+        ch.ensure_tables()
+        logger.info("clickhouse_tables_ensured")
+    except Exception:
+        logger.warning("clickhouse_init_failed", exc_info=True)
 
-    async def _health_monitor():
-        STALE_SECONDS = 90  # 3× the 30-second heartbeat interval
-        while True:
-            await asyncio.sleep(60)
-            try:
-                from sqlalchemy import select, update
-                from monctl_central.storage.models import Collector
-                from monctl_common.utils import utc_now
+    # ── Redis connection ───────────────────────────────────────────────────
+    from monctl_central.cache import get_redis
 
-                cutoff = utc_now() - timedelta(seconds=STALE_SECONDS)
-                _factory = get_session_factory()
-                async with _factory() as session:
-                    stale = (
-                        await session.execute(
-                            select(Collector).where(
-                                Collector.status == "ACTIVE",
-                                Collector.last_seen_at < cutoff,
-                            )
-                        )
-                    ).scalars().all()
+    try:
+        await get_redis(settings.redis_url)
+        logger.info("redis_connected")
+    except Exception:
+        logger.warning("redis_connect_failed", exc_info=True)
 
-                    for c in stale:
-                        c.status = "DOWN"
-                        c.updated_at = utc_now()
-                        logger.info(
-                            "collector_marked_down",
-                            collector_id=str(c.id),
-                            name=c.name,
-                            last_seen_at=str(c.last_seen_at),
-                        )
-                        # Bump surviving group members so they re-fetch config
-                        # and pick up the work that was on the dead collector.
-                        if c.group_id:
-                            await session.execute(
-                                update(Collector)
-                                .where(
-                                    Collector.group_id == c.group_id,
-                                    Collector.id != c.id,
-                                    Collector.status == "ACTIVE",
-                                )
-                                .values(
-                                    config_version=Collector.config_version + 1,
-                                    updated_at=utc_now(),
-                                )
-                            )
+    # ── Scheduler with leader election (health monitor + alert engine) ─────
+    leader = None
+    scheduler_runner = None
+    if role in ("scheduler", "all"):
+        try:
+            from monctl_central.cache import _redis
+            from monctl_central.scheduler.leader import LeaderElection
+            from monctl_central.scheduler.tasks import SchedulerRunner
 
-                    if stale:
-                        await session.commit()
-                        logger.info(
-                            "collector_health_check",
-                            marked_down=len(stale),
-                        )
-
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("collector_health_monitor_error")
-
-    health_task = asyncio.create_task(_health_monitor())
+            if _redis is not None:
+                leader = LeaderElection(_redis, settings.instance_id)
+                await leader.start()
+                scheduler_runner = SchedulerRunner(
+                    leader=leader,
+                    session_factory=factory,
+                    clickhouse_client=ch,
+                )
+                await scheduler_runner.start()
+                logger.info("scheduler_started", instance_id=settings.instance_id)
+            else:
+                logger.warning("scheduler_skipped_no_redis")
+        except Exception:
+            logger.warning("scheduler_start_failed", exc_info=True)
 
     yield
 
     # Shutdown
-    health_task.cancel()
-    try:
-        await health_task
-    except asyncio.CancelledError:
-        pass
+    if scheduler_runner:
+        await scheduler_runner.stop()
+    if leader:
+        await leader.stop()
+
+    from monctl_central.cache import close_redis
+    await close_redis()
+
+    if ch:
+        ch.close()
 
     engine = get_engine()
     await engine.dispose()

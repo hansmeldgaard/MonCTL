@@ -245,6 +245,11 @@ class LocalCache:
         )
         await self._db.commit()
 
+    async def delete_job(self, job_id: str) -> None:
+        """Permanently remove a job from the database (called when central deletes it)."""
+        await self._db.execute("DELETE FROM jobs WHERE job_id=?", (job_id,))
+        await self._db.commit()
+
     async def get_all_jobs(self) -> list[dict]:
         """Return all non-deleted job definitions as dicts."""
         jobs = []

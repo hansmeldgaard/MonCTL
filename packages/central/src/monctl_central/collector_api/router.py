@@ -23,12 +23,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from monctl_central.credentials.crypto import decrypt_dict
-from monctl_central.dependencies import get_db, require_auth
+from monctl_central.dependencies import get_clickhouse, get_db, require_collector_auth as require_auth
 from monctl_central.storage.models import (
     App,
     AppAssignment,
     AppVersion,
-    CheckResultRecord,
     Collector,
     Credential,
     Device,
@@ -36,6 +35,34 @@ from monctl_central.storage.models import (
 
 router = APIRouter()
 logger = structlog.get_logger()
+
+
+# ---------------------------------------------------------------------------
+# ACTIVE-status gate for collector endpoints
+# ---------------------------------------------------------------------------
+
+async def _require_active_collector(auth: dict, db: AsyncSession) -> None:
+    """Raise 403 if the collector is not in ACTIVE status.
+
+    Used by endpoints that should be blocked for PENDING/REJECTED collectors
+    (jobs, app metadata/code, credentials).
+    """
+    collector_id = auth.get("collector_id")
+    if not collector_id:
+        return  # Non-collector auth (management key, JWT) — skip check
+
+    stmt = select(Collector).where(Collector.id == uuid.UUID(collector_id))
+    result = await db.execute(stmt)
+    collector = result.scalar_one_or_none()
+    if collector is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Collector not found")
+
+    if collector.status != "ACTIVE":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Collector is {collector.status} — approval required before accessing this endpoint",
+        )
+
 
 # ---------------------------------------------------------------------------
 # Helper
@@ -60,20 +87,20 @@ async def get_jobs(
         default=None,
         description="ISO-8601 timestamp for delta-sync. Only return jobs updated after this time.",
     ),
+    collector_id: str | None = Query(
+        default=None,
+        description="Collector UUID — filters jobs to only devices in the collector's group.",
+    ),
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
-    """Return all active jobs (assignments) for the collector cluster.
+    """Return active jobs (assignments) for a collector.
 
-    A "job" maps 1-to-1 to an AppAssignment. Collectors use consistent hashing
-    on job_id to decide which node is responsible for each job.
-
-    Supports delta-sync via ?since=<ISO timestamp>. Returns:
-    - jobs: list of changed/new jobs since `since` (or all jobs if omitted)
-    - deleted_ids: list of job IDs that were deleted since `since`
-      (NOTE: current implementation always returns [] for deleted_ids — soft
-       delete support can be added later)
+    If collector_id is provided and the collector belongs to a group,
+    only assignments for devices in that group are returned.
     """
+    await _require_active_collector(auth, db)
+
     since_dt: datetime | None = None
     if since:
         try:
@@ -84,7 +111,17 @@ async def get_jobs(
                 detail=f"Invalid 'since' timestamp: {since!r}. Use ISO-8601 format.",
             )
 
-    # Fetch all enabled assignments with their app, app_version, and device
+    # Resolve collector's group for filtering
+    group_id: uuid.UUID | None = None
+    if collector_id:
+        try:
+            coll = await db.get(Collector, uuid.UUID(collector_id))
+        except ValueError:
+            coll = None
+        if coll and coll.group_id:
+            group_id = coll.group_id
+
+    # Fetch enabled assignments with their app, app_version, and device
     stmt = (
         select(AppAssignment, App, AppVersion, Device)
         .join(App, AppAssignment.app_id == App.id)
@@ -92,6 +129,11 @@ async def get_jobs(
         .outerjoin(Device, AppAssignment.device_id == Device.id)
         .where(AppAssignment.enabled == True)  # noqa: E712
     )
+
+    # Filter by collector group: only jobs for devices in this group
+    if group_id is not None:
+        stmt = stmt.where(Device.collector_group_id == group_id)
+
     if since_dt is not None:
         stmt = stmt.where(AppAssignment.updated_at > since_dt)
 
@@ -161,10 +203,9 @@ async def get_app_metadata(
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
-    """Return app metadata (requirements, entry_class, checksum) for a given app name.
+    """Return app metadata (requirements, entry_class, checksum) for a given app name."""
+    await _require_active_collector(auth, db)
 
-    Used by collectors to know what packages to install before downloading code.
-    """
     from sqlalchemy.orm import selectinload
 
     stmt = (
@@ -215,13 +256,9 @@ async def get_app_code(
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
-    """Return Python source code for a poll app.
+    """Return Python source code for a poll app."""
+    await _require_active_collector(auth, db)
 
-    The collector should:
-    1. Verify the returned checksum matches sha256(code).
-    2. Save code to /data/apps/{app_id}/{version}/module.py
-    3. Create/reuse a virtualenv for the requirements set.
-    """
     from sqlalchemy.orm import selectinload
 
     stmt = (
@@ -345,13 +382,9 @@ async def get_credential(
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
-    """Return decrypted credential data for a named credential.
+    """Return decrypted credential data for a named credential."""
+    await _require_active_collector(auth, db)
 
-    Used by collectors to resolve $credential:<name> references in job config.
-    The response contains the raw (decrypted) credential data dict.
-
-    NOTE: This endpoint should only be accessible over HTTPS in production.
-    """
     stmt = select(Credential).where(Credential.name == credential_name)
     result = await db.execute(stmt)
     cred = result.scalar_one_or_none()
@@ -392,6 +425,7 @@ class CollectorResult(BaseModel):
     execution_time_ms: int | None = None
     rtt_ms: float | None = None
     response_time_ms: float | None = None
+    started_at: float | None = None
 
 
 class SubmitResultsRequest(BaseModel):
@@ -416,29 +450,31 @@ async def submit_results(
 ):
     """Receive monitoring results from a collector node.
 
-    Results are stored in the check_results table and forwarded to
-    VictoriaMetrics for time-series storage (same as the legacy /v1/ingest).
+    Results are inserted into ClickHouse for time-series storage.
+    Denormalized fields (device_name, app_name, role, tenant_id) are resolved
+    from PostgreSQL and cached in Redis.
     """
-    from monctl_central.config import settings as central_settings
+    ch = get_clickhouse()
 
     # Try to find a matching collector record by hostname
     collector_stmt = select(Collector).where(Collector.hostname == request.collector_node)
     collector_row = await db.execute(collector_stmt)
     collector = collector_row.scalar_one_or_none()
-    # Use collector UUID if found; fall back to nil UUID
-    collector_uuid = collector.id if collector else uuid.UUID(int=0)
+    collector_uuid = str(collector.id) if collector else "00000000-0000-0000-0000-000000000000"
 
-    records = []
+    ch_rows = []
+    skipped = 0
     for r in request.results:
         try:
             assignment_id = uuid.UUID(r.job_id)
         except ValueError:
-            continue  # Skip malformed job_ids
+            skipped += 1
+            continue
 
-        # Map status string → integer state
+        # Map status string to integer state
         state = _STATUS_TO_STATE.get(r.status.lower(), 3)
         if not r.reachable and state == 0:
-            state = 2  # treat unreachable as CRITICAL even if status says ok
+            state = 2
 
         # Build output string
         if r.error_message:
@@ -449,86 +485,83 @@ async def submit_results(
         else:
             output = "CRITICAL — unreachable"
 
-        # Performance data
-        perf: dict = {}
-        if r.rtt_ms is not None:
-            perf["rtt_ms"] = r.rtt_ms
-        if r.response_time_ms is not None:
-            perf["response_time_ms"] = r.response_time_ms
-        if r.metrics:
-            perf["metrics"] = r.metrics
-
         executed_at = datetime.fromtimestamp(r.timestamp, tz=timezone.utc)
 
-        record = CheckResultRecord(
-            assignment_id=assignment_id,
-            collector_id=collector_uuid,
-            app_id=assignment_id,  # re-use assignment_id — will refine later
-            state=state,
-            output=output,
-            performance_data=perf if perf else None,
-            executed_at=executed_at,
-            execution_time=r.execution_time_ms / 1000.0 if r.execution_time_ms else None,
-        )
-        records.append(record)
+        # Resolve denormalized fields via cache
+        enrichment = await _enrich_assignment(db, str(assignment_id))
 
-    if records:
-        db.add_all(records)
-        await db.flush()
+        # Extract metric arrays from the metrics list
+        metric_names = []
+        metric_values = []
+        for m in (r.metrics or []):
+            if isinstance(m, dict) and "name" in m and "value" in m:
+                metric_names.append(str(m["name"]))
+                metric_values.append(float(m["value"]))
 
-        # Push to VictoriaMetrics (best-effort, same as /v1/ingest)
+        ch_rows.append({
+            "assignment_id": str(assignment_id),
+            "collector_id": collector_uuid,
+            "app_id": enrichment.get("app_id", str(assignment_id)),
+            "device_id": r.device_id or enrichment.get("device_id", "00000000-0000-0000-0000-000000000000"),
+            "state": state,
+            "output": output,
+            "error_message": r.error_message or "",
+            "rtt_ms": r.rtt_ms or 0.0,
+            "response_time_ms": r.response_time_ms or 0.0,
+            "reachable": 1 if r.reachable else 0,
+            "status_code": 0,
+            "metric_names": metric_names,
+            "metric_values": metric_values,
+            "executed_at": executed_at,
+            "execution_time": (r.execution_time_ms / 1000.0) if r.execution_time_ms else 0.0,
+            "started_at": datetime.fromtimestamp(r.started_at, tz=timezone.utc) if r.started_at else executed_at,
+            "collector_name": request.collector_node,
+            "device_name": enrichment.get("device_name", ""),
+            "app_name": enrichment.get("app_name", ""),
+            "role": enrichment.get("role", ""),
+            "tenant_id": enrichment.get("tenant_id", "00000000-0000-0000-0000-000000000000"),
+        })
+
+    if ch_rows:
         try:
-            await _push_to_victoriametrics(request, central_settings)
+            ch.insert_check_results(ch_rows)
         except Exception:
-            logger.warning("victoriametrics_push_failed", node=request.collector_node)
+            logger.exception("clickhouse_insert_error", node=request.collector_node)
 
     return {
-        "accepted": len(records),
-        "skipped": len(request.results) - len(records),
+        "accepted": len(ch_rows),
+        "skipped": skipped,
     }
 
 
-async def _push_to_victoriametrics(request: SubmitResultsRequest, settings) -> None:
-    """Push results to VictoriaMetrics in Prometheus line protocol."""
-    if not getattr(settings, "victoria_metrics_url", None):
-        return
+async def _enrich_assignment(db: AsyncSession, assignment_id: str) -> dict:
+    """Resolve denormalized fields for a given assignment_id, with Redis caching."""
+    from monctl_central.cache import get_or_load_enrichment
 
-    import aiohttp
-    lines = []
-    for r in request.results:
-        ts_ms = int(r.timestamp * 1000)
-        safe_node = request.collector_node.replace('"', "")
-        safe_job = r.job_id.replace('"', "")
-        reachable_val = 1 if r.reachable else 0
-
-        lines.append(
-            f'monctl_reachable{{collector="{safe_node}",job_id="{safe_job}"}} '
-            f"{reachable_val} {ts_ms}"
-        )
-        if r.rtt_ms is not None:
-            lines.append(
-                f'monctl_rtt_ms{{collector="{safe_node}",job_id="{safe_job}"}} '
-                f"{r.rtt_ms} {ts_ms}"
+    async def _load(aid: str) -> dict:
+        try:
+            stmt = (
+                select(AppAssignment, App, Device)
+                .join(App, AppAssignment.app_id == App.id)
+                .outerjoin(Device, AppAssignment.device_id == Device.id)
+                .where(AppAssignment.id == uuid.UUID(aid))
             )
-        if r.response_time_ms is not None:
-            lines.append(
-                f'monctl_response_time_ms{{collector="{safe_node}",job_id="{safe_job}"}} '
-                f"{r.response_time_ms} {ts_ms}"
-            )
+            row = (await db.execute(stmt)).first()
+            if row is None:
+                return {}
+            assignment, app, device = row.AppAssignment, row.App, row.Device
+            return {
+                "app_id": str(app.id),
+                "app_name": app.name,
+                "device_id": str(device.id) if device else "00000000-0000-0000-0000-000000000000",
+                "device_name": device.name if device else "",
+                "role": assignment.role or "",
+                "tenant_id": str(device.tenant_id) if device and device.tenant_id else "00000000-0000-0000-0000-000000000000",
+            }
+        except Exception:
+            return {}
 
-    if not lines:
-        return
-
-    payload = "\n".join(lines) + "\n"
-    async with aiohttp.ClientSession() as session:
-        vm_url = settings.victoria_metrics_url.rstrip("/")
-        async with session.post(
-            f"{vm_url}/api/v1/import/prometheus",
-            data=payload,
-            timeout=aiohttp.ClientTimeout(total=5),
-        ) as resp:
-            if resp.status >= 400:
-                logger.warning("victoriametrics_error", status=resp.status)
+    return await get_or_load_enrichment(assignment_id, _load)
 
 
 # ---------------------------------------------------------------------------
@@ -543,6 +576,8 @@ class HeartbeatRequest(BaseModel):
     deadline_miss_rate: float = 0.0
     total_jobs: int = 0
     stolen_job_count: int = 0
+    peer_address: str | None = None  # gRPC address for peer discovery (e.g. 192.168.1.31:50051)
+    peer_states: dict[str, str] | None = None  # {node_id: "ALIVE"|"SUSPECTED"|"DEAD"}
 
 
 @router.post("/heartbeat", tags=["collector-api"])
@@ -565,7 +600,14 @@ async def collector_heartbeat(
 
     if collector is not None:
         collector.last_seen_at = utc_now()
-        collector.status = "ACTIVE"
+        # Don't flip PENDING or REJECTED to ACTIVE via heartbeat
+        if collector.status not in ("PENDING", "REJECTED"):
+            collector.status = "ACTIVE"
+        if request.peer_address:
+            collector.peer_address = request.peer_address
+        # Store gossip peer states reported by this collector
+        if request.peer_states:
+            collector.reported_peer_states = request.peer_states
         await db.flush()
 
     return {

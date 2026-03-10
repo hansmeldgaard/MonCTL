@@ -10,9 +10,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 
+import sqlalchemy as sa
 from monctl_central.dependencies import apply_tenant_filter, check_tenant_access, get_db, require_auth
 from sqlalchemy.orm import selectinload
-from monctl_central.storage.models import Device
+from monctl_central.storage.models import Credential, CollectorGroup, Device, Tenant
 from monctl_common.utils import utc_now
 
 router = APIRouter()
@@ -41,6 +42,7 @@ class CreateDeviceRequest(BaseModel):
     collector_id: str | None = Field(default=None, description="UUID of the owning collector")
     tenant_id: str | None = Field(default=None, description="UUID of the owning tenant")
     collector_group_id: str | None = Field(default=None, description="UUID of the collector group")
+    default_credential_id: str | None = Field(default=None, description="UUID of the default credential")
     labels: dict[str, str] = Field(default_factory=dict, description="Key-value labels")
     metadata: dict = Field(default_factory=dict, description="Additional metadata")
 
@@ -52,6 +54,7 @@ class UpdateDeviceRequest(BaseModel):
     collector_id: str | None = None
     tenant_id: str | None = None
     collector_group_id: str | None = None
+    default_credential_id: str | None = None
     labels: dict[str, str] | None = None
     metadata: dict | None = None
 
@@ -67,6 +70,8 @@ def _format_device(d: Device) -> dict:
         "tenant_name": d.tenant.name if d.tenant else None,
         "collector_group_id": str(d.collector_group_id) if d.collector_group_id else None,
         "collector_group_name": d.collector_group.name if d.collector_group else None,
+        "default_credential_id": str(d.default_credential_id) if d.default_credential_id else None,
+        "default_credential_name": d.default_credential.name if d.default_credential else None,
         "labels": d.labels,
         "metadata": d.metadata_,
         "created_at": d.created_at.isoformat() if d.created_at else None,
@@ -78,24 +83,89 @@ def _format_device(d: Device) -> dict:
 async def list_devices(
     collector_id: Optional[str] = Query(default=None, description="Filter by collector UUID"),
     device_type: Optional[str] = Query(default=None, description="Filter by device type"),
+    name: Optional[str] = Query(default=None, description="Filter by name (ilike)"),
+    address: Optional[str] = Query(default=None, description="Filter by address (ilike)"),
+    tenant_name: Optional[str] = Query(default=None, description="Filter by tenant name"),
+    collector_group_name: Optional[str] = Query(default=None, description="Filter by collector group name"),
+    label_key: Optional[str] = Query(default=None, description="Filter by label key"),
+    label_value: Optional[str] = Query(default=None, description="Filter by label value (requires label_key)"),
+    sort_by: str = Query(default="name", description="Sort field"),
+    sort_dir: str = Query(default="asc", description="Sort direction: asc or desc"),
     limit: int = Query(default=50, le=500),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
-    """List devices."""
-    stmt = select(Device).options(selectinload(Device.tenant), selectinload(Device.collector_group))
+    """List devices with filtering, sorting, and pagination."""
+    # Base query with eager loads
+    stmt = select(Device).options(
+        selectinload(Device.tenant),
+        selectinload(Device.collector_group),
+        selectinload(Device.default_credential),
+    )
+
+    # Apply filters
     if collector_id:
         stmt = stmt.where(Device.collector_id == uuid.UUID(collector_id))
     if device_type:
         stmt = stmt.where(Device.device_type == device_type)
+    if name:
+        stmt = stmt.where(Device.name.ilike(f"%{name}%"))
+    if address:
+        stmt = stmt.where(Device.address.ilike(f"%{address}%"))
+    if tenant_name:
+        stmt = stmt.outerjoin(Tenant, Device.tenant_id == Tenant.id)
+        stmt = stmt.where(Tenant.name == tenant_name)
+    if collector_group_name:
+        if not tenant_name:  # avoid double outerjoin issues
+            stmt = stmt.outerjoin(CollectorGroup, Device.collector_group_id == CollectorGroup.id)
+        else:
+            stmt = stmt.outerjoin(CollectorGroup, Device.collector_group_id == CollectorGroup.id)
+        stmt = stmt.where(CollectorGroup.name == collector_group_name)
+    if label_key:
+        stmt = stmt.where(Device.labels.has_key(label_key))
+        if label_value:
+            stmt = stmt.where(Device.labels[label_key].astext == label_value)
+
     stmt = apply_tenant_filter(stmt, auth, Device.tenant_id)
+
+    # Count query (same WHERE clause)
+    count_stmt = select(sa.func.count()).select_from(stmt.subquery())
+    total = (await db.execute(count_stmt)).scalar() or 0
+
+    # Sorting
+    sort_column = {
+        "name": Device.name,
+        "address": Device.address,
+        "device_type": Device.device_type,
+        "created_at": Device.created_at,
+    }.get(sort_by)
+
+    if sort_by == "tenant_name" and not tenant_name:
+        stmt = stmt.outerjoin(Tenant, Device.tenant_id == Tenant.id)
+        sort_column = Tenant.name
+    elif sort_by == "tenant_name":
+        sort_column = Tenant.name
+    elif sort_by == "collector_group_name" and not collector_group_name:
+        stmt = stmt.outerjoin(CollectorGroup, Device.collector_group_id == CollectorGroup.id)
+        sort_column = CollectorGroup.name
+    elif sort_by == "collector_group_name":
+        sort_column = CollectorGroup.name
+
+    if sort_column is not None:
+        if sort_dir == "desc":
+            stmt = stmt.order_by(sa.desc(sort_column))
+        else:
+            stmt = stmt.order_by(sa.asc(sort_column))
+    else:
+        stmt = stmt.order_by(Device.name)
+
     stmt = stmt.offset(offset).limit(limit)
-    devices = (await db.execute(stmt)).scalars().all()
+    devices = (await db.execute(stmt)).scalars().unique().all()
     return {
         "status": "success",
         "data": [_format_device(d) for d in devices],
-        "meta": {"limit": limit, "offset": offset, "count": len(devices)},
+        "meta": {"limit": limit, "offset": offset, "count": len(devices), "total": total},
     }
 
 
@@ -113,12 +183,13 @@ async def create_device(
         collector_id=uuid.UUID(request.collector_id) if request.collector_id else None,
         tenant_id=uuid.UUID(request.tenant_id) if request.tenant_id else None,
         collector_group_id=uuid.UUID(request.collector_group_id) if request.collector_group_id else None,
+        default_credential_id=uuid.UUID(request.default_credential_id) if request.default_credential_id else None,
         labels=request.labels,
         metadata_=request.metadata,
     )
     db.add(device)
     await db.flush()
-    await db.refresh(device, ["tenant", "collector_group"])
+    await db.refresh(device, ["tenant", "collector_group", "default_credential"])
     return {
         "status": "success",
         "data": _format_device(device),
@@ -134,7 +205,7 @@ async def get_device(
     """Get a device by ID."""
     stmt = (
         select(Device)
-        .options(selectinload(Device.tenant), selectinload(Device.collector_group))
+        .options(selectinload(Device.tenant), selectinload(Device.collector_group), selectinload(Device.default_credential))
         .where(Device.id == uuid.UUID(device_id))
     )
     device = (await db.execute(stmt)).scalar_one_or_none()
@@ -155,7 +226,7 @@ async def update_device(
     """Update a device."""
     stmt = (
         select(Device)
-        .options(selectinload(Device.tenant), selectinload(Device.collector_group))
+        .options(selectinload(Device.tenant), selectinload(Device.collector_group), selectinload(Device.default_credential))
         .where(Device.id == uuid.UUID(device_id))
     )
     device = (await db.execute(stmt)).scalar_one_or_none()
@@ -181,6 +252,8 @@ async def update_device(
         new_group_id = uuid.UUID(request.collector_group_id) if request.collector_group_id != "" else None
         device.collector_group_id = new_group_id
 
+    if request.default_credential_id is not None:
+        device.default_credential_id = uuid.UUID(request.default_credential_id) if request.default_credential_id != "" else None
     if request.labels is not None:
         device.labels = request.labels
     if request.metadata is not None:
@@ -213,7 +286,7 @@ async def update_device(
             .values(config_version=Collector.config_version + 1, updated_at=_utc_now())
         )
 
-    await db.refresh(device, ["tenant", "collector_group"])
+    await db.refresh(device, ["tenant", "collector_group", "default_credential"])
     return {"status": "success", "data": _format_device(device)}
 
 
@@ -224,6 +297,8 @@ class MonitoringCheckConfig(BaseModel):
     oid: str | None = None
     credential_name: str | None = None
     interval_seconds: int = 60
+    ping_count: int | None = None       # ping_check: number of ICMP packets (default 3)
+    ping_timeout: int | None = None     # ping_check: per-packet timeout in seconds (default 2)
 
 
 class UpdateMonitoringRequest(BaseModel):
@@ -238,13 +313,16 @@ def _monitoring_config_from_assignment(assignment, app_name: str) -> dict:
     cred_ref = config.get("snmp_credential", "")
     if isinstance(cred_ref, str) and cred_ref.startswith("$credential:"):
         credential_name = cred_ref[len("$credential:"):]
-    return {
+    result = {
         "app_type": app_name,
         "port": config.get("port"),
         "oid": config.get("oid"),
         "credential_name": credential_name,
         "interval_seconds": int(assignment.schedule_value),
+        "ping_count": config.get("count"),
+        "ping_timeout": config.get("timeout"),
     }
+    return result
 
 
 @router.get("/{device_id}/monitoring")
@@ -351,6 +429,11 @@ async def update_device_monitoring(
         if check_config.app_type == "port_check":
             if check_config.port is not None:
                 config["port"] = check_config.port
+        elif check_config.app_type == "ping_check":
+            if check_config.ping_count is not None:
+                config["count"] = check_config.ping_count
+            if check_config.ping_timeout is not None:
+                config["timeout"] = check_config.ping_timeout
         elif check_config.app_type == "snmp_check":
             if check_config.oid is not None:
                 config["oid"] = check_config.oid
@@ -402,3 +485,23 @@ async def delete_device(
     if not check_tenant_access(auth, device.tenant_id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     await db.delete(device)
+
+
+class BulkDeleteRequest(BaseModel):
+    device_ids: list[str]
+
+
+@router.post("/bulk-delete", status_code=status.HTTP_200_OK)
+async def bulk_delete_devices(
+    request: BulkDeleteRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Bulk delete devices."""
+    deleted = 0
+    for did in request.device_ids:
+        device = await db.get(Device, uuid.UUID(did))
+        if device and check_tenant_access(auth, device.tenant_id):
+            await db.delete(device)
+            deleted += 1
+    return {"status": "success", "data": {"deleted": deleted}}

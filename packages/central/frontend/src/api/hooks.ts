@@ -9,15 +9,22 @@ import type {
   Collector,
   CollectorGroup,
   Credential,
+  CredentialDetail,
+  CredentialKey,
   Device,
   DeviceAssignment,
+  DeviceListParams,
   DeviceResults,
   DeviceType,
   HealthStatus,
   MonitoringConfig,
+  RegistrationToken,
   ResultRecord,
   SnmpOid,
+  SystemSettings,
+  Template,
   Tenant,
+  TlsCertificateInfo,
   User,
   UserWithTenants,
 } from "@/types/api.ts";
@@ -29,11 +36,24 @@ const POLL_DETAIL = 15_000;  // 15 seconds for detail views
 
 // ── Devices ──────────────────────────────────────────────
 
-export function useDevices() {
+export function useDevices(params: DeviceListParams = {}) {
+  const queryString = new URLSearchParams();
+  if (params.limit) queryString.set("limit", String(params.limit));
+  if (params.offset !== undefined) queryString.set("offset", String(params.offset));
+  if (params.sort_by) queryString.set("sort_by", params.sort_by);
+  if (params.sort_dir) queryString.set("sort_dir", params.sort_dir);
+  if (params.name) queryString.set("name", params.name);
+  if (params.address) queryString.set("address", params.address);
+  if (params.device_type) queryString.set("device_type", params.device_type);
+  if (params.tenant_name) queryString.set("tenant_name", params.tenant_name);
+  if (params.collector_group_name) queryString.set("collector_group_name", params.collector_group_name);
+  if (params.label_key) queryString.set("label_key", params.label_key);
+  if (params.label_value) queryString.set("label_value", params.label_value);
+  if (params.collector_id) queryString.set("collector_id", params.collector_id);
+  const qs = queryString.toString();
   return useQuery({
-    queryKey: ["devices"],
-    queryFn: () => apiGet<Device[]>("/devices"),
-    select: (res) => res.data,
+    queryKey: ["devices", params],
+    queryFn: () => apiGet<Device[]>(`/devices${qs ? `?${qs}` : ""}`),
     refetchInterval: POLL_LIST,
   });
 }
@@ -163,8 +183,19 @@ export function useDeviceTypes() {
 export function useCreateDeviceType() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { name: string; description?: string }) =>
+    mutationFn: (data: { name: string; description?: string; category?: string }) =>
       apiPost<DeviceType>("/device-types", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["device-types"] });
+    },
+  });
+}
+
+export function useUpdateDeviceType() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: { name?: string; description?: string; category?: string } }) =>
+      apiPut<DeviceType>(`/device-types/${id}`, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["device-types"] });
     },
@@ -268,6 +299,30 @@ export function useDeleteCollectorGroup() {
   });
 }
 
+// ── Collector approval ─────────────────────────────────────
+
+export function useApproveCollector() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, group_id }: { id: string; group_id: string }) =>
+      apiPost(`/collectors/${id}/approve`, { group_id }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["collectors"] });
+    },
+  });
+}
+
+export function useRejectCollector() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
+      apiPost(`/collectors/${id}/reject`, { reason }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["collectors"] });
+    },
+  });
+}
+
 // ── Collector mutations ────────────────────────────────────
 
 export function useUpdateCollector() {
@@ -302,6 +357,7 @@ export function useCreateDevice() {
       device_type: string;
       tenant_id?: string;
       collector_group_id?: string;
+      default_credential_id?: string;
       labels?: Record<string, string>;
     }) => apiPost<Device>("/devices", data),
     onSuccess: () => {
@@ -314,6 +370,17 @@ export function useDeleteDevice() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => apiDelete(`/devices/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["devices"] });
+    },
+  });
+}
+
+export function useBulkDeleteDevices() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (deviceIds: string[]) =>
+      apiPost<{ deleted: number }>("/devices/bulk-delete", { device_ids: deviceIds }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["devices"] });
     },
@@ -491,6 +558,17 @@ export function useUpdateUser() {
   });
 }
 
+export function useUpdateMyTimezone() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (timezone: string) =>
+      apiPut<{ timezone: string }>("/users/me/timezone", { timezone }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["users"] });
+    },
+  });
+}
+
 export function useDeleteUser() {
   const qc = useQueryClient();
   return useMutation({
@@ -600,5 +678,320 @@ export function useUpdateDeviceMonitoring() {
       qc.invalidateQueries({ queryKey: ["device-monitoring", id] });
       qc.invalidateQueries({ queryKey: ["device-assignments", id] });
     },
+  });
+}
+
+// ── Registration Tokens ─────────────────────────────────
+
+export function useRegistrationTokens() {
+  return useQuery({
+    queryKey: ["registration-tokens"],
+    queryFn: () => apiGet<RegistrationToken[]>("/registration-tokens"),
+    select: (res) => res.data,
+    refetchInterval: POLL_LIST,
+  });
+}
+
+export function useCreateRegistrationToken() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: {
+      name: string;
+      one_time?: boolean;
+      cluster_id?: string;
+      expires_at?: string;
+    }) => apiPost<RegistrationToken>("/registration-tokens", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["registration-tokens"] });
+    },
+  });
+}
+
+export function useDeleteRegistrationToken() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/registration-tokens/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["registration-tokens"] });
+    },
+  });
+}
+
+// ── Credential Keys ─────────────────────────────────────
+
+export function useCredentialKeys() {
+  return useQuery({
+    queryKey: ["credential-keys"],
+    queryFn: () => apiGet<CredentialKey[]>("/credential-keys"),
+    select: (res) => res.data,
+    refetchInterval: POLL_LIST,
+  });
+}
+
+export function useCreateCredentialKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { name: string; description?: string; is_secret?: boolean }) =>
+      apiPost<CredentialKey>("/credential-keys", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["credential-keys"] });
+    },
+  });
+}
+
+export function useUpdateCredentialKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: { name?: string; description?: string; is_secret?: boolean } }) =>
+      apiPut<CredentialKey>(`/credential-keys/${id}`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["credential-keys"] });
+    },
+  });
+}
+
+export function useDeleteCredentialKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/credential-keys/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["credential-keys"] });
+    },
+  });
+}
+
+// ── Credential mutations ────────────────────────────────
+
+export function useCreateCredential() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: {
+      name: string;
+      description?: string;
+      credential_type: string;
+      secret: Record<string, unknown>;
+    }) => apiPost<Credential>("/credentials", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["credentials"] });
+    },
+  });
+}
+
+export function useUpdateCredential() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: {
+      id: string;
+      data: { description?: string; credential_type?: string; secret?: Record<string, unknown> };
+    }) => apiPut<Credential>(`/credentials/${id}`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["credentials"] });
+    },
+  });
+}
+
+export function useDeleteCredential() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/credentials/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["credentials"] });
+    },
+  });
+}
+
+// ── App mutations ───────────────────────────────────────
+
+export function useCreateApp() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: {
+      name: string;
+      description?: string;
+      app_type: string;
+      config_schema?: Record<string, unknown>;
+    }) => apiPost<{ id: string; name: string }>("/apps", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["apps"] });
+    },
+  });
+}
+
+export function useUpdateApp() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: {
+      id: string;
+      data: { name?: string; description?: string; app_type?: string; config_schema?: Record<string, unknown> };
+    }) => apiPut<AppSummary>(`/apps/${id}`, data),
+    onSuccess: (_res, { id }) => {
+      qc.invalidateQueries({ queryKey: ["apps"] });
+      qc.invalidateQueries({ queryKey: ["app-detail", id] });
+    },
+  });
+}
+
+export function useDeleteApp() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/apps/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["apps"] });
+    },
+  });
+}
+
+export function useCreateAppVersion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ appId, data }: {
+      appId: string;
+      data: { version: string; source_code: string; requirements?: string[]; entry_class?: string };
+    }) => apiPost<{ id: string }>(`/apps/${appId}/versions`, data),
+    onSuccess: (_res, { appId }) => {
+      qc.invalidateQueries({ queryKey: ["app-detail", appId] });
+      qc.invalidateQueries({ queryKey: ["apps"] });
+    },
+  });
+}
+
+// ── Update Tenant (extended with metadata) ──────────────
+
+export function useUpdateTenantFull() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: { name?: string; metadata?: Record<string, string> } }) =>
+      apiPut<Tenant>(`/tenants/${id}`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["tenants"] });
+    },
+  });
+}
+
+// ── System Settings ──────────────────────────────────────
+
+export function useSystemSettings() {
+  return useQuery({
+    queryKey: ["system-settings"],
+    queryFn: () => apiGet<SystemSettings>("/settings"),
+    select: (res) => res.data,
+  });
+}
+
+export function useUpdateSystemSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { settings: Record<string, string> }) =>
+      apiPut<SystemSettings>("/settings", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["system-settings"] });
+    },
+  });
+}
+
+// ── TLS Certificates ─────────────────────────────────────
+
+export function useTlsCertificate() {
+  return useQuery({
+    queryKey: ["tls-cert"],
+    queryFn: () => apiGet<TlsCertificateInfo | null>("/settings/tls"),
+    select: (res) => res.data,
+  });
+}
+
+export function useGenerateTlsCert() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { cn?: string }) =>
+      apiPost<TlsCertificateInfo>("/settings/tls/generate", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["tls-cert"] });
+    },
+  });
+}
+
+export function useUploadTlsCert() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { name: string; cert_pem: string; key_pem: string }) =>
+      apiPost<TlsCertificateInfo>("/settings/tls/upload", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["tls-cert"] });
+    },
+  });
+}
+
+export function useDeployTlsCert() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiPost<{ deployed: boolean }>("/settings/tls/deploy", {}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["tls-cert"] });
+    },
+  });
+}
+
+// ── Templates ────────────────────────────────────────────
+
+export function useTemplates() {
+  return useQuery({
+    queryKey: ["templates"],
+    queryFn: () => apiGet<Template[]>("/templates"),
+    select: (res) => res.data,
+    refetchInterval: POLL_LIST,
+  });
+}
+
+export function useCreateTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { name: string; description?: string; config: Record<string, unknown> }) =>
+      apiPost<Template>("/templates", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["templates"] });
+    },
+  });
+}
+
+export function useUpdateTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: { name?: string; description?: string; config?: Record<string, unknown> } }) =>
+      apiPut<Template>(`/templates/${id}`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["templates"] });
+    },
+  });
+}
+
+export function useDeleteTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/templates/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["templates"] });
+    },
+  });
+}
+
+export function useApplyTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ templateId, deviceIds }: { templateId: string; deviceIds: string[] }) =>
+      apiPost<{ applied: number }>(`/templates/${templateId}/apply`, { device_ids: deviceIds }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["devices"] });
+    },
+  });
+}
+
+// ── Credential Detail ────────────────────────────────────
+
+export function useCredentialDetail(id: string | undefined) {
+  return useQuery({
+    queryKey: ["credential-detail", id],
+    queryFn: () => apiGet<CredentialDetail>(`/credentials/${id}`),
+    select: (res) => res.data,
+    enabled: !!id,
   });
 }

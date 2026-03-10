@@ -1,20 +1,21 @@
-"""Ingestion endpoint - receives data from collectors."""
+"""Ingestion endpoint - receives data from collectors (legacy format)."""
 
 from __future__ import annotations
 
-import asyncio
+import json
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from monctl_central.config import settings
-from monctl_central.dependencies import get_db, require_collector_key
-from monctl_central.storage.models import AppAssignment, CheckResultRecord, Device, EventRecord
+from monctl_central.dependencies import get_clickhouse, get_db, require_collector_key
+from monctl_central.storage.models import AppAssignment, Device
 from monctl_common.schemas.metrics import IngestPayload
 from monctl_common.utils import utc_now
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.post("/ingest", status_code=status.HTTP_202_ACCEPTED)
@@ -25,99 +26,108 @@ async def ingest(
 ):
     """Receive metrics, check results, and events from a collector.
 
-    Returns 202 Accepted after persisting to PostgreSQL.
+    Returns 202 Accepted after persisting to ClickHouse.
     """
-    # Verify collector_id matches the API key
     if api_key["collector_id"] != payload.collector_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Collector ID mismatch",
         )
 
+    ch = get_clickhouse()
     received = utc_now()
-    collector_uuid = uuid.UUID(payload.collector_id)
+    collector_uuid = payload.collector_id
 
-    # Persist check results
+    # Build ClickHouse check result rows
+    ch_rows = []
     for app_result in payload.app_results:
         cr = app_result.check_result
-        record = CheckResultRecord(
-            assignment_id=uuid.UUID(app_result.assignment_id),
-            collector_id=collector_uuid,
-            app_id=uuid.UUID(app_result.app_id),
-            state=cr.state.value,
-            output=cr.output,
-            performance_data=cr.performance_data,
-            executed_at=app_result.executed_at,
-            received_at=received,
-            execution_time=cr.execution_time,
-        )
-        db.add(record)
+        perf = cr.performance_data or {}
 
-    # Persist events
+        # Enrich from PG (cached)
+        enrichment = await _enrich_legacy(db, app_result.assignment_id)
+
+        ch_rows.append({
+            "assignment_id": app_result.assignment_id,
+            "collector_id": collector_uuid,
+            "app_id": app_result.app_id,
+            "device_id": enrichment.get("device_id", "00000000-0000-0000-0000-000000000000"),
+            "state": cr.state.value,
+            "output": cr.output,
+            "error_message": "",
+            "rtt_ms": perf.get("rtt_ms", 0.0) or 0.0,
+            "response_time_ms": perf.get("response_time_ms", 0.0) or 0.0,
+            "reachable": 1 if perf.get("reachable", 1) else 0,
+            "status_code": int(perf.get("status_code", 0) or 0),
+            "metric_names": [],
+            "metric_values": [],
+            "executed_at": app_result.executed_at,
+            "execution_time": cr.execution_time or 0.0,
+            "device_name": enrichment.get("device_name", ""),
+            "app_name": enrichment.get("app_name", ""),
+            "role": enrichment.get("role", ""),
+            "tenant_id": enrichment.get("tenant_id", "00000000-0000-0000-0000-000000000000"),
+        })
+
+    # Build ClickHouse event rows
+    event_rows = []
     for event in payload.events:
-        event_record = EventRecord(
-            collector_id=collector_uuid,
-            app_id=None,
-            source=event.source,
-            severity=event.severity,
-            message=event.message,
-            data=event.data,
-            occurred_at=event.timestamp or received,
-            received_at=received,
-        )
-        db.add(event_record)
+        event_rows.append({
+            "collector_id": collector_uuid,
+            "app_id": "00000000-0000-0000-0000-000000000000",
+            "source": event.source,
+            "severity": event.severity,
+            "message": event.message,
+            "data": json.dumps(event.data) if event.data else "{}",
+            "occurred_at": event.timestamp or received,
+        })
 
-    # Collect VictoriaMetrics data points before the session is committed
-    vm_points: list[str] = []
-    for app_result in payload.app_results:
-        perf = app_result.check_result.performance_data or {}
-        if "reachable" not in perf and "rtt_ms" not in perf:
-            continue
+    try:
+        if ch_rows:
+            ch.insert_check_results(ch_rows)
+        if event_rows:
+            ch.insert_events(event_rows)
+    except Exception:
+        logger.exception("clickhouse_insert_error")
 
-        assignment = await db.get(AppAssignment, uuid.UUID(app_result.assignment_id))
-        if assignment is None or assignment.device_id is None:
-            continue
-        device = await db.get(Device, assignment.device_id)
-        if device is None:
-            continue
-
-        ts_ms = int(app_result.executed_at.timestamp() * 1000)
-        # Sanitize label values to avoid Prometheus line protocol issues
-        dev_name = str(device.name).replace('"', '\\"').replace('\n', '')
-        labels = (
-            f'device_id="{device.id}",'
-            f'device_name="{dev_name}",'
-            f'role="{assignment.role or ""}",'
-            f'app="{app_result.app_id}"'
-        )
-        if "reachable" in perf:
-            vm_points.append(f'monctl_up{{{labels}}} {perf["reachable"]} {ts_ms}')
-        if "rtt_ms" in perf and perf["rtt_ms"] is not None:
-            vm_points.append(f'monctl_latency_ms{{{labels}}} {perf["rtt_ms"]} {ts_ms}')
-
-    # Fire VictoriaMetrics push in the background — does not block the ingest response
-    if vm_points:
-        asyncio.create_task(_push_to_victoriametrics("\n".join(vm_points)))
-
-    # Session is auto-committed by get_db() dependency on success
     return {
         "status": "accepted",
         "data": {
-            "results_count": len(payload.app_results),
-            "events_count": len(payload.events),
+            "results_count": len(ch_rows),
+            "events_count": len(event_rows),
         },
     }
 
 
-async def _push_to_victoriametrics(text: str) -> None:
-    """Best-effort push of Prometheus line protocol metrics to VictoriaMetrics."""
-    try:
-        import httpx
-        async with httpx.AsyncClient(timeout=5) as client:
-            await client.post(
-                f"{settings.victoriametrics_url}/api/v1/import/prometheus",
-                content=text.encode(),
-                headers={"Content-Type": "text/plain"},
+async def _enrich_legacy(db: AsyncSession, assignment_id: str) -> dict:
+    """Resolve denormalized fields for the legacy ingest endpoint."""
+    from monctl_central.cache import get_or_load_enrichment
+    from monctl_central.storage.models import App
+    from sqlalchemy import select
+
+    async def _load(aid: str) -> dict:
+        try:
+            stmt = (
+                select(AppAssignment, App, Device)
+                .join(App, AppAssignment.app_id == App.id)
+                .outerjoin(Device, AppAssignment.device_id == Device.id)
+                .where(AppAssignment.id == uuid.UUID(aid))
             )
-    except Exception:
-        pass  # best-effort — don't fail the ingest response
+            row = (await db.execute(stmt)).first()
+            if row is None:
+                return {}
+            assignment = row.AppAssignment
+            app = row.App
+            device = row.Device
+            return {
+                "app_id": str(app.id),
+                "app_name": app.name,
+                "device_id": str(device.id) if device else "00000000-0000-0000-0000-000000000000",
+                "device_name": device.name if device else "",
+                "role": assignment.role or "",
+                "tenant_id": str(device.tenant_id) if device and device.tenant_id else "00000000-0000-0000-0000-000000000000",
+            }
+        except Exception:
+            return {}
+
+    return await get_or_load_enrichment(assignment_id, _load)

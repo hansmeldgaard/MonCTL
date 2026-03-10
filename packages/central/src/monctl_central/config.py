@@ -22,8 +22,17 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = "redis://localhost:6379/0"
 
-    # VictoriaMetrics
-    victoriametrics_url: str = "http://localhost:8428"
+    # ClickHouse (replaces VictoriaMetrics for time-series + text data)
+    clickhouse_hosts: str = "localhost"  # comma-separated: "192.168.1.41,192.168.1.42,192.168.1.43"
+    clickhouse_port: int = 8123
+    clickhouse_database: str = "monctl"
+    clickhouse_cluster: str = "monctl_cluster"
+    clickhouse_user: str = "default"
+    clickhouse_password: str = ""
+    clickhouse_async_insert: bool = True
+
+    # Instance role: "api" (serve requests only), "scheduler" (run background tasks only), "all" (both)
+    role: str = "all"
 
     # Ingestion
     ingest_batch_size: int = 1000

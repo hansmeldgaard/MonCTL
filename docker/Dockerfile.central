@@ -4,8 +4,8 @@ FROM node:20-alpine AS frontend-builder
 WORKDIR /frontend
 
 # Copy package files first for layer caching
-COPY packages/central/frontend/package.json packages/central/frontend/package-lock.json ./
-RUN npm ci
+COPY packages/central/frontend/package.json ./
+RUN npm install
 
 # Copy source and build
 COPY packages/central/frontend/ ./
@@ -31,7 +31,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl postgresql-client && rm -rf /var/lib/apt/lists/*
+
+# Install psycopg2 for migration advisory lock
+RUN pip install --no-cache-dir psycopg2-binary
 
 # Copy installed packages from builder
 COPY --from=builder /usr/local/lib/python3.11/site-packages/ /usr/local/lib/python3.11/site-packages/

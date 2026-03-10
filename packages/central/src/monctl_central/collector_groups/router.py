@@ -26,12 +26,13 @@ class UpdateCollectorGroupRequest(BaseModel):
     description: str | None = Field(default=None, description="New description")
 
 
-def _fmt(g: CollectorGroup, collector_count: int = 0) -> dict:
+def _fmt(g: CollectorGroup, collector_count: int = 0, health: dict | None = None) -> dict:
     return {
         "id": str(g.id),
         "name": g.name,
         "description": g.description,
         "collector_count": collector_count,
+        "health": health or {"status": "empty", "message": "No collectors"},
         "created_at": g.created_at.isoformat() if g.created_at else None,
     }
 
@@ -41,25 +42,65 @@ async def list_collector_groups(
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
-    """List all collector groups with collector count."""
-    # Subquery: count collectors per group
-    count_sq = (
-        select(Collector.group_id, func.count(Collector.id).label("cnt"))
-        .where(Collector.group_id.is_not(None))
-        .group_by(Collector.group_id)
-        .subquery()
-    )
-
+    """List all collector groups with collector count and health status."""
+    # Load groups with their collectors for health calculation
     stmt = (
-        select(CollectorGroup, func.coalesce(count_sq.c.cnt, 0).label("collector_count"))
-        .outerjoin(count_sq, CollectorGroup.id == count_sq.c.group_id)
+        select(CollectorGroup)
+        .options(selectinload(CollectorGroup.collectors))
         .order_by(CollectorGroup.name)
     )
-    rows = (await db.execute(stmt)).all()
-    return {
-        "status": "success",
-        "data": [_fmt(g, int(cnt)) for g, cnt in rows],
-    }
+    groups = (await db.execute(stmt)).scalars().all()
+
+    result = []
+    for g in groups:
+        collectors = [c for c in g.collectors if c.status not in ("PENDING", "REJECTED")]
+        total = len(collectors)
+        health = _compute_group_health(collectors, total)
+        result.append(_fmt(g, total, health))
+
+    return {"status": "success", "data": result}
+
+
+def _compute_group_health(collectors: list, total: int) -> dict:
+    """Compute health status for a collector group based on member statuses.
+
+    Uses central's own status tracking (ACTIVE/DOWN) as the primary source,
+    and gossip-reported peer_states as supplementary info for SUSPECTED peers.
+    """
+    if total == 0:
+        return {"status": "empty", "message": "No collectors"}
+
+    active = [c for c in collectors if c.status == "ACTIVE"]
+    down = [c for c in collectors if c.status == "DOWN"]
+
+    # Check gossip for SUSPECTED peers (not yet DOWN in central but flaky)
+    suspected_names: set[str] = set()
+    for c in active:
+        peer_states = getattr(c, "reported_peer_states", None) or {}
+        for peer_id, state in peer_states.items():
+            if state == "SUSPECTED":
+                suspected_names.add(peer_id)
+
+    issues: list[str] = []
+    if down:
+        down_names = ", ".join(c.hostname or c.name for c in down)
+        issues.append(f"{len(down)} DOWN: {down_names}")
+    if suspected_names:
+        issues.append(f"{len(suspected_names)} SUSPECTED: {', '.join(sorted(suspected_names))}")
+
+    if len(down) == total:
+        return {
+            "status": "critical",
+            "message": f"All {total} collectors are DOWN",
+        }
+
+    if issues:
+        return {
+            "status": "degraded",
+            "message": "; ".join(issues),
+        }
+
+    return {"status": "healthy", "message": f"All {total} collectors online"}
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)

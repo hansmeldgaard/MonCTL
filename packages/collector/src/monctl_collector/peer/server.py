@@ -210,6 +210,8 @@ class CollectorPeerServicer(pb_grpc.CollectorPeerServicer):
             "execution_time_ms": request.execution_time_ms,
             "rtt_ms": request.rtt_ms if request.rtt_ms > 0 else None,
             "response_time_ms": request.response_time_ms if request.response_time_ms > 0 else None,
+            "started_at": request.started_at if request.started_at > 0 else None,
+            "collector_node": request.collector_node or None,
         }
         await self._local_cache.enqueue_result(result)
         return pb.SubmitResultResponse(accepted=True)

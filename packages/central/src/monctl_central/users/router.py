@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from monctl_central.dependencies import get_db, require_admin
+from monctl_central.dependencies import get_db, require_admin, require_auth
 from monctl_central.storage.models import Tenant, User, UserTenant
 from monctl_common.utils import utc_now
 
@@ -46,6 +46,11 @@ class UpdateUserRequest(BaseModel):
     email: str | None = None
     all_tenants: bool | None = None
     is_active: bool | None = None
+    timezone: str | None = None
+
+
+class UpdateTimezoneRequest(BaseModel):
+    timezone: str = Field(min_length=1, max_length=50)
 
 
 class AssignTenantRequest(BaseModel):
@@ -53,6 +58,21 @@ class AssignTenantRequest(BaseModel):
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
+
+@router.put("/me/timezone")
+async def update_my_timezone(
+    request: UpdateTimezoneRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Update the current user's timezone preference."""
+    user = await db.get(User, uuid.UUID(auth["user_id"]))
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    user.timezone = request.timezone
+    user.updated_at = utc_now()
+    return {"status": "success", "data": {"timezone": user.timezone}}
+
 
 @router.get("")
 async def list_users(
@@ -152,6 +172,8 @@ async def update_user(
         user.all_tenants = request.all_tenants
     if request.is_active is not None:
         user.is_active = request.is_active
+    if request.timezone is not None:
+        user.timezone = request.timezone
     user.updated_at = utc_now()
 
     return {"status": "success", "data": _fmt_user(user)}

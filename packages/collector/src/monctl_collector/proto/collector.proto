@@ -166,6 +166,8 @@ message SubmitResultRequest {
   int32  execution_time_ms = 9;
   float  rtt_ms            = 10;
   float  response_time_ms  = 11;
+  double started_at        = 12;
+  string collector_node    = 13;
 }
 
 message SubmitResultResponse {

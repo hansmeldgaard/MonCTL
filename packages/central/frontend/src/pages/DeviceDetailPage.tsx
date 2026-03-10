@@ -1,9 +1,13 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
 import {
   Activity,
+  ArrowDown,
   ArrowLeft,
+  ArrowUp,
+  ArrowUpDown,
   BarChart2,
+  Clock,
   Layout,
   Loader2,
   Monitor,
@@ -56,6 +60,7 @@ import {
 } from "@/api/hooks.ts";
 import type { Device as DeviceType } from "@/types/api.ts";
 import { timeAgo, formatDate } from "@/lib/utils.ts";
+import { useTimezone } from "@/hooks/useTimezone.ts";
 
 // ── Default time range ────────────────────────────────────
 
@@ -300,6 +305,7 @@ function AddAssignmentDialog({
 // ── Tab 1: Overview ──────────────────────────────────────
 
 function OverviewTab({ deviceId }: { deviceId: string }) {
+  const tz = useTimezone();
   const [timeRange, setTimeRange] = useState<TimeRangeValue>(DEFAULT_RANGE);
   const { fromTs, toTs } = useMemo(() => rangeToTimestamps(timeRange), [timeRange]);
   const { data: deviceResults } = useDeviceResults(deviceId);
@@ -315,7 +321,7 @@ function OverviewTab({ deviceId }: { deviceId: string }) {
       {/* Chart header + time picker */}
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-medium text-zinc-400">Availability &amp; Latency</h3>
-        <TimeRangePicker value={timeRange} onChange={setTimeRange} />
+        <TimeRangePicker value={timeRange} onChange={setTimeRange} timezone={tz} />
       </div>
 
       {/* Chart card */}
@@ -326,7 +332,7 @@ function OverviewTab({ deviceId }: { deviceId: string }) {
               <Loader2 className="h-6 w-6 animate-spin text-brand-500" />
             </div>
           ) : (
-            <AvailabilityChart results={history ?? []} fromTs={fromTs} toTs={toTs} />
+            <AvailabilityChart results={history ?? []} fromTs={fromTs} toTs={toTs} timezone={tz} />
           )}
         </CardContent>
       </Card>
@@ -409,16 +415,49 @@ function OverviewTab({ deviceId }: { deviceId: string }) {
 // ── Tab 2: Performance ───────────────────────────────────
 
 function PerformanceTab({ deviceId }: { deviceId: string }) {
+  const tz = useTimezone();
   const [timeRange, setTimeRange] = useState<TimeRangeValue>(DEFAULT_RANGE);
   const { fromTs, toTs } = useMemo(() => rangeToTimestamps(timeRange), [timeRange]);
   const { data: history, isLoading } = useDeviceHistory(deviceId, fromTs, toTs, 1000);
   const tableHistory = history ?? [];
+  const { sortBy, sortDir, toggle: onSort } = useSort("executed_at");
+  const [filterCheck, setFilterCheck] = useState("");
+  const [filterState, setFilterState] = useState("");
+  const [filterAvail, setFilterAvail] = useState("");
+
+  const checkNames = useMemo(() => [...new Set(tableHistory.map((r) => r.app_name).filter(Boolean))].sort(), [tableHistory]);
+  const stateNames = useMemo(() => [...new Set(tableHistory.map((r) => r.state_name).filter(Boolean))].sort(), [tableHistory]);
+
+  const filtered = useMemo(() => {
+    let data = tableHistory;
+    if (filterCheck) data = data.filter((r) => r.app_name === filterCheck);
+    if (filterState) data = data.filter((r) => r.state_name === filterState);
+    if (filterAvail === "up") data = data.filter((r) => r.reachable);
+    if (filterAvail === "down") data = data.filter((r) => !r.reachable);
+
+    return [...data].sort((a, b) => {
+      let cmp = 0;
+      switch (sortBy) {
+        case "state": cmp = (a.state_name ?? "").localeCompare(b.state_name ?? ""); break;
+        case "check": cmp = (a.app_name ?? "").localeCompare(b.app_name ?? ""); break;
+        case "availability": cmp = (a.reachable ? 1 : 0) - (b.reachable ? 1 : 0); break;
+        case "latency": {
+          const la = a.rtt_ms ?? a.response_time_ms ?? 0;
+          const lb = b.rtt_ms ?? b.response_time_ms ?? 0;
+          cmp = la - lb;
+          break;
+        }
+        case "executed_at": cmp = a.executed_at.localeCompare(b.executed_at); break;
+      }
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+  }, [tableHistory, filterCheck, filterState, filterAvail, sortBy, sortDir]);
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-medium text-zinc-400">Check History</h3>
-        <TimeRangePicker value={timeRange} onChange={setTimeRange} />
+        <TimeRangePicker value={timeRange} onChange={setTimeRange} timezone={tz} />
       </div>
 
       {isLoading ? (
@@ -439,24 +478,44 @@ function PerformanceTab({ deviceId }: { deviceId: string }) {
             <CardTitle className="text-sm">
               Check History
               <span className="ml-2 text-zinc-500 font-normal text-xs">
-                ({tableHistory.length} results)
+                ({filtered.length}{filtered.length !== tableHistory.length ? ` of ${tableHistory.length}` : ""} results)
               </span>
             </CardTitle>
+            <div className="flex items-center gap-2 pt-2">
+              <Select value={filterCheck} onChange={(e) => setFilterCheck(e.target.value)} className="w-40 text-xs">
+                <option value="">All Checks</option>
+                {checkNames.map((n) => <option key={n} value={n!}>{n}</option>)}
+              </Select>
+              <Select value={filterState} onChange={(e) => setFilterState(e.target.value)} className="w-36 text-xs">
+                <option value="">All States</option>
+                {stateNames.map((s) => <option key={s} value={s!}>{s}</option>)}
+              </Select>
+              <Select value={filterAvail} onChange={(e) => setFilterAvail(e.target.value)} className="w-36 text-xs">
+                <option value="">All</option>
+                <option value="up">UP</option>
+                <option value="down">DOWN</option>
+              </Select>
+              {(filterCheck || filterState || filterAvail) && (
+                <Button variant="ghost" size="sm" onClick={() => { setFilterCheck(""); setFilterState(""); setFilterAvail(""); }}>
+                  <X className="h-3 w-3" /> Clear
+                </Button>
+              )}
+            </div>
           </CardHeader>
           <CardContent>
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>State</TableHead>
-                  <TableHead>Check</TableHead>
-                  <TableHead>Availability</TableHead>
-                  <TableHead>Latency</TableHead>
+                  <SortableHead label="State" field="state" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+                  <SortableHead label="Check" field="check" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+                  <SortableHead label="Availability" field="availability" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+                  <SortableHead label="Latency" field="latency" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
                   <TableHead>Output</TableHead>
-                  <TableHead>Executed</TableHead>
+                  <SortableHead label="Executed" field="executed_at" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {tableHistory.slice(0, 500).map((r, idx) => (
+                {filtered.slice(0, 500).map((r, idx) => (
                   <TableRow key={`${r.assignment_id}-${idx}`}>
                     <TableCell>
                       <StatusBadge state={r.state_name} />
@@ -490,7 +549,7 @@ function PerformanceTab({ deviceId }: { deviceId: string }) {
                       {r.output || "—"}
                     </TableCell>
                     <TableCell className="text-zinc-500 text-sm">
-                      {formatDate(r.executed_at)}
+                      {formatDate(r.executed_at, tz)}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -548,10 +607,14 @@ function MonitoringCard({ deviceId, device }: { deviceId: string; device: Device
   const [availabilityPort, setAvailabilityPort] = useState("");
   const [availabilityOid, setAvailabilityOid] = useState("");
   const [availabilityCredential, setAvailabilityCredential] = useState("");
+  const [availabilityPingCount, setAvailabilityPingCount] = useState("");
+  const [availabilityPingTimeout, setAvailabilityPingTimeout] = useState("");
   const [latencyAppType, setLatencyAppType] = useState("");
   const [latencyPort, setLatencyPort] = useState("");
   const [latencyOid, setLatencyOid] = useState("");
   const [latencyCredential, setLatencyCredential] = useState("");
+  const [latencyPingCount, setLatencyPingCount] = useState("");
+  const [latencyPingTimeout, setLatencyPingTimeout] = useState("");
   const [intervalSeconds, setIntervalSeconds] = useState("60");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -565,10 +628,14 @@ function MonitoringCard({ deviceId, device }: { deviceId: string; device: Device
     setAvailabilityPort(av?.port != null ? String(av.port) : "");
     setAvailabilityOid(av?.oid ?? "");
     setAvailabilityCredential(av?.credential_name ?? "");
+    setAvailabilityPingCount(av?.ping_count != null ? String(av.ping_count) : "");
+    setAvailabilityPingTimeout(av?.ping_timeout != null ? String(av.ping_timeout) : "");
     setLatencyAppType(la?.app_type ?? "");
     setLatencyPort(la?.port != null ? String(la.port) : "");
     setLatencyOid(la?.oid ?? "");
     setLatencyCredential(la?.credential_name ?? "");
+    setLatencyPingCount(la?.ping_count != null ? String(la.ping_count) : "");
+    setLatencyPingTimeout(la?.ping_timeout != null ? String(la.ping_timeout) : "");
     // Use the interval from availability if set, otherwise latency, otherwise default
     const interval = av?.interval_seconds ?? la?.interval_seconds ?? 60;
     setIntervalSeconds(String(interval));
@@ -579,7 +646,7 @@ function MonitoringCard({ deviceId, device }: { deviceId: string; device: Device
     setSaveError(null);
     setSaveSuccess(false);
 
-    const makeCheck = (appType: string, port: string, oid: string, cred: string) => {
+    const makeCheck = (appType: string, port: string, oid: string, cred: string, pingCount: string, pingTimeout: string) => {
       if (!appType) return null;
       return {
         app_type: appType,
@@ -587,6 +654,8 @@ function MonitoringCard({ deviceId, device }: { deviceId: string; device: Device
         oid: appType === "snmp_check" ? oid || null : null,
         credential_name: appType === "snmp_check" ? cred || null : null,
         interval_seconds: parseInt(intervalSeconds, 10),
+        ping_count: appType === "ping_check" && pingCount ? parseInt(pingCount, 10) : null,
+        ping_timeout: appType === "ping_check" && pingTimeout ? parseInt(pingTimeout, 10) : null,
       };
     };
 
@@ -594,8 +663,8 @@ function MonitoringCard({ deviceId, device }: { deviceId: string; device: Device
       await updateMonitoring.mutateAsync({
         id: deviceId,
         data: {
-          availability: makeCheck(availabilityAppType, availabilityPort, availabilityOid, availabilityCredential),
-          latency: makeCheck(latencyAppType, latencyPort, latencyOid, latencyCredential),
+          availability: makeCheck(availabilityAppType, availabilityPort, availabilityOid, availabilityCredential, availabilityPingCount, availabilityPingTimeout),
+          latency: makeCheck(latencyAppType, latencyPort, latencyOid, latencyCredential, latencyPingCount, latencyPingTimeout),
         },
       });
       setSaveSuccess(true);
@@ -626,7 +695,7 @@ function MonitoringCard({ deviceId, device }: { deviceId: string; device: Device
             <Loader2 className="h-5 w-5 animate-spin text-brand-500" />
           </div>
         ) : (
-          <form onSubmit={handleSave} className="space-y-5 max-w-md">
+          <form onSubmit={handleSave} className="space-y-5 max-w-2xl">
             {/* Shared interval */}
             <div className="space-y-1.5">
               <Label htmlFor="mon-interval">Check Interval</Label>
@@ -643,123 +712,187 @@ function MonitoringCard({ deviceId, device }: { deviceId: string; device: Device
             </div>
 
             {/* Availability check */}
-            <div className="space-y-3">
+            <div className="space-y-2">
               <Label>Availability Check</Label>
-              <Select
-                value={availabilityAppType}
-                onChange={(e) => setAvailabilityAppType(e.target.value)}
-                disabled={!hasGroup}
-              >
-                {APP_TYPE_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-              </Select>
-              {availabilityAppType === "port_check" && (
-                <div className="space-y-1.5">
-                  <Label htmlFor="av-port">TCP Port</Label>
-                  <Input
-                    id="av-port"
-                    type="number"
-                    min={1}
-                    max={65535}
-                    placeholder="e.g. 22, 80, 443"
-                    value={availabilityPort}
-                    onChange={(e) => setAvailabilityPort(e.target.value)}
-                  />
+              <div className="flex items-end gap-3">
+                <div className="space-y-1">
+                  <Select
+                    value={availabilityAppType}
+                    onChange={(e) => setAvailabilityAppType(e.target.value)}
+                    disabled={!hasGroup}
+                  >
+                    {APP_TYPE_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </Select>
                 </div>
-              )}
-              {availabilityAppType === "snmp_check" && (
-                <div className="space-y-3">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="av-oid">SNMP OID</Label>
-                    <Select
-                      id="av-oid"
-                      value={availabilityOid}
-                      onChange={(e) => setAvailabilityOid(e.target.value)}
-                    >
-                      <option value="">— Select OID —</option>
-                      {(snmpOids ?? []).map((o) => (
-                        <option key={o.id} value={o.oid}>{o.name} ({o.oid})</option>
-                      ))}
-                    </Select>
+                {availabilityAppType === "port_check" && (
+                  <div className="space-y-1">
+                    <span className="text-xs text-zinc-400">Port</span>
+                    <Input
+                      id="av-port"
+                      type="number"
+                      min={1}
+                      max={65535}
+                      value={availabilityPort || "443"}
+                      onChange={(e) => setAvailabilityPort(e.target.value)}
+                      className="w-28"
+                    />
                   </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="av-cred">SNMP Credential</Label>
-                    <Select
-                      id="av-cred"
-                      value={availabilityCredential}
-                      onChange={(e) => setAvailabilityCredential(e.target.value)}
-                    >
-                      <option value="">— Select credential —</option>
-                      {(credentials ?? [])
-                        .filter((c) => c.credential_type.startsWith("snmp"))
-                        .map((c) => (
-                          <option key={c.id} value={c.name}>{c.name}</option>
+                )}
+                {availabilityAppType === "ping_check" && (
+                  <>
+                    <div className="space-y-1">
+                      <span className="text-xs text-zinc-400">Count</span>
+                      <Input
+                        id="av-ping-count"
+                        type="number"
+                        min={1}
+                        max={20}
+                        value={availabilityPingCount || "3"}
+                        onChange={(e) => setAvailabilityPingCount(e.target.value)}
+                        className="w-24"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-xs text-zinc-400">Timeout</span>
+                      <Input
+                        id="av-ping-timeout"
+                        type="number"
+                        min={1}
+                        max={30}
+                        value={availabilityPingTimeout || "2"}
+                        onChange={(e) => setAvailabilityPingTimeout(e.target.value)}
+                        className="w-24"
+                      />
+                    </div>
+                  </>
+                )}
+                {availabilityAppType === "snmp_check" && (
+                  <>
+                    <div className="space-y-1">
+                      <span className="text-xs text-zinc-400">OID</span>
+                      <Select
+                        id="av-oid"
+                        value={availabilityOid}
+                        onChange={(e) => setAvailabilityOid(e.target.value)}
+                      >
+                        <option value="">— OID —</option>
+                        {(snmpOids ?? []).map((o) => (
+                          <option key={o.id} value={o.oid}>{o.name} ({o.oid})</option>
                         ))}
-                    </Select>
-                  </div>
-                </div>
-              )}
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-xs text-zinc-400">Credential</span>
+                      <Select
+                        id="av-cred"
+                        value={availabilityCredential}
+                        onChange={(e) => setAvailabilityCredential(e.target.value)}
+                      >
+                        <option value="">— Credential —</option>
+                        {(credentials ?? [])
+                          .filter((c) => c.credential_type.startsWith("snmp"))
+                          .map((c) => (
+                            <option key={c.id} value={c.name}>{c.name}</option>
+                          ))}
+                      </Select>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
 
             {/* Latency check */}
-            <div className="space-y-3">
+            <div className="space-y-2">
               <Label>Latency Check</Label>
-              <Select
-                value={latencyAppType}
-                onChange={(e) => setLatencyAppType(e.target.value)}
-                disabled={!hasGroup}
-              >
-                {APP_TYPE_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-              </Select>
-              {latencyAppType === "port_check" && (
-                <div className="space-y-1.5">
-                  <Label htmlFor="la-port">TCP Port</Label>
-                  <Input
-                    id="la-port"
-                    type="number"
-                    min={1}
-                    max={65535}
-                    placeholder="e.g. 22, 80, 443"
-                    value={latencyPort}
-                    onChange={(e) => setLatencyPort(e.target.value)}
-                  />
+              <div className="flex items-end gap-3">
+                <div className="space-y-1">
+                  <Select
+                    value={latencyAppType}
+                    onChange={(e) => setLatencyAppType(e.target.value)}
+                    disabled={!hasGroup}
+                  >
+                    {APP_TYPE_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </Select>
                 </div>
-              )}
-              {latencyAppType === "snmp_check" && (
-                <div className="space-y-3">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="la-oid">SNMP OID</Label>
-                    <Select
-                      id="la-oid"
-                      value={latencyOid}
-                      onChange={(e) => setLatencyOid(e.target.value)}
-                    >
-                      <option value="">— Select OID —</option>
-                      {(snmpOids ?? []).map((o) => (
-                        <option key={o.id} value={o.oid}>{o.name} ({o.oid})</option>
-                      ))}
-                    </Select>
+                {latencyAppType === "port_check" && (
+                  <div className="space-y-1">
+                    <span className="text-xs text-zinc-400">Port</span>
+                    <Input
+                      id="la-port"
+                      type="number"
+                      min={1}
+                      max={65535}
+                      value={latencyPort || "443"}
+                      onChange={(e) => setLatencyPort(e.target.value)}
+                      className="w-28"
+                    />
                   </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="la-cred">SNMP Credential</Label>
-                    <Select
-                      id="la-cred"
-                      value={latencyCredential}
-                      onChange={(e) => setLatencyCredential(e.target.value)}
-                    >
-                      <option value="">— Select credential —</option>
-                      {(credentials ?? [])
-                        .filter((c) => c.credential_type.startsWith("snmp"))
-                        .map((c) => (
-                          <option key={c.id} value={c.name}>{c.name}</option>
+                )}
+                {latencyAppType === "ping_check" && (
+                  <>
+                    <div className="space-y-1">
+                      <span className="text-xs text-zinc-400">Count</span>
+                      <Input
+                        id="la-ping-count"
+                        type="number"
+                        min={1}
+                        max={20}
+                        value={latencyPingCount || "3"}
+                        onChange={(e) => setLatencyPingCount(e.target.value)}
+                        className="w-24"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-xs text-zinc-400">Timeout</span>
+                      <Input
+                        id="la-ping-timeout"
+                        type="number"
+                        min={1}
+                        max={30}
+                        value={latencyPingTimeout || "2"}
+                        onChange={(e) => setLatencyPingTimeout(e.target.value)}
+                        className="w-24"
+                      />
+                    </div>
+                  </>
+                )}
+                {latencyAppType === "snmp_check" && (
+                  <>
+                    <div className="space-y-1">
+                      <span className="text-xs text-zinc-400">OID</span>
+                      <Select
+                        id="la-oid"
+                        value={latencyOid}
+                        onChange={(e) => setLatencyOid(e.target.value)}
+                      >
+                        <option value="">— OID —</option>
+                        {(snmpOids ?? []).map((o) => (
+                          <option key={o.id} value={o.oid}>{o.name} ({o.oid})</option>
                         ))}
-                    </Select>
-                  </div>
-                </div>
-              )}
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-xs text-zinc-400">Credential</span>
+                      <Select
+                        id="la-cred"
+                        value={latencyCredential}
+                        onChange={(e) => setLatencyCredential(e.target.value)}
+                      >
+                        <option value="">— Credential —</option>
+                        {(credentials ?? [])
+                          .filter((c) => c.credential_type.startsWith("snmp"))
+                          .map((c) => (
+                            <option key={c.id} value={c.name}>{c.name}</option>
+                          ))}
+                      </Select>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
 
             {saveError && <p className="text-sm text-red-400">{saveError}</p>}
@@ -800,6 +933,9 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
 
   // Labels
   const [labels, setLabels] = useState<Record<string, string>>({});
+  const [labelsModified, setLabelsModified] = useState(false);
+  const [labelsSaving, setLabelsSaving] = useState(false);
+  const [labelsSaveSuccess, setLabelsSaveSuccess] = useState(false);
   const [newLabelKey, setNewLabelKey] = useState("");
   const [newLabelValue, setNewLabelValue] = useState("");
   const [labelError, setLabelError] = useState<string | null>(null);
@@ -852,6 +988,7 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
       return;
     }
     setLabels((prev) => ({ ...prev, [key]: val }));
+    setLabelsModified(true);
     setNewLabelKey("");
     setNewLabelValue("");
   }
@@ -862,6 +999,33 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
       delete next[key];
       return next;
     });
+    setLabelsModified(true);
+  }
+
+  async function handleSaveLabels() {
+    setLabelError(null);
+    setLabelsSaving(true);
+    setLabelsSaveSuccess(false);
+    try {
+      await updateDevice.mutateAsync({
+        id: deviceId,
+        data: {
+          name: name.trim(),
+          address: address.trim(),
+          device_type: deviceType,
+          tenant_id: tenantId || null,
+          collector_group_id: collectorGroupId || null,
+          labels,
+        },
+      });
+      setLabelsModified(false);
+      setLabelsSaveSuccess(true);
+      setTimeout(() => setLabelsSaveSuccess(false), 3000);
+    } catch (err) {
+      setLabelError(err instanceof Error ? err.message : "Failed to save labels");
+    } finally {
+      setLabelsSaving(false);
+    }
   }
 
   async function handleDeleteAssignment() {
@@ -948,6 +1112,22 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
           <CardTitle className="flex items-center gap-2">
             <Tag className="h-4 w-4" />
             Labels
+            {labelsModified && (
+              <Button
+                size="sm"
+                className="ml-auto gap-1.5"
+                onClick={handleSaveLabels}
+                disabled={labelsSaving}
+              >
+                {labelsSaving
+                  ? <Loader2 className="h-4 w-4 animate-spin" />
+                  : <Save className="h-4 w-4" />}
+                Save Labels
+              </Button>
+            )}
+            {labelsSaveSuccess && (
+              <span className="ml-auto text-sm text-emerald-400">Saved.</span>
+            )}
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -999,10 +1179,6 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
               </Button>
             </div>
             {labelError && <p className="text-xs text-red-400">{labelError}</p>}
-
-            <p className="text-xs text-zinc-600">
-              Labels are saved along with device settings. Click "Save Changes" above to persist.
-            </p>
           </div>
         </CardContent>
       </Card>
@@ -1113,20 +1289,200 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
   );
 }
 
+// ── Sortable Header helper ───────────────────────────────
+
+type SortDir = "asc" | "desc";
+
+function SortableHead({
+  label,
+  field,
+  sortBy,
+  sortDir,
+  onSort,
+}: {
+  label: string;
+  field: string;
+  sortBy: string;
+  sortDir: SortDir;
+  onSort: (field: string) => void;
+}) {
+  const active = sortBy === field;
+  return (
+    <TableHead
+      className="cursor-pointer select-none hover:text-zinc-200"
+      onClick={() => onSort(field)}
+    >
+      <span className="inline-flex items-center gap-1">
+        {label}
+        {active ? (
+          sortDir === "asc" ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />
+        ) : (
+          <ArrowUpDown className="h-3 w-3 text-zinc-600" />
+        )}
+      </span>
+    </TableHead>
+  );
+}
+
+function useSort(defaultField: string, defaultDir: SortDir = "desc") {
+  const [sortBy, setSortBy] = useState(defaultField);
+  const [sortDir, setSortDir] = useState<SortDir>(defaultDir);
+  const toggle = useCallback((field: string) => {
+    if (field === sortBy) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortBy(field);
+      setSortDir("desc");
+    }
+  }, [sortBy]);
+  return { sortBy, sortDir, toggle };
+}
+
+// ── Tab 5: History ───────────────────────────────────────
+
+function HistoryTab({ deviceId }: { deviceId: string }) {
+  const tz = useTimezone();
+  const [range, setRange] = useState<TimeRangeValue>({ type: "preset", preset: "24h" });
+  const { fromTs: from } = useMemo(() => rangeToTimestamps(range), [range]);
+  const { data: history, isLoading } = useDeviceHistory(deviceId, from, null, 500);
+  const { sortBy, sortDir, toggle: onSort } = useSort("executed_at");
+  const [filterApp, setFilterApp] = useState("");
+  const [filterStatus, setFilterStatus] = useState("");
+  const [filterCollector, setFilterCollector] = useState("");
+
+  const records = history ?? [];
+
+  // Unique values for filter dropdowns
+  const appNames = useMemo(() => [...new Set(records.map((r) => r.app_name).filter(Boolean))].sort(), [records]);
+  const statuses = useMemo(() => [...new Set(records.map((r) => r.state_name).filter(Boolean))].sort(), [records]);
+  const collectors = useMemo(() => [...new Set(records.map((r) => r.collector_name).filter(Boolean))].sort(), [records]);
+
+  // Filter + sort
+  const filtered = useMemo(() => {
+    let data = records;
+    if (filterApp) data = data.filter((r) => r.app_name === filterApp);
+    if (filterStatus) data = data.filter((r) => r.state_name === filterStatus);
+    if (filterCollector) data = data.filter((r) => r.collector_name === filterCollector);
+
+    return [...data].sort((a, b) => {
+      let cmp = 0;
+      switch (sortBy) {
+        case "app_name": cmp = (a.app_name ?? "").localeCompare(b.app_name ?? ""); break;
+        case "started_at": cmp = (a.started_at ?? "").localeCompare(b.started_at ?? ""); break;
+        case "executed_at": cmp = a.executed_at.localeCompare(b.executed_at); break;
+        case "duration": {
+          const da = a.execution_time_ms ?? 0;
+          const db = b.execution_time_ms ?? 0;
+          cmp = da - db;
+          break;
+        }
+        case "collector": cmp = (a.collector_name ?? "").localeCompare(b.collector_name ?? ""); break;
+        case "status": cmp = (a.state_name ?? "").localeCompare(b.state_name ?? ""); break;
+      }
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+  }, [records, filterApp, filterStatus, filterCollector, sortBy, sortDir]);
+
+  if (isLoading) {
+    return (
+      <div className="flex justify-center py-12">
+        <Loader2 className="h-6 w-6 animate-spin text-zinc-500" />
+      </div>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle className="flex items-center gap-2">
+            <Activity className="h-4 w-4" />
+            Job Execution History
+            <span className="text-zinc-500 font-normal text-xs ml-1">
+              ({filtered.length}{filtered.length !== records.length ? ` of ${records.length}` : ""} results)
+            </span>
+          </CardTitle>
+          <TimeRangePicker value={range} onChange={setRange} timezone={tz} />
+        </div>
+        {/* Filters */}
+        <div className="flex items-center gap-2 pt-2">
+          <Select value={filterApp} onChange={(e) => setFilterApp(e.target.value)} className="w-40 text-xs">
+            <option value="">All Apps</option>
+            {appNames.map((n) => <option key={n} value={n!}>{n}</option>)}
+          </Select>
+          <Select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="w-36 text-xs">
+            <option value="">All Statuses</option>
+            {statuses.map((s) => <option key={s} value={s!}>{s}</option>)}
+          </Select>
+          <Select value={filterCollector} onChange={(e) => setFilterCollector(e.target.value)} className="w-40 text-xs">
+            <option value="">All Collectors</option>
+            {collectors.map((c) => <option key={c} value={c!}>{c}</option>)}
+          </Select>
+          {(filterApp || filterStatus || filterCollector) && (
+            <Button variant="ghost" size="sm" onClick={() => { setFilterApp(""); setFilterStatus(""); setFilterCollector(""); }}>
+              <X className="h-3 w-3" /> Clear
+            </Button>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent>
+        {filtered.length === 0 ? (
+          <p className="text-sm text-zinc-500 py-8 text-center">No results match the current filters.</p>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <SortableHead label="App" field="app_name" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+                <SortableHead label="Started" field="started_at" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+                <SortableHead label="Completed" field="executed_at" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+                <SortableHead label="Duration" field="duration" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+                <SortableHead label="Collector" field="collector" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+                <SortableHead label="Status" field="status" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filtered.map((r, i) => {
+                const startedAt = r.started_at ? new Date(r.started_at) : null;
+                const executedAt = new Date(r.executed_at);
+                const durationMs = r.execution_time_ms ?? (startedAt ? executedAt.getTime() - startedAt.getTime() : null);
+                return (
+                  <TableRow key={`${r.assignment_id}-${i}`}>
+                    <TableCell className="font-medium text-zinc-200">{r.app_name ?? "—"}</TableCell>
+                    <TableCell className="text-zinc-400 text-xs">
+                      {startedAt ? formatDate(startedAt.toISOString(), tz) : "—"}
+                    </TableCell>
+                    <TableCell className="text-zinc-400 text-xs">
+                      {formatDate(r.executed_at, tz)}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs text-zinc-300">
+                      {durationMs != null ? `${Math.round(durationMs)}ms` : "—"}
+                    </TableCell>
+                    <TableCell className="text-zinc-400 text-sm">
+                      {r.collector_name ?? "—"}
+                    </TableCell>
+                    <TableCell>
+                      <StatusBadge state={r.state_name} />
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Main Page ────────────────────────────────────────────
 
 export function DeviceDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { data: deviceResults, isLoading } = useDeviceResults(id);
-  const { data: device } = useDevice(id);
-  const { data: collectors } = useCollectors();
+  const { data: deviceResults, isLoading: resultsLoading } = useDeviceResults(id);
+  const { data: device, isLoading: deviceLoading } = useDevice(id);
   const [activeTab, setActiveTab] = useState("overview");
 
-  // Resolve the active collector name from the most recent check result
-  const activeCollectorId = deviceResults?.checks?.[0]?.collector_id ?? null;
-  const activeCollectorName = activeCollectorId
-    ? (collectors?.find((c) => c.id === activeCollectorId)?.name ?? null)
-    : null;
+  const isLoading = deviceLoading || (resultsLoading && !device);
 
   if (isLoading) {
     return (
@@ -1136,7 +1492,7 @@ export function DeviceDetailPage() {
     );
   }
 
-  if (!deviceResults) {
+  if (!device && !deviceResults) {
     return (
       <div className="space-y-4">
         <Link to="/devices">
@@ -1147,11 +1503,18 @@ export function DeviceDetailPage() {
         </Link>
         <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
           <Monitor className="mb-2 h-8 w-8 text-zinc-600" />
-          <p className="text-sm">Device not found or no data available</p>
+          <p className="text-sm">Device not found</p>
         </div>
       </div>
     );
   }
+
+  // Use device data as primary source, deviceResults as supplement
+  const deviceName = device?.name ?? deviceResults?.device_name ?? "Unknown";
+  const deviceAddress = device?.address ?? deviceResults?.device_address ?? "";
+  const deviceType = device?.device_type ?? deviceResults?.device_type ?? "";
+  const deviceId = id!;
+  const upStatus = deviceResults?.up;
 
   return (
     <div className="space-y-4">
@@ -1165,23 +1528,23 @@ export function DeviceDetailPage() {
         </Link>
         <div className="flex items-center gap-3">
           <h2 className="text-xl font-semibold text-zinc-100">
-            {deviceResults.device_name}
+            {deviceName}
           </h2>
           <Badge
             variant={
-              deviceResults.up === true
+              upStatus === true
                 ? "success"
-                : deviceResults.up === false
+                : upStatus === false
                   ? "destructive"
                   : "default"
             }
           >
-            {deviceResults.up === true ? "UP" : deviceResults.up === false ? "DOWN" : "UNKNOWN"}
+            {upStatus === true ? "UP" : upStatus === false ? "DOWN" : "UNKNOWN"}
           </Badge>
         </div>
         <div className="flex items-center gap-3 text-sm text-zinc-500">
-          <span className="font-mono">{deviceResults.device_address}</span>
-          <Badge variant="info">{deviceResults.device_type}</Badge>
+          <span className="font-mono">{deviceAddress}</span>
+          {deviceType && <Badge variant="info">{deviceType}</Badge>}
           {device?.tenant_name && (
             <span className="text-xs text-zinc-500">
               tenant: <span className="text-zinc-300">{device.tenant_name}</span>
@@ -1190,14 +1553,6 @@ export function DeviceDetailPage() {
           {device?.collector_group_name && (
             <span className="text-xs text-zinc-500">
               collector group: <span className="text-zinc-300">{device.collector_group_name}</span>
-              {activeCollectorName && (
-                <span className="text-zinc-500"> via <span className="text-zinc-300">{activeCollectorName}</span></span>
-              )}
-            </span>
-          )}
-          {!device?.collector_group_name && activeCollectorName && (
-            <span className="text-xs text-zinc-500">
-              via <span className="text-zinc-300">{activeCollectorName}</span>
             </span>
           )}
         </div>
@@ -1230,19 +1585,28 @@ export function DeviceDetailPage() {
               Settings
             </span>
           </TabTrigger>
+          <TabTrigger value="history">
+            <span className="flex items-center gap-1.5">
+              <Clock className="h-3.5 w-3.5" />
+              History
+            </span>
+          </TabTrigger>
         </TabsList>
 
         <TabsContent value="overview">
-          <OverviewTab deviceId={deviceResults.device_id} />
+          <OverviewTab deviceId={deviceId} />
         </TabsContent>
         <TabsContent value="performance">
-          <PerformanceTab deviceId={deviceResults.device_id} />
+          <PerformanceTab deviceId={deviceId} />
         </TabsContent>
         <TabsContent value="configuration">
           <ConfigurationTab />
         </TabsContent>
         <TabsContent value="settings">
-          <SettingsTab deviceId={deviceResults.device_id} />
+          <SettingsTab deviceId={deviceId} />
+        </TabsContent>
+        <TabsContent value="history">
+          <HistoryTab deviceId={deviceId} />
         </TabsContent>
       </Tabs>
     </div>

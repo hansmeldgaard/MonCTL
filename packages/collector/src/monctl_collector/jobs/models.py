@@ -156,6 +156,7 @@ class PollResult:
     reachable: bool
     error_message: str | None
     execution_time_ms: int
+    started_at: float | None = None
     rtt_ms: float | None = None
     response_time_ms: float | None = None
 

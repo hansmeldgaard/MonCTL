@@ -36,6 +36,7 @@ interface AvailabilityChartProps {
   results: ResultRecord[];
   fromTs?: string | null;
   toTs?: string | null;
+  timezone?: string;
 }
 
 /**
@@ -54,23 +55,24 @@ function chooseBucketMs(spanMs: number): number {
 /**
  * Format a timestamp for the X axis label based on time span.
  */
-function formatAxisLabel(ts: number, spanMs: number): string {
+function formatAxisLabel(ts: number, spanMs: number, timezone = "UTC"): string {
   const d = new Date(ts);
   const DAY = 86400_000;
   if (spanMs > 7 * DAY) {
-    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: timezone });
   }
   if (spanMs > 1 * DAY) {
     return (
-      d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) +
+      d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: timezone }) +
       " " +
-      d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false })
+      d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: timezone })
     );
   }
   return d.toLocaleTimeString("en-US", {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
+    timeZone: timezone,
   });
 }
 
@@ -90,6 +92,7 @@ function buildChartData(
   results: ResultRecord[],
   fromTs?: string | null,
   toTs?: string | null,
+  timezone = "UTC",
 ): {
   data: ChartPoint[];
   appNames: string[];
@@ -208,7 +211,7 @@ function buildChartData(
     // No-data placeholder — gray strip, no latency value
     if (noDataBuckets.has(bucketStart)) {
       return {
-        time: formatAxisLabel(bucketStart, spanMs),
+        time: formatAxisLabel(bucketStart, spanMs, timezone),
         ts: bucketStart,
         up: 0,
         noData: true,
@@ -217,7 +220,7 @@ function buildChartData(
 
     // Real data bucket
     const bucket = byBucket.get(bucketStart)!;
-    const timeLabel = formatAxisLabel(bucketStart, spanMs);
+    const timeLabel = formatAxisLabel(bucketStart, spanMs, timezone);
 
     // Availability strip: carry-forward the last known state from the
     // availability-role check.  For legacy (no roles), fall back to all results
@@ -427,8 +430,8 @@ function StatusStrip({ data }: { data: ChartPoint[] }) {
   );
 }
 
-export function AvailabilityChart({ results, fromTs, toTs }: AvailabilityChartProps) {
-  const { data, appNames } = buildChartData(results, fromTs, toTs);
+export function AvailabilityChart({ results, fromTs, toTs, timezone = "UTC" }: AvailabilityChartProps) {
+  const { data, appNames } = buildChartData(results, fromTs, toTs, timezone);
 
   if (!data.length) {
     return (

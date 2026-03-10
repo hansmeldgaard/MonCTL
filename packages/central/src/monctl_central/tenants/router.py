@@ -17,16 +17,19 @@ router = APIRouter()
 
 class CreateTenantRequest(BaseModel):
     name: str = Field(description="Unique tenant name")
+    metadata: dict = Field(default_factory=dict, description="Key-value metadata")
 
 
 class UpdateTenantRequest(BaseModel):
-    name: str = Field(description="New unique tenant name")
+    name: str | None = None
+    metadata: dict | None = None
 
 
 def _fmt(t: Tenant) -> dict:
     return {
         "id": str(t.id),
         "name": t.name,
+        "metadata": t.metadata_ if t.metadata_ else {},
         "created_at": t.created_at.isoformat() if t.created_at else None,
     }
 
@@ -56,7 +59,7 @@ async def create_tenant(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Tenant '{request.name}' already exists",
         )
-    tenant = Tenant(name=request.name)
+    tenant = Tenant(name=request.name, metadata_=request.metadata)
     db.add(tenant)
     await db.flush()
     return {"status": "success", "data": _fmt(tenant)}
@@ -73,16 +76,19 @@ async def update_tenant(
     tenant = await db.get(Tenant, uuid.UUID(tenant_id))
     if tenant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
-    # Check uniqueness of new name
-    existing = (
-        await db.execute(select(Tenant).where(Tenant.name == request.name))
-    ).scalar_one_or_none()
-    if existing and str(existing.id) != tenant_id:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Tenant '{request.name}' already exists",
-        )
-    tenant.name = request.name
+    if request.name is not None:
+        # Check uniqueness of new name
+        existing = (
+            await db.execute(select(Tenant).where(Tenant.name == request.name))
+        ).scalar_one_or_none()
+        if existing and str(existing.id) != tenant_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Tenant '{request.name}' already exists",
+            )
+        tenant.name = request.name
+    if request.metadata is not None:
+        tenant.metadata_ = request.metadata
     await db.flush()
     return {"status": "success", "data": _fmt(tenant)}
 

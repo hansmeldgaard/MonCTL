@@ -14,19 +14,23 @@ import {
   TableRow,
 } from "@/components/ui/table.tsx";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
+import { KeyValueEditor } from "@/components/KeyValueEditor.tsx";
 import {
   useCreateTenant,
   useDeleteTenant,
   useTenants,
-  useUpdateTenant,
+  useUpdateTenantFull,
 } from "@/api/hooks.ts";
+import type { Tenant } from "@/types/api.ts";
 import { useAuth } from "@/hooks/useAuth.tsx";
 import { formatDate } from "@/lib/utils.ts";
+import { useTimezone } from "@/hooks/useTimezone.ts";
 
 export function TenantsPage() {
+  const tz = useTimezone();
   const { data: tenants, isLoading } = useTenants();
   const createTenant = useCreateTenant();
-  const updateTenant = useUpdateTenant();
+  const updateTenant = useUpdateTenantFull();
   const deleteTenant = useDeleteTenant();
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
@@ -37,8 +41,9 @@ export function TenantsPage() {
   const [addError, setAddError] = useState<string | null>(null);
 
   // Edit dialog
-  const [editTarget, setEditTarget] = useState<{ id: string; name: string } | null>(null);
+  const [editTarget, setEditTarget] = useState<Tenant | null>(null);
   const [editName, setEditName] = useState("");
+  const [editMetadata, setEditMetadata] = useState<Record<string, string>>({});
   const [editError, setEditError] = useState<string | null>(null);
 
   // Delete dialog
@@ -53,6 +58,7 @@ export function TenantsPage() {
     }
     try {
       await createTenant.mutateAsync({ name: addName.trim() });
+      // If metadata was provided, update it after creation
       setAddName("");
       setAddOpen(false);
     } catch (err) {
@@ -60,9 +66,10 @@ export function TenantsPage() {
     }
   }
 
-  function openEdit(t: { id: string; name: string }) {
+  function openEdit(t: Tenant) {
     setEditTarget(t);
     setEditName(t.name);
+    setEditMetadata(t.metadata || {});
     setEditError(null);
   }
 
@@ -75,10 +82,13 @@ export function TenantsPage() {
       return;
     }
     try {
-      await updateTenant.mutateAsync({ id: editTarget.id, name: editName.trim() });
+      await updateTenant.mutateAsync({
+        id: editTarget.id,
+        data: { name: editName.trim(), metadata: editMetadata },
+      });
       setEditTarget(null);
     } catch (err) {
-      setEditError(err instanceof Error ? err.message : "Failed to rename tenant");
+      setEditError(err instanceof Error ? err.message : "Failed to update tenant");
     }
   }
 
@@ -143,41 +153,54 @@ export function TenantsPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
+                  <TableHead>Metadata</TableHead>
                   <TableHead>Created</TableHead>
                   {isAdmin && <TableHead className="w-20"></TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {tenants.map((t) => (
-                  <TableRow key={t.id}>
-                    <TableCell className="font-medium text-zinc-100">
-                      {t.name}
-                    </TableCell>
-                    <TableCell className="text-zinc-500 text-sm">
-                      {formatDate(t.created_at)}
-                    </TableCell>
-                    {isAdmin && (
-                      <TableCell>
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => openEdit({ id: t.id, name: t.name })}
-                            className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer"
-                            title="Rename"
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </button>
-                          <button
-                            onClick={() => setDeleteTarget({ id: t.id, name: t.name })}
-                            className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                            title="Delete"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </div>
+                {tenants.map((t) => {
+                  const metaCount = Object.keys(t.metadata || {}).length;
+                  return (
+                    <TableRow key={t.id}>
+                      <TableCell className="font-medium text-zinc-100">
+                        {t.name}
                       </TableCell>
-                    )}
-                  </TableRow>
-                ))}
+                      <TableCell className="text-zinc-400 text-sm">
+                        {metaCount > 0 ? (
+                          <Badge variant="default" className="text-xs">
+                            {metaCount} {metaCount === 1 ? "key" : "keys"}
+                          </Badge>
+                        ) : (
+                          <span className="text-zinc-600 text-xs">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-zinc-500 text-sm">
+                        {formatDate(t.created_at, tz)}
+                      </TableCell>
+                      {isAdmin && (
+                        <TableCell>
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => openEdit(t)}
+                              className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer"
+                              title="Edit"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </button>
+                            <button
+                              onClick={() => setDeleteTarget({ id: t.id, name: t.name })}
+                              className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                              title="Delete"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           )}
@@ -218,11 +241,11 @@ export function TenantsPage() {
         </form>
       </Dialog>
 
-      {/* Edit (Rename) Tenant Dialog */}
+      {/* Edit Tenant Dialog */}
       <Dialog
         open={!!editTarget}
         onClose={() => setEditTarget(null)}
-        title="Rename Tenant"
+        title="Edit Tenant"
       >
         <form onSubmit={handleEdit} className="space-y-4">
           <div className="space-y-1.5">
@@ -233,6 +256,10 @@ export function TenantsPage() {
               onChange={(e) => setEditName(e.target.value)}
               autoFocus
             />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Metadata</Label>
+            <KeyValueEditor value={editMetadata} onChange={setEditMetadata} />
           </div>
           {editError && <p className="text-sm text-red-400">{editError}</p>}
           <DialogFooter>
