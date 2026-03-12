@@ -1,0 +1,96 @@
+# MonCTL Central HA — Patroni PostgreSQL + Redis + Central app
+#
+# central1: MONCTL_ROLE=all (runs scheduler), Patroni primary, Redis
+# central2: MONCTL_ROLE=api, Patroni replica
+# central3-4: MONCTL_ROLE=api (no local PostgreSQL)
+#
+# Each node gets its own .env with: PG_PASSWORD, PG_REPL_PASSWORD, ENCRYPTION_KEY,
+# JWT_SECRET, COLLECTOR_API_KEY, ADMIN_PASSWORD, PATRONI_NAME, NODE_IP,
+# MONCTL_ROLE, CLICKHOUSE_HOSTS
+
+services:
+
+  # ── Patroni PostgreSQL (central1 + central2 only) ──────────────────────────
+  patroni:
+    image: timescale/timescaledb:latest-pg16
+    container_name: patroni
+    network_mode: host
+    entrypoint: []
+    command: >
+      bash -c "
+        apt-get update && apt-get install -y python3-pip python3-psycopg2 &&
+        pip install --break-system-packages patroni[etcd3] &&
+        patroni /etc/patroni/patroni.yml
+      "
+    environment:
+      PATRONI_NAME: ${PATRONI_NAME:-pg1}
+      PATRONI_SCOPE: monctl
+      PATRONI_RESTAPI_CONNECT_ADDRESS: ${NODE_IP:-10.145.210.41}:8008
+      PATRONI_RESTAPI_LISTEN: 0.0.0.0:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: ${NODE_IP:-10.145.210.41}:5432
+      PATRONI_POSTGRESQL_LISTEN: 0.0.0.0:5432
+      PATRONI_POSTGRESQL_DATA_DIR: /var/lib/postgresql/data/patroni
+      PATRONI_ETCD3_HOSTS: 10.145.210.41:2379,10.145.210.42:2379,10.145.210.43:2379
+      PATRONI_SUPERUSER_USERNAME: postgres
+      PATRONI_SUPERUSER_PASSWORD: ${PG_PASSWORD}
+      PATRONI_REPLICATION_USERNAME: replicator
+      PATRONI_REPLICATION_PASSWORD: ${PG_REPL_PASSWORD}
+      PATRONI_POSTGRESQL_AUTHENTICATION__SUPERUSER__PASSWORD: ${PG_PASSWORD}
+      PATRONI_POSTGRESQL_AUTHENTICATION__REPLICATION__PASSWORD: ${PG_REPL_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./patroni.yml:/etc/patroni/patroni.yml:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8008/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    profiles:
+      - db
+
+  # ── Redis (central1 only) ──────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    profiles:
+      - redis
+
+  # ── Central app (all 4 nodes) ──────────────────────────────────────────────
+  central:
+    image: monctl-central:latest
+    ports:
+      - "8443:8443"
+    environment:
+      MONCTL_DATABASE_URL: postgresql+asyncpg://monctl:${PG_PASSWORD}@${PG_HOST:-10.145.210.41}:5432/monctl
+      MONCTL_REDIS_URL: redis://${REDIS_HOST:-10.145.210.41}:6379/0
+      MONCTL_HOST: 0.0.0.0
+      MONCTL_PORT: 8443
+      MONCTL_DEBUG: "false"
+      MONCTL_ROLE: ${MONCTL_ROLE:-api}
+      MONCTL_ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      MONCTL_JWT_SECRET_KEY: ${JWT_SECRET}
+      MONCTL_ADMIN_USERNAME: admin
+      MONCTL_ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      MONCTL_COLLECTOR_API_KEY: ${COLLECTOR_API_KEY}
+      MONCTL_CLICKHOUSE_HOSTS: ${CLICKHOUSE_HOSTS:-10.145.210.43,10.145.210.44}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8443/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+volumes:
+  pgdata:
+  redisdata:

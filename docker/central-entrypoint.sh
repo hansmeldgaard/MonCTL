@@ -1,12 +1,35 @@
 #!/bin/sh
 set -e
 
-# Wait for database to be ready (via HAProxy or direct)
-echo "Waiting for database..."
-until pg_isready -h 127.0.0.1 -p 5432 -U monctl -q 2>/dev/null; do
+# Extract DB host/port from DATABASE_URL (works with both local and external PostgreSQL)
+DB_URL="${MONCTL_DATABASE_URL:-postgresql+asyncpg://monctl:monctl@127.0.0.1:5432/monctl}"
+# Strip scheme prefix, extract host:port — handles postgresql+asyncpg://user:pass@host:port/db
+DB_HOST=$(echo "$DB_URL" | sed -E 's|.*@([^:/]+).*|\1|')
+DB_PORT=$(echo "$DB_URL" | sed -E 's|.*@[^:]+:([0-9]+).*|\1|')
+DB_PORT="${DB_PORT:-5432}"
+
+echo "Waiting for database at ${DB_HOST}:${DB_PORT}..."
+until pg_isready -h "$DB_HOST" -p "$DB_PORT" -U monctl -q 2>/dev/null; do
   echo "  Database not ready, retrying in 2s..."
   sleep 2
 done
+
+# Create base schema (tables not covered by alembic migrations)
+echo "Ensuring base schema exists..."
+python -c "
+import os, sys
+db_url = os.environ.get('MONCTL_DATABASE_URL', '')
+sync_url = db_url.replace('+asyncpg', '').replace('postgresql+asyncpg', 'postgresql')
+if not sync_url:
+    sync_url = 'postgresql://monctl:monctl@127.0.0.1:5432/monctl'
+
+from sqlalchemy import create_engine
+from monctl_central.storage.models import Base
+engine = create_engine(sync_url)
+Base.metadata.create_all(engine, checkfirst=True)
+engine.dispose()
+print('Base schema ensured.')
+"
 
 # Advisory lock: only one instance runs migrations at a time
 echo "Running database migrations (with advisory lock)..."
@@ -23,6 +46,26 @@ if not sync_url:
 conn = psycopg2.connect(sync_url)
 conn.autocommit = True
 cur = conn.cursor()
+
+# Stamp head if alembic_version table doesn't exist yet (fresh DB with create_all)
+cur.execute(\"\"\"SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='alembic_version')\"\"\")
+has_alembic = cur.fetchone()[0]
+if not has_alembic:
+    print('Fresh database — stamping alembic head...')
+    subprocess.run(['alembic', 'stamp', 'head'], check=True)
+    print('Stamped.')
+    conn.close()
+    sys.exit(0)
+
+# Check if there's already a revision stamped
+cur.execute('SELECT version_num FROM alembic_version LIMIT 1')
+row = cur.fetchone()
+if row is None:
+    print('No alembic version found — stamping head...')
+    subprocess.run(['alembic', 'stamp', 'head'], check=True)
+    conn.close()
+    sys.exit(0)
+
 cur.execute('SELECT pg_try_advisory_lock(1)')
 got_lock = cur.fetchone()[0]
 

@@ -1,0 +1,30 @@
+# etcd cluster for Patroni DCS — deploy on central1, central2, central3
+# Each node runs ONE etcd service with node-specific ETCD_NAME and IPs.
+# Override ETCD_NAME and ETCD_ADVERTISE_IP via .env on each node.
+
+services:
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.17
+    container_name: etcd
+    network_mode: host
+    environment:
+      ETCD_NAME: ${ETCD_NAME:-etcd1}
+      ETCD_DATA_DIR: /etcd-data
+      ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+      ETCD_LISTEN_PEER_URLS: http://0.0.0.0:2380
+      ETCD_ADVERTISE_CLIENT_URLS: http://${ETCD_ADVERTISE_IP:-10.145.210.41}:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://${ETCD_ADVERTISE_IP:-10.145.210.41}:2380
+      ETCD_INITIAL_CLUSTER: etcd1=http://10.145.210.41:2380,etcd2=http://10.145.210.42:2380,etcd3=http://10.145.210.43:2380
+      ETCD_INITIAL_CLUSTER_STATE: new
+      ETCD_INITIAL_CLUSTER_TOKEN: monctl-etcd-cluster
+    volumes:
+      - etcd_data:/etcd-data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  etcd_data:

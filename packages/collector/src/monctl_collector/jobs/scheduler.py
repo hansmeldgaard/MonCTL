@@ -329,6 +329,15 @@ class JobScheduler:
         """Remove a home job that we offered to another node via work-stealing."""
         self._my_jobs.pop(job_id, None)
 
+    def notify_ring_changed(self) -> None:
+        """Called when the hash ring changes (node added/removed).
+
+        Forces a full re-sync from central on the next cycle so that
+        job ownership is re-evaluated with the updated ring.
+        """
+        self._last_sync = None
+        logger.info("ring_changed_forcing_full_sync")
+
     # ── Private helpers ──────────────────────────────────────────────────────
 
     def _is_mine(self, job_id: str) -> bool:

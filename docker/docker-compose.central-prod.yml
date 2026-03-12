@@ -1,0 +1,66 @@
+# MonCTL Central — single-node production (central1)
+# Deploy: scp to /opt/monctl/central/docker-compose.yml + .env
+# Start:  cd /opt/monctl/central && docker compose up -d
+
+services:
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_USER: monctl
+      POSTGRES_PASSWORD: ${PG_PASSWORD}
+      POSTGRES_DB: monctl
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U monctl"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  central:
+    image: monctl-central:latest
+    ports:
+      - "8443:8443"
+    environment:
+      MONCTL_DATABASE_URL: postgresql+asyncpg://monctl:${PG_PASSWORD}@postgres:5432/monctl
+      MONCTL_REDIS_URL: redis://redis:6379/0
+      MONCTL_HOST: 0.0.0.0
+      MONCTL_PORT: 8443
+      MONCTL_DEBUG: "false"
+      MONCTL_ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      MONCTL_JWT_SECRET_KEY: ${JWT_SECRET}
+      MONCTL_ADMIN_USERNAME: admin
+      MONCTL_ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      MONCTL_COLLECTOR_API_KEY: ${COLLECTOR_API_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8443/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:

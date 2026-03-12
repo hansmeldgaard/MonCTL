@@ -1,0 +1,32 @@
+# ClickHouse 2-node replicated cluster — deploy on central3 + central4
+# Each node gets CLICKHOUSE_SHARD=1, CLICKHOUSE_REPLICA=ch1 or ch2 via .env
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.3-alpine
+    container_name: clickhouse
+    network_mode: host
+    environment:
+      CLICKHOUSE_DB: monctl
+      CLICKHOUSE_USER: monctl
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-monctl}
+      CLICKHOUSE_REPLICA: ${CLICKHOUSE_REPLICA}
+      KEEPER_SERVER_ID: ${KEEPER_SERVER_ID}
+    volumes:
+      - ch_data:/var/lib/clickhouse
+      - ch_logs:/var/log/clickhouse-server
+      - ./clickhouse-config.xml:/etc/clickhouse-server/config.d/cluster.xml:ro
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  ch_data:
+  ch_logs:

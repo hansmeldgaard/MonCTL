@@ -1,0 +1,81 @@
+# MonCTL Collector — production (1 poll-worker per node)
+# Deploy: scp to /opt/monctl/collector/docker-compose.yml + .env
+# Start:  cd /opt/monctl/collector && docker compose up -d
+
+services:
+
+  # ── Cache-node — cluster brain ──────────────────────────────────────────────
+  cache-node:
+    image: monctl-collector:latest
+    command: monctl-cache-node
+    container_name: cache-node
+    hostname: ${NODE_ID:-collector-node}
+    ports:
+      - "50051:50051"
+      - "50052:50052"
+    environment:
+      MONCTL_NODE_ID:           ${NODE_ID}
+      MONCTL_CENTRAL_URL:       ${CENTRAL_URL}
+      MONCTL_CENTRAL_API_KEY:   ${CENTRAL_API_KEY}
+      MONCTL_VERIFY_SSL:        ${VERIFY_SSL:-true}
+      MONCTL_GRPC_ADDRESS:      0.0.0.0:50051
+      MONCTL_PEERS:             ${PEERS:-}
+      MONCTL_ADVERTISE_ADDR:    ${MONCTL_ADVERTISE_ADDR:-}
+      MONCTL_DB_PATH:           /data/cache.db
+      MONCTL_COLLECTOR_ID:      ${MONCTL_COLLECTOR_ID:-}
+      MONCTL_COLLECTOR_API_KEY: ${CENTRAL_API_KEY}
+      MONCTL_SETUP_YAML:        /etc/monctl/setup.yaml
+    volumes:
+      - cache_data:/data
+      - /etc/monctl/setup.yaml:/etc/monctl/setup.yaml:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import socket,sys; s=socket.socket(); s.settimeout(1); r=s.connect_ex(('127.0.0.1',50051)); s.close(); sys.exit(r)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ── Poll-worker (single worker — 1.9 GB RAM constraint) ────────────────────
+  poll-worker-1:
+    image: monctl-collector:latest
+    command: monctl-poll-worker
+    container_name: poll-worker-1
+    environment:
+      MONCTL_CACHE_NODE:        cache-node:50051
+      MONCTL_WORKER_ID:         ${NODE_ID:-node}-worker-1
+      MONCTL_CENTRAL_URL:       ${CENTRAL_URL}
+      MONCTL_CENTRAL_API_KEY:   ${CENTRAL_API_KEY}
+      MONCTL_VERIFY_SSL:        ${VERIFY_SSL:-true}
+      MONCTL_APPS_DIR:          /data/apps
+      MONCTL_VENVS_DIR:         /data/venvs
+      MONCTL_DB_PATH:           /data/worker.db
+    volumes:
+      - app_data:/data
+    depends_on:
+      cache-node:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Forwarder — ships results to central ────────────────────────────────────
+  forwarder:
+    image: monctl-collector:latest
+    command: monctl-forwarder
+    container_name: forwarder
+    environment:
+      MONCTL_NODE_ID:           ${NODE_ID}
+      MONCTL_CENTRAL_URL:       ${CENTRAL_URL}
+      MONCTL_CENTRAL_API_KEY:   ${CENTRAL_API_KEY}
+      MONCTL_VERIFY_SSL:        ${VERIFY_SSL:-true}
+      MONCTL_DB_PATH:           /data/cache.db
+    volumes:
+      - cache_data:/data
+    depends_on:
+      cache-node:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  cache_data:
+  app_data:

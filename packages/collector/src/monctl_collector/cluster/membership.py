@@ -55,12 +55,17 @@ class MembershipTable:
     # ── Lifecycle ────────────────────────────────────────────────────────────
 
     def add_local(self, address: str, generation: int = 0) -> None:
-        """Register the local node (always ALIVE)."""
+        """Register the local node (always ALIVE).
+
+        Uses a time-based generation so that restarts are detected by peers
+        and the ALIVE status propagates via gossip even if the node was
+        previously declared DEAD.
+        """
         self._members[self._local_id] = MemberInfo(
             node_id=self._local_id,
             address=address,
             status=MemberStatus.ALIVE,
-            generation=generation,
+            generation=generation or int(time.time()),
             last_seen=time.time(),
         )
 
@@ -72,7 +77,7 @@ class MembershipTable:
                 address=address,
                 status=MemberStatus.ALIVE,
                 generation=0,
-                last_seen=0.0,  # will be updated on first gossip round
+                last_seen=time.time(),  # use current time so suspect expiry doesn't trigger immediately
             )
 
     # ── Merge (gossip) ────────────────────────────────────────────────────────
@@ -118,7 +123,13 @@ class MembershipTable:
                 if remote_status != MemberStatus.DEAD:
                     events.append(MemberEvent(node_id, MemberStatus.DEAD, remote_status))
             else:
-                # Apply update if remote has higher generation, or same gen + worse status
+                # Always update load info from gossip (it's auxiliary data
+                # that should flow freely regardless of status changes)
+                if remote_load:
+                    existing.load_info = remote_load
+
+                # Apply status/generation update if remote has higher generation,
+                # or same gen + worse status
                 if remote_gen > existing.generation or (
                     remote_gen == existing.generation
                     and _STATUS_RANK[remote_status] > _STATUS_RANK[existing.status]
@@ -127,7 +138,6 @@ class MembershipTable:
                     existing.status = remote_status
                     existing.generation = remote_gen
                     existing.address = remote_addr or existing.address
-                    existing.load_info = remote_load or existing.load_info
                     existing.last_seen = max(existing.last_seen, remote_last_seen)
                     if old != remote_status:
                         events.append(MemberEvent(node_id, old, remote_status))
@@ -157,6 +167,7 @@ class MembershipTable:
         member = self._members.get(node_id)
         if member and member.status == MemberStatus.ALIVE:
             member.status = MemberStatus.SUSPECTED
+            member.last_seen = time.time()  # record suspicion start for timeout
 
     def remove(self, node_id: str) -> None:
         """Remove a node entirely from the membership table."""

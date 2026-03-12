@@ -19,6 +19,7 @@ import json
 import grpc
 import structlog
 
+from monctl_collector.cluster.membership import MemberStatus
 from monctl_collector.proto import collector_pb2 as pb
 from monctl_collector.proto import collector_pb2_grpc as pb_grpc
 
@@ -111,7 +112,19 @@ class CollectorPeerServicer(pb_grpc.CollectorPeerServicer):
             }
             for m in request.members
         ]
-        self._membership.merge(incoming)
+        events = self._membership.merge(incoming)
+
+        # Process merge events: update hash ring for state transitions
+        for ev in events:
+            if self._gossip is not None:
+                if ev.new_status == MemberStatus.ALIVE:
+                    self._gossip._ring.add_node(ev.node_id)
+                    if self._gossip._on_ring_changed:
+                        self._gossip._on_ring_changed()
+                elif ev.new_status == MemberStatus.DEAD:
+                    self._gossip._ring.remove_node(ev.node_id)
+                    if self._gossip._on_ring_changed:
+                        self._gossip._on_ring_changed()
 
         # Return our own view
         local_members = self._membership.to_gossip_list()

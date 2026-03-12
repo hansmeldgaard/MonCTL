@@ -27,6 +27,7 @@ import json
 import os
 import signal
 import socket
+from typing import Callable
 
 from aiohttp import web
 import structlog
@@ -151,6 +152,7 @@ async def run(cfg: CollectorConfig) -> None:
         channel_pool=channel_pool,
         hash_ring=hash_ring,
         get_load_info=scheduler.get_current_load_info,
+        on_ring_changed=scheduler.notify_ring_changed,
         gossip_interval=cfg.cluster.gossip_interval,
         suspicion_timeout=cfg.cluster.suspicion_timeout,
     )
@@ -190,7 +192,7 @@ async def run(cfg: CollectorConfig) -> None:
     if cfg.collector_id and cfg.collector_api_key:
         asyncio.create_task(_peer_refresh_loop(
             central_client, node_id, cfg.collector_id, cfg.collector_api_key,
-            membership, hash_ring,
+            membership, hash_ring, on_ring_changed=scheduler.notify_ring_changed,
         ))
 
     logger.info("cache_node_ready", node_id=node_id)
@@ -323,6 +325,7 @@ async def _peer_refresh_loop(
     collector_api_key: str,
     membership: MembershipTable,
     hash_ring: HashRing,
+    on_ring_changed: Callable[[], None] | None = None,
     interval: int = 60,
 ) -> None:
     """Periodically fetch peers from central and update membership.
@@ -345,6 +348,8 @@ async def _peer_refresh_loop(
                     if peer_id not in membership.members:
                         membership.add_seed(peer_id, peer_addr)
                         hash_ring.add_node(peer_id)
+                        if on_ring_changed:
+                            on_ring_changed()
                         logger.info("peer_added_from_central", peer_id=peer_id, address=peer_addr)
 
             # Remove peers no longer in our group
@@ -354,6 +359,8 @@ async def _peer_refresh_loop(
                 if central_peer_ids and mid not in central_peer_ids:
                     if mid in hash_ring._nodes:
                         hash_ring.remove_node(mid)
+                        if on_ring_changed:
+                            on_ring_changed()
                     membership.remove(mid)
                     logger.info("peer_removed", peer_id=mid, reason="not_in_group")
 

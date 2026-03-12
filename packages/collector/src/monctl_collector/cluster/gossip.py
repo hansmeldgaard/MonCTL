@@ -39,6 +39,7 @@ class GossipProtocol:
         channel_pool: PeerChannelPool,
         hash_ring: HashRing,
         get_load_info: Callable[[], NodeLoadInfo],
+        on_ring_changed: Callable[[], None] | None = None,
         gossip_interval: float = 1.0,
         suspicion_timeout: float = 5.0,
         indirect_probe_count: int = 3,
@@ -48,6 +49,7 @@ class GossipProtocol:
         self._pool = channel_pool
         self._ring = hash_ring
         self._get_load_info = get_load_info
+        self._on_ring_changed = on_ring_changed
         self._gossip_interval = gossip_interval
         self._suspicion_timeout = suspicion_timeout
         self._k = indirect_probe_count
@@ -144,9 +146,13 @@ class GossipProtocol:
             # Add newly discovered ALIVE nodes to the hash ring
             if ev.new_status == MemberStatus.ALIVE:
                 self._ring.add_node(ev.node_id)
+                if self._on_ring_changed:
+                    self._on_ring_changed()
             # Remove DEAD nodes from the hash ring
             elif ev.new_status == MemberStatus.DEAD:
                 self._ring.remove_node(ev.node_id)
+                if self._on_ring_changed:
+                    self._on_ring_changed()
 
     # ── Suspect expiry ───────────────────────────────────────────────────────
 
@@ -156,6 +162,8 @@ class GossipProtocol:
         for node_id in timed_out:
             self._membership.mark_dead(node_id)
             self._ring.remove_node(node_id)
+            if self._on_ring_changed:
+                self._on_ring_changed()
             logger.warning("node_declared_dead", node_id=node_id, reason="suspicion_timeout")
 
     # ── Failure detection (SWIM probe) ───────────────────────────────────────
@@ -242,6 +250,8 @@ class GossipProtocol:
             if member and member.status == MemberStatus.SUSPECTED:
                 self._membership.mark_dead(target.node_id)
                 self._ring.remove_node(target.node_id)
+                if self._on_ring_changed:
+                    self._on_ring_changed()
                 logger.warning(
                     "node_declared_dead",
                     node_id=target.node_id,

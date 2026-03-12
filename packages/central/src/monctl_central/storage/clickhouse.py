@@ -52,7 +52,7 @@ ENGINE = ReplicatedMergeTree(
 )
 PARTITION BY toYYYYMM(executed_at)
 ORDER BY (assignment_id, executed_at)
-TTL executed_at + INTERVAL 90 DAY
+TTL toDateTime(executed_at) + INTERVAL 90 DAY
 SETTINGS index_granularity = 8192
 """
 
@@ -90,7 +90,7 @@ ENGINE = ReplicatedMergeTree(
 )
 PARTITION BY toYYYYMM(occurred_at)
 ORDER BY (collector_id, occurred_at)
-TTL occurred_at + INTERVAL 30 DAY
+TTL toDateTime(occurred_at) + INTERVAL 30 DAY
 """
 
 # Non-clustered fallback DDL (single-node / dev)
@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS check_results
 ENGINE = MergeTree()
 PARTITION BY toYYYYMM(executed_at)
 ORDER BY (assignment_id, executed_at)
-TTL executed_at + INTERVAL 90 DAY
+TTL toDateTime(executed_at) + INTERVAL 90 DAY
 SETTINGS index_granularity = 8192
 """
 
@@ -154,7 +154,7 @@ CREATE TABLE IF NOT EXISTS events
 ENGINE = MergeTree()
 PARTITION BY toYYYYMM(occurred_at)
 ORDER BY (collector_id, occurred_at)
-TTL occurred_at + INTERVAL 30 DAY
+TTL toDateTime(occurred_at) + INTERVAL 30 DAY
 """
 
 # Columns used for check_results inserts
