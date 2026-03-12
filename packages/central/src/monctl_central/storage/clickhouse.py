@@ -1,7 +1,10 @@
 """ClickHouse client wrapper for time-series data storage.
 
-Handles check results and events — replaces PostgreSQL for high-volume
-append-only data and VictoriaMetrics for metrics storage.
+Handles 4 domain-specific tables:
+  - availability_latency: ping, HTTP, port checks
+  - performance: CPU, memory, disk, custom metrics
+  - interface: network interface statistics
+  - config: configuration/discovery data
 """
 
 from __future__ import annotations
@@ -15,9 +18,12 @@ from clickhouse_connect.driver.client import Client
 
 logger = logging.getLogger(__name__)
 
-# ClickHouse table DDL — executed via ensure_tables() on startup
-_CHECK_RESULTS_DDL = """
-CREATE TABLE IF NOT EXISTS check_results ON CLUSTER '{cluster}'
+# ---------------------------------------------------------------------------
+# Table definitions — clustered (ReplicatedMergeTree)
+# ---------------------------------------------------------------------------
+
+_AVAILABILITY_LATENCY_DDL = """
+CREATE TABLE IF NOT EXISTS availability_latency ON CLUSTER '{cluster}'
 (
     assignment_id      UUID,
     collector_id       UUID,
@@ -33,69 +39,192 @@ CREATE TABLE IF NOT EXISTS check_results ON CLUSTER '{cluster}'
     reachable          UInt8         DEFAULT 1,
     status_code        UInt16        DEFAULT 0,
 
-    metric_names       Array(String)   DEFAULT [],
-    metric_values      Array(Float64)  DEFAULT [],
-
     executed_at        DateTime64(3, 'UTC'),
     received_at        DateTime64(3, 'UTC') DEFAULT now64(3),
     execution_time     Float32       DEFAULT 0,
     started_at         DateTime64(3, 'UTC') DEFAULT toDateTime64(0, 3),
-    collector_name     String               DEFAULT '',
 
+    collector_name     String        DEFAULT '',
     device_name        String        DEFAULT '',
     app_name           String        DEFAULT '',
     role               String        DEFAULT '',
-    tenant_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000')
+    tenant_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+
 )
 ENGINE = ReplicatedMergeTree(
-    '/clickhouse/tables/{{shard}}/check_results', '{{replica}}'
+    '/clickhouse/tables/{{shard}}/availability_latency', '{{replica}}'
 )
 PARTITION BY toYYYYMM(executed_at)
 ORDER BY (assignment_id, executed_at)
-TTL toDateTime(executed_at) + INTERVAL 90 DAY
 SETTINGS index_granularity = 8192
 """
 
-_CHECK_RESULTS_INDEXES = [
-    "ALTER TABLE check_results ADD INDEX IF NOT EXISTS idx_device bloom_filter(device_id) GRANULARITY 4",
-    "ALTER TABLE check_results ADD INDEX IF NOT EXISTS idx_collector bloom_filter(collector_id) GRANULARITY 4",
-    "ALTER TABLE check_results ADD INDEX IF NOT EXISTS idx_state set(state) GRANULARITY 4",
-    "ALTER TABLE check_results ADD INDEX IF NOT EXISTS idx_tenant bloom_filter(tenant_id) GRANULARITY 4",
-]
-
-_CHECK_RESULTS_LATEST_DDL = """
-CREATE MATERIALIZED VIEW IF NOT EXISTS check_results_latest ON CLUSTER '{cluster}'
+_AVAILABILITY_LATENCY_LATEST_DDL = """
+CREATE MATERIALIZED VIEW IF NOT EXISTS availability_latency_latest ON CLUSTER '{cluster}'
 ENGINE = ReplicatedReplacingMergeTree(
-    '/clickhouse/tables/{{shard}}/check_results_latest_v2', '{{replica}}',
+    '/clickhouse/tables/{{shard}}/availability_latency_latest', '{{replica}}',
     executed_at
 )
 ORDER BY (assignment_id)
-AS SELECT * FROM check_results
+AS SELECT * FROM availability_latency
 """
 
-_EVENTS_DDL = """
-CREATE TABLE IF NOT EXISTS events ON CLUSTER '{cluster}'
+_PERFORMANCE_DDL = """
+CREATE TABLE IF NOT EXISTS performance ON CLUSTER '{cluster}'
 (
-    collector_id   UUID,
-    app_id         UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
-    source         String,
-    severity       LowCardinality(String),
-    message        String,
-    data           String        DEFAULT '{{}}',
-    occurred_at    DateTime64(3, 'UTC'),
-    received_at    DateTime64(3, 'UTC') DEFAULT now64(3)
+    assignment_id      UUID,
+    collector_id       UUID,
+    app_id             UUID,
+    device_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+
+    component          String        DEFAULT '',
+    component_type     String        DEFAULT '',
+
+    state              UInt8,
+    output             String        DEFAULT '',
+    error_message      String        DEFAULT '',
+
+    metric_names       Array(String)   DEFAULT [],
+    metric_values      Array(Float64)  DEFAULT [],
+
+    executed_at        DateTime64(3, 'UTC'),
+    received_at        DateTime64(3, 'UTC') DEFAULT now64(3),
+    execution_time     Float32       DEFAULT 0,
+    started_at         DateTime64(3, 'UTC') DEFAULT toDateTime64(0, 3),
+
+    collector_name     String        DEFAULT '',
+    device_name        String        DEFAULT '',
+    app_name           String        DEFAULT '',
+    tenant_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+
 )
 ENGINE = ReplicatedMergeTree(
-    '/clickhouse/tables/{{shard}}/events', '{{replica}}'
+    '/clickhouse/tables/{{shard}}/performance', '{{replica}}'
 )
-PARTITION BY toYYYYMM(occurred_at)
-ORDER BY (collector_id, occurred_at)
-TTL toDateTime(occurred_at) + INTERVAL 30 DAY
+PARTITION BY toYYYYMM(executed_at)
+ORDER BY (device_id, component_type, component, executed_at)
+SETTINGS index_granularity = 8192
 """
 
+_PERFORMANCE_LATEST_DDL = """
+CREATE MATERIALIZED VIEW IF NOT EXISTS performance_latest ON CLUSTER '{cluster}'
+ENGINE = ReplicatedReplacingMergeTree(
+    '/clickhouse/tables/{{shard}}/performance_latest', '{{replica}}',
+    executed_at
+)
+ORDER BY (device_id, component_type, component)
+AS SELECT * FROM performance
+"""
+
+_INTERFACE_DDL = """
+CREATE TABLE IF NOT EXISTS interface ON CLUSTER '{cluster}'
+(
+    assignment_id      UUID,
+    collector_id       UUID,
+    app_id             UUID,
+    device_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+
+    if_index           UInt32        DEFAULT 0,
+    if_name            String        DEFAULT '',
+    if_alias           String        DEFAULT '',
+    if_speed_mbps      UInt32        DEFAULT 0,
+    if_admin_status    String        DEFAULT '',
+    if_oper_status     String        DEFAULT '',
+
+    in_octets          UInt64        DEFAULT 0,
+    out_octets         UInt64        DEFAULT 0,
+    in_errors          UInt64        DEFAULT 0,
+    out_errors         UInt64        DEFAULT 0,
+    in_discards        UInt64        DEFAULT 0,
+    out_discards       UInt64        DEFAULT 0,
+    in_unicast_pkts    UInt64        DEFAULT 0,
+    out_unicast_pkts   UInt64        DEFAULT 0,
+
+    in_rate_bps        Float64       DEFAULT 0,
+    out_rate_bps       Float64       DEFAULT 0,
+    in_utilization_pct Float32       DEFAULT 0,
+    out_utilization_pct Float32      DEFAULT 0,
+    poll_interval_sec  UInt16        DEFAULT 0,
+
+    state              UInt8         DEFAULT 0,
+
+    executed_at        DateTime64(3, 'UTC'),
+    received_at        DateTime64(3, 'UTC') DEFAULT now64(3),
+
+    collector_name     String        DEFAULT '',
+    device_name        String        DEFAULT '',
+    app_name           String        DEFAULT '',
+    tenant_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+
+)
+ENGINE = ReplicatedMergeTree(
+    '/clickhouse/tables/{{shard}}/interface', '{{replica}}'
+)
+PARTITION BY toYYYYMM(executed_at)
+ORDER BY (device_id, if_index, executed_at)
+SETTINGS index_granularity = 8192
+"""
+
+_INTERFACE_LATEST_DDL = """
+CREATE MATERIALIZED VIEW IF NOT EXISTS interface_latest ON CLUSTER '{cluster}'
+ENGINE = ReplicatedReplacingMergeTree(
+    '/clickhouse/tables/{{shard}}/interface_latest', '{{replica}}',
+    executed_at
+)
+ORDER BY (device_id, if_index)
+AS SELECT * FROM interface
+"""
+
+_CONFIG_DDL = """
+CREATE TABLE IF NOT EXISTS config ON CLUSTER '{cluster}'
+(
+    assignment_id      UUID,
+    collector_id       UUID,
+    app_id             UUID,
+    device_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+
+    component          String        DEFAULT '',
+    component_type     String        DEFAULT '',
+
+    config_key         String        DEFAULT '',
+    config_value       String        DEFAULT '',
+    config_hash        String        DEFAULT '',
+
+    state              UInt8         DEFAULT 0,
+
+    executed_at        DateTime64(3, 'UTC'),
+    received_at        DateTime64(3, 'UTC') DEFAULT now64(3),
+
+    collector_name     String        DEFAULT '',
+    device_name        String        DEFAULT '',
+    app_name           String        DEFAULT '',
+    tenant_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+
+)
+ENGINE = ReplicatedMergeTree(
+    '/clickhouse/tables/{{shard}}/config', '{{replica}}'
+)
+PARTITION BY toYYYYMM(executed_at)
+ORDER BY (device_id, component_type, component, config_key, executed_at)
+SETTINGS index_granularity = 8192
+"""
+
+_CONFIG_LATEST_DDL = """
+CREATE MATERIALIZED VIEW IF NOT EXISTS config_latest ON CLUSTER '{cluster}'
+ENGINE = ReplicatedReplacingMergeTree(
+    '/clickhouse/tables/{{shard}}/config_latest', '{{replica}}',
+    executed_at
+)
+ORDER BY (device_id, component_type, component, config_key)
+AS SELECT * FROM config
+"""
+
+# ---------------------------------------------------------------------------
 # Non-clustered fallback DDL (single-node / dev)
-_CHECK_RESULTS_DDL_LOCAL = """
-CREATE TABLE IF NOT EXISTS check_results
+# ---------------------------------------------------------------------------
+
+_AVAILABILITY_LATENCY_DDL_LOCAL = """
+CREATE TABLE IF NOT EXISTS availability_latency
 (
     assignment_id      UUID,
     collector_id       UUID,
@@ -111,6 +240,46 @@ CREATE TABLE IF NOT EXISTS check_results
     reachable          UInt8         DEFAULT 1,
     status_code        UInt16        DEFAULT 0,
 
+    executed_at        DateTime64(3, 'UTC'),
+    received_at        DateTime64(3, 'UTC') DEFAULT now64(3),
+    execution_time     Float32       DEFAULT 0,
+    started_at         DateTime64(3, 'UTC') DEFAULT toDateTime64(0, 3),
+
+    collector_name     String        DEFAULT '',
+    device_name        String        DEFAULT '',
+    app_name           String        DEFAULT '',
+    role               String        DEFAULT '',
+    tenant_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+
+)
+ENGINE = MergeTree()
+PARTITION BY toYYYYMM(executed_at)
+ORDER BY (assignment_id, executed_at)
+SETTINGS index_granularity = 8192
+"""
+
+_AVAILABILITY_LATENCY_LATEST_DDL_LOCAL = """
+CREATE MATERIALIZED VIEW IF NOT EXISTS availability_latency_latest
+ENGINE = ReplacingMergeTree(executed_at)
+ORDER BY (assignment_id)
+AS SELECT * FROM availability_latency
+"""
+
+_PERFORMANCE_DDL_LOCAL = """
+CREATE TABLE IF NOT EXISTS performance
+(
+    assignment_id      UUID,
+    collector_id       UUID,
+    app_id             UUID,
+    device_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+
+    component          String        DEFAULT '',
+    component_type     String        DEFAULT '',
+
+    state              UInt8,
+    output             String        DEFAULT '',
+    error_message      String        DEFAULT '',
+
     metric_names       Array(String)   DEFAULT [],
     metric_values      Array(Float64)  DEFAULT [],
 
@@ -118,59 +287,165 @@ CREATE TABLE IF NOT EXISTS check_results
     received_at        DateTime64(3, 'UTC') DEFAULT now64(3),
     execution_time     Float32       DEFAULT 0,
     started_at         DateTime64(3, 'UTC') DEFAULT toDateTime64(0, 3),
-    collector_name     String               DEFAULT '',
 
+    collector_name     String        DEFAULT '',
     device_name        String        DEFAULT '',
     app_name           String        DEFAULT '',
-    role               String        DEFAULT '',
-    tenant_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000')
+    tenant_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+
 )
 ENGINE = MergeTree()
 PARTITION BY toYYYYMM(executed_at)
-ORDER BY (assignment_id, executed_at)
-TTL toDateTime(executed_at) + INTERVAL 90 DAY
+ORDER BY (device_id, component_type, component, executed_at)
 SETTINGS index_granularity = 8192
 """
 
-_CHECK_RESULTS_LATEST_DDL_LOCAL = """
-CREATE MATERIALIZED VIEW IF NOT EXISTS check_results_latest
+_PERFORMANCE_LATEST_DDL_LOCAL = """
+CREATE MATERIALIZED VIEW IF NOT EXISTS performance_latest
 ENGINE = ReplacingMergeTree(executed_at)
-ORDER BY (assignment_id)
-AS SELECT * FROM check_results
+ORDER BY (device_id, component_type, component)
+AS SELECT * FROM performance
 """
 
-_EVENTS_DDL_LOCAL = """
-CREATE TABLE IF NOT EXISTS events
+_INTERFACE_DDL_LOCAL = """
+CREATE TABLE IF NOT EXISTS interface
 (
-    collector_id   UUID,
-    app_id         UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
-    source         String,
-    severity       LowCardinality(String),
-    message        String,
-    data           String        DEFAULT '{}',
-    occurred_at    DateTime64(3, 'UTC'),
-    received_at    DateTime64(3, 'UTC') DEFAULT now64(3)
+    assignment_id      UUID,
+    collector_id       UUID,
+    app_id             UUID,
+    device_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+
+    if_index           UInt32        DEFAULT 0,
+    if_name            String        DEFAULT '',
+    if_alias           String        DEFAULT '',
+    if_speed_mbps      UInt32        DEFAULT 0,
+    if_admin_status    String        DEFAULT '',
+    if_oper_status     String        DEFAULT '',
+
+    in_octets          UInt64        DEFAULT 0,
+    out_octets         UInt64        DEFAULT 0,
+    in_errors          UInt64        DEFAULT 0,
+    out_errors         UInt64        DEFAULT 0,
+    in_discards        UInt64        DEFAULT 0,
+    out_discards       UInt64        DEFAULT 0,
+    in_unicast_pkts    UInt64        DEFAULT 0,
+    out_unicast_pkts   UInt64        DEFAULT 0,
+
+    in_rate_bps        Float64       DEFAULT 0,
+    out_rate_bps       Float64       DEFAULT 0,
+    in_utilization_pct Float32       DEFAULT 0,
+    out_utilization_pct Float32      DEFAULT 0,
+    poll_interval_sec  UInt16        DEFAULT 0,
+
+    state              UInt8         DEFAULT 0,
+
+    executed_at        DateTime64(3, 'UTC'),
+    received_at        DateTime64(3, 'UTC') DEFAULT now64(3),
+
+    collector_name     String        DEFAULT '',
+    device_name        String        DEFAULT '',
+    app_name           String        DEFAULT '',
+    tenant_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+
 )
 ENGINE = MergeTree()
-PARTITION BY toYYYYMM(occurred_at)
-ORDER BY (collector_id, occurred_at)
-TTL toDateTime(occurred_at) + INTERVAL 30 DAY
+PARTITION BY toYYYYMM(executed_at)
+ORDER BY (device_id, if_index, executed_at)
+SETTINGS index_granularity = 8192
 """
 
-# Columns used for check_results inserts
-_INSERT_COLUMNS = [
+_INTERFACE_LATEST_DDL_LOCAL = """
+CREATE MATERIALIZED VIEW IF NOT EXISTS interface_latest
+ENGINE = ReplacingMergeTree(executed_at)
+ORDER BY (device_id, if_index)
+AS SELECT * FROM interface
+"""
+
+_CONFIG_DDL_LOCAL = """
+CREATE TABLE IF NOT EXISTS config
+(
+    assignment_id      UUID,
+    collector_id       UUID,
+    app_id             UUID,
+    device_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+
+    component          String        DEFAULT '',
+    component_type     String        DEFAULT '',
+
+    config_key         String        DEFAULT '',
+    config_value       String        DEFAULT '',
+    config_hash        String        DEFAULT '',
+
+    state              UInt8         DEFAULT 0,
+
+    executed_at        DateTime64(3, 'UTC'),
+    received_at        DateTime64(3, 'UTC') DEFAULT now64(3),
+
+    collector_name     String        DEFAULT '',
+    device_name        String        DEFAULT '',
+    app_name           String        DEFAULT '',
+    tenant_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+
+)
+ENGINE = MergeTree()
+PARTITION BY toYYYYMM(executed_at)
+ORDER BY (device_id, component_type, component, config_key, executed_at)
+SETTINGS index_granularity = 8192
+"""
+
+_CONFIG_LATEST_DDL_LOCAL = """
+CREATE MATERIALIZED VIEW IF NOT EXISTS config_latest
+ENGINE = ReplacingMergeTree(executed_at)
+ORDER BY (device_id, component_type, component, config_key)
+AS SELECT * FROM config
+"""
+
+# ---------------------------------------------------------------------------
+# Insert column definitions per table
+# ---------------------------------------------------------------------------
+
+_AVAIL_INSERT_COLUMNS = [
     "assignment_id", "collector_id", "app_id", "device_id",
     "state", "output", "error_message",
     "rtt_ms", "response_time_ms", "reachable", "status_code",
-    "metric_names", "metric_values",
-    "executed_at", "execution_time",
-    "started_at", "collector_name",
-    "device_name", "app_name", "role", "tenant_id",
+    "executed_at", "execution_time", "started_at",
+    "collector_name", "device_name", "app_name", "role", "tenant_id",
 ]
 
-_EVENT_INSERT_COLUMNS = [
-    "collector_id", "app_id", "source", "severity",
-    "message", "data", "occurred_at",
+_PERF_INSERT_COLUMNS = [
+    "assignment_id", "collector_id", "app_id", "device_id",
+    "component", "component_type",
+    "state", "output", "error_message",
+    "metric_names", "metric_values",
+    "executed_at", "execution_time", "started_at",
+    "collector_name", "device_name", "app_name", "tenant_id",
+]
+
+_IFACE_INSERT_COLUMNS = [
+    "assignment_id", "collector_id", "app_id", "device_id",
+    "if_index", "if_name", "if_alias", "if_speed_mbps",
+    "if_admin_status", "if_oper_status",
+    "in_octets", "out_octets", "in_errors", "out_errors",
+    "in_discards", "out_discards", "in_unicast_pkts", "out_unicast_pkts",
+    "in_rate_bps", "out_rate_bps", "in_utilization_pct", "out_utilization_pct",
+    "poll_interval_sec", "state",
+    "executed_at",
+    "collector_name", "device_name", "app_name", "tenant_id",
+]
+
+_CONFIG_INSERT_COLUMNS = [
+    "assignment_id", "collector_id", "app_id", "device_id",
+    "component", "component_type",
+    "config_key", "config_value", "config_hash",
+    "state", "executed_at",
+    "collector_name", "device_name", "app_name", "tenant_id",
+]
+
+# Old tables to drop
+_OLD_TABLES = [
+    "check_results_latest",  # MV must be dropped before base table
+    "check_results",
+    "events",
 ]
 
 
@@ -201,7 +476,7 @@ class ClickHouseClient:
             settings: dict[str, Any] = {}
             if self._async_insert:
                 settings["async_insert"] = 1
-                settings["wait_for_async_insert"] = 0
+                settings["wait_for_async_insert"] = 1
             self._client = clickhouse_connect.get_client(
                 host=self._hosts[0],
                 port=self._port,
@@ -212,23 +487,45 @@ class ClickHouseClient:
             )
         return self._client
 
+    def _reconnect(self) -> Client:
+        """Drop cached client and create a fresh connection."""
+        logger.warning("ClickHouse reconnecting to %s", self._hosts[0])
+        if self._client is not None:
+            try:
+                self._client.close()
+            except Exception:
+                pass
+            self._client = None
+        return self._get_client()
+
+    def _is_connection_error(self, exc: Exception) -> bool:
+        """Check if an exception is a connection/transport error worth retrying."""
+        # Connection refused, broken pipe, timeout, etc.
+        if isinstance(exc, (OSError, ConnectionError, TimeoutError)):
+            return True
+        # clickhouse-connect wraps some errors as DatabaseError
+        msg = str(exc).lower()
+        if any(s in msg for s in ("broken pipe", "connection refused", "timed out", "reset by peer")):
+            return True
+        return False
+
     def close(self) -> None:
         if self._client is not None:
             self._client.close()
             self._client = None
 
-    def _ensure_mv_columns(self) -> None:
-        """Drop and recreate the materialized view if it doesn't have new columns."""
+    def _drop_old_tables(self, has_cluster: bool) -> None:
+        """Drop legacy check_results / events tables (only test data)."""
         client = self._get_client()
-        try:
-            # Check if the MV has the new columns
-            cols = client.query("DESCRIBE TABLE check_results_latest")
-            col_names = {r[0] for r in cols.result_rows}
-            if "started_at" not in col_names:
-                client.command("DROP VIEW IF EXISTS check_results_latest")
-                # It will be recreated by ensure_tables
-        except Exception:
-            pass
+        for table in _OLD_TABLES:
+            try:
+                if has_cluster:
+                    client.command(f"DROP TABLE IF EXISTS {table} ON CLUSTER '{self._cluster_name}'")
+                else:
+                    client.command(f"DROP TABLE IF EXISTS {table}")
+                logger.info("Dropped old table %s", table)
+            except Exception:
+                logger.debug("Could not drop old table %s (may not exist)", table)
 
     def ensure_tables(self) -> None:
         """Create tables if they don't exist. Safe to call on every startup."""
@@ -247,90 +544,136 @@ class ClickHouseClient:
         except Exception:
             has_cluster = False
 
+        # Drop old tables first
+        self._drop_old_tables(has_cluster)
+
         if has_cluster:
-            client.command(_CHECK_RESULTS_DDL.format(cluster=self._cluster_name))
-            for idx_sql in _CHECK_RESULTS_INDEXES:
-                try:
-                    client.command(idx_sql)
-                except Exception:
-                    pass  # index may already exist
-            # Add new columns to existing tables
-            _NEW_COLUMNS = [
-                ("started_at", "DateTime64(3, 'UTC') DEFAULT toDateTime64(0, 3)"),
-                ("collector_name", "String DEFAULT ''"),
-            ]
-            for col_name, col_def in _NEW_COLUMNS:
-                try:
-                    client.command(f"ALTER TABLE check_results ADD COLUMN IF NOT EXISTS {col_name} {col_def}")
-                except Exception:
-                    pass
-            self._ensure_mv_columns()
-            client.command(_CHECK_RESULTS_LATEST_DDL.format(cluster=self._cluster_name))
-            client.command(_EVENTS_DDL.format(cluster=self._cluster_name))
+            for ddl in [
+                _AVAILABILITY_LATENCY_DDL,
+                _PERFORMANCE_DDL,
+                _INTERFACE_DDL,
+                _CONFIG_DDL,
+            ]:
+                client.command(ddl.format(cluster=self._cluster_name))
+            for mv_ddl in [
+                _AVAILABILITY_LATENCY_LATEST_DDL,
+                _PERFORMANCE_LATEST_DDL,
+                _INTERFACE_LATEST_DDL,
+                _CONFIG_LATEST_DDL,
+            ]:
+                client.command(mv_ddl.format(cluster=self._cluster_name))
         else:
             logger.info("No ClickHouse cluster detected, using local MergeTree engines")
-            client.command(_CHECK_RESULTS_DDL_LOCAL)
-            for idx_sql in _CHECK_RESULTS_INDEXES:
-                try:
-                    client.command(idx_sql)
-                except Exception:
-                    pass
-            # Add new columns to existing tables
-            _NEW_COLUMNS = [
-                ("started_at", "DateTime64(3, 'UTC') DEFAULT toDateTime64(0, 3)"),
-                ("collector_name", "String DEFAULT ''"),
-            ]
-            for col_name, col_def in _NEW_COLUMNS:
-                try:
-                    client.command(f"ALTER TABLE check_results ADD COLUMN IF NOT EXISTS {col_name} {col_def}")
-                except Exception:
-                    pass
-            self._ensure_mv_columns()
-            client.command(_CHECK_RESULTS_LATEST_DDL_LOCAL)
-            client.command(_EVENTS_DDL_LOCAL)
+            for ddl in [
+                _AVAILABILITY_LATENCY_DDL_LOCAL,
+                _PERFORMANCE_DDL_LOCAL,
+                _INTERFACE_DDL_LOCAL,
+                _CONFIG_DDL_LOCAL,
+            ]:
+                client.command(ddl)
+            for mv_ddl in [
+                _AVAILABILITY_LATENCY_LATEST_DDL_LOCAL,
+                _PERFORMANCE_LATEST_DDL_LOCAL,
+                _INTERFACE_LATEST_DDL_LOCAL,
+                _CONFIG_LATEST_DDL_LOCAL,
+            ]:
+                client.command(mv_ddl)
 
-        logger.info("ClickHouse tables ensured")
+        # Add bloom filter indexes via ALTER TABLE (ClickHouse 24.x compat)
+        _INDEXES = [
+            # availability_latency
+            "ALTER TABLE availability_latency ADD INDEX IF NOT EXISTS idx_device bloom_filter(device_id) GRANULARITY 4",
+            "ALTER TABLE availability_latency ADD INDEX IF NOT EXISTS idx_collector bloom_filter(collector_id) GRANULARITY 4",
+            "ALTER TABLE availability_latency ADD INDEX IF NOT EXISTS idx_tenant bloom_filter(tenant_id) GRANULARITY 4",
+            "ALTER TABLE availability_latency ADD INDEX IF NOT EXISTS idx_state set(state) GRANULARITY 4",
+            # performance
+            "ALTER TABLE performance ADD INDEX IF NOT EXISTS idx_device bloom_filter(device_id) GRANULARITY 4",
+            "ALTER TABLE performance ADD INDEX IF NOT EXISTS idx_collector bloom_filter(collector_id) GRANULARITY 4",
+            "ALTER TABLE performance ADD INDEX IF NOT EXISTS idx_tenant bloom_filter(tenant_id) GRANULARITY 4",
+            "ALTER TABLE performance ADD INDEX IF NOT EXISTS idx_state set(state) GRANULARITY 4",
+            # interface
+            "ALTER TABLE interface ADD INDEX IF NOT EXISTS idx_device bloom_filter(device_id) GRANULARITY 4",
+            "ALTER TABLE interface ADD INDEX IF NOT EXISTS idx_collector bloom_filter(collector_id) GRANULARITY 4",
+            "ALTER TABLE interface ADD INDEX IF NOT EXISTS idx_tenant bloom_filter(tenant_id) GRANULARITY 4",
+            # config
+            "ALTER TABLE config ADD INDEX IF NOT EXISTS idx_device bloom_filter(device_id) GRANULARITY 4",
+            "ALTER TABLE config ADD INDEX IF NOT EXISTS idx_collector bloom_filter(collector_id) GRANULARITY 4",
+            "ALTER TABLE config ADD INDEX IF NOT EXISTS idx_tenant bloom_filter(tenant_id) GRANULARITY 4",
+        ]
+        for idx_sql in _INDEXES:
+            try:
+                client.command(idx_sql)
+            except Exception:
+                pass
 
-    def insert_check_results(self, results: list[dict]) -> None:
-        """Batch insert check results. Uses async insert for high throughput."""
+        logger.info("ClickHouse tables ensured (4 domain tables + materialized views)")
+
+    # ------------------------------------------------------------------
+    # Insert methods
+    # ------------------------------------------------------------------
+
+    def insert_availability_latency(self, results: list[dict]) -> None:
+        """Batch insert availability/latency results."""
         if not results:
             return
         client = self._get_client()
-        data = []
-        for r in results:
-            row = [r.get(col) for col in _INSERT_COLUMNS]
-            data.append(row)
-        client.insert(
-            "check_results",
-            data,
-            column_names=_INSERT_COLUMNS,
-        )
+        data = [[r.get(col) for col in _AVAIL_INSERT_COLUMNS] for r in results]
+        client.insert("availability_latency", data, column_names=_AVAIL_INSERT_COLUMNS)
 
-    def insert_events(self, events: list[dict]) -> None:
-        """Batch insert events."""
-        if not events:
+    def insert_performance(self, results: list[dict]) -> None:
+        """Batch insert performance results."""
+        if not results:
             return
         client = self._get_client()
-        data = []
-        for e in events:
-            row = [e.get(col) for col in _EVENT_INSERT_COLUMNS]
-            data.append(row)
-        client.insert(
-            "events",
-            data,
-            column_names=_EVENT_INSERT_COLUMNS,
-        )
+        data = [[r.get(col) for col in _PERF_INSERT_COLUMNS] for r in results]
+        client.insert("performance", data, column_names=_PERF_INSERT_COLUMNS)
+
+    def insert_interface(self, results: list[dict]) -> None:
+        """Batch insert interface results."""
+        if not results:
+            return
+        client = self._get_client()
+        data = [[r.get(col) for col in _IFACE_INSERT_COLUMNS] for r in results]
+        client.insert("interface", data, column_names=_IFACE_INSERT_COLUMNS)
+
+    def insert_config(self, results: list[dict]) -> None:
+        """Batch insert config results."""
+        if not results:
+            return
+        client = self._get_client()
+        data = [[r.get(col) for col in _CONFIG_INSERT_COLUMNS] for r in results]
+        client.insert("config", data, column_names=_CONFIG_INSERT_COLUMNS)
+
+    def insert_by_table(self, table: str, results: list[dict]) -> None:
+        """Route inserts to the correct table by name."""
+        inserters = {
+            "availability_latency": self.insert_availability_latency,
+            "performance": self.insert_performance,
+            "interface": self.insert_interface,
+            "config": self.insert_config,
+        }
+        fn = inserters.get(table)
+        if fn is None:
+            logger.warning("Unknown target_table %r, falling back to availability_latency", table)
+            self.insert_availability_latency(results)
+        else:
+            fn(results)
+
+    # ------------------------------------------------------------------
+    # Query methods — availability_latency (primary, backward compat)
+    # ------------------------------------------------------------------
 
     def query_latest(
         self,
         *,
+        table: str = "availability_latency",
         tenant_id: str | None = None,
         device_id: str | None = None,
         collector_id: str | None = None,
     ) -> list[dict]:
-        """Query latest result per assignment from the materialized view."""
-        client = self._get_client()
-        sql = "SELECT * FROM check_results_latest FINAL"
+        """Query latest result per key from the materialized view."""
+        view = f"{table}_latest"
+        sql = f"SELECT * FROM {view} FINAL"
         wheres: list[str] = []
         params: dict[str, Any] = {}
 
@@ -348,16 +691,49 @@ class ClickHouseClient:
             sql += " WHERE " + " AND ".join(wheres)
         sql += " ORDER BY executed_at DESC"
 
-        result = client.query(sql, parameters=params)
-        return result.named_results()
+        try:
+            client = self._get_client()
+            result = client.query(sql, parameters=params)
+            return list(result.named_results())
+        except Exception as exc:
+            if self._is_connection_error(exc):
+                logger.warning("ClickHouse query_latest connection error, retrying: %s", exc)
+                client = self._reconnect()
+                result = client.query(sql, parameters=params)
+                return list(result.named_results())
+            raise
 
-    def query_by_device(self, device_id: str) -> list[dict]:
-        """Query latest results for a specific device."""
-        return self.query_latest(device_id=device_id)
+    def _is_table_missing_error(self, exc: Exception) -> bool:
+        """Check if an exception is due to a missing table/view."""
+        msg = str(exc).lower()
+        return "unknown table" in msg or "table" in msg and "doesn't exist" in msg
+
+    def query_by_device(self, device_id: str, table: str | None = None) -> list[dict]:
+        """Query latest results for a specific device across all tables."""
+        if table:
+            return self.query_latest(table=table, device_id=device_id)
+        # Query all domain tables and merge results
+        all_rows: list[dict] = []
+        for t in ("availability_latency", "performance", "interface", "config"):
+            try:
+                rows = list(self.query_latest(table=t, device_id=device_id))
+                if rows:
+                    logger.debug("query_by_device(%s): %s_latest returned %d rows", device_id, t, len(rows))
+                all_rows.extend(rows)
+            except Exception as exc:
+                if self._is_table_missing_error(exc):
+                    logger.debug("Table %s_latest does not exist yet, skipping", t)
+                else:
+                    logger.error("ClickHouse query failed for table %s, device %s: %s", t, device_id, exc)
+                    raise
+        if not all_rows:
+            logger.warning("query_by_device(%s): all tables returned 0 rows", device_id)
+        return all_rows
 
     def query_history(
         self,
         *,
+        table: str = "availability_latency",
         assignment_id: str | None = None,
         device_id: str | None = None,
         collector_id: str | None = None,
@@ -369,9 +745,8 @@ class ClickHouseClient:
         limit: int = 50,
         offset: int = 0,
     ) -> list[dict]:
-        """Query historical check results with filters."""
-        client = self._get_client()
-        sql = "SELECT * FROM check_results"
+        """Query historical results with filters."""
+        sql = f"SELECT * FROM {table}"
         wheres: list[str] = []
         params: dict[str, Any] = {}
 
@@ -405,11 +780,28 @@ class ClickHouseClient:
         sql += " ORDER BY executed_at DESC"
         sql += f" LIMIT {limit} OFFSET {offset}"
 
-        result = client.query(sql, parameters=params)
-        return result.named_results()
+        try:
+            client = self._get_client()
+            result = client.query(sql, parameters=params)
+            return list(result.named_results())
+        except Exception as exc:
+            if self._is_connection_error(exc):
+                logger.warning("ClickHouse query_history connection error, retrying: %s", exc)
+                client = self._reconnect()
+                result = client.query(sql, parameters=params)
+                return list(result.named_results())
+            raise
 
     def query_for_alert(self, sql: str, params: dict[str, Any] | None = None) -> list[dict]:
         """Execute an arbitrary read query for alert evaluation."""
-        client = self._get_client()
-        result = client.query(sql, parameters=params or {})
-        return result.named_results()
+        try:
+            client = self._get_client()
+            result = client.query(sql, parameters=params or {})
+            return list(result.named_results())
+        except Exception as exc:
+            if self._is_connection_error(exc):
+                logger.warning("ClickHouse query_for_alert connection error, retrying: %s", exc)
+                client = self._reconnect()
+                result = client.query(sql, parameters=params or {})
+                return list(result.named_results())
+            raise

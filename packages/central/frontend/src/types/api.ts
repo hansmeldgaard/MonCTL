@@ -227,6 +227,7 @@ export interface Assignment {
   schedule_human: string;
   config: Record<string, unknown>;
   enabled: boolean;
+  use_latest: boolean;
   created_at: string;
 }
 
@@ -234,12 +235,14 @@ export interface Assignment {
 export interface DeviceAssignment {
   id: string;
   app: AppInfo;
+  app_version_id: string;
   collector_id: string | null;
   schedule_type: string;
   schedule_value: string;
   schedule_human: string;
   config: Record<string, unknown>;
   enabled: boolean;
+  use_latest: boolean;
   created_at: string;
 }
 
@@ -250,11 +253,13 @@ export interface AppSummary {
   name: string;
   description: string | null;
   app_type: string;
+  target_table: string;
 }
 
 export interface AppVersion {
   id: string;
   version: string;
+  is_latest: boolean;
 }
 
 export interface AppDetail extends AppSummary {
@@ -329,13 +334,9 @@ export interface SnmpOid {
 // ── Monitoring Config ──────────────────────────────────────
 
 export interface MonitoringCheckConfig {
-  app_type: string | null;
-  port: number | null;
-  oid: string | null;
-  credential_name: string | null;
+  app_name: string | null;
+  config: Record<string, unknown>;
   interval_seconds: number;
-  ping_count: number | null;
-  ping_timeout: number | null;
 }
 
 export interface MonitoringConfig {

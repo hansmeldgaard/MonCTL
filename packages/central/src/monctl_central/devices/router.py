@@ -292,13 +292,9 @@ async def update_device(
 
 class MonitoringCheckConfig(BaseModel):
     """Configuration for a single monitoring check (availability or latency)."""
-    app_type: str | None = None
-    port: int | None = None
-    oid: str | None = None
-    credential_name: str | None = None
+    app_name: str | None = None
+    config: dict = Field(default_factory=dict)
     interval_seconds: int = 60
-    ping_count: int | None = None       # ping_check: number of ICMP packets (default 3)
-    ping_timeout: int | None = None     # ping_check: per-packet timeout in seconds (default 2)
 
 
 class UpdateMonitoringRequest(BaseModel):
@@ -308,21 +304,11 @@ class UpdateMonitoringRequest(BaseModel):
 
 def _monitoring_config_from_assignment(assignment, app_name: str) -> dict:
     """Convert an AppAssignment back into a MonitoringCheckConfig dict."""
-    config = assignment.config or {}
-    credential_name = None
-    cred_ref = config.get("snmp_credential", "")
-    if isinstance(cred_ref, str) and cred_ref.startswith("$credential:"):
-        credential_name = cred_ref[len("$credential:"):]
-    result = {
-        "app_type": app_name,
-        "port": config.get("port"),
-        "oid": config.get("oid"),
-        "credential_name": credential_name,
+    return {
+        "app_name": app_name,
+        "config": assignment.config or {},
         "interval_seconds": int(assignment.schedule_value),
-        "ping_count": config.get("count"),
-        "ping_timeout": config.get("timeout"),
     }
-    return result
 
 
 @router.get("/{device_id}/monitoring")
@@ -396,17 +382,24 @@ async def update_device_monitoring(
         ("availability", request.availability),
         ("latency", request.latency),
     ]:
-        if check_config is None or check_config.app_type is None:
+        if check_config is None or check_config.app_name is None:
             continue
 
         # Look up the app by name
         app = (
-            await db.execute(sa_select(App).where(App.name == check_config.app_type))
+            await db.execute(sa_select(App).where(App.name == check_config.app_name))
         ).scalar_one_or_none()
         if app is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"App '{check_config.app_type}' not found",
+                detail=f"App '{check_config.app_name}' not found",
+            )
+
+        # Only apps targeting availability_latency table can be used for monitoring
+        if app.target_table != "availability_latency":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"App '{check_config.app_name}' targets '{app.target_table}', not 'availability_latency'",
             )
 
         # Get the latest published version
@@ -421,31 +414,15 @@ async def update_device_monitoring(
         if app_version is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"No version found for app '{check_config.app_type}'",
+                detail=f"No version found for app '{check_config.app_name}'",
             )
-
-        # Build app config based on app type
-        config: dict = {}
-        if check_config.app_type == "port_check":
-            if check_config.port is not None:
-                config["port"] = check_config.port
-        elif check_config.app_type == "ping_check":
-            if check_config.ping_count is not None:
-                config["count"] = check_config.ping_count
-            if check_config.ping_timeout is not None:
-                config["timeout"] = check_config.ping_timeout
-        elif check_config.app_type == "snmp_check":
-            if check_config.oid is not None:
-                config["oid"] = check_config.oid
-            if check_config.credential_name:
-                config["snmp_credential"] = f"$credential:{check_config.credential_name}"
 
         assignment = AppAssignment(
             app_id=app.id,
             app_version_id=app_version.id,
             device_id=uuid.UUID(device_id),
             collector_id=None,
-            config=config,
+            config=check_config.config,
             schedule_type="interval",
             schedule_value=str(check_config.interval_seconds),
             resource_limits={"timeout_seconds": 30, "memory_mb": 256},

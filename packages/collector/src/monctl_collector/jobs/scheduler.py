@@ -120,8 +120,7 @@ class JobScheduler:
         for d in job_dicts:
             try:
                 job = _dict_to_job(d)
-                if self._is_mine(job.job_id):
-                    self._my_jobs[job.job_id] = job
+                self._my_jobs[job.job_id] = job
             except Exception as exc:
                 logger.warning("job_load_error", job_id=d.get("job_id"), error=str(exc))
 
@@ -194,18 +193,16 @@ class JobScheduler:
 
             await self._cache.upsert_job(job)
 
-            if self._is_mine(job.job_id):
-                self._my_jobs[job.job_id] = job
-                # Ensure we have a profile
-                if job.job_id not in self._profiles:
-                    row = await self._cache.get_profile(job.job_id)
-                    if row:
-                        self._profiles[job.job_id] = _row_to_profile(job.job_id, row)
-                    else:
-                        self._profiles[job.job_id] = JobProfile(job_id=job.job_id)
-            else:
-                # Job moved to another node (ring rebalanced)
-                self._my_jobs.pop(job.job_id, None)
+            # Central partitions jobs server-side (weighted consistent hashing) —
+            # all jobs returned from the /jobs endpoint belong to this collector.
+            self._my_jobs[job.job_id] = job
+            # Ensure we have a profile
+            if job.job_id not in self._profiles:
+                row = await self._cache.get_profile(job.job_id)
+                if row:
+                    self._profiles[job.job_id] = _row_to_profile(job.job_id, row)
+                else:
+                    self._profiles[job.job_id] = JobProfile(job_id=job.job_id)
 
         logger.debug(
             "job_sync_complete",

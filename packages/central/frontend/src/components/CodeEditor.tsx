@@ -23,7 +23,7 @@ export function CodeEditor({ value, onChange, readOnly = false, height = "300px"
       python(),
       oneDark,
       EditorView.theme({
-        "&": { height, fontSize: "13px" },
+        "&": { height: "100%", fontSize: "13px" },
         ".cm-scroller": { overflow: "auto" },
       }),
     ];
@@ -78,6 +78,7 @@ export function CodeEditor({ value, onChange, readOnly = false, height = "300px"
     <div
       ref={containerRef}
       className="rounded-md border border-zinc-700 overflow-hidden"
+      style={{ resize: "vertical", height, minHeight: "150px" }}
     />
   );
 }

@@ -10,9 +10,11 @@ Authentication: Bearer token (API key) in Authorization header — same as exist
 
 from __future__ import annotations
 
+import bisect
 import hashlib
 import json
 import re
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -68,6 +70,70 @@ async def _require_active_collector(auth: dict, db: AsyncSession) -> None:
 # Helper
 # ---------------------------------------------------------------------------
 
+def _compute_capacity_weights(
+    collectors: list[Collector], stale_threshold: float = 120.0,
+) -> dict[str, float]:
+    """Compute capacity weights for each collector based on load metrics.
+
+    Returns {collector.hostname: weight} where higher weight = more capacity.
+    """
+    now_ts = time.time()
+    weights: dict[str, float] = {}
+    for c in collectors:
+        # Stale or missing load data → fallback to equal weight
+        if c.load_updated_at is None:
+            weights[c.hostname] = 1.0
+            continue
+        age = now_ts - c.load_updated_at.timestamp()
+        if age > stale_threshold:
+            weights[c.hostname] = 1.0
+            continue
+
+        capacity = max(0.05, 1.0 - c.effective_load)
+        # Penalty for high deadline miss rate
+        if c.deadline_miss_rate > 0.1:
+            capacity *= 0.5
+        weights[c.hostname] = capacity
+    return weights
+
+
+def _weighted_job_owner(
+    assignment_id: str,
+    weights: dict[str, float],
+    vnodes_base: int = 100,
+) -> str:
+    """Weighted consistent hashing — returns the hostname that owns this job.
+
+    Each collector gets `vnodes_base * normalized_weight` virtual nodes on a
+    SHA256 hash ring. More capacity → more vnodes → more jobs.
+    """
+    if not weights:
+        return ""
+    if len(weights) == 1:
+        return next(iter(weights))
+
+    # Normalize weights so the max is 1.0
+    max_w = max(weights.values()) or 1.0
+
+    # Build ring: list of (hash_value, hostname) sorted by hash_value
+    ring_hashes: list[int] = []
+    ring_nodes: list[str] = []
+    for hostname, w in sorted(weights.items()):
+        n_vnodes = max(1, int(vnodes_base * (w / max_w)))
+        for i in range(n_vnodes):
+            h = int(hashlib.sha256(f"{hostname}:{i}".encode()).hexdigest(), 16)
+            idx = bisect.bisect_left(ring_hashes, h)
+            ring_hashes.insert(idx, h)
+            ring_nodes.insert(idx, hostname)
+
+    # Hash the assignment and find its position on the ring
+    key_hash = int(hashlib.sha256(assignment_id.encode()).hexdigest(), 16)
+    idx = bisect.bisect_left(ring_hashes, key_hash)
+    if idx >= len(ring_hashes):
+        idx = 0
+    return ring_nodes[idx]
+
+
 _CRED_REF_RE = re.compile(r"\$credential:([^\"}\s]+)")
 
 
@@ -98,6 +164,8 @@ async def get_jobs(
 
     If collector_id is provided and the collector belongs to a group,
     only assignments for devices in that group are returned.
+    Jobs are partitioned server-side across active collectors in the group
+    using consistent hashing so each job is executed by exactly one collector.
     """
     await _require_active_collector(auth, db)
 
@@ -111,8 +179,9 @@ async def get_jobs(
                 detail=f"Invalid 'since' timestamp: {since!r}. Use ISO-8601 format.",
             )
 
-    # Resolve collector's group for filtering
+    # Resolve collector's group for filtering and partitioning
     group_id: uuid.UUID | None = None
+    coll: Collector | None = None
     if collector_id:
         try:
             coll = await db.get(Collector, uuid.UUID(collector_id))
@@ -140,12 +209,62 @@ async def get_jobs(
     result = await db.execute(stmt)
     rows = result.all()
 
+    # ── Server-side weighted job partitioning ────────────────────────────
+    # When a collector belongs to a group with multiple active members,
+    # partition jobs using weighted consistent hashing so collectors with
+    # more available capacity receive proportionally more jobs.
+    if group_id is not None and coll is not None:
+        group_stmt = (
+            select(Collector)
+            .where(Collector.group_id == group_id, Collector.status == "ACTIVE")
+            .order_by(Collector.hostname)  # deterministic ordering
+        )
+        group_result = await db.execute(group_stmt)
+        group_collectors = group_result.scalars().all()
+
+        if len(group_collectors) > 1:
+            my_hostname = coll.hostname
+            weights = _compute_capacity_weights(group_collectors)
+
+            if my_hostname in weights:
+                total_before = len(rows)
+                rows = [
+                    r for r in rows
+                    if _weighted_job_owner(str(r.AppAssignment.id), weights) == my_hostname
+                ]
+                logger.info(
+                    "job_partitioning_weighted",
+                    collector=my_hostname,
+                    weights=weights,
+                    group_size=len(group_collectors),
+                    total_jobs=total_before,
+                    assigned_jobs=len(rows),
+                )
+
+    # Pre-load latest versions for apps that have use_latest assignments
+    latest_versions: dict[uuid.UUID, AppVersion] = {}
+    use_latest_app_ids = {
+        row.AppAssignment.app_id for row in rows if row.AppAssignment.use_latest
+    }
+    if use_latest_app_ids:
+        latest_stmt = select(AppVersion).where(
+            AppVersion.app_id.in_(use_latest_app_ids),
+            AppVersion.is_latest == True,  # noqa: E712
+        )
+        latest_result = await db.execute(latest_stmt)
+        for lv in latest_result.scalars().all():
+            latest_versions[lv.app_id] = lv
+
     jobs = []
     for row in rows:
         assignment: AppAssignment = row.AppAssignment
         app: App = row.App
         app_version: AppVersion = row.AppVersion
         device: Device | None = row.Device
+
+        # Resolve version: use_latest overrides the pinned version
+        if assignment.use_latest and assignment.app_id in latest_versions:
+            app_version = latest_versions[assignment.app_id]
 
         # Derive device_host: use device.address if linked, else try config["host"]
         device_host: str | None = None
@@ -218,7 +337,7 @@ async def get_app_metadata(
     if app is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"App '{app_name}' not found")
 
-    # Pick version
+    # Pick version: explicit > is_latest > newest
     versions = sorted(app.versions, key=lambda v: v.published_at, reverse=True)
     if version:
         av = next((v for v in versions if v.version == version), None)
@@ -228,7 +347,7 @@ async def get_app_metadata(
                 detail=f"App '{app_name}' version '{version}' not found",
             )
     else:
-        av = versions[0] if versions else None
+        av = next((v for v in versions if v.is_latest), None) or (versions[0] if versions else None)
         if av is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -280,7 +399,7 @@ async def get_app_code(
                 detail=f"App '{app_name}' version '{version}' not found",
             )
     else:
-        av = versions[0] if versions else None
+        av = next((v for v in versions if v.is_latest), None) or (versions[0] if versions else None)
         if av is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -499,6 +618,7 @@ async def submit_results(
                 metric_values.append(float(m["value"]))
 
         ch_rows.append({
+            "_target_table": enrichment.get("target_table", "availability_latency"),
             "assignment_id": str(assignment_id),
             "collector_id": collector_uuid,
             "app_id": enrichment.get("app_id", str(assignment_id)),
@@ -522,11 +642,19 @@ async def submit_results(
             "tenant_id": enrichment.get("tenant_id", "00000000-0000-0000-0000-000000000000"),
         })
 
+    # Route results to the correct ClickHouse table based on target_table
     if ch_rows:
-        try:
-            ch.insert_check_results(ch_rows)
-        except Exception:
-            logger.exception("clickhouse_insert_error", node=request.collector_node)
+        # Group by target_table
+        by_table: dict[str, list[dict]] = {}
+        for row in ch_rows:
+            tt = row.pop("_target_table", "availability_latency")
+            by_table.setdefault(tt, []).append(row)
+
+        for table, rows in by_table.items():
+            try:
+                ch.insert_by_table(table, rows)
+            except Exception:
+                logger.exception("clickhouse_insert_error", node=request.collector_node, table=table)
 
     return {
         "accepted": len(ch_rows),
@@ -553,6 +681,7 @@ async def _enrich_assignment(db: AsyncSession, assignment_id: str) -> dict:
             return {
                 "app_id": str(app.id),
                 "app_name": app.name,
+                "target_table": app.target_table,
                 "device_id": str(device.id) if device else "00000000-0000-0000-0000-000000000000",
                 "device_name": device.name if device else "",
                 "role": assignment.role or "",
@@ -608,6 +737,13 @@ async def collector_heartbeat(
         # Store gossip peer states reported by this collector
         if request.peer_states:
             collector.reported_peer_states = request.peer_states
+        # Persist load metrics for weighted job partitioning
+        collector.load_score = request.load_score
+        collector.effective_load = request.effective_load
+        collector.total_jobs = request.total_jobs
+        collector.worker_count = request.worker_count
+        collector.deadline_miss_rate = request.deadline_miss_rate
+        collector.load_updated_at = utc_now()
         await db.flush()
 
     return {

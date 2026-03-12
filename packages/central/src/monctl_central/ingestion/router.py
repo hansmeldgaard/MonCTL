@@ -48,6 +48,7 @@ async def ingest(
         enrichment = await _enrich_legacy(db, app_result.assignment_id)
 
         ch_rows.append({
+            "_target_table": enrichment.get("target_table", "availability_latency"),
             "assignment_id": app_result.assignment_id,
             "collector_id": collector_uuid,
             "app_id": app_result.app_id,
@@ -84,9 +85,13 @@ async def ingest(
 
     try:
         if ch_rows:
-            ch.insert_check_results(ch_rows)
-        if event_rows:
-            ch.insert_events(event_rows)
+            # Group by target_table
+            by_table: dict[str, list[dict]] = {}
+            for row in ch_rows:
+                tt = row.pop("_target_table", "availability_latency")
+                by_table.setdefault(tt, []).append(row)
+            for table, rows in by_table.items():
+                ch.insert_by_table(table, rows)
     except Exception:
         logger.exception("clickhouse_insert_error")
 
@@ -122,6 +127,7 @@ async def _enrich_legacy(db: AsyncSession, assignment_id: str) -> dict:
             return {
                 "app_id": str(app.id),
                 "app_name": app.name,
+                "target_table": app.target_table,
                 "device_id": str(device.id) if device else "00000000-0000-0000-0000-000000000000",
                 "device_name": device.name if device else "",
                 "role": assignment.role or "",

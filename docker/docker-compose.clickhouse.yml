@@ -12,6 +12,7 @@ services:
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-monctl}
       CLICKHOUSE_REPLICA: ${CLICKHOUSE_REPLICA}
       KEEPER_SERVER_ID: ${KEEPER_SERVER_ID}
+      INTERSERVER_HTTP_HOST: ${INTERSERVER_HTTP_HOST}
     volumes:
       - ch_data:/var/lib/clickhouse
       - ch_logs:/var/log/clickhouse-server

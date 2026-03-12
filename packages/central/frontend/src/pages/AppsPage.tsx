@@ -28,9 +28,11 @@ export function AppsPage() {
   const [addName, setAddName] = useState("");
   const [addDesc, setAddDesc] = useState("");
   const [addType, setAddType] = useState("script");
+  const [addTargetTable, setAddTargetTable] = useState("availability_latency");
   const [addError, setAddError] = useState<string | null>(null);
 
   const [deleteTarget, setDeleteTarget] = useState<AppSummary | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -41,8 +43,9 @@ export function AppsPage() {
         name: addName.trim(),
         description: addDesc.trim() || undefined,
         app_type: addType,
+        target_table: addTargetTable,
       });
-      setAddName(""); setAddDesc(""); setAddType("script"); setAddOpen(false);
+      setAddName(""); setAddDesc(""); setAddType("script"); setAddTargetTable("availability_latency"); setAddOpen(false);
     } catch (err) {
       setAddError(err instanceof Error ? err.message : "Failed to create app");
     }
@@ -50,7 +53,13 @@ export function AppsPage() {
 
   async function handleDelete() {
     if (!deleteTarget) return;
-    try { await deleteApp.mutateAsync(deleteTarget.id); setDeleteTarget(null); } catch { /* silent */ }
+    setDeleteError(null);
+    try {
+      await deleteApp.mutateAsync(deleteTarget.id);
+      setDeleteTarget(null);
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "Failed to delete app");
+    }
   }
 
   if (isLoading) {
@@ -70,7 +79,7 @@ export function AppsPage() {
             Manage monitoring apps and their versions.
           </p>
         </div>
-        <Button size="sm" onClick={() => { setAddName(""); setAddDesc(""); setAddType("script"); setAddError(null); setAddOpen(true); }} className="gap-1.5">
+        <Button size="sm" onClick={() => { setAddName(""); setAddDesc(""); setAddType("script"); setAddTargetTable("availability_latency"); setAddError(null); setAddOpen(true); }} className="gap-1.5">
           <Plus className="h-4 w-4" />
           New App
         </Button>
@@ -96,6 +105,7 @@ export function AppsPage() {
                 <TableRow>
                   <TableHead>Name</TableHead>
                   <TableHead>Type</TableHead>
+                  <TableHead>Target Table</TableHead>
                   <TableHead>Description</TableHead>
                   <TableHead className="w-12"></TableHead>
                 </TableRow>
@@ -112,23 +122,26 @@ export function AppsPage() {
                       </Link>
                     </TableCell>
                     <TableCell>
-                      <Badge variant={app.app_type === "builtin" ? "default" : "info"}>
+                      <Badge variant="info">
                         {app.app_type}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="default" className="font-mono text-xs">
+                        {app.target_table}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-zinc-400 text-sm max-w-[400px] truncate">
                       {app.description ?? <span className="text-zinc-600 italic">—</span>}
                     </TableCell>
                     <TableCell>
-                      {app.app_type !== "builtin" && (
-                        <button
-                          onClick={() => setDeleteTarget(app)}
-                          className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                          title="Delete"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      )}
+                      <button
+                        onClick={() => setDeleteTarget(app)}
+                        className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                        title="Delete"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -153,6 +166,15 @@ export function AppsPage() {
             </Select>
           </div>
           <div className="space-y-1.5">
+            <Label htmlFor="app-target">Target Table</Label>
+            <Select id="app-target" value={addTargetTable} onChange={(e) => setAddTargetTable(e.target.value)}>
+              <option value="availability_latency">availability_latency</option>
+              <option value="performance">performance</option>
+              <option value="interface">interface</option>
+              <option value="config">config</option>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
             <Label htmlFor="app-desc">Description <span className="font-normal text-zinc-500">(optional)</span></Label>
             <Input id="app-desc" value={addDesc} onChange={(e) => setAddDesc(e.target.value)} />
           </div>
@@ -168,13 +190,13 @@ export function AppsPage() {
       </Dialog>
 
       {/* Delete App Dialog */}
-      <Dialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)} title="Delete App">
+      <Dialog open={!!deleteTarget} onClose={() => { setDeleteTarget(null); setDeleteError(null); }} title="Delete App">
         <p className="text-sm text-zinc-400">
-          Delete app <span className="font-semibold text-zinc-200">{deleteTarget?.name}</span>?
-          All versions and assignments will be removed.
+          Delete app <span className="font-semibold text-zinc-200">{deleteTarget?.name}</span> and all its versions?
         </p>
+        {deleteError && <p className="text-sm text-red-400 mt-2">{deleteError}</p>}
         <DialogFooter>
-          <Button variant="secondary" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+          <Button variant="secondary" onClick={() => { setDeleteTarget(null); setDeleteError(null); }}>Cancel</Button>
           <Button variant="destructive" onClick={handleDelete} disabled={deleteApp.isPending}>
             {deleteApp.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
             Delete

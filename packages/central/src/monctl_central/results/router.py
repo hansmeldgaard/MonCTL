@@ -7,6 +7,7 @@ tenant_id are stored in each ClickHouse row).
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime
 from typing import Optional
@@ -17,9 +18,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from monctl_central.dependencies import check_tenant_access, get_clickhouse, get_db, require_auth
 from monctl_central.storage.models import Device
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 STATE_NAMES = {0: "OK", 1: "WARNING", 2: "CRITICAL", 3: "UNKNOWN"}
+
+
+def _ensure_utc_iso(dt) -> str | None:
+    """Format datetime as ISO 8601 with explicit UTC offset."""
+    if dt is None:
+        return None
+    if isinstance(dt, datetime):
+        if dt.tzinfo is None:
+            return dt.isoformat() + "+00:00"
+        return dt.isoformat()
+    return str(dt) if dt else None
 
 
 def _format_ch_row(r: dict) -> dict:
@@ -46,16 +60,20 @@ def _format_ch_row(r: dict) -> dict:
         "status_code": int(status_code) if status_code and status_code > 0 else None,
         "role": r.get("role", ""),
         "error_message": r.get("error_message", "") or None,
-        "executed_at": r["executed_at"].isoformat() if isinstance(r.get("executed_at"), datetime) else str(r.get("executed_at", "")),
-        "received_at": r["received_at"].isoformat() if isinstance(r.get("received_at"), datetime) else str(r.get("received_at", "")),
+        "executed_at": _ensure_utc_iso(r.get("executed_at")) or "",
+        "received_at": _ensure_utc_iso(r.get("received_at")) or "",
         "execution_time_ms": round(exec_time * 1000, 2) if exec_time and exec_time > 0 else None,
-        "started_at": r["started_at"].isoformat() if isinstance(r.get("started_at"), datetime) else (str(r["started_at"]) if r.get("started_at") else None),
+        "started_at": _ensure_utc_iso(r.get("started_at")),
         "collector_name": r.get("collector_name", "") or None,
     }
 
 
+VALID_TABLES = {"availability_latency", "performance", "interface", "config"}
+
+
 @router.get("")
 async def list_results(
+    table: Optional[str] = Query(default=None, description="ClickHouse table to query (omit to search all tables)"),
     collector_id: Optional[str] = Query(default=None, description="Filter by collector UUID"),
     app_id: Optional[str] = Query(default=None, description="Filter by app UUID"),
     device_id: Optional[str] = Query(default=None, description="Filter by device UUID"),
@@ -67,6 +85,12 @@ async def list_results(
     auth: dict = Depends(require_auth),
 ):
     """List recent check results, newest first. Reads from ClickHouse."""
+    # Determine which tables to query
+    if table and table in VALID_TABLES:
+        tables = [table]
+    else:
+        tables = list(VALID_TABLES)
+
     ch = get_clickhouse()
 
     # Parse tenant filter
@@ -85,24 +109,39 @@ async def list_results(
     if to_ts:
         to_dt = datetime.fromisoformat(to_ts.replace("Z", "+00:00"))
 
-    rows = ch.query_history(
-        device_id=device_id,
-        collector_id=collector_id,
-        app_id=app_id,
-        state=state,
-        tenant_id=tenant_id,
-        from_ts=from_dt,
-        to_ts=to_dt,
-        limit=limit,
-        offset=offset,
-    )
+    all_rows: list[dict] = []
+    for t in tables:
+        try:
+            rows = ch.query_history(
+                table=t,
+                device_id=device_id,
+                collector_id=collector_id,
+                app_id=app_id,
+                state=state,
+                tenant_id=tenant_id,
+                from_ts=from_dt,
+                to_ts=to_dt,
+                limit=limit,
+                offset=offset,
+            )
+            all_rows.extend(rows)
+        except Exception as exc:
+            if ch._is_table_missing_error(exc):
+                logger.debug("Table %s does not exist yet, skipping", t)
+            else:
+                logger.error("ClickHouse query failed for table %s: %s", t, exc)
+                raise
 
     # Multi-tenant filter for users with multiple tenant assignments
     if tenant_ids is not None and len(tenant_ids) > 1:
         tid_set = set(tenant_ids)
-        rows = [r for r in rows if str(r.get("tenant_id", "")) in tid_set]
+        all_rows = [r for r in all_rows if str(r.get("tenant_id", "")) in tid_set]
 
-    data = [_format_ch_row(r) for r in rows]
+    # Sort merged results by executed_at descending and apply limit
+    all_rows.sort(key=lambda r: r.get("executed_at", ""), reverse=True)
+    all_rows = all_rows[:limit]
+
+    data = [_format_ch_row(r) for r in all_rows]
     return {
         "status": "success",
         "data": data,
@@ -112,15 +151,21 @@ async def list_results(
 
 @router.get("/latest")
 async def latest_results(
+    table: Optional[str] = Query(default=None, description="ClickHouse table to query (omit to search all tables)"),
     collector_id: Optional[str] = Query(default=None, description="Filter by collector UUID"),
     device_id: Optional[str] = Query(default=None, description="Filter by device UUID"),
     auth: dict = Depends(require_auth),
 ):
-    """Return the most recent result per assignment_id (status dashboard).
+    """Return the most recent result per key (status dashboard).
 
     Uses ClickHouse ReplacingMergeTree materialized view with FINAL
     for instant deduplication — no GROUP BY subquery needed.
     """
+    if table and table in VALID_TABLES:
+        tables = [table]
+    else:
+        tables = list(VALID_TABLES)
+
     ch = get_clickhouse()
 
     tenant_ids = auth.get("tenant_ids")
@@ -131,17 +176,28 @@ async def latest_results(
         if len(tenant_ids) == 1:
             tenant_id = tenant_ids[0]
 
-    rows = ch.query_latest(
-        tenant_id=tenant_id,
-        device_id=device_id,
-        collector_id=collector_id,
-    )
+    all_rows: list[dict] = []
+    for t in tables:
+        try:
+            rows = ch.query_latest(
+                table=t,
+                tenant_id=tenant_id,
+                device_id=device_id,
+                collector_id=collector_id,
+            )
+            all_rows.extend(rows)
+        except Exception as exc:
+            if ch._is_table_missing_error(exc):
+                logger.debug("Table %s_latest does not exist yet, skipping", t)
+            else:
+                logger.error("ClickHouse query failed for table %s: %s", t, exc)
+                raise
 
     if tenant_ids is not None and len(tenant_ids) > 1:
         tid_set = set(tenant_ids)
-        rows = [r for r in rows if str(r.get("tenant_id", "")) in tid_set]
+        all_rows = [r for r in all_rows if str(r.get("tenant_id", "")) in tid_set]
 
-    data = [_format_ch_row(r) for r in rows]
+    data = [_format_ch_row(r) for r in all_rows]
     return {
         "status": "success",
         "data": data,
@@ -169,7 +225,14 @@ async def device_status(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     ch = get_clickhouse()
-    rows = ch.query_by_device(device_id)
+    try:
+        rows = ch.query_by_device(device_id)
+    except Exception:
+        logger.exception("query_by_device failed for device %s", device_id)
+        rows = []
+
+    if not rows:
+        logger.warning("device_status: 0 checks returned from ClickHouse for device %s", device_id)
 
     checks = []
     for r in rows:

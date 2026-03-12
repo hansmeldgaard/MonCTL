@@ -7,7 +7,7 @@ MonCTL is a distributed monitoring platform with a central management server and
 ## Architecture
 
 ```
-Browser → HAProxy (VIP 192.168.1.40:443) → central1-4 (:8444)
+Browser → HAProxy (VIP 10.145.210.40:443) → central1-4 (:8444)
                                               ├── PostgreSQL (Patroni HA)
                                               ├── ClickHouse (replicated cluster)
                                               └── Redis
@@ -372,13 +372,13 @@ Key models: Device, Collector, CollectorCluster, CollectorGroup, App, AppVersion
 
 ### Server Inventory
 
-| Role     | Hosts          | IPs               |
-|----------|----------------|--------------------|
-| Central  | central1-4     | 192.168.1.41 - .44 |
-| Workers  | worker1-4      | 192.168.1.31 - .34 |
-| VIP      | (keepalived)   | 192.168.1.40       |
+| Role     | Hosts          | IPs                    |
+|----------|----------------|------------------------|
+| Central  | central1-4     | 10.145.210.41 - .44    |
+| Workers  | worker1-4      | 10.145.210.31 - .34    |
+| VIP      | (keepalived)   | 10.145.210.40          |
 
-SSH user: `hans` for all servers.
+SSH user: `monctl` for all servers.
 
 ### Code Style
 

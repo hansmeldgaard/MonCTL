@@ -3,15 +3,26 @@ import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils.ts";
 
+const SIZE_CLASSES = {
+  sm: "max-w-sm",
+  md: "max-w-lg",
+  lg: "max-w-2xl",
+  xl: "max-w-4xl",
+  full: "max-w-6xl",
+} as const;
+
+type DialogSize = keyof typeof SIZE_CLASSES;
+
 interface DialogProps {
   open: boolean;
   onClose: () => void;
   title?: string;
   children: React.ReactNode;
   className?: string;
+  size?: DialogSize;
 }
 
-export function Dialog({ open, onClose, title, children, className }: DialogProps) {
+export function Dialog({ open, onClose, title, children, className, size = "md" }: DialogProps) {
   // Close on Escape key
   useEffect(() => {
     if (!open) return;
@@ -43,7 +54,7 @@ export function Dialog({ open, onClose, title, children, className }: DialogProp
       {/* Panel */}
       <div
         className={cn(
-          "relative z-10 w-full max-w-lg rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl",
+          `relative z-10 w-full ${SIZE_CLASSES[size]} rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl`,
           className,
         )}
       >

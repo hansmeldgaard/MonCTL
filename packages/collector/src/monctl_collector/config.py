@@ -51,7 +51,7 @@ class SchedulingConfig:
 
 @dataclass
 class WorkStealingConfig:
-    enabled: bool = True
+    enabled: bool = False  # Central handles load-aware partitioning server-side
     check_interval: int = 30            # seconds between work-steal rounds
     overload_factor: float = 1.3        # steal if load > median * overload_factor
     max_steals_per_round: int = 1
@@ -139,7 +139,7 @@ def load_config(yaml_path: str = "/etc/collector/config.yaml") -> CollectorConfi
         deadline_miss_threshold=_get("scheduling", "deadline_miss_threshold", 0.05),
     )
     work_stealing = WorkStealingConfig(
-        enabled=_get("work_stealing", "enabled", True),
+        enabled=_get("work_stealing", "enabled", False),
         check_interval=_get("work_stealing", "check_interval", 30),
         overload_factor=_get("work_stealing", "overload_factor", 1.3),
         max_steals_per_round=_get("work_stealing", "max_steals_per_round", 1),

@@ -8,6 +8,7 @@ from datetime import datetime
 from sqlalchemy import (
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -65,6 +66,12 @@ class Collector(Base):
     )
     peer_address: Mapped[str | None] = mapped_column(String(255))
     reported_peer_states: Mapped[dict | None] = mapped_column(JSONB)
+    load_score: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.0")
+    effective_load: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.0")
+    total_jobs: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    worker_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    deadline_miss_rate: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.0")
+    load_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     fingerprint: Mapped[str | None] = mapped_column(String(64), index=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     approved_by: Mapped[str | None] = mapped_column(String(255))
@@ -105,6 +112,9 @@ class App(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default="now()"
     )
+    target_table: Mapped[str] = mapped_column(
+        String(50), nullable=False, server_default="availability_latency"
+    )
 
     versions: Mapped[list["AppVersion"]] = relationship(back_populates="app", cascade="all, delete-orphan")
 
@@ -128,6 +138,7 @@ class AppVersion(Base):
     source_code: Mapped[str | None] = mapped_column(Text)
     requirements: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
     entry_class: Mapped[str | None] = mapped_column(String(200))
+    is_latest: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
 
     app: Mapped[App] = relationship(back_populates="versions")
 
@@ -259,6 +270,7 @@ class AppAssignment(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     # Optional role for structured monitoring checks: "availability" | "latency" | None
     role: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    use_latest: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default="now()"
     )

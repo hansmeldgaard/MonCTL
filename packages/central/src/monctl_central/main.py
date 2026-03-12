@@ -19,8 +19,8 @@ from monctl_central.dependencies import get_engine, get_session_factory
 logger = structlog.get_logger()
 
 
-def _get_builtin_apps():
-    """Return list of (name, description, source_code, entry_class, requirements) for built-in apps."""
+def _get_default_apps():
+    """Return list of (name, description, source_code, entry_class, requirements) for default apps."""
     ping_check_code = '''\
 """ICMP ping check — measures reachability and round-trip time."""
 import asyncio
@@ -205,9 +205,26 @@ class Poller(BasePoller):
 '''
 
     return [
-        ("ping_check", "Built-in ICMP ping check", ping_check_code, "Poller", []),
-        ("port_check", "Built-in TCP port check", port_check_code, "Poller", []),
-        ("snmp_check", "Built-in SNMP check (v1/v2c/v3)", snmp_check_code, "Poller", []),
+        ("ping_check", "ICMP ping check", ping_check_code, "Poller", [], {
+            "type": "object",
+            "properties": {
+                "count": {"type": "integer", "title": "Packet Count", "default": 3, "minimum": 1, "maximum": 20},
+                "timeout": {"type": "integer", "title": "Timeout (s)", "default": 2, "minimum": 1, "maximum": 30},
+            },
+        }),
+        ("port_check", "TCP port check", port_check_code, "Poller", [], {
+            "type": "object",
+            "properties": {
+                "port": {"type": "integer", "title": "Port", "default": 443, "minimum": 1, "maximum": 65535},
+            },
+        }),
+        ("snmp_check", "SNMP check (v1/v2c/v3)", snmp_check_code, "Poller", [], {
+            "type": "object",
+            "properties": {
+                "oid": {"type": "string", "title": "OID", "x-widget": "snmp-oid"},
+                "snmp_credential": {"type": "string", "title": "Credential", "x-widget": "credential"},
+            },
+        }),
     ]
 
 
@@ -272,15 +289,18 @@ async def lifespan(app: FastAPI):
                 await session.commit()
                 logger.info("device_types_seeded", count=len(_DEFAULT_DEVICE_TYPES))
 
-        # Seed built-in apps with source code
-        _BUILTIN_APPS = _get_builtin_apps()
+        # Seed default apps with source code
+        _DEFAULT_APPS = _get_default_apps()
         async with factory() as session:
-            for app_name, desc, source_code, entry_class, requirements in _BUILTIN_APPS:
+            for app_name, desc, source_code, entry_class, requirements, config_schema in _DEFAULT_APPS:
                 existing_app = (
                     await session.execute(select(App).where(App.name == app_name))
                 ).scalar_one_or_none()
                 if existing_app is None:
-                    app_obj = App(name=app_name, description=desc, app_type="builtin")
+                    app_obj = App(
+                        name=app_name, description=desc, app_type="script",
+                        config_schema=config_schema,
+                    )
                     session.add(app_obj)
                     await session.flush()
                     import hashlib as _hl
@@ -294,6 +314,9 @@ async def lifespan(app: FastAPI):
                         requirements=requirements,
                     ))
                 else:
+                    # Update existing app: backfill config_schema if missing
+                    if existing_app.config_schema is None and config_schema:
+                        existing_app.config_schema = config_schema
                     # Update existing app version if source_code is missing
                     from sqlalchemy.orm import selectinload
                     stmt = select(App).options(selectinload(App.versions)).where(App.name == app_name)
@@ -307,7 +330,7 @@ async def lifespan(app: FastAPI):
                             v.requirements = requirements
                             v.checksum_sha256 = _hl.sha256(source_code.encode()).hexdigest()
             await session.commit()
-            logger.info("builtin_apps_seeded")
+            logger.info("default_apps_seeded")
 
     # ── ClickHouse schema init ─────────────────────────────────────────────
     from monctl_central.dependencies import get_clickhouse

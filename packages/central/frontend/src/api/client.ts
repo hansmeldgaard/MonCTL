@@ -35,8 +35,14 @@ async function request<T>(
   }
 
   if (!res.ok) {
-    const text = await res.text().catch(() => "Unknown error");
-    throw new ApiError(res.status, text);
+    let message = "Unknown error";
+    try {
+      const body = await res.json();
+      message = body.detail ?? JSON.stringify(body);
+    } catch {
+      message = await res.text().catch(() => "Unknown error");
+    }
+    throw new ApiError(res.status, message);
   }
 
   // 204 No Content (and any other empty-body success) has no JSON to parse.

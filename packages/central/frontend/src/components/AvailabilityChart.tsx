@@ -451,7 +451,7 @@ export function AvailabilityChart({ results, fromTs, toTs, timezone = "UTC" }: A
   return (
     <div className="space-y-4">
       {/* Availability timeline strip */}
-      <div>
+      <div style={{ paddingLeft: 48, paddingRight: 16 }}>
         <div className="mb-1.5 flex items-center gap-3">
           <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
             Availability

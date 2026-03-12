@@ -449,6 +449,26 @@ export function useDeviceAssignments(deviceId: string | undefined) {
   });
 }
 
+export function useUpdateAssignment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: {
+      id: string;
+      data: {
+        schedule_type?: string;
+        schedule_value?: string;
+        config?: Record<string, unknown>;
+        enabled?: boolean;
+        app_version_id?: string;
+        use_latest?: boolean;
+      };
+    }) => apiPut<{ id: string }>(`/apps/assignments/${id}`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["device-assignments"] });
+    },
+  });
+}
+
 export function useDeleteAssignment() {
   const qc = useQueryClient();
   return useMutation({
@@ -491,6 +511,7 @@ export function useCreateAssignment() {
       schedule_value: string;
       config: Record<string, unknown>;
       resource_limits?: Record<string, unknown>;
+      use_latest?: boolean;
     }) => apiPost<{ id: string }>("/apps/assignments", data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["device-assignments"] });
@@ -810,6 +831,7 @@ export function useCreateApp() {
       description?: string;
       app_type: string;
       config_schema?: Record<string, unknown>;
+      target_table?: string;
     }) => apiPost<{ id: string; name: string }>("/apps", data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["apps"] });
@@ -848,6 +870,43 @@ export function useCreateAppVersion() {
       appId: string;
       data: { version: string; source_code: string; requirements?: string[]; entry_class?: string };
     }) => apiPost<{ id: string }>(`/apps/${appId}/versions`, data),
+    onSuccess: (_res, { appId }) => {
+      qc.invalidateQueries({ queryKey: ["app-detail", appId] });
+      qc.invalidateQueries({ queryKey: ["apps"] });
+    },
+  });
+}
+
+export function useSetLatestVersion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ appId, versionId }: { appId: string; versionId: string }) =>
+      apiPut<{ id: string }>(`/apps/${appId}/versions/${versionId}/set-latest`, {}),
+    onSuccess: (_res, { appId }) => {
+      qc.invalidateQueries({ queryKey: ["app-detail", appId] });
+    },
+  });
+}
+
+export function useUpdateAppVersion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ appId, versionId, data }: {
+      appId: string;
+      versionId: string;
+      data: { source_code?: string; requirements?: string[]; entry_class?: string };
+    }) => apiPut<{ id: string }>(`/apps/${appId}/versions/${versionId}`, data),
+    onSuccess: (_res, { appId }) => {
+      qc.invalidateQueries({ queryKey: ["app-detail", appId] });
+    },
+  });
+}
+
+export function useDeleteAppVersion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ appId, versionId }: { appId: string; versionId: string }) =>
+      apiDelete(`/apps/${appId}/versions/${versionId}`),
     onSuccess: (_res, { appId }) => {
       qc.invalidateQueries({ queryKey: ["app-detail", appId] });
       qc.invalidateQueries({ queryKey: ["apps"] });

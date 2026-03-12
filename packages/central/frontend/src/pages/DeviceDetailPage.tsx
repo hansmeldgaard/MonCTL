@@ -15,6 +15,7 @@ import {
   Save,
   Settings2,
   Tag,
+  Pencil,
   Trash2,
   Wrench,
   X,
@@ -45,6 +46,7 @@ import {
   useCreateAssignment,
   useCredentials,
   useDeleteAssignment,
+  useUpdateAssignment,
   useDevice,
   useDeviceAssignments,
   useDeviceHistory,
@@ -58,7 +60,7 @@ import {
   useUpdateDevice,
   useUpdateDeviceMonitoring,
 } from "@/api/hooks.ts";
-import type { Device as DeviceType } from "@/types/api.ts";
+import type { Device as DeviceType, DeviceAssignment } from "@/types/api.ts";
 import { timeAgo, formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 
@@ -96,6 +98,8 @@ function AddAssignmentDialog({
   const [collectorId, setCollectorId] = useState("");
   const [scheduleType, setScheduleType] = useState("interval");
   const [scheduleValue, setScheduleValue] = useState("60");
+  const [versionMode, setVersionMode] = useState<"latest" | "pinned">("latest");
+  const [selectedVersionId, setSelectedVersionId] = useState("");
   const [configText, setConfigText] = useState("{}");
   const [configError, setConfigError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
@@ -113,10 +117,18 @@ function AddAssignmentDialog({
     setRoutingMode(deviceCollectorGroupId ? "group" : "specific");
   }, [deviceCollectorGroupId, open]);
 
+  // Reset version picker when app changes
+  useEffect(() => {
+    setVersionMode("latest");
+    setSelectedVersionId("");
+  }, [selectedAppId]);
+
   function reset() {
     setSelectedAppId(apps?.[0]?.id ?? "");
     setCollectorId(collectors?.[0]?.id ?? "");
     setRoutingMode(deviceCollectorGroupId ? "group" : "specific");
+    setVersionMode("latest");
+    setSelectedVersionId("");
     setScheduleType("interval");
     setScheduleValue("60");
     setConfigText("{}");
@@ -152,21 +164,28 @@ function AddAssignmentDialog({
       return;
     }
 
-    const latestVersion = appDetail?.versions?.[0];
-    if (!latestVersion) {
-      setFormError("The selected app has no published versions.");
+    const latestVersion = appDetail?.versions?.find((v) => v.is_latest);
+    if (!latestVersion && versionMode === "latest") {
+      setFormError("The selected app has no latest version.");
+      return;
+    }
+
+    const versionId = versionMode === "latest" ? latestVersion!.id : selectedVersionId;
+    if (!versionId) {
+      setFormError("Select a version.");
       return;
     }
 
     try {
       await createAssignment.mutateAsync({
         app_id: selectedAppId,
-        app_version_id: latestVersion.id,
+        app_version_id: versionId,
         collector_id: routingMode === "specific" ? collectorId : null,
         device_id: deviceId,
         schedule_type: scheduleType,
         schedule_value: scheduleValue,
         config,
+        use_latest: versionMode === "latest",
       });
       reset();
       onClose();
@@ -189,13 +208,60 @@ function AddAssignmentDialog({
               <option key={a.id} value={a.id}>{a.name}</option>
             ))}
           </Select>
-          {appDetail && (
-            <p className="text-xs text-zinc-500">
-              Latest version:{" "}
-              {appDetail.versions.length > 0
-                ? <span className="text-zinc-300">{appDetail.versions[0].version}</span>
-                : <span className="text-red-400">none — publish a version first</span>}
-            </p>
+          {appDetail && appDetail.versions.length > 0 && (
+            <div className="space-y-2 mt-2">
+              <Label>Version</Label>
+              <label className="flex items-center gap-2.5 cursor-pointer rounded-md border border-zinc-700 px-3 py-2.5 hover:border-zinc-600 transition-colors">
+                <input
+                  type="radio"
+                  name="version-mode"
+                  value="latest"
+                  checked={versionMode === "latest"}
+                  onChange={() => setVersionMode("latest")}
+                  className="accent-brand-500"
+                />
+                <span className="text-sm text-zinc-200">
+                  Use latest
+                  {appDetail.versions.find((v) => v.is_latest) && (
+                    <span className="ml-1.5 text-xs text-zinc-500 font-normal">
+                      (currently {appDetail.versions.find((v) => v.is_latest)!.version})
+                    </span>
+                  )}
+                </span>
+              </label>
+              <label className="flex items-center gap-2.5 cursor-pointer rounded-md border border-zinc-700 px-3 py-2.5 hover:border-zinc-600 transition-colors">
+                <input
+                  type="radio"
+                  name="version-mode"
+                  value="pinned"
+                  checked={versionMode === "pinned"}
+                  onChange={() => {
+                    setVersionMode("pinned");
+                    if (!selectedVersionId && appDetail.versions.length > 0) {
+                      setSelectedVersionId(appDetail.versions[0].id);
+                    }
+                  }}
+                  className="accent-brand-500"
+                />
+                <span className="text-sm text-zinc-200">Pin to version</span>
+              </label>
+              {versionMode === "pinned" && (
+                <Select
+                  value={selectedVersionId}
+                  onChange={(e) => setSelectedVersionId(e.target.value)}
+                  className="mt-1"
+                >
+                  {appDetail.versions.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.version}{v.is_latest ? " (latest)" : ""}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </div>
+          )}
+          {appDetail && appDetail.versions.length === 0 && (
+            <p className="text-xs text-red-400 mt-1">No versions — publish a version first</p>
           )}
         </div>
 
@@ -295,6 +361,206 @@ function AddAssignmentDialog({
           <Button type="submit" disabled={createAssignment.isPending}>
             {createAssignment.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
             Add Assignment
+          </Button>
+        </DialogFooter>
+      </form>
+    </Dialog>
+  );
+}
+
+// ── Edit Assignment Dialog ────────────────────────────────
+
+interface EditAssignmentDialogProps {
+  assignment: DeviceAssignment | null;
+  open: boolean;
+  onClose: () => void;
+}
+
+function EditAssignmentDialog({ assignment, open, onClose }: EditAssignmentDialogProps) {
+  const updateAssignment = useUpdateAssignment();
+  const { data: appDetail } = useAppDetail(assignment?.app.id);
+
+  const [scheduleType, setScheduleType] = useState("interval");
+  const [scheduleValue, setScheduleValue] = useState("60");
+  const [configText, setConfigText] = useState("{}");
+  const [configError, setConfigError] = useState<string | null>(null);
+  const [enabled, setEnabled] = useState(true);
+  const [versionMode, setVersionMode] = useState<"latest" | "pinned">("latest");
+  const [selectedVersionId, setSelectedVersionId] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
+
+  // Populate fields when assignment changes
+  useEffect(() => {
+    if (assignment) {
+      setScheduleType(assignment.schedule_type);
+      setScheduleValue(assignment.schedule_value);
+      setConfigText(JSON.stringify(assignment.config, null, 2));
+      setEnabled(assignment.enabled);
+      setVersionMode(assignment.use_latest ? "latest" : "pinned");
+      setSelectedVersionId(assignment.app_version_id);
+      setConfigError(null);
+      setFormError(null);
+    }
+  }, [assignment]);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!assignment) return;
+    setFormError(null);
+    setConfigError(null);
+
+    let config: Record<string, unknown> = {};
+    try {
+      config = JSON.parse(configText);
+    } catch {
+      setConfigError("Invalid JSON");
+      return;
+    }
+
+    const latestVersion = appDetail?.versions?.find((v) => v.is_latest);
+    const versionId = versionMode === "latest" ? latestVersion?.id : selectedVersionId;
+    if (!versionId) {
+      setFormError(versionMode === "latest" ? "No latest version available." : "Select a version.");
+      return;
+    }
+
+    try {
+      await updateAssignment.mutateAsync({
+        id: assignment.id,
+        data: {
+          schedule_type: scheduleType,
+          schedule_value: scheduleValue,
+          config,
+          enabled,
+          app_version_id: versionId,
+          use_latest: versionMode === "latest",
+        },
+      });
+      onClose();
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Failed to update assignment");
+    }
+  }
+
+  return (
+    <Dialog open={open} onClose={onClose} title={`Edit Assignment — ${assignment?.app.name ?? ""}`}>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {/* Version picker */}
+        {appDetail && appDetail.versions.length > 0 && (
+          <div className="space-y-2">
+            <Label>Version</Label>
+            <label className="flex items-center gap-2.5 cursor-pointer rounded-md border border-zinc-700 px-3 py-2.5 hover:border-zinc-600 transition-colors">
+              <input
+                type="radio"
+                name="edit-version-mode"
+                value="latest"
+                checked={versionMode === "latest"}
+                onChange={() => setVersionMode("latest")}
+                className="accent-brand-500"
+              />
+              <span className="text-sm text-zinc-200">
+                Use latest
+                {appDetail.versions.find((v) => v.is_latest) && (
+                  <span className="ml-1.5 text-xs text-zinc-500 font-normal">
+                    (currently {appDetail.versions.find((v) => v.is_latest)!.version})
+                  </span>
+                )}
+              </span>
+            </label>
+            <label className="flex items-center gap-2.5 cursor-pointer rounded-md border border-zinc-700 px-3 py-2.5 hover:border-zinc-600 transition-colors">
+              <input
+                type="radio"
+                name="edit-version-mode"
+                value="pinned"
+                checked={versionMode === "pinned"}
+                onChange={() => {
+                  setVersionMode("pinned");
+                  if (!selectedVersionId && appDetail.versions.length > 0) {
+                    setSelectedVersionId(appDetail.versions[0].id);
+                  }
+                }}
+                className="accent-brand-500"
+              />
+              <span className="text-sm text-zinc-200">Pin to version</span>
+            </label>
+            {versionMode === "pinned" && (
+              <Select
+                value={selectedVersionId}
+                onChange={(e) => setSelectedVersionId(e.target.value)}
+                className="mt-1"
+              >
+                {appDetail.versions.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.version}{v.is_latest ? " (latest)" : ""}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </div>
+        )}
+
+        {/* Schedule */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="ea-sched-type">Schedule Type</Label>
+            <Select
+              id="ea-sched-type"
+              value={scheduleType}
+              onChange={(e) => setScheduleType(e.target.value)}
+            >
+              <option value="interval">Interval (seconds)</option>
+              <option value="cron">Cron expression</option>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="ea-sched-val">
+              {scheduleType === "interval" ? "Interval (s)" : "Cron"}
+            </Label>
+            <Input
+              id="ea-sched-val"
+              value={scheduleValue}
+              onChange={(e) => setScheduleValue(e.target.value)}
+              placeholder={scheduleType === "interval" ? "60" : "*/5 * * * *"}
+            />
+          </div>
+        </div>
+
+        {/* Config */}
+        <div className="space-y-1.5">
+          <Label htmlFor="ea-config">
+            Config <span className="font-normal text-zinc-500">(JSON)</span>
+          </Label>
+          <textarea
+            id="ea-config"
+            rows={4}
+            value={configText}
+            onChange={(e) => setConfigText(e.target.value)}
+            className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-xs text-zinc-100 focus:outline-none focus:ring-2 focus:ring-brand-500/50 focus:border-brand-500 resize-none"
+            placeholder="{}"
+          />
+          {configError && <p className="text-xs text-red-400">{configError}</p>}
+        </div>
+
+        {/* Enabled toggle */}
+        <label className="flex items-center gap-2.5 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => setEnabled(e.target.checked)}
+            className="accent-brand-500"
+          />
+          <span className="text-sm text-zinc-200">Enabled</span>
+        </label>
+
+        {formError && <p className="text-sm text-red-400">{formError}</p>}
+
+        <DialogFooter>
+          <Button type="button" variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" disabled={updateAssignment.isPending}>
+            {updateAssignment.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+            Save Changes
           </Button>
         </DialogFooter>
       </form>
@@ -583,13 +849,6 @@ function ConfigurationTab() {
 
 // ── Monitoring Config Card ────────────────────────────────
 
-const APP_TYPE_OPTIONS = [
-  { value: "", label: "None" },
-  { value: "ping_check", label: "Ping (ICMP)" },
-  { value: "port_check", label: "Port Check (TCP)" },
-  { value: "snmp_check", label: "SNMP" },
-];
-
 const INTERVAL_OPTIONS = [
   { value: "30", label: "30 seconds" },
   { value: "60", label: "60 seconds" },
@@ -597,65 +856,174 @@ const INTERVAL_OPTIONS = [
   { value: "300", label: "5 minutes" },
 ];
 
-function MonitoringCard({ deviceId, device }: { deviceId: string; device: DeviceType | undefined }) {
-  const { data: monitoring, isLoading: monLoading } = useDeviceMonitoring(deviceId);
+// Renders config fields dynamically from an app's config_schema
+function SchemaConfigFields({
+  schema,
+  config,
+  onChange,
+  prefix,
+  disabled,
+}: {
+  schema: Record<string, unknown> | null | undefined;
+  config: Record<string, unknown>;
+  onChange: (config: Record<string, unknown>) => void;
+  prefix: string;
+  disabled?: boolean;
+}) {
   const { data: snmpOids } = useSnmpOids();
   const { data: credentials } = useCredentials();
+
+  if (!schema || typeof schema !== "object") return null;
+  const properties = (schema as { properties?: Record<string, Record<string, unknown>> }).properties;
+  if (!properties) return null;
+
+  const setField = (key: string, value: unknown) => {
+    onChange({ ...config, [key]: value });
+  };
+
+  return (
+    <>
+      {Object.entries(properties).map(([key, prop]) => {
+        const widget = prop["x-widget"] as string | undefined;
+        const title = (prop.title as string) ?? key;
+        const defaultVal = prop.default;
+        const currentVal = config[key] ?? defaultVal ?? "";
+
+        // SNMP OID selector
+        if (widget === "snmp-oid") {
+          return (
+            <div key={key} className="space-y-1">
+              <span className="text-xs text-zinc-400">{title}</span>
+              <Select
+                id={`${prefix}-${key}`}
+                value={String(currentVal)}
+                onChange={(e) => setField(key, e.target.value)}
+                disabled={disabled}
+              >
+                <option value="">-- {title} --</option>
+                {(snmpOids ?? []).map((o) => (
+                  <option key={o.id} value={o.oid}>{o.name} ({o.oid})</option>
+                ))}
+              </Select>
+            </div>
+          );
+        }
+
+        // Credential selector
+        if (widget === "credential") {
+          return (
+            <div key={key} className="space-y-1">
+              <span className="text-xs text-zinc-400">{title}</span>
+              <Select
+                id={`${prefix}-${key}`}
+                value={String(currentVal)}
+                onChange={(e) => setField(key, e.target.value ? `$credential:${e.target.value}` : "")}
+                disabled={disabled}
+              >
+                <option value="">-- {title} --</option>
+                {(credentials ?? []).map((c) => (
+                  <option key={c.id} value={c.name}>{c.name}</option>
+                ))}
+              </Select>
+            </div>
+          );
+        }
+
+        // Number input
+        if (prop.type === "integer" || prop.type === "number") {
+          return (
+            <div key={key} className="space-y-1">
+              <span className="text-xs text-zinc-400">{title}</span>
+              <Input
+                id={`${prefix}-${key}`}
+                type="number"
+                min={prop.minimum as number | undefined}
+                max={prop.maximum as number | undefined}
+                value={currentVal !== "" ? String(currentVal) : String(defaultVal ?? "")}
+                onChange={(e) => setField(key, e.target.value ? parseInt(e.target.value, 10) : undefined)}
+                className="w-28"
+                disabled={disabled}
+              />
+            </div>
+          );
+        }
+
+        // Default: text input
+        return (
+          <div key={key} className="space-y-1">
+            <span className="text-xs text-zinc-400">{title}</span>
+            <Input
+              id={`${prefix}-${key}`}
+              value={String(currentVal)}
+              onChange={(e) => setField(key, e.target.value)}
+              disabled={disabled}
+            />
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+function MonitoringCard({ deviceId, device }: { deviceId: string; device: DeviceType | undefined }) {
+  const { data: monitoring, isLoading: monLoading } = useDeviceMonitoring(deviceId);
+  const { data: allApps } = useApps();
   const updateMonitoring = useUpdateDeviceMonitoring();
 
-  const [availabilityAppType, setAvailabilityAppType] = useState("");
-  const [availabilityPort, setAvailabilityPort] = useState("");
-  const [availabilityOid, setAvailabilityOid] = useState("");
-  const [availabilityCredential, setAvailabilityCredential] = useState("");
-  const [availabilityPingCount, setAvailabilityPingCount] = useState("");
-  const [availabilityPingTimeout, setAvailabilityPingTimeout] = useState("");
-  const [latencyAppType, setLatencyAppType] = useState("");
-  const [latencyPort, setLatencyPort] = useState("");
-  const [latencyOid, setLatencyOid] = useState("");
-  const [latencyCredential, setLatencyCredential] = useState("");
-  const [latencyPingCount, setLatencyPingCount] = useState("");
-  const [latencyPingTimeout, setLatencyPingTimeout] = useState("");
+  // Only apps targeting availability_latency can be used for monitoring
+  const monitoringApps = useMemo(
+    () => (allApps ?? []).filter((a) => a.target_table === "availability_latency"),
+    [allApps],
+  );
+
+  // Fetch config_schema for selected apps
+  const [availAppName, setAvailAppName] = useState("");
+  const [latencyAppName, setLatencyAppName] = useState("");
+  const [availConfig, setAvailConfig] = useState<Record<string, unknown>>({});
+  const [latencyConfig, setLatencyConfig] = useState<Record<string, unknown>>({});
   const [intervalSeconds, setIntervalSeconds] = useState("60");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
+
+  const selectedAvApp = monitoringApps.find((a) => a.name === availAppName);
+  const selectedLatApp = monitoringApps.find((a) => a.name === latencyAppName);
+  const { data: avAppDetail } = useAppDetail(selectedAvApp?.id);
+  const { data: latAppDetail } = useAppDetail(selectedLatApp?.id);
 
   // Sync state when monitoring data loads
   useEffect(() => {
     if (!monitoring) return;
     const av = monitoring.availability;
     const la = monitoring.latency;
-    setAvailabilityAppType(av?.app_type ?? "");
-    setAvailabilityPort(av?.port != null ? String(av.port) : "");
-    setAvailabilityOid(av?.oid ?? "");
-    setAvailabilityCredential(av?.credential_name ?? "");
-    setAvailabilityPingCount(av?.ping_count != null ? String(av.ping_count) : "");
-    setAvailabilityPingTimeout(av?.ping_timeout != null ? String(av.ping_timeout) : "");
-    setLatencyAppType(la?.app_type ?? "");
-    setLatencyPort(la?.port != null ? String(la.port) : "");
-    setLatencyOid(la?.oid ?? "");
-    setLatencyCredential(la?.credential_name ?? "");
-    setLatencyPingCount(la?.ping_count != null ? String(la.ping_count) : "");
-    setLatencyPingTimeout(la?.ping_timeout != null ? String(la.ping_timeout) : "");
-    // Use the interval from availability if set, otherwise latency, otherwise default
+    setAvailAppName(av?.app_name ?? "");
+    setAvailConfig(av?.config ?? {});
+    setLatencyAppName(la?.app_name ?? "");
+    setLatencyConfig(la?.config ?? {});
     const interval = av?.interval_seconds ?? la?.interval_seconds ?? 60;
     setIntervalSeconds(String(interval));
   }, [monitoring]);
+
+  function handleAppChange(role: "availability" | "latency", newAppName: string) {
+    if (role === "availability") {
+      setAvailAppName(newAppName);
+      setAvailConfig({});
+    } else {
+      setLatencyAppName(newAppName);
+      setLatencyConfig({});
+    }
+  }
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     setSaveError(null);
     setSaveSuccess(false);
 
-    const makeCheck = (appType: string, port: string, oid: string, cred: string, pingCount: string, pingTimeout: string) => {
-      if (!appType) return null;
+    const makeCheck = (appName: string, config: Record<string, unknown>) => {
+      if (!appName) return null;
       return {
-        app_type: appType,
-        port: appType === "port_check" && port ? parseInt(port, 10) : null,
-        oid: appType === "snmp_check" ? oid || null : null,
-        credential_name: appType === "snmp_check" ? cred || null : null,
+        app_name: appName,
+        config,
         interval_seconds: parseInt(intervalSeconds, 10),
-        ping_count: appType === "ping_check" && pingCount ? parseInt(pingCount, 10) : null,
-        ping_timeout: appType === "ping_check" && pingTimeout ? parseInt(pingTimeout, 10) : null,
       };
     };
 
@@ -663,8 +1031,8 @@ function MonitoringCard({ deviceId, device }: { deviceId: string; device: Device
       await updateMonitoring.mutateAsync({
         id: deviceId,
         data: {
-          availability: makeCheck(availabilityAppType, availabilityPort, availabilityOid, availabilityCredential, availabilityPingCount, availabilityPingTimeout),
-          latency: makeCheck(latencyAppType, latencyPort, latencyOid, latencyCredential, latencyPingCount, latencyPingTimeout),
+          availability: makeCheck(availAppName, availConfig),
+          latency: makeCheck(latencyAppName, latencyConfig),
         },
       });
       setSaveSuccess(true);
@@ -714,91 +1082,27 @@ function MonitoringCard({ deviceId, device }: { deviceId: string; device: Device
             {/* Availability check */}
             <div className="space-y-2">
               <Label>Availability Check</Label>
-              <div className="flex items-end gap-3">
+              <div className="flex items-end gap-3 flex-wrap">
                 <div className="space-y-1">
                   <Select
-                    value={availabilityAppType}
-                    onChange={(e) => setAvailabilityAppType(e.target.value)}
+                    value={availAppName}
+                    onChange={(e) => handleAppChange("availability", e.target.value)}
                     disabled={!hasGroup}
                   >
-                    {APP_TYPE_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
+                    <option value="">None</option>
+                    {monitoringApps.map((a) => (
+                      <option key={a.id} value={a.name}>{a.description || a.name}</option>
                     ))}
                   </Select>
                 </div>
-                {availabilityAppType === "port_check" && (
-                  <div className="space-y-1">
-                    <span className="text-xs text-zinc-400">Port</span>
-                    <Input
-                      id="av-port"
-                      type="number"
-                      min={1}
-                      max={65535}
-                      value={availabilityPort || "443"}
-                      onChange={(e) => setAvailabilityPort(e.target.value)}
-                      className="w-28"
-                    />
-                  </div>
-                )}
-                {availabilityAppType === "ping_check" && (
-                  <>
-                    <div className="space-y-1">
-                      <span className="text-xs text-zinc-400">Count</span>
-                      <Input
-                        id="av-ping-count"
-                        type="number"
-                        min={1}
-                        max={20}
-                        value={availabilityPingCount || "3"}
-                        onChange={(e) => setAvailabilityPingCount(e.target.value)}
-                        className="w-24"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <span className="text-xs text-zinc-400">Timeout</span>
-                      <Input
-                        id="av-ping-timeout"
-                        type="number"
-                        min={1}
-                        max={30}
-                        value={availabilityPingTimeout || "2"}
-                        onChange={(e) => setAvailabilityPingTimeout(e.target.value)}
-                        className="w-24"
-                      />
-                    </div>
-                  </>
-                )}
-                {availabilityAppType === "snmp_check" && (
-                  <>
-                    <div className="space-y-1">
-                      <span className="text-xs text-zinc-400">OID</span>
-                      <Select
-                        id="av-oid"
-                        value={availabilityOid}
-                        onChange={(e) => setAvailabilityOid(e.target.value)}
-                      >
-                        <option value="">— OID —</option>
-                        {(snmpOids ?? []).map((o) => (
-                          <option key={o.id} value={o.oid}>{o.name} ({o.oid})</option>
-                        ))}
-                      </Select>
-                    </div>
-                    <div className="space-y-1">
-                      <span className="text-xs text-zinc-400">Credential</span>
-                      <Select
-                        id="av-cred"
-                        value={availabilityCredential}
-                        onChange={(e) => setAvailabilityCredential(e.target.value)}
-                      >
-                        <option value="">— Credential —</option>
-                        {(credentials ?? [])
-                          .filter((c) => c.credential_type.startsWith("snmp"))
-                          .map((c) => (
-                            <option key={c.id} value={c.name}>{c.name}</option>
-                          ))}
-                      </Select>
-                    </div>
-                  </>
+                {availAppName && (
+                  <SchemaConfigFields
+                    schema={avAppDetail?.config_schema}
+                    config={availConfig}
+                    onChange={setAvailConfig}
+                    prefix="av"
+                    disabled={!hasGroup}
+                  />
                 )}
               </div>
             </div>
@@ -806,91 +1110,27 @@ function MonitoringCard({ deviceId, device }: { deviceId: string; device: Device
             {/* Latency check */}
             <div className="space-y-2">
               <Label>Latency Check</Label>
-              <div className="flex items-end gap-3">
+              <div className="flex items-end gap-3 flex-wrap">
                 <div className="space-y-1">
                   <Select
-                    value={latencyAppType}
-                    onChange={(e) => setLatencyAppType(e.target.value)}
+                    value={latencyAppName}
+                    onChange={(e) => handleAppChange("latency", e.target.value)}
                     disabled={!hasGroup}
                   >
-                    {APP_TYPE_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
+                    <option value="">None</option>
+                    {monitoringApps.map((a) => (
+                      <option key={a.id} value={a.name}>{a.description || a.name}</option>
                     ))}
                   </Select>
                 </div>
-                {latencyAppType === "port_check" && (
-                  <div className="space-y-1">
-                    <span className="text-xs text-zinc-400">Port</span>
-                    <Input
-                      id="la-port"
-                      type="number"
-                      min={1}
-                      max={65535}
-                      value={latencyPort || "443"}
-                      onChange={(e) => setLatencyPort(e.target.value)}
-                      className="w-28"
-                    />
-                  </div>
-                )}
-                {latencyAppType === "ping_check" && (
-                  <>
-                    <div className="space-y-1">
-                      <span className="text-xs text-zinc-400">Count</span>
-                      <Input
-                        id="la-ping-count"
-                        type="number"
-                        min={1}
-                        max={20}
-                        value={latencyPingCount || "3"}
-                        onChange={(e) => setLatencyPingCount(e.target.value)}
-                        className="w-24"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <span className="text-xs text-zinc-400">Timeout</span>
-                      <Input
-                        id="la-ping-timeout"
-                        type="number"
-                        min={1}
-                        max={30}
-                        value={latencyPingTimeout || "2"}
-                        onChange={(e) => setLatencyPingTimeout(e.target.value)}
-                        className="w-24"
-                      />
-                    </div>
-                  </>
-                )}
-                {latencyAppType === "snmp_check" && (
-                  <>
-                    <div className="space-y-1">
-                      <span className="text-xs text-zinc-400">OID</span>
-                      <Select
-                        id="la-oid"
-                        value={latencyOid}
-                        onChange={(e) => setLatencyOid(e.target.value)}
-                      >
-                        <option value="">— OID —</option>
-                        {(snmpOids ?? []).map((o) => (
-                          <option key={o.id} value={o.oid}>{o.name} ({o.oid})</option>
-                        ))}
-                      </Select>
-                    </div>
-                    <div className="space-y-1">
-                      <span className="text-xs text-zinc-400">Credential</span>
-                      <Select
-                        id="la-cred"
-                        value={latencyCredential}
-                        onChange={(e) => setLatencyCredential(e.target.value)}
-                      >
-                        <option value="">— Credential —</option>
-                        {(credentials ?? [])
-                          .filter((c) => c.credential_type.startsWith("snmp"))
-                          .map((c) => (
-                            <option key={c.id} value={c.name}>{c.name}</option>
-                          ))}
-                      </Select>
-                    </div>
-                  </>
+                {latencyAppName && (
+                  <SchemaConfigFields
+                    schema={latAppDetail?.config_schema}
+                    config={latencyConfig}
+                    onChange={setLatencyConfig}
+                    prefix="la"
+                    disabled={!hasGroup}
+                  />
                 )}
               </div>
             </div>
@@ -942,6 +1182,7 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
 
   // Assignment dialogs
   const [addOpen, setAddOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<DeviceAssignment | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
 
   // Initialize form fields when device loads
@@ -1224,14 +1465,19 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
                   <TableHead>Version</TableHead>
                   <TableHead>Schedule</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead className="w-12"></TableHead>
+                  <TableHead className="w-20"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {assignments.map((a) => (
                   <TableRow key={a.id}>
                     <TableCell className="font-medium text-zinc-200">{a.app.name}</TableCell>
-                    <TableCell className="text-zinc-500 font-mono text-xs">{a.app.version}</TableCell>
+                    <TableCell className="text-zinc-500 font-mono text-xs">
+                      {a.app.version}
+                      {a.use_latest && (
+                        <Badge variant="default" className="ml-1.5 text-[10px]">latest</Badge>
+                      )}
+                    </TableCell>
                     <TableCell className="text-zinc-400 text-sm">{a.schedule_human}</TableCell>
                     <TableCell>
                       <Badge variant={a.enabled ? "success" : "default"}>
@@ -1239,13 +1485,22 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <button
-                        onClick={() => setDeleteTarget({ id: a.id, name: a.app.name })}
-                        className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                        title="Remove"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => setEditTarget(a)}
+                          className="rounded p-1 text-zinc-600 hover:text-zinc-200 hover:bg-zinc-700 transition-colors cursor-pointer"
+                          title="Edit"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                        <button
+                          onClick={() => setDeleteTarget({ id: a.id, name: a.app.name })}
+                          className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                          title="Remove"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -1261,6 +1516,12 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
         deviceCollectorGroupName={device?.collector_group_name ?? null}
         open={addOpen}
         onClose={() => setAddOpen(false)}
+      />
+
+      <EditAssignmentDialog
+        assignment={editTarget}
+        open={!!editTarget}
+        onClose={() => setEditTarget(null)}
       />
 
       <Dialog
