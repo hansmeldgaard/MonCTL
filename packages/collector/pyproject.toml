@@ -29,6 +29,7 @@ monctl-cache-node    = "monctl_collector.entrypoints.cache_node:main"
 monctl-poll-worker   = "monctl_collector.entrypoints.poll_worker:main"
 monctl-forwarder     = "monctl_collector.entrypoints.forwarder_main:main"
 monctl-setup         = "monctl_collector.tui.app:main"
+monctl-status        = "monctl_collector.tui.status_app:main"
 
 [project.optional-dependencies]
 dev = [

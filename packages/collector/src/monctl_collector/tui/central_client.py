@@ -10,10 +10,11 @@ import httpx
 class CentralClient:
     """Thin wrapper around httpx for calling central API endpoints."""
 
-    def __init__(self, base_url: str, api_key: str = "", timeout: float = 10.0):
+    def __init__(self, base_url: str, api_key: str = "", timeout: float = 10.0, verify_ssl: bool = True):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout
+        self.verify_ssl = verify_ssl
 
     def _headers(self) -> dict[str, str]:
         h: dict[str, str] = {"Content-Type": "application/json"}
@@ -27,6 +28,7 @@ class CentralClient:
             f"{self.base_url}/v1/health",
             headers=self._headers(),
             timeout=self.timeout,
+            verify=self.verify_ssl,
         )
         r.raise_for_status()
         return r.json()
@@ -55,6 +57,7 @@ class CentralClient:
             json=payload,
             headers=self._headers(),
             timeout=self.timeout,
+            verify=self.verify_ssl,
         )
         r.raise_for_status()
         return r.json()
@@ -65,6 +68,7 @@ class CentralClient:
             f"{self.base_url}/v1/collectors/{collector_id}/registration-status",
             headers=self._headers(),
             timeout=self.timeout,
+            verify=self.verify_ssl,
         )
         r.raise_for_status()
         return r.json()

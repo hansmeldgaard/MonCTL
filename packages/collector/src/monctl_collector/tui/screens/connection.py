@@ -19,6 +19,12 @@ from monctl_collector.tui.state import SetupState
 _ENV_PATH = "/opt/monctl/collector/.env"
 
 
+def _should_verify(url: str) -> bool:
+    """Check MONCTL_VERIFY_SSL env var; default True unless explicitly 'false'."""
+    val = os.environ.get("MONCTL_VERIFY_SSL", "true").lower()
+    return val not in ("false", "0", "no")
+
+
 class ConnectionTab(Vertical):
     """Central connection — register, poll approval, write .env on activation."""
 
@@ -70,6 +76,20 @@ class ConnectionTab(Vertical):
     ConnectionTab .status-none {
         color: $text-muted;
     }
+    ConnectionTab .conn-info-section {
+        background: $surface;
+        padding: 1 2;
+        margin-bottom: 1;
+    }
+    ConnectionTab .conn-info-label {
+        color: $text-muted;
+    }
+    ConnectionTab .conn-healthy {
+        color: $success;
+    }
+    ConnectionTab .conn-unhealthy {
+        color: $error;
+    }
     """
 
     def __init__(self) -> None:
@@ -77,8 +97,49 @@ class ConnectionTab(Vertical):
         self._state = SetupState.load()
         self._fingerprint = self._state.fingerprint or generate_fingerprint()
         self._poll_timer: Timer | None = None
+        self._health_timer: Timer | None = None
+
+    def _mask_key(self, key: str) -> str:
+        if len(key) <= 8:
+            return "****"
+        return f"****...{key[-8:]}"
+
+    def _read_env_value(self, key: str) -> str:
+        """Read a value from the collector .env file."""
+        try:
+            if os.path.exists(_ENV_PATH):
+                with open(_ENV_PATH) as f:
+                    for line in f:
+                        line = line.strip()
+                        if line.startswith(f"{key}="):
+                            return line.split("=", 1)[1]
+        except Exception:
+            pass
+        return ""
 
     def compose(self) -> ComposeResult:
+        yield Static("Current Connection", classes="section-title")
+
+        # Determine current values
+        central_url = self._state.central_url or self._read_env_value("MONCTL_CENTRAL_URL")
+        collector_id = self._state.collector_id
+        api_key = self._state.api_key or self._read_env_value("MONCTL_CENTRAL_API_KEY")
+        status = self._state.status or "NOT REGISTERED"
+
+        with Vertical(classes="conn-info-section"):
+            yield Static(f"Central URL: {central_url or 'Not configured'}", id="info-url",
+                         classes="conn-info-label")
+            yield Static(f"Status: {status}", id="info-status", classes="conn-info-label")
+            yield Static(
+                f"Collector ID: {collector_id[:12] + '...' if len(collector_id) > 12 else collector_id or 'N/A'}",
+                id="info-collector-id", classes="conn-info-label",
+            )
+            yield Static(
+                f"API Key: {self._mask_key(api_key) if api_key else 'N/A'}",
+                id="info-api-key", classes="conn-info-label",
+            )
+            yield Static("Connection: Checking...", id="info-health", classes="conn-info-label")
+
         yield Static("Central Connection", classes="section-title")
 
         yield Static("Machine Fingerprint", classes="section-title")
@@ -103,6 +164,10 @@ class ConnectionTab(Vertical):
         yield Static("", id="reg-status", classes="status-label status-none")
 
     def on_mount(self) -> None:
+        # Start health check
+        self._check_health()
+        self._health_timer = self.set_interval(30.0, self._check_health)
+
         # If already registered, start polling or fetch current status
         if self._state.collector_id and self._state.api_key:
             self._update_conn_status(f"Registered as {self._state.collector_id[:8]}...")
@@ -134,7 +199,7 @@ class ConnectionTab(Vertical):
     def _do_test(self) -> None:
         url = self._test_url
         try:
-            client = CentralClient(url)
+            client = CentralClient(url, verify_ssl=_should_verify(url))
             result = client.health()
             self.app.call_from_thread(
                 self._update_conn_status,
@@ -169,7 +234,7 @@ class ConnectionTab(Vertical):
             hostname = socket.gethostname()
             ip_addresses = self._get_local_ips()
 
-            client = CentralClient(url)
+            client = CentralClient(url, verify_ssl=_should_verify(url))
             result = client.register(
                 hostname=hostname,
                 registration_code=token.strip().upper(),
@@ -185,6 +250,8 @@ class ConnectionTab(Vertical):
             self._state.status = result.get("status", "PENDING")
             self._state.save()
 
+            self.app.call_from_thread(self._update_info_section)
+            self.app.call_from_thread(self._check_health)
             self.app.call_from_thread(
                 self._update_conn_status,
                 f"Registered as {result['collector_id'][:8]}... — waiting for approval",
@@ -213,7 +280,7 @@ class ConnectionTab(Vertical):
 
     def _do_poll(self) -> None:
         try:
-            client = CentralClient(self._state.central_url, api_key=self._state.api_key)
+            client = CentralClient(self._state.central_url, api_key=self._state.api_key, verify_ssl=_should_verify(self._state.central_url))
             result = client.registration_status(self._state.collector_id)
             status = result.get("status", "")
 
@@ -225,6 +292,7 @@ class ConnectionTab(Vertical):
                 msg = f"Approved — Group: {group_name}" if group_name else "Approved"
                 self.app.call_from_thread(self._show_reg_status, "ACTIVE", msg)
                 self.app.call_from_thread(self._update_conn_status, "Collector is ACTIVE")
+                self.app.call_from_thread(self._update_info_section)
                 self.app.call_from_thread(self._write_env_and_offer_restart)
 
                 # Stop polling
@@ -250,7 +318,7 @@ class ConnectionTab(Vertical):
     def _fetch_active_status(self) -> None:
         """Fetch current registration status from central to show group info."""
         try:
-            client = CentralClient(self._state.central_url, api_key=self._state.api_key)
+            client = CentralClient(self._state.central_url, api_key=self._state.api_key, verify_ssl=_should_verify(self._state.central_url))
             result = client.registration_status(self._state.collector_id)
             status = result.get("status", "ACTIVE")
 
@@ -291,6 +359,60 @@ class ConnectionTab(Vertical):
                 self.app.call_from_thread(
                     self._update_conn_status, "Collector no longer exists on central"
                 )
+
+    def _check_health(self) -> None:
+        """Check connection health in a worker thread."""
+        url = self._state.central_url or self._read_env_value("MONCTL_CENTRAL_URL")
+        if not url:
+            try:
+                self.query_one("#info-health", Static).update("Connection: No URL configured")
+                self.query_one("#info-health", Static).set_classes("conn-info-label conn-unhealthy")
+            except Exception:
+                pass
+            return
+        self.run_worker(self._do_health_check, thread=True)
+
+    def _do_health_check(self) -> None:
+        url = self._state.central_url or self._read_env_value("MONCTL_CENTRAL_URL")
+        try:
+            client = CentralClient(url, verify_ssl=_should_verify(url), timeout=5.0)
+            client.health()
+            self.app.call_from_thread(self._set_health, True)
+        except Exception:
+            self.app.call_from_thread(self._set_health, False)
+
+    def _set_health(self, healthy: bool) -> None:
+        try:
+            widget = self.query_one("#info-health", Static)
+            if healthy:
+                widget.update("Connection: Healthy ✓")
+                widget.set_classes("conn-info-label conn-healthy")
+            else:
+                widget.update("Connection: Unreachable ✗")
+                widget.set_classes("conn-info-label conn-unhealthy")
+        except Exception:
+            pass
+
+    def _update_info_section(self) -> None:
+        """Refresh the connection info section after state changes."""
+        try:
+            url = self._state.central_url or self._read_env_value("MONCTL_CENTRAL_URL")
+            self.query_one("#info-url", Static).update(
+                f"Central URL: {url or 'Not configured'}"
+            )
+            status = self._state.status or "NOT REGISTERED"
+            status_widget = self.query_one("#info-status", Static)
+            status_widget.update(f"Status: {status}")
+            cid = self._state.collector_id
+            self.query_one("#info-collector-id", Static).update(
+                f"Collector ID: {cid[:12] + '...' if len(cid) > 12 else cid or 'N/A'}"
+            )
+            api_key = self._state.api_key or self._read_env_value("MONCTL_CENTRAL_API_KEY")
+            self.query_one("#info-api-key", Static).update(
+                f"API Key: {self._mask_key(api_key) if api_key else 'N/A'}"
+            )
+        except Exception:
+            pass
 
     def _update_conn_status(self, msg: str, error: bool = False) -> None:
         status = self.query_one("#conn-status", Static)

@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Vertical, Horizontal
-from textual.widgets import Static, Input, RadioButton, RadioSet, Button, Label
+from textual.widgets import Static, Input, RadioButton, RadioSet, Button, Label, Select
 from textual.worker import Worker, WorkerState
 
 from monctl_collector.tui.network.common import NetworkConfig
-from monctl_collector.tui.network.detect import detect_backend, detect_interface, get_current_ip
+from monctl_collector.tui.network.detect import detect_backend, detect_interface, get_current_ip, list_interfaces
 
 
 class NetworkTab(Vertical):
@@ -35,6 +35,9 @@ class NetworkTab(Vertical):
     NetworkTab Input {
         width: 1fr;
     }
+    NetworkTab Select {
+        width: 1fr;
+    }
     NetworkTab .status-msg {
         margin-top: 1;
         color: $success;
@@ -57,7 +60,15 @@ class NetworkTab(Vertical):
 
     def compose(self) -> ComposeResult:
         yield Static(f"Network Configuration ({self._backend})", classes="section-title")
-        yield Static(f"Interface: {self._interface}", id="net-interface")
+
+        interfaces = list_interfaces()
+        options = [
+            (f"{name} ({ip})" if ip else name, name) for name, ip in interfaces
+        ]
+        # Fallback if list_interfaces() returns nothing
+        if not options:
+            options = [(self._interface, self._interface)]
+        yield Select(options, value=self._interface, id="net-interface")
 
         with Horizontal(classes="field-row"):
             yield Label("Mode", classes="field-label")
@@ -153,6 +164,12 @@ class NetworkTab(Vertical):
                 self.query_one(f"#{fid}", Input).disabled = not enabled
             except Exception:
                 pass
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id == "net-interface" and event.value != Select.BLANK:
+            self._interface = str(event.value)
+            self._config = NetworkConfig(interface=self._interface)
+            self._load_current()
 
     def on_radio_set_changed(self, event: RadioSet.Changed) -> None:
         if event.radio_set.id == "net-mode":

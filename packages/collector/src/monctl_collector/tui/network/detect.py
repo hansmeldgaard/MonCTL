@@ -16,6 +16,41 @@ def detect_backend() -> str:
     return "unknown"
 
 
+_FILTERED_PREFIXES = ("lo", "docker", "br-", "veth", "docker_gwbridge")
+
+
+def list_interfaces() -> list[tuple[str, str]]:
+    """Return [(name, ip_or_empty), ...] — filters out docker/veth/br- interfaces."""
+    interfaces: list[tuple[str, str]] = []
+    try:
+        result = subprocess.run(
+            ["ip", "-o", "addr", "show"],
+            capture_output=True, text=True, timeout=5,
+        )
+        seen: set[str] = set()
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if len(parts) < 4:
+                continue
+            name = parts[1].split("@")[0]
+            if name in seen:
+                continue
+            if any(name == p or name.startswith(p) for p in _FILTERED_PREFIXES):
+                continue
+            # Extract IPv4 address if present
+            ip = ""
+            if "inet " in line:
+                for i, tok in enumerate(parts):
+                    if tok == "inet" and i + 1 < len(parts):
+                        ip = parts[i + 1].split("/")[0]
+                        break
+            seen.add(name)
+            interfaces.append((name, ip))
+    except Exception:
+        pass
+    return interfaces
+
+
 def detect_interface() -> str:
     """Return the name of the primary non-loopback network interface."""
     try:

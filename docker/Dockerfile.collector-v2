@@ -17,7 +17,10 @@ COPY src ./src
 # Install into a prefix that we can copy cleanly
 RUN pip install --no-cache-dir --prefix=/install .
 
-# ── Stage 2: Runtime ──────────────────────────────────────────────────────────
+# ── Stage 2: Docker CLI only ─────────────────────────────────────────────────
+FROM docker:27-cli AS docker-cli
+
+# ── Stage 3: Runtime ──────────────────────────────────────────────────────────
 FROM python:3.12-slim AS runtime
 
 # poll-worker needs python3-venv to create app virtualenvs
@@ -26,6 +29,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-venv \
     iputils-ping \
     && rm -rf /var/lib/apt/lists/*
+
+# Docker CLI for monctl-status (container listing via mounted socket)
+COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 
 # Copy installed packages from builder
 COPY --from=builder /install /usr/local
