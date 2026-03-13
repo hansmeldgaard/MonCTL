@@ -64,7 +64,7 @@ import {
   useUpdateDevice,
   useUpdateDeviceMonitoring,
 } from "@/api/hooks.ts";
-import type { Device as DeviceType, DeviceAssignment, InterfaceRecord } from "@/types/api.ts";
+import type { Device as DeviceType, DeviceAssignment } from "@/types/api.ts";
 import { InterfaceTrafficChart } from "@/components/InterfaceTrafficChart.tsx";
 import { timeAgo, formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
