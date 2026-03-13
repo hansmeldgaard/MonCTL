@@ -511,6 +511,7 @@ export function AvailabilityChart({ results, fromTs, toTs, timezone = "UTC" }: A
                     x2={range.x2}
                     fill="#27272a"
                     fillOpacity={0.9}
+                    isAnimationActive={false}
                   />
                 ))}
                 {appNames.map((appName, i) => (
@@ -523,6 +524,7 @@ export function AvailabilityChart({ results, fromTs, toTs, timezone = "UTC" }: A
                     strokeWidth={2}
                     dot={false}
                     connectNulls={true}
+                    isAnimationActive={false}
                   />
                 ))}
               </LineChart>

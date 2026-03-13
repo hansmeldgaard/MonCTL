@@ -385,6 +385,7 @@ class Poller(BasePoller):
          ["pysnmp-lextudio>=6.0"], {
             "type": "object",
             "properties": {
+                "snmp_credential": {"type": "string", "title": "SNMP Credential", "x-widget": "credential"},
                 "timeout": {"type": "integer", "title": "SNMP Timeout (s)", "default": 10, "minimum": 1, "maximum": 60},
                 "include_interfaces": {
                     "type": "array", "title": "Include Interfaces (substring match)",

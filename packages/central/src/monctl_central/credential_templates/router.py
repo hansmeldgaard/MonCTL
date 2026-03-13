@@ -1,0 +1,141 @@
+"""Credential template management endpoints."""
+
+from __future__ import annotations
+
+import uuid
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from monctl_central.dependencies import get_db, require_auth
+from monctl_central.storage.models import CredentialTemplate, CredentialKey
+from monctl_common.utils import utc_now
+
+router = APIRouter()
+
+
+class TemplateField(BaseModel):
+    key_name: str
+    required: bool = True
+    default_value: str | None = None
+    display_order: int = 0
+
+
+class CreateCredentialTemplateRequest(BaseModel):
+    name: str = Field(max_length=64)
+    description: str | None = None
+    fields: list[TemplateField] = Field(min_length=1)
+
+
+class UpdateCredentialTemplateRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    fields: list[TemplateField] | None = None
+
+
+def _fmt(t: CredentialTemplate) -> dict:
+    return {
+        "id": str(t.id),
+        "name": t.name,
+        "description": t.description,
+        "fields": t.fields,
+        "created_at": t.created_at.isoformat() if t.created_at else None,
+        "updated_at": t.updated_at.isoformat() if t.updated_at else None,
+    }
+
+
+async def _validate_fields(fields: list[TemplateField], db: AsyncSession) -> None:
+    """Ensure all referenced key_names exist in credential_keys."""
+    key_names = {f.key_name for f in fields}
+    existing = (await db.execute(
+        select(CredentialKey.name).where(CredentialKey.name.in_(key_names))
+    )).scalars().all()
+    missing = key_names - set(existing)
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown credential keys: {', '.join(sorted(missing))}",
+        )
+
+
+@router.get("")
+async def list_credential_templates(
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    rows = (await db.execute(
+        select(CredentialTemplate).order_by(CredentialTemplate.name)
+    )).scalars().all()
+    return {"status": "success", "data": [_fmt(t) for t in rows]}
+
+
+@router.get("/{template_id}")
+async def get_credential_template(
+    template_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    t = await db.get(CredentialTemplate, uuid.UUID(template_id))
+    if t is None:
+        raise HTTPException(status_code=404, detail="Credential template not found")
+    return {"status": "success", "data": _fmt(t)}
+
+
+@router.post("", status_code=status.HTTP_201_CREATED)
+async def create_credential_template(
+    request: CreateCredentialTemplateRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    existing = (await db.execute(
+        select(CredentialTemplate).where(CredentialTemplate.name == request.name)
+    )).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=409, detail=f"Template '{request.name}' already exists")
+
+    await _validate_fields(request.fields, db)
+
+    t = CredentialTemplate(
+        name=request.name,
+        description=request.description,
+        fields=[f.model_dump() for f in request.fields],
+    )
+    db.add(t)
+    await db.flush()
+    return {"status": "success", "data": _fmt(t)}
+
+
+@router.put("/{template_id}")
+async def update_credential_template(
+    template_id: str,
+    request: UpdateCredentialTemplateRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    t = await db.get(CredentialTemplate, uuid.UUID(template_id))
+    if t is None:
+        raise HTTPException(status_code=404, detail="Credential template not found")
+
+    if request.name is not None:
+        t.name = request.name
+    if request.description is not None:
+        t.description = request.description
+    if request.fields is not None:
+        await _validate_fields(request.fields, db)
+        t.fields = [f.model_dump() for f in request.fields]
+    t.updated_at = utc_now()
+    return {"status": "success", "data": _fmt(t)}
+
+
+@router.delete("/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_credential_template(
+    template_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    t = await db.get(CredentialTemplate, uuid.UUID(template_id))
+    if t is None:
+        raise HTTPException(status_code=404, detail="Credential template not found")
+    await db.delete(t)

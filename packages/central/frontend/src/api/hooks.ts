@@ -11,6 +11,8 @@ import type {
   Credential,
   CredentialDetail,
   CredentialKey,
+  CredentialTemplate,
+  CredentialTemplateField,
   Device,
   DeviceAssignment,
   DeviceListParams,
@@ -827,7 +829,8 @@ export function useCreateCredential() {
     mutationFn: (data: {
       name: string;
       description?: string;
-      credential_type: string;
+      template_id?: string;
+      credential_type?: string;
       secret: Record<string, unknown>;
     }) => apiPost<Credential>("/credentials", data),
     onSuccess: () => {
@@ -855,6 +858,49 @@ export function useDeleteCredential() {
     mutationFn: (id: string) => apiDelete(`/credentials/${id}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["credentials"] });
+    },
+  });
+}
+
+// ── Credential Templates ────────────────────────────────
+
+export function useCredentialTemplates() {
+  return useQuery({
+    queryKey: ["credential-templates"],
+    queryFn: () => apiGet<CredentialTemplate[]>("/credential-templates"),
+    select: (res) => res.data,
+    refetchInterval: POLL_LIST,
+  });
+}
+
+export function useCreateCredentialTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { name: string; description?: string; fields: CredentialTemplateField[] }) =>
+      apiPost<CredentialTemplate>("/credential-templates", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["credential-templates"] });
+    },
+  });
+}
+
+export function useUpdateCredentialTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: { name?: string; description?: string; fields?: CredentialTemplateField[] } }) =>
+      apiPut<CredentialTemplate>(`/credential-templates/${id}`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["credential-templates"] });
+    },
+  });
+}
+
+export function useDeleteCredentialTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/credential-templates/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["credential-templates"] });
     },
   });
 }

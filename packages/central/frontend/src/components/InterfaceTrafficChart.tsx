@@ -106,6 +106,7 @@ export function InterfaceTrafficChart({ data, timezone = "UTC" }: Props) {
           fill="#06b6d4"
           fillOpacity={0.15}
           strokeWidth={1.5}
+          isAnimationActive={false}
         />
         <Area
           type="monotone"
@@ -115,6 +116,7 @@ export function InterfaceTrafficChart({ data, timezone = "UTC" }: Props) {
           fill="#6366f1"
           fillOpacity={0.15}
           strokeWidth={1.5}
+          isAnimationActive={false}
         />
       </AreaChart>
     </ResponsiveContainer>

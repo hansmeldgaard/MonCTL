@@ -64,8 +64,12 @@ class CreateCredentialRequest(BaseModel):
 
     name: str = Field(description="Unique reference name used in config: `$credential:<name>`")
     description: str | None = Field(default=None)
-    credential_type: str = Field(
-        description="Type hint: 'snmp_community', 'ssh_password', 'api_key', 'token', etc."
+    template_id: str | None = Field(
+        default=None, description="UUID of the credential template to use"
+    )
+    credential_type: str | None = Field(
+        default=None,
+        description="Type hint: 'snmp_community', 'ssh_password', etc. Ignored if template_id is set.",
     )
     secret: dict = Field(
         description=(
@@ -102,6 +106,7 @@ def _format_credential(c: Credential) -> dict:
         "name": c.name,
         "description": c.description,
         "credential_type": c.credential_type,
+        "template_id": str(c.template_id) if c.template_id else None,
         "created_at": c.created_at.isoformat() if c.created_at else None,
         "updated_at": c.updated_at.isoformat() if c.updated_at else None,
     }
@@ -145,11 +150,48 @@ async def create_credential(
             detail=f"A credential named '{request.name}' already exists",
         )
 
+    template_id = None
+    credential_type = request.credential_type or "custom"
+    secret_to_store = request.secret
+
+    if request.template_id:
+        from monctl_central.storage.models import CredentialTemplate
+
+        template = await db.get(CredentialTemplate, uuid.UUID(request.template_id))
+        if template is None:
+            raise HTTPException(status_code=400, detail="Credential template not found")
+
+        template_id = template.id
+        credential_type = template.name
+
+        # Validate required fields
+        for field in template.fields:
+            if field.get("required") and field["key_name"] not in request.secret:
+                if field.get("default_value") is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Missing required field: {field['key_name']}",
+                    )
+
+        # Merge defaults for missing optional fields
+        merged = {}
+        for field in template.fields:
+            key = field["key_name"]
+            if key in request.secret:
+                merged[key] = request.secret[key]
+            elif field.get("default_value") is not None:
+                merged[key] = field["default_value"]
+        for k, v in request.secret.items():
+            if k not in merged:
+                merged[k] = v
+        secret_to_store = merged
+
     credential = Credential(
         name=request.name,
         description=request.description,
-        credential_type=request.credential_type,
-        secret_data=encrypt_dict(request.secret),
+        credential_type=credential_type,
+        template_id=template_id,
+        secret_data=encrypt_dict(secret_to_store),
     )
     db.add(credential)
     await db.flush()

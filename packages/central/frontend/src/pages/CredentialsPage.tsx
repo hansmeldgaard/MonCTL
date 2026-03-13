@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { KeyRound, Loader2, Pencil, Plus, Settings2, Trash2 } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { FileText, KeyRound, Loader2, Pencil, Plus, Settings2, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
@@ -26,8 +26,11 @@ import {
   useCreateCredentialKey,
   useUpdateCredentialKey,
   useDeleteCredentialKey,
+  useCredentialTemplates,
+  useCreateCredentialTemplate,
+  useDeleteCredentialTemplate,
 } from "@/api/hooks.ts";
-import type { Credential, CredentialKey } from "@/types/api.ts";
+import type { Credential, CredentialKey, CredentialTemplate } from "@/types/api.ts";
 import { formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 
@@ -238,6 +241,7 @@ function CredentialsCard() {
   const tz = useTimezone();
   const { data: credentials, isLoading } = useCredentials();
   const { data: credentialKeys } = useCredentialKeys();
+  const { data: templates } = useCredentialTemplates();
   const createCredential = useCreateCredential();
   const updateCredential = useUpdateCredential();
   const deleteCredential = useDeleteCredential();
@@ -246,8 +250,22 @@ function CredentialsCard() {
   const [addName, setAddName] = useState("");
   const [addDesc, setAddDesc] = useState("");
   const [addType, setAddType] = useState("snmp_community");
+  const [addTemplateId, setAddTemplateId] = useState("");
   const [addValues, setAddValues] = useState<Record<string, string>>({});
   const [addError, setAddError] = useState<string | null>(null);
+
+  // When template changes, populate fields from template
+  useEffect(() => {
+    if (!addTemplateId) return;
+    const tmpl = (templates ?? []).find((t) => t.id === addTemplateId);
+    if (!tmpl) return;
+    setAddType(tmpl.name);
+    const vals: Record<string, string> = {};
+    for (const f of tmpl.fields) {
+      vals[f.key_name] = f.default_value ?? "";
+    }
+    setAddValues(vals);
+  }, [addTemplateId, templates]);
 
   const [editTarget, setEditTarget] = useState<Credential | null>(null);
   const [editDesc, setEditDesc] = useState("");
@@ -266,10 +284,11 @@ function CredentialsCard() {
       await createCredential.mutateAsync({
         name: addName.trim(),
         description: addDesc.trim() || undefined,
-        credential_type: addType,
+        template_id: addTemplateId || undefined,
+        credential_type: addTemplateId ? undefined : addType,
         secret: addValues,
       });
-      setAddName(""); setAddDesc(""); setAddType("snmp_community"); setAddValues({}); setAddOpen(false);
+      setAddName(""); setAddDesc(""); setAddType("snmp_community"); setAddTemplateId(""); setAddValues({}); setAddOpen(false);
     } catch (err) {
       setAddError(err instanceof Error ? err.message : "Failed to create credential");
     }
@@ -385,7 +404,7 @@ function CredentialsCard() {
             </Table>
           )}
           <div className="mt-4 flex justify-end border-t border-zinc-800 pt-4">
-            <Button size="sm" variant="secondary" onClick={() => { setAddName(""); setAddDesc(""); setAddType("snmp_community"); setAddValues({}); setAddError(null); setAddOpen(true); }} className="gap-1.5">
+            <Button size="sm" variant="secondary" onClick={() => { setAddName(""); setAddDesc(""); setAddType("snmp_community"); setAddTemplateId(""); setAddValues({}); setAddError(null); setAddOpen(true); }} className="gap-1.5">
               <Plus className="h-4 w-4" /> New Credential
             </Button>
           </div>
@@ -395,6 +414,15 @@ function CredentialsCard() {
       {/* Add Credential Dialog */}
       <Dialog open={addOpen} onClose={() => setAddOpen(false)} title="New Credential">
         <form onSubmit={handleCreate} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="cr-template">Template</Label>
+            <Select id="cr-template" value={addTemplateId} onChange={(e) => { setAddTemplateId(e.target.value); if (!e.target.value) { setAddValues({}); setAddType("snmp_community"); } }}>
+              <option value="">Custom (no template)</option>
+              {(templates ?? []).map((t) => (
+                <option key={t.id} value={t.id}>{t.name}{t.description ? ` — ${t.description}` : ""}</option>
+              ))}
+            </Select>
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="cr-name">Name</Label>
@@ -402,7 +430,7 @@ function CredentialsCard() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="cr-type">Type</Label>
-              <Input id="cr-type" placeholder="e.g. snmp_community" value={addType} onChange={(e) => setAddType(e.target.value)} />
+              <Input id="cr-type" placeholder="e.g. snmp_community" value={addType} onChange={(e) => setAddType(e.target.value)} disabled={!!addTemplateId} />
             </div>
           </div>
           <div className="space-y-1.5">
@@ -411,31 +439,60 @@ function CredentialsCard() {
           </div>
           <div className="space-y-2">
             <Label>Secret Values</Label>
-            {Object.entries(addValues).map(([key, val]) => {
-              const keyDef = (credentialKeys ?? []).find((k) => k.name === key);
-              return (
-                <div key={key} className="flex items-center gap-2">
-                  <span className="text-xs font-mono text-zinc-400 w-24 shrink-0">{key}</span>
-                  <Input
-                    type={keyDef?.is_secret ? "password" : "text"}
-                    value={val}
-                    onChange={(e) => setAddValues((prev) => ({ ...prev, [key]: e.target.value }))}
-                    placeholder={keyDef?.is_secret ? "••••••" : "value"}
-                    className="flex-1 text-xs"
-                  />
-                  <button type="button" onClick={() => handleRemoveAddValue(key)} className="rounded p-1 text-zinc-600 hover:text-red-400 cursor-pointer">
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              );
-            })}
-            {availableKeys.length > 0 && (
-              <Select onChange={(e) => { if (e.target.value) { handleAddKeyValue(e.target.value); e.target.value = ""; } }}>
-                <option value="">+ Add field...</option>
-                {availableKeys.map((k) => (
-                  <option key={k.id} value={k.name}>{k.name}{k.is_secret ? " (secret)" : ""}</option>
-                ))}
-              </Select>
+            {addTemplateId ? (
+              /* Template mode: show template fields in order */
+              (() => {
+                const tmpl = (templates ?? []).find((t) => t.id === addTemplateId);
+                if (!tmpl) return null;
+                const sortedFields = [...tmpl.fields].sort((a, b) => a.display_order - b.display_order);
+                return sortedFields.map((f) => {
+                  const keyDef = (credentialKeys ?? []).find((k) => k.name === f.key_name);
+                  return (
+                    <div key={f.key_name} className="flex items-center gap-2">
+                      <span className="text-xs font-mono text-zinc-400 w-28 shrink-0">
+                        {f.key_name}{f.required ? " *" : ""}
+                      </span>
+                      <Input
+                        type={keyDef?.is_secret ? "password" : "text"}
+                        value={addValues[f.key_name] ?? f.default_value ?? ""}
+                        onChange={(e) => setAddValues((prev) => ({ ...prev, [f.key_name]: e.target.value }))}
+                        placeholder={keyDef?.is_secret ? "••••••" : (f.default_value ?? "value")}
+                        className="flex-1 text-xs"
+                      />
+                    </div>
+                  );
+                });
+              })()
+            ) : (
+              /* Custom mode: free key picker */
+              <>
+                {Object.entries(addValues).map(([key, val]) => {
+                  const keyDef = (credentialKeys ?? []).find((k) => k.name === key);
+                  return (
+                    <div key={key} className="flex items-center gap-2">
+                      <span className="text-xs font-mono text-zinc-400 w-24 shrink-0">{key}</span>
+                      <Input
+                        type={keyDef?.is_secret ? "password" : "text"}
+                        value={val}
+                        onChange={(e) => setAddValues((prev) => ({ ...prev, [key]: e.target.value }))}
+                        placeholder={keyDef?.is_secret ? "••••••" : "value"}
+                        className="flex-1 text-xs"
+                      />
+                      <button type="button" onClick={() => handleRemoveAddValue(key)} className="rounded p-1 text-zinc-600 hover:text-red-400 cursor-pointer">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  );
+                })}
+                {availableKeys.length > 0 && (
+                  <Select onChange={(e) => { if (e.target.value) { handleAddKeyValue(e.target.value); e.target.value = ""; } }}>
+                    <option value="">+ Add field...</option>
+                    {availableKeys.map((k) => (
+                      <option key={k.id} value={k.name}>{k.name}{k.is_secret ? " (secret)" : ""}</option>
+                    ))}
+                  </Select>
+                )}
+              </>
             )}
           </div>
           {addError && <p className="text-sm text-red-400">{addError}</p>}
@@ -510,6 +567,184 @@ function CredentialsCard() {
   );
 }
 
+// ── Credential Templates Section ─────────────────────────
+
+function CredentialTemplatesCard() {
+  const tz = useTimezone();
+  const { data: templates, isLoading } = useCredentialTemplates();
+  const { data: credentialKeys } = useCredentialKeys();
+  const createTemplate = useCreateCredentialTemplate();
+  const deleteTemplate = useDeleteCredentialTemplate();
+
+  const [addOpen, setAddOpen] = useState(false);
+  const [addName, setAddName] = useState("");
+  const [addDesc, setAddDesc] = useState("");
+  const [addFields, setAddFields] = useState<{ key_name: string; required: boolean; default_value: string }[]>([]);
+  const [addError, setAddError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<CredentialTemplate | null>(null);
+
+  const usedKeyNames = new Set(addFields.map((f) => f.key_name));
+  const availableKeys = (credentialKeys ?? []).filter((k) => !usedKeyNames.has(k.name));
+
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault();
+    setAddError(null);
+    if (!addName.trim()) { setAddError("Name is required."); return; }
+    if (addFields.length === 0) { setAddError("At least one field is required."); return; }
+    try {
+      await createTemplate.mutateAsync({
+        name: addName.trim(),
+        description: addDesc.trim() || undefined,
+        fields: addFields.map((f, i) => ({
+          key_name: f.key_name,
+          required: f.required,
+          default_value: f.default_value || null,
+          display_order: i + 1,
+        })),
+      });
+      setAddName(""); setAddDesc(""); setAddFields([]); setAddOpen(false);
+    } catch (err) {
+      setAddError(err instanceof Error ? err.message : "Failed to create template");
+    }
+  }
+
+  async function handleDelete() {
+    if (!deleteTarget) return;
+    try { await deleteTemplate.mutateAsync(deleteTarget.id); setDeleteTarget(null); } catch { /* silent */ }
+  }
+
+  return (
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <FileText className="h-4 w-4" />
+            Credential Templates
+            <Badge variant="default" className="ml-auto">{templates?.length ?? 0}</Badge>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin text-zinc-500" /></div>
+          ) : !templates || templates.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-10 text-zinc-500">
+              <FileText className="mb-2 h-8 w-8 text-zinc-600" />
+              <p className="text-sm">No credential templates defined</p>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Description</TableHead>
+                  <TableHead>Fields</TableHead>
+                  <TableHead>Created</TableHead>
+                  <TableHead className="w-16"></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {templates.map((t) => (
+                  <TableRow key={t.id}>
+                    <TableCell className="font-medium font-mono text-sm text-zinc-100">{t.name}</TableCell>
+                    <TableCell className="text-zinc-400 text-sm">{t.description ?? "—"}</TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap gap-1">
+                        {[...t.fields].sort((a, b) => a.display_order - b.display_order).map((f) => (
+                          <Badge key={f.key_name} variant={f.required ? "default" : "secondary"} className="text-xs">
+                            {f.key_name}{f.required ? " *" : ""}
+                          </Badge>
+                        ))}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-zinc-500 text-sm">{formatDate(t.created_at, tz)}</TableCell>
+                    <TableCell>
+                      <button onClick={() => setDeleteTarget(t)} className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer" title="Delete">
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+          <div className="mt-4 flex justify-end border-t border-zinc-800 pt-4">
+            <Button size="sm" variant="secondary" onClick={() => { setAddName(""); setAddDesc(""); setAddFields([]); setAddError(null); setAddOpen(true); }} className="gap-1.5">
+              <Plus className="h-4 w-4" /> New Template
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Add Template Dialog */}
+      <Dialog open={addOpen} onClose={() => setAddOpen(false)} title="New Credential Template">
+        <form onSubmit={handleCreate} className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="ct-name">Name</Label>
+              <Input id="ct-name" placeholder="e.g. snmpv2c" value={addName} onChange={(e) => setAddName(e.target.value)} autoFocus />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="ct-desc">Description</Label>
+              <Input id="ct-desc" placeholder="e.g. SNMP v2c community-based" value={addDesc} onChange={(e) => setAddDesc(e.target.value)} />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label>Fields</Label>
+            {addFields.map((f, idx) => {
+              const keyDef = (credentialKeys ?? []).find((k) => k.name === f.key_name);
+              return (
+                <div key={f.key_name} className="flex items-center gap-2 rounded border border-zinc-800 px-2 py-1.5">
+                  <span className="text-xs font-mono text-zinc-300 w-28 shrink-0">{f.key_name}</span>
+                  {keyDef?.is_secret && <Badge variant="destructive" className="text-[10px]">secret</Badge>}
+                  <label className="flex items-center gap-1 text-xs text-zinc-400 ml-auto">
+                    <input type="checkbox" checked={f.required} onChange={(e) => {
+                      const next = [...addFields]; next[idx] = { ...f, required: e.target.checked }; setAddFields(next);
+                    }} className="accent-brand-500" />
+                    Required
+                  </label>
+                  <Input
+                    value={f.default_value}
+                    onChange={(e) => {
+                      const next = [...addFields]; next[idx] = { ...f, default_value: e.target.value }; setAddFields(next);
+                    }}
+                    placeholder="default"
+                    className="w-24 text-xs"
+                  />
+                  <button type="button" onClick={() => setAddFields(addFields.filter((_, i) => i !== idx))} className="rounded p-1 text-zinc-600 hover:text-red-400 cursor-pointer">
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              );
+            })}
+            {availableKeys.length > 0 && (
+              <Select onChange={(e) => { if (e.target.value) { setAddFields([...addFields, { key_name: e.target.value, required: true, default_value: "" }]); e.target.value = ""; } }}>
+                <option value="">+ Add field...</option>
+                {availableKeys.map((k) => (
+                  <option key={k.id} value={k.name}>{k.name}{k.is_secret ? " (secret)" : ""}</option>
+                ))}
+              </Select>
+            )}
+          </div>
+          {addError && <p className="text-sm text-red-400">{addError}</p>}
+          <DialogFooter>
+            <Button type="button" variant="secondary" onClick={() => setAddOpen(false)}>Cancel</Button>
+            <Button type="submit" disabled={createTemplate.isPending}>{createTemplate.isPending && <Loader2 className="h-4 w-4 animate-spin" />} Create</Button>
+          </DialogFooter>
+        </form>
+      </Dialog>
+
+      {/* Delete Template Dialog */}
+      <Dialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)} title="Delete Template">
+        <p className="text-sm text-zinc-400">Delete template <span className="font-semibold text-zinc-200">{deleteTarget?.name}</span>? Existing credentials using this template will keep working.</p>
+        <DialogFooter>
+          <Button variant="secondary" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+          <Button variant="destructive" onClick={handleDelete} disabled={deleteTemplate.isPending}>{deleteTemplate.isPending && <Loader2 className="h-4 w-4 animate-spin" />} Delete</Button>
+        </DialogFooter>
+      </Dialog>
+    </>
+  );
+}
+
 // ── Main Page ────────────────────────────────────────────
 
 export function CredentialsPage() {
@@ -527,12 +762,16 @@ export function CredentialsPage() {
         <TabsList>
           <TabTrigger value="credentials">Credentials</TabTrigger>
           <TabTrigger value="credential-keys">Credential Keys</TabTrigger>
+          <TabTrigger value="templates">Templates</TabTrigger>
         </TabsList>
         <TabsContent value="credentials">
           <CredentialsCard />
         </TabsContent>
         <TabsContent value="credential-keys">
           <CredentialKeysCard />
+        </TabsContent>
+        <TabsContent value="templates">
+          <CredentialTemplatesCard />
         </TabsContent>
       </Tabs>
     </div>

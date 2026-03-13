@@ -106,6 +106,7 @@ function AddAssignmentDialog({
   const [versionMode, setVersionMode] = useState<"latest" | "pinned">("latest");
   const [selectedVersionId, setSelectedVersionId] = useState("");
   const [configText, setConfigText] = useState("{}");
+  const [parsedConfig, setParsedConfig] = useState<Record<string, unknown>>({});
   const [configError, setConfigError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -122,10 +123,12 @@ function AddAssignmentDialog({
     setRoutingMode(deviceCollectorGroupId ? "group" : "specific");
   }, [deviceCollectorGroupId, open]);
 
-  // Reset version picker when app changes
+  // Reset version/config when app changes
   useEffect(() => {
     setVersionMode("latest");
     setSelectedVersionId("");
+    setParsedConfig({});
+    setConfigText("{}");
   }, [selectedAppId]);
 
   function reset() {
@@ -137,6 +140,7 @@ function AddAssignmentDialog({
     setScheduleType("interval");
     setScheduleValue("60");
     setConfigText("{}");
+    setParsedConfig({});
     setConfigError(null);
     setFormError(null);
   }
@@ -146,17 +150,24 @@ function AddAssignmentDialog({
     onClose();
   }
 
+  const hasSchemaFields = appDetail?.config_schema &&
+    Object.keys((appDetail.config_schema as { properties?: Record<string, unknown> }).properties ?? {}).length > 0;
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setFormError(null);
     setConfigError(null);
 
     let config: Record<string, unknown> = {};
-    try {
-      config = JSON.parse(configText);
-    } catch {
-      setConfigError("Invalid JSON");
-      return;
+    if (hasSchemaFields && Object.keys(parsedConfig).length > 0) {
+      config = parsedConfig;
+    } else {
+      try {
+        config = JSON.parse(configText);
+      } catch {
+        setConfigError("Invalid JSON");
+        return;
+      }
     }
 
     if (!selectedAppId) {
@@ -343,17 +354,43 @@ function AddAssignmentDialog({
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="aa-config">
-            Config <span className="font-normal text-zinc-500">(JSON)</span>
-          </Label>
-          <textarea
-            id="aa-config"
-            rows={4}
-            value={configText}
-            onChange={(e) => setConfigText(e.target.value)}
-            className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-xs text-zinc-100 focus:outline-none focus:ring-2 focus:ring-brand-500/50 focus:border-brand-500 resize-none"
-            placeholder="{}"
-          />
+          <Label>Config</Label>
+          {hasSchemaFields ? (
+            <div className="space-y-3 rounded-md border border-zinc-800 p-3">
+              <SchemaConfigFields
+                schema={appDetail!.config_schema}
+                config={parsedConfig}
+                onChange={(newConfig) => {
+                  setParsedConfig(newConfig);
+                  setConfigText(JSON.stringify(newConfig, null, 2));
+                }}
+                prefix="add-assign"
+                disabled={false}
+              />
+              <details className="text-xs">
+                <summary className="cursor-pointer text-zinc-600 hover:text-zinc-400">
+                  Show raw JSON
+                </summary>
+                <textarea
+                  rows={3}
+                  value={configText}
+                  onChange={(e) => {
+                    setConfigText(e.target.value);
+                    try { setParsedConfig(JSON.parse(e.target.value || "{}")); } catch { /* typing */ }
+                  }}
+                  className="mt-2 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-xs text-zinc-100 focus:outline-none focus:ring-2 focus:ring-brand-500/50 focus:border-brand-500 resize-none"
+                />
+              </details>
+            </div>
+          ) : (
+            <textarea
+              rows={4}
+              value={configText}
+              onChange={(e) => setConfigText(e.target.value)}
+              className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-xs text-zinc-100 focus:outline-none focus:ring-2 focus:ring-brand-500/50 focus:border-brand-500 resize-none"
+              placeholder="{}"
+            />
+          )}
           {configError && <p className="text-xs text-red-400">{configError}</p>}
         </div>
 
@@ -388,6 +425,7 @@ function EditAssignmentDialog({ assignment, open, onClose }: EditAssignmentDialo
   const [scheduleType, setScheduleType] = useState("interval");
   const [scheduleValue, setScheduleValue] = useState("60");
   const [configText, setConfigText] = useState("{}");
+  const [parsedConfig, setParsedConfig] = useState<Record<string, unknown>>({});
   const [configError, setConfigError] = useState<string | null>(null);
   const [enabled, setEnabled] = useState(true);
   const [versionMode, setVersionMode] = useState<"latest" | "pinned">("latest");
@@ -400,6 +438,7 @@ function EditAssignmentDialog({ assignment, open, onClose }: EditAssignmentDialo
       setScheduleType(assignment.schedule_type);
       setScheduleValue(assignment.schedule_value);
       setConfigText(JSON.stringify(assignment.config, null, 2));
+      setParsedConfig(assignment.config ?? {});
       setEnabled(assignment.enabled);
       setVersionMode(assignment.use_latest ? "latest" : "pinned");
       setSelectedVersionId(assignment.app_version_id);
@@ -408,6 +447,9 @@ function EditAssignmentDialog({ assignment, open, onClose }: EditAssignmentDialo
     }
   }, [assignment]);
 
+  const editHasSchemaFields = appDetail?.config_schema &&
+    Object.keys((appDetail.config_schema as { properties?: Record<string, unknown> }).properties ?? {}).length > 0;
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!assignment) return;
@@ -415,11 +457,15 @@ function EditAssignmentDialog({ assignment, open, onClose }: EditAssignmentDialo
     setConfigError(null);
 
     let config: Record<string, unknown> = {};
-    try {
-      config = JSON.parse(configText);
-    } catch {
-      setConfigError("Invalid JSON");
-      return;
+    if (editHasSchemaFields && Object.keys(parsedConfig).length > 0) {
+      config = parsedConfig;
+    } else {
+      try {
+        config = JSON.parse(configText);
+      } catch {
+        setConfigError("Invalid JSON");
+        return;
+      }
     }
 
     const latestVersion = appDetail?.versions?.find((v) => v.is_latest);
@@ -532,17 +578,43 @@ function EditAssignmentDialog({ assignment, open, onClose }: EditAssignmentDialo
 
         {/* Config */}
         <div className="space-y-1.5">
-          <Label htmlFor="ea-config">
-            Config <span className="font-normal text-zinc-500">(JSON)</span>
-          </Label>
-          <textarea
-            id="ea-config"
-            rows={4}
-            value={configText}
-            onChange={(e) => setConfigText(e.target.value)}
-            className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-xs text-zinc-100 focus:outline-none focus:ring-2 focus:ring-brand-500/50 focus:border-brand-500 resize-none"
-            placeholder="{}"
-          />
+          <Label>Config</Label>
+          {editHasSchemaFields ? (
+            <div className="space-y-3 rounded-md border border-zinc-800 p-3">
+              <SchemaConfigFields
+                schema={appDetail!.config_schema}
+                config={parsedConfig}
+                onChange={(newConfig) => {
+                  setParsedConfig(newConfig);
+                  setConfigText(JSON.stringify(newConfig, null, 2));
+                }}
+                prefix="edit-assign"
+                disabled={false}
+              />
+              <details className="text-xs">
+                <summary className="cursor-pointer text-zinc-600 hover:text-zinc-400">
+                  Show raw JSON
+                </summary>
+                <textarea
+                  rows={3}
+                  value={configText}
+                  onChange={(e) => {
+                    setConfigText(e.target.value);
+                    try { setParsedConfig(JSON.parse(e.target.value || "{}")); } catch { /* typing */ }
+                  }}
+                  className="mt-2 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-xs text-zinc-100 focus:outline-none focus:ring-2 focus:ring-brand-500/50 focus:border-brand-500 resize-none"
+                />
+              </details>
+            </div>
+          ) : (
+            <textarea
+              rows={4}
+              value={configText}
+              onChange={(e) => setConfigText(e.target.value)}
+              className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-xs text-zinc-100 focus:outline-none focus:ring-2 focus:ring-brand-500/50 focus:border-brand-500 resize-none"
+              placeholder="{}"
+            />
+          )}
           {configError && <p className="text-xs text-red-400">{configError}</p>}
         </div>
 

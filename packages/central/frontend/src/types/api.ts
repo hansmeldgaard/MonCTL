@@ -274,6 +274,25 @@ export interface Credential {
   name: string;
   description: string;
   credential_type: string;
+  template_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// ── Credential Templates ─────────────────────────────────
+
+export interface CredentialTemplateField {
+  key_name: string;
+  required: boolean;
+  default_value: string | null;
+  display_order: number;
+}
+
+export interface CredentialTemplate {
+  id: string;
+  name: string;
+  description: string | null;
+  fields: CredentialTemplateField[];
   created_at: string;
   updated_at: string;
 }
