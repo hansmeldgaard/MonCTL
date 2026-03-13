@@ -511,7 +511,6 @@ export function AvailabilityChart({ results, fromTs, toTs, timezone = "UTC" }: A
                     x2={range.x2}
                     fill="#27272a"
                     fillOpacity={0.9}
-                    isAnimationActive={false}
                   />
                 ))}
                 {appNames.map((appName, i) => (

@@ -650,7 +650,7 @@ function CredentialTemplatesCard() {
                     <TableCell>
                       <div className="flex flex-wrap gap-1">
                         {[...t.fields].sort((a, b) => a.display_order - b.display_order).map((f) => (
-                          <Badge key={f.key_name} variant={f.required ? "default" : "secondary"} className="text-xs">
+                          <Badge key={f.key_name} variant={f.required ? "default" : "info"} className="text-xs">
                             {f.key_name}{f.required ? " *" : ""}
                           </Badge>
                         ))}
