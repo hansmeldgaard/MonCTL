@@ -182,26 +182,167 @@ class Poller(BasePoller):
 '''
 
     snmp_check_code = '''\
-"""SNMP check placeholder — requires pysnmp for full implementation."""
+"""SNMP reachability check — SNMP GET on a configurable OID with RTT measurement."""
 import time
 from monctl_collector.polling.base import BasePoller
 from monctl_collector.jobs.models import PollContext, PollResult
 
 
+def _build_v3_auth(cred: dict):
+    """Build UsmUserData from credential dict for SNMPv3."""
+    from pysnmp.hlapi.v3arch.asyncio import UsmUserData
+    import pysnmp.hlapi.v3arch.asyncio as hlapi
+
+    username = cred.get("username", "")
+    security_level = cred.get("security_level", "authPriv").lower()
+
+    _auth_map = {
+        "MD5": "usmHMACMD5AuthProtocol", "SHA": "usmHMACSHAAuthProtocol",
+        "SHA224": "usmHMAC128SHA224AuthProtocol", "SHA256": "usmHMAC192SHA256AuthProtocol",
+        "SHA384": "usmHMAC256SHA384AuthProtocol", "SHA512": "usmHMAC384SHA512AuthProtocol",
+    }
+    _priv_map = {
+        "DES": "usmDESPrivProtocol", "3DES": "usm3DESEDEPrivProtocol",
+        "AES": "usmAesCfb128Protocol", "AES128": "usmAesCfb128Protocol",
+        "AES192": "usmAesCfb192Protocol", "AES256": "usmAesCfb256Protocol",
+    }
+
+    kwargs: dict = {"userName": username}
+
+    if security_level == "noauthnopriv":
+        return UsmUserData(**kwargs)
+
+    auth_proto_name = (cred.get("auth_protocol") or "").upper()
+    auth_key = cred.get("auth_password") or cred.get("auth_key") or ""
+    auth_proto = getattr(hlapi, _auth_map.get(auth_proto_name, ""), None) if auth_proto_name else None
+    if auth_proto and auth_key:
+        kwargs["authKey"] = auth_key
+        kwargs["authProtocol"] = auth_proto
+
+    if security_level == "authpriv":
+        priv_proto_name = (cred.get("priv_protocol") or "").upper()
+        priv_key = cred.get("priv_password") or cred.get("priv_key") or ""
+        priv_proto = getattr(hlapi, _priv_map.get(priv_proto_name, ""), None) if priv_proto_name else None
+        if priv_proto and priv_key:
+            kwargs["privKey"] = priv_key
+            kwargs["privProtocol"] = priv_proto
+
+    return UsmUserData(**kwargs)
+
+
 class Poller(BasePoller):
     async def poll(self, context: PollContext) -> PollResult:
-        return PollResult(
-            job_id=context.job.job_id,
-            device_id=context.job.device_id,
-            collector_node=context.node_id,
-            timestamp=time.time(),
-            metrics=[],
-            config_data=None,
-            status="unknown",
-            reachable=False,
-            error_message="SNMP check not yet implemented — upload source code via PUT /api/v1/apps/snmp_check/code",
-            execution_time_ms=0,
-        )
+        host = context.device_host or context.parameters.get("host", "")
+        oid = context.parameters.get("oid", "1.3.6.1.2.1.1.3.0")
+        timeout = int(context.parameters.get("timeout", 5))
+        snmp_port = int(context.credential.get("port", context.parameters.get("port", 161)))
+        cred = context.credential
+        snmp_version = str(cred.get("version", "2c")).lower()
+        start = time.time()
+
+        try:
+            from pysnmp.hlapi.v3arch.asyncio import (
+                CommunityData, ContextData, ObjectIdentity, ObjectType,
+                SnmpEngine, UdpTransportTarget, get_cmd,
+            )
+
+            engine = SnmpEngine()
+            if snmp_version == "3":
+                auth_data = _build_v3_auth(cred)
+            else:
+                auth_data = CommunityData(
+                    cred.get("community", "public"),
+                    mpModel=0 if snmp_version == "1" else 1,
+                )
+
+            transport = await UdpTransportTarget.create(
+                (host, snmp_port), timeout=timeout, retries=1,
+            )
+
+            error_indication, error_status, error_index, var_binds = await get_cmd(
+                engine, auth_data, transport, ContextData(),
+                ObjectType(ObjectIdentity(oid)),
+            )
+
+            rtt_ms = round((time.time() - start) * 1000, 2)
+            execution_ms = int((time.time() - start) * 1000)
+
+            if error_indication:
+                return PollResult(
+                    job_id=context.job.job_id,
+                    device_id=context.job.device_id,
+                    collector_node=context.node_id,
+                    timestamp=time.time(),
+                    metrics=[{"name": "snmp_reachable", "value": 0.0, "labels": {"oid": oid}}],
+                    config_data=None,
+                    status="critical",
+                    reachable=False,
+                    error_message=f"SNMP error: {error_indication}",
+                    execution_time_ms=execution_ms,
+                )
+
+            if error_status:
+                return PollResult(
+                    job_id=context.job.job_id,
+                    device_id=context.job.device_id,
+                    collector_node=context.node_id,
+                    timestamp=time.time(),
+                    metrics=[{"name": "snmp_reachable", "value": 0.0, "labels": {"oid": oid}}],
+                    config_data=None,
+                    status="critical",
+                    reachable=False,
+                    error_message=f"SNMP error: {error_status.prettyPrint()} at {error_index}",
+                    execution_time_ms=execution_ms,
+                )
+
+            value = var_binds[0][1].prettyPrint() if var_binds else "(no value)"
+
+            return PollResult(
+                job_id=context.job.job_id,
+                device_id=context.job.device_id,
+                collector_node=context.node_id,
+                timestamp=time.time(),
+                metrics=[
+                    {"name": "snmp_reachable", "value": 1.0, "labels": {"oid": oid}},
+                    {"name": "snmp_rtt_ms", "value": rtt_ms, "unit": "ms", "labels": {"oid": oid}},
+                ],
+                config_data={"snmp_oid_value": value, "snmp_oid": oid},
+                status="ok",
+                reachable=True,
+                error_message=None,
+                execution_time_ms=execution_ms,
+                rtt_ms=rtt_ms,
+                response_time_ms=rtt_ms,
+            )
+
+        except ImportError:
+            execution_ms = int((time.time() - start) * 1000)
+            return PollResult(
+                job_id=context.job.job_id,
+                device_id=context.job.device_id,
+                collector_node=context.node_id,
+                timestamp=time.time(),
+                metrics=[],
+                config_data=None,
+                status="critical",
+                reachable=False,
+                error_message="pysnmp not installed — add pysnmp-lextudio>=6.0 to app requirements",
+                execution_time_ms=execution_ms,
+            )
+        except Exception as exc:
+            execution_ms = int((time.time() - start) * 1000)
+            return PollResult(
+                job_id=context.job.job_id,
+                device_id=context.job.device_id,
+                collector_node=context.node_id,
+                timestamp=time.time(),
+                metrics=[{"name": "snmp_reachable", "value": 0.0, "labels": {"oid": oid}}],
+                config_data=None,
+                status="critical",
+                reachable=False,
+                error_message=f"{type(exc).__name__}: {exc}",
+                execution_time_ms=execution_ms,
+            )
 '''
 
     snmp_interface_code = '''\
@@ -421,11 +562,12 @@ class Poller(BasePoller):
                 "port": {"type": "integer", "title": "Port", "default": 443, "minimum": 1, "maximum": 65535},
             },
         }),
-        ("snmp_check", "SNMP check (v1/v2c/v3)", snmp_check_code, "Poller", [], {
+        ("snmp_check", "SNMP check (v1/v2c/v3)", snmp_check_code, "Poller", ["pysnmp-lextudio>=6.0"], {
             "type": "object",
             "properties": {
-                "oid": {"type": "string", "title": "OID", "x-widget": "snmp-oid"},
-                "snmp_credential": {"type": "string", "title": "Credential", "x-widget": "credential"},
+                "snmp_credential": {"type": "string", "title": "SNMP Credential", "x-widget": "credential"},
+                "oid": {"type": "string", "title": "OID", "default": "1.3.6.1.2.1.1.3.0", "x-widget": "snmp-oid"},
+                "timeout": {"type": "integer", "title": "SNMP Timeout (s)", "default": 5, "minimum": 1, "maximum": 30},
             },
         }),
         ("snmp_interface_poller", "SNMP interface poller (ifTable/ifXTable)", snmp_interface_code, "Poller",
