@@ -445,8 +445,33 @@ function CredentialsCard() {
                 const tmpl = (templates ?? []).find((t) => t.id === addTemplateId);
                 if (!tmpl) return null;
                 const sortedFields = [...tmpl.fields].sort((a, b) => a.display_order - b.display_order);
+                const secLevel = (addValues.security_level ?? "authPriv").toLowerCase();
+                const showAuth = secLevel !== "noauthnopriv";
+                const showPriv = secLevel === "authpriv";
                 return sortedFields.map((f) => {
+                  // Hide auth/priv fields based on security_level
+                  if (!showAuth && ["auth_protocol", "auth_password"].includes(f.key_name)) return null;
+                  if (!showPriv && ["priv_protocol", "priv_password"].includes(f.key_name)) return null;
                   const keyDef = (credentialKeys ?? []).find((k) => k.name === f.key_name);
+                  // Render security_level as a select
+                  if (f.key_name === "security_level") {
+                    return (
+                      <div key={f.key_name} className="flex items-center gap-2">
+                        <span className="text-xs font-mono text-zinc-400 w-28 shrink-0">
+                          {f.key_name}{f.required ? " *" : ""}
+                        </span>
+                        <Select
+                          value={addValues[f.key_name] ?? f.default_value ?? "authPriv"}
+                          onChange={(e) => setAddValues((prev) => ({ ...prev, [f.key_name]: e.target.value }))}
+                          className="flex-1 text-xs"
+                        >
+                          <option value="noAuthNoPriv">noAuthNoPriv</option>
+                          <option value="authNoPriv">authNoPriv</option>
+                          <option value="authPriv">authPriv</option>
+                        </Select>
+                      </div>
+                    );
+                  }
                   return (
                     <div key={f.key_name} className="flex items-center gap-2">
                       <span className="text-xs font-mono text-zinc-400 w-28 shrink-0">

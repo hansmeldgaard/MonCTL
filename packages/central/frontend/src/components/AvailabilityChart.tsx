@@ -481,7 +481,7 @@ export function AvailabilityChart({ results, fromTs, toTs, timezone = "UTC" }: A
           </p>
           <div className="h-44">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={data} margin={{ top: 4, right: 16, bottom: 0, left: 0 }}>
+              <LineChart data={data} margin={{ top: 4, right: 16, bottom: 0, left: 0 }} throttleDelay={0}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
                 <XAxis
                   dataKey="time"
@@ -499,7 +499,7 @@ export function AvailabilityChart({ results, fromTs, toTs, timezone = "UTC" }: A
                   tickFormatter={(v: number) => `${v}ms`}
                   width={48}
                 />
-                <Tooltip content={<LatencyTooltip />} />
+                <Tooltip content={<LatencyTooltip />} isAnimationActive={false} />
                 <Legend
                   wrapperStyle={{ fontSize: 11, color: "#a1a1aa", paddingTop: 8 }}
                 />

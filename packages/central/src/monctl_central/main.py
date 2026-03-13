@@ -239,11 +239,57 @@ _OPER_STATUS = {1: "up", 2: "down", 3: "testing", 4: "unknown", 5: "dormant", 6:
 
 
 class Poller(BasePoller):
+    @staticmethod
+    def _build_auth(cred: dict):
+        """Build pysnmp auth object from credential data. Supports v1, v2c, and v3."""
+        from pysnmp.hlapi.v3arch.asyncio import CommunityData, UsmUserData
+        import pysnmp.hlapi.v3arch.asyncio as hlapi
+
+        version = str(cred.get("version", "2c")).lower()
+
+        if version != "3":
+            community = cred.get("community", "public")
+            return CommunityData(community, mpModel=0 if version == "1" else 1)
+
+        username = cred.get("username", "")
+        security_level = cred.get("security_level", "authPriv").lower()
+
+        _AUTH_MAP = {
+            "MD5": "usmHMACMD5AuthProtocol", "SHA": "usmHMACSHAAuthProtocol",
+            "SHA224": "usmHMAC128SHA224AuthProtocol", "SHA256": "usmHMAC192SHA256AuthProtocol",
+            "SHA384": "usmHMAC256SHA384AuthProtocol", "SHA512": "usmHMAC384SHA512AuthProtocol",
+        }
+        _PRIV_MAP = {
+            "DES": "usmDESPrivProtocol", "3DES": "usm3DESEDEPrivProtocol",
+            "AES": "usmAesCfb128Protocol", "AES128": "usmAesCfb128Protocol",
+            "AES192": "usmAesCfb192Protocol", "AES256": "usmAesCfb256Protocol",
+        }
+
+        kwargs: dict = {"userName": username}
+
+        if security_level == "noauthnopriv":
+            return UsmUserData(**kwargs)
+
+        auth_proto_name = (cred.get("auth_protocol") or "").upper()
+        auth_key = cred.get("auth_password") or cred.get("auth_key") or ""
+        auth_proto = getattr(hlapi, _AUTH_MAP.get(auth_proto_name, ""), None) if auth_proto_name else None
+        if auth_proto and auth_key:
+            kwargs["authKey"] = auth_key
+            kwargs["authProtocol"] = auth_proto
+
+        if security_level == "authpriv":
+            priv_proto_name = (cred.get("priv_protocol") or "").upper()
+            priv_key = cred.get("priv_password") or cred.get("priv_key") or ""
+            priv_proto = getattr(hlapi, _PRIV_MAP.get(priv_proto_name, ""), None) if priv_proto_name else None
+            if priv_proto and priv_key:
+                kwargs["privKey"] = priv_key
+                kwargs["privProtocol"] = priv_proto
+
+        return UsmUserData(**kwargs)
+
     async def poll(self, context: PollContext) -> PollResult:
         host = context.device_host or context.parameters.get("host", "")
         timeout = context.parameters.get("timeout", 10)
-        community = context.credential.get("community", "public")
-        snmp_version = context.credential.get("version", "2c")
         include_filter = context.parameters.get("include_interfaces", [])
         exclude_filter = context.parameters.get("exclude_interfaces", [])
         exclude_oper = set(context.parameters.get("exclude_oper_status", []))
@@ -253,12 +299,13 @@ class Poller(BasePoller):
         try:
             from pysnmp.hlapi.v3arch.asyncio import (
                 CommunityData, ContextData, ObjectIdentity, ObjectType,
-                SnmpEngine, UdpTransportTarget, bulk_walk_cmd,
+                SnmpEngine, UdpTransportTarget, UsmUserData, bulk_walk_cmd,
             )
 
             engine = SnmpEngine()
-            auth_data = CommunityData(community, mpModel=0 if snmp_version == "1" else 1)
-            transport = await UdpTransportTarget.create((host, 161), timeout=timeout, retries=1)
+            auth_data = self._build_auth(context.credential)
+            port = int(context.credential.get("port", 161))
+            transport = await UdpTransportTarget.create((host, port), timeout=timeout, retries=1)
 
             # Walk all needed OIDs
             raw: dict[str, dict[int, str | int]] = {}

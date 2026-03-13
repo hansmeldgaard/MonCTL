@@ -81,7 +81,7 @@ export function InterfaceTrafficChart({ data, timezone = "UTC" }: Props) {
 
   return (
     <ResponsiveContainer width="100%" height={250}>
-      <AreaChart data={chartData}>
+      <AreaChart data={chartData} throttleDelay={0}>
         <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
         <XAxis dataKey="time" tick={{ fill: "#71717a", fontSize: 11 }} />
         <YAxis tick={{ fill: "#71717a", fontSize: 11 }} tickFormatter={formatBpsShort} />
@@ -96,6 +96,7 @@ export function InterfaceTrafficChart({ data, timezone = "UTC" }: Props) {
             formatBpsShort(Number(value)),
             name === "in_bps" ? "Inbound" : "Outbound",
           ]}
+          isAnimationActive={false}
         />
         <Legend />
         <Area
