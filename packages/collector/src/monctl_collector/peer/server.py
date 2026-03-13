@@ -211,6 +211,11 @@ class CollectorPeerServicer(pb_grpc.CollectorPeerServicer):
     async def SubmitResult(self, request, context):
         if self._local_cache is None:
             return pb.SubmitResultResponse(accepted=False)
+        iface_rows = None
+        if request.interface_rows_json:
+            parsed = json.loads(request.interface_rows_json)
+            if parsed:
+                iface_rows = parsed
         result = {
             "job_id": request.job_id,
             "device_id": request.device_id or None,
@@ -225,6 +230,7 @@ class CollectorPeerServicer(pb_grpc.CollectorPeerServicer):
             "response_time_ms": request.response_time_ms if request.response_time_ms > 0 else None,
             "started_at": request.started_at if request.started_at > 0 else None,
             "collector_node": request.collector_node or None,
+            "interface_rows": iface_rows,
         }
         await self._local_cache.enqueue_result(result)
         return pb.SubmitResultResponse(accepted=True)

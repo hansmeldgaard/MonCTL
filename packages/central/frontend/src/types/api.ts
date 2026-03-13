@@ -304,6 +304,24 @@ export interface HealthStatus {
   instance_id: string;
 }
 
+// ── System Health ────────────────────────────────────────
+
+export type SubsystemStatus = "healthy" | "degraded" | "critical" | "unknown";
+
+export interface SubsystemHealth {
+  status: SubsystemStatus;
+  latency_ms: number | null;
+  details: Record<string, unknown>;
+}
+
+export interface SystemHealthReport {
+  overall_status: SubsystemStatus;
+  instance_id: string;
+  version: string;
+  checked_at: string;
+  subsystems: Record<string, SubsystemHealth>;
+}
+
 // ── Users ─────────────────────────────────────────────────
 
 export interface User {

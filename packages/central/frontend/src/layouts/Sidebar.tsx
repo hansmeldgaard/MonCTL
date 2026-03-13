@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   ChevronRight,
   FileText,
+  HeartPulse,
   LayoutDashboard,
   ListChecks,
   Monitor,
@@ -20,6 +21,7 @@ interface SidebarProps {
 
 const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard", end: true },
+  { to: "/system-health", icon: HeartPulse, label: "System Health", end: true },
   { to: "/devices", icon: Monitor, label: "Devices", end: false },
   { to: "/apps", icon: AppWindow, label: "Apps", end: false },
   { to: "/assignments", icon: ListChecks, label: "Assignments", end: false },

@@ -21,6 +21,7 @@ import type {
   RegistrationToken,
   ResultRecord,
   SnmpOid,
+  SystemHealthReport,
   SystemSettings,
   Template,
   Tenant,
@@ -360,8 +361,8 @@ export function useCreateDevice() {
       default_credential_id?: string;
       labels?: Record<string, string>;
     }) => apiPost<Device>("/devices", data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["devices"] });
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["devices"] });
     },
   });
 }
@@ -1041,6 +1042,19 @@ export function useApplyTemplate() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["devices"] });
     },
+  });
+}
+
+// ── Credential Detail ────────────────────────────────────
+
+// ── System Health ────────────────────────────────────────
+
+export function useSystemHealth() {
+  return useQuery({
+    queryKey: ["system-health"],
+    queryFn: () => apiGet<SystemHealthReport>("/system/health"),
+    select: (res) => res.data,
+    refetchInterval: POLL_DETAIL,
   });
 }
 

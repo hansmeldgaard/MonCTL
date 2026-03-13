@@ -205,6 +205,116 @@ async def latest_results(
     }
 
 
+def _format_interface_row(r: dict) -> dict:
+    """Format a ClickHouse interface table row into the API response format."""
+    return {
+        "assignment_id": str(r.get("assignment_id", "")),
+        "collector_id": str(r.get("collector_id", "")),
+        "app_id": str(r.get("app_id", "")),
+        "app_name": r.get("app_name", ""),
+        "device_id": str(r.get("device_id", "")),
+        "device_name": r.get("device_name", ""),
+        "if_index": r.get("if_index", 0),
+        "if_name": r.get("if_name", ""),
+        "if_alias": r.get("if_alias", ""),
+        "if_speed_mbps": r.get("if_speed_mbps", 0),
+        "if_admin_status": r.get("if_admin_status", ""),
+        "if_oper_status": r.get("if_oper_status", ""),
+        "in_octets": r.get("in_octets", 0),
+        "out_octets": r.get("out_octets", 0),
+        "in_errors": r.get("in_errors", 0),
+        "out_errors": r.get("out_errors", 0),
+        "in_discards": r.get("in_discards", 0),
+        "out_discards": r.get("out_discards", 0),
+        "in_unicast_pkts": r.get("in_unicast_pkts", 0),
+        "out_unicast_pkts": r.get("out_unicast_pkts", 0),
+        "in_rate_bps": r.get("in_rate_bps", 0),
+        "out_rate_bps": r.get("out_rate_bps", 0),
+        "in_utilization_pct": r.get("in_utilization_pct", 0),
+        "out_utilization_pct": r.get("out_utilization_pct", 0),
+        "poll_interval_sec": r.get("poll_interval_sec", 0),
+        "state": r.get("state", 0),
+        "executed_at": _ensure_utc_iso(r.get("executed_at")) or "",
+        "received_at": _ensure_utc_iso(r.get("received_at")) or "",
+        "tenant_id": str(r.get("tenant_id", "")),
+        "collector_name": r.get("collector_name", "") or None,
+    }
+
+
+@router.get("/interfaces/{device_id}")
+async def device_interfaces(
+    device_id: str,
+    from_ts: Optional[str] = Query(default=None, description="ISO datetime — return only results at or after this time"),
+    to_ts: Optional[str] = Query(default=None, description="ISO datetime — return only results at or before this time"),
+    limit: int = Query(default=500, le=5000),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Return interface history for a device from the ClickHouse interface table."""
+    device = await db.get(Device, uuid.UUID(device_id))
+    if device is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+    if not check_tenant_access(auth, device.tenant_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    from_dt = datetime.fromisoformat(from_ts.replace("Z", "+00:00")) if from_ts else None
+    to_dt = datetime.fromisoformat(to_ts.replace("Z", "+00:00")) if to_ts else None
+
+    ch = get_clickhouse()
+    try:
+        rows = ch.query_history(
+            table="interface",
+            device_id=device_id,
+            from_ts=from_dt,
+            to_ts=to_dt,
+            limit=limit,
+            offset=offset,
+        )
+    except Exception as exc:
+        if ch._is_table_missing_error(exc):
+            rows = []
+        else:
+            raise
+
+    data = [_format_interface_row(r) for r in rows]
+    return {
+        "status": "success",
+        "data": data,
+        "meta": {"limit": limit, "offset": offset, "count": len(data)},
+    }
+
+
+@router.get("/interfaces/{device_id}/latest")
+async def device_interfaces_latest(
+    device_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Return the latest interface data per interface for a device."""
+    device = await db.get(Device, uuid.UUID(device_id))
+    if device is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+    if not check_tenant_access(auth, device.tenant_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    ch = get_clickhouse()
+    try:
+        rows = ch.query_latest(table="interface", device_id=device_id)
+    except Exception as exc:
+        if ch._is_table_missing_error(exc):
+            rows = []
+        else:
+            raise
+
+    data = [_format_interface_row(r) for r in rows]
+    return {
+        "status": "success",
+        "data": data,
+        "meta": {"count": len(data)},
+    }
+
+
 @router.get("/by-device/{device_id}")
 async def device_status(
     device_id: str,

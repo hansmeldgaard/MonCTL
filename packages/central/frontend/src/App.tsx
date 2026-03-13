@@ -10,6 +10,7 @@ import { AssignmentsPage } from "@/pages/AssignmentsPage.tsx";
 import { AlertsPage } from "@/pages/AlertsPage.tsx";
 import { TemplatesPage } from "@/pages/TemplatesPage.tsx";
 import { SettingsPage } from "@/pages/SettingsPage.tsx";
+import { SystemHealthPage } from "@/pages/SystemHealthPage.tsx";
 
 export function App() {
   return (
@@ -17,6 +18,7 @@ export function App() {
       <Route path="/login" element={<LoginPage />} />
       <Route element={<AppLayout />}>
         <Route index element={<DashboardPage />} />
+        <Route path="system-health" element={<SystemHealthPage />} />
         <Route path="devices" element={<DevicesPage />} />
         <Route path="devices/:id" element={<DeviceDetailPage />} />
         <Route path="apps" element={<AppsPage />} />

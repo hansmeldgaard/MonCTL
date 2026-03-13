@@ -545,6 +545,7 @@ class CollectorResult(BaseModel):
     rtt_ms: float | None = None
     response_time_ms: float | None = None
     started_at: float | None = None
+    interface_rows: list[dict] | None = None  # Per-interface data for interface-table apps
 
 
 class SubmitResultsRequest(BaseModel):
@@ -617,30 +618,70 @@ async def submit_results(
                 metric_names.append(str(m["name"]))
                 metric_values.append(float(m["value"]))
 
-        ch_rows.append({
-            "_target_table": enrichment.get("target_table", "availability_latency"),
-            "assignment_id": str(assignment_id),
-            "collector_id": collector_uuid,
-            "app_id": enrichment.get("app_id", str(assignment_id)),
-            "device_id": r.device_id or enrichment.get("device_id", "00000000-0000-0000-0000-000000000000"),
-            "state": state,
-            "output": output,
-            "error_message": r.error_message or "",
-            "rtt_ms": r.rtt_ms or 0.0,
-            "response_time_ms": r.response_time_ms or 0.0,
-            "reachable": 1 if r.reachable else 0,
-            "status_code": 0,
-            "metric_names": metric_names,
-            "metric_values": metric_values,
-            "executed_at": executed_at,
-            "execution_time": (r.execution_time_ms / 1000.0) if r.execution_time_ms else 0.0,
-            "started_at": datetime.fromtimestamp(r.started_at, tz=timezone.utc) if r.started_at else executed_at,
-            "collector_name": request.collector_node,
-            "device_name": enrichment.get("device_name", ""),
-            "app_name": enrichment.get("app_name", ""),
-            "role": enrichment.get("role", ""),
-            "tenant_id": enrichment.get("tenant_id", "00000000-0000-0000-0000-000000000000"),
-        })
+        target_table = enrichment.get("target_table", "availability_latency")
+        device_id_resolved = r.device_id or enrichment.get("device_id", "00000000-0000-0000-0000-000000000000")
+        started_at_dt = datetime.fromtimestamp(r.started_at, tz=timezone.utc) if r.started_at else executed_at
+
+        # Interface-table apps: unpack interface_rows into one CH row per interface
+        if target_table == "interface" and r.interface_rows:
+            for iface in r.interface_rows:
+                ch_rows.append({
+                    "_target_table": "interface",
+                    "assignment_id": str(assignment_id),
+                    "collector_id": collector_uuid,
+                    "app_id": enrichment.get("app_id", str(assignment_id)),
+                    "device_id": device_id_resolved,
+                    "if_index": iface.get("if_index", 0),
+                    "if_name": iface.get("if_name", ""),
+                    "if_alias": iface.get("if_alias", ""),
+                    "if_speed_mbps": iface.get("if_speed_mbps", 0),
+                    "if_admin_status": iface.get("if_admin_status", ""),
+                    "if_oper_status": iface.get("if_oper_status", ""),
+                    "in_octets": iface.get("in_octets", 0),
+                    "out_octets": iface.get("out_octets", 0),
+                    "in_errors": iface.get("in_errors", 0),
+                    "out_errors": iface.get("out_errors", 0),
+                    "in_discards": iface.get("in_discards", 0),
+                    "out_discards": iface.get("out_discards", 0),
+                    "in_unicast_pkts": iface.get("in_unicast_pkts", 0),
+                    "out_unicast_pkts": iface.get("out_unicast_pkts", 0),
+                    "in_rate_bps": iface.get("in_rate_bps", 0.0),
+                    "out_rate_bps": iface.get("out_rate_bps", 0.0),
+                    "in_utilization_pct": iface.get("in_utilization_pct", 0.0),
+                    "out_utilization_pct": iface.get("out_utilization_pct", 0.0),
+                    "poll_interval_sec": iface.get("poll_interval_sec", 0),
+                    "state": iface.get("state", 0),
+                    "executed_at": executed_at,
+                    "collector_name": request.collector_node,
+                    "device_name": enrichment.get("device_name", ""),
+                    "app_name": enrichment.get("app_name", ""),
+                    "tenant_id": enrichment.get("tenant_id", "00000000-0000-0000-0000-000000000000"),
+                })
+        else:
+            ch_rows.append({
+                "_target_table": target_table,
+                "assignment_id": str(assignment_id),
+                "collector_id": collector_uuid,
+                "app_id": enrichment.get("app_id", str(assignment_id)),
+                "device_id": device_id_resolved,
+                "state": state,
+                "output": output,
+                "error_message": r.error_message or "",
+                "rtt_ms": r.rtt_ms or 0.0,
+                "response_time_ms": r.response_time_ms or 0.0,
+                "reachable": 1 if r.reachable else 0,
+                "status_code": 0,
+                "metric_names": metric_names,
+                "metric_values": metric_values,
+                "executed_at": executed_at,
+                "execution_time": (r.execution_time_ms / 1000.0) if r.execution_time_ms else 0.0,
+                "started_at": started_at_dt,
+                "collector_name": request.collector_node,
+                "device_name": enrichment.get("device_name", ""),
+                "app_name": enrichment.get("app_name", ""),
+                "role": enrichment.get("role", ""),
+                "tenant_id": enrichment.get("tenant_id", "00000000-0000-0000-0000-000000000000"),
+            })
 
     # Route results to the correct ClickHouse table based on target_table
     if ch_rows:

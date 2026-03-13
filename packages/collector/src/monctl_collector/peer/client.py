@@ -215,6 +215,7 @@ class PeerClient:
                     response_time_ms=result.get("response_time_ms") or 0.0,
                     started_at=result.get("started_at") or 0.0,
                     collector_node=result.get("collector_node") or "",
+                    interface_rows_json=json.dumps(result.get("interface_rows") or []),
                 ),
                 timeout=self._timeout,
             )

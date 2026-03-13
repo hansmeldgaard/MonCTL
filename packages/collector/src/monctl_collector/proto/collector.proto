@@ -168,6 +168,7 @@ message SubmitResultRequest {
   float  response_time_ms  = 11;
   double started_at        = 12;
   string collector_node    = 13;
+  string interface_rows_json = 14;  // JSON-encoded list[dict] for interface pollers
 }
 
 message SubmitResultResponse {

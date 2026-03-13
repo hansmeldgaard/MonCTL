@@ -317,6 +317,7 @@ class PollEngine:
                 "execution_time_ms": result.execution_time_ms,
                 "rtt_ms": result.rtt_ms,
                 "response_time_ms": result.response_time_ms,
+                "interface_rows": result.interface_rows,
             })
         except Exception as exc:
             logger.warning("submit_result_failed", job_id=result.job_id, error=str(exc))

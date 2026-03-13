@@ -204,6 +204,162 @@ class Poller(BasePoller):
         )
 '''
 
+    snmp_interface_code = '''\
+"""SNMP interface poller — walks ifTable/ifXTable for per-interface metrics."""
+import asyncio
+import time
+from monctl_collector.polling.base import BasePoller
+from monctl_collector.jobs.models import PollContext, PollResult
+
+# SNMP OIDs for interface data
+_IF_OIDS = {
+    "ifIndex":       "1.3.6.1.2.1.2.2.1.1",
+    "ifDescr":       "1.3.6.1.2.1.2.2.1.2",
+    "ifSpeed":       "1.3.6.1.2.1.2.2.1.5",
+    "ifAdminStatus": "1.3.6.1.2.1.2.2.1.7",
+    "ifOperStatus":  "1.3.6.1.2.1.2.2.1.8",
+    "ifInOctets":    "1.3.6.1.2.1.2.2.1.10",
+    "ifOutOctets":   "1.3.6.1.2.1.2.2.1.16",
+    "ifInErrors":    "1.3.6.1.2.1.2.2.1.14",
+    "ifOutErrors":   "1.3.6.1.2.1.2.2.1.20",
+    "ifInDiscards":  "1.3.6.1.2.1.2.2.1.13",
+    "ifOutDiscards": "1.3.6.1.2.1.2.2.1.19",
+    "ifInUcastPkts": "1.3.6.1.2.1.2.2.1.11",
+    "ifOutUcastPkts":"1.3.6.1.2.1.2.2.1.17",
+}
+_IFX_OIDS = {
+    "ifName":        "1.3.6.1.2.1.31.1.1.1.1",
+    "ifAlias":       "1.3.6.1.2.1.31.1.1.1.18",
+    "ifHighSpeed":   "1.3.6.1.2.1.31.1.1.1.15",
+    "ifHCInOctets":  "1.3.6.1.2.1.31.1.1.1.6",
+    "ifHCOutOctets": "1.3.6.1.2.1.31.1.1.1.10",
+}
+_ADMIN_STATUS = {1: "up", 2: "down", 3: "testing"}
+_OPER_STATUS = {1: "up", 2: "down", 3: "testing", 4: "unknown", 5: "dormant", 6: "notPresent", 7: "lowerLayerDown"}
+
+
+class Poller(BasePoller):
+    async def poll(self, context: PollContext) -> PollResult:
+        host = context.device_host or context.parameters.get("host", "")
+        timeout = context.parameters.get("timeout", 10)
+        community = context.credential.get("community", "public")
+        snmp_version = context.credential.get("version", "2c")
+        include_filter = context.parameters.get("include_interfaces", [])
+        exclude_filter = context.parameters.get("exclude_interfaces", [])
+        exclude_oper = set(context.parameters.get("exclude_oper_status", []))
+        poll_interval = context.job.interval
+        start = time.time()
+
+        try:
+            from pysnmp.hlapi.v3arch.asyncio import (
+                CommunityData, ContextData, ObjectIdentity, ObjectType,
+                SnmpEngine, UdpTransportTarget, bulk_walk_cmd,
+            )
+
+            engine = SnmpEngine()
+            auth_data = CommunityData(community, mpModel=0 if snmp_version == "1" else 1)
+            transport = await UdpTransportTarget.create((host, 161), timeout=timeout, retries=1)
+
+            # Walk all needed OIDs
+            raw: dict[str, dict[int, str | int]] = {}
+            all_oids = list(_IF_OIDS.items()) + list(_IFX_OIDS.items())
+
+            for oid_name, oid_str in all_oids:
+                raw[oid_name] = {}
+                objects = []
+                async for err_indication, err_status, err_index, var_binds in bulk_walk_cmd(
+                    engine, auth_data, transport, ContextData(),
+                    0, 25,
+                    ObjectType(ObjectIdentity(oid_str)),
+                ):
+                    if err_indication or err_status:
+                        break
+                    for oid, val in var_binds:
+                        oid_parts = str(oid).split(".")
+                        if_index = int(oid_parts[-1])
+                        raw[oid_name][if_index] = val.prettyPrint() if hasattr(val, "prettyPrint") else str(val)
+
+            # Build per-interface rows
+            if_indices = sorted(raw.get("ifIndex", {}).keys())
+            interface_rows = []
+
+            for idx in if_indices:
+                if_name = str(raw.get("ifName", {}).get(idx, raw.get("ifDescr", {}).get(idx, f"if{idx}")))
+                if_alias = str(raw.get("ifAlias", {}).get(idx, ""))
+                oper_status = _OPER_STATUS.get(int(raw.get("ifOperStatus", {}).get(idx, 4)), "unknown")
+
+                # Apply filters
+                if exclude_oper and oper_status in exclude_oper:
+                    continue
+                if include_filter and not any(p in if_name for p in include_filter):
+                    continue
+                if exclude_filter and any(p in if_name for p in exclude_filter):
+                    continue
+
+                # Use HC counters if available, else fall back to 32-bit
+                in_octets = int(raw.get("ifHCInOctets", {}).get(idx, raw.get("ifInOctets", {}).get(idx, 0)))
+                out_octets = int(raw.get("ifHCOutOctets", {}).get(idx, raw.get("ifOutOctets", {}).get(idx, 0)))
+
+                # Speed in Mbps (ifHighSpeed preferred over ifSpeed)
+                high_speed = raw.get("ifHighSpeed", {}).get(idx)
+                if high_speed and int(high_speed) > 0:
+                    speed_mbps = int(high_speed)
+                else:
+                    speed_raw = raw.get("ifSpeed", {}).get(idx, 0)
+                    speed_mbps = int(int(speed_raw) / 1_000_000) if speed_raw else 0
+
+                admin_status = _ADMIN_STATUS.get(int(raw.get("ifAdminStatus", {}).get(idx, 3)), "unknown")
+
+                interface_rows.append({
+                    "if_index": idx,
+                    "if_name": if_name,
+                    "if_alias": if_alias,
+                    "if_speed_mbps": speed_mbps,
+                    "if_admin_status": admin_status,
+                    "if_oper_status": oper_status,
+                    "in_octets": in_octets,
+                    "out_octets": out_octets,
+                    "in_errors": int(raw.get("ifInErrors", {}).get(idx, 0)),
+                    "out_errors": int(raw.get("ifOutErrors", {}).get(idx, 0)),
+                    "in_discards": int(raw.get("ifInDiscards", {}).get(idx, 0)),
+                    "out_discards": int(raw.get("ifOutDiscards", {}).get(idx, 0)),
+                    "in_unicast_pkts": int(raw.get("ifInUcastPkts", {}).get(idx, 0)),
+                    "out_unicast_pkts": int(raw.get("ifOutUcastPkts", {}).get(idx, 0)),
+                    "poll_interval_sec": poll_interval,
+                })
+
+            execution_ms = int((time.time() - start) * 1000)
+            return PollResult(
+                job_id=context.job.job_id,
+                device_id=context.job.device_id,
+                collector_node=context.node_id,
+                timestamp=time.time(),
+                metrics=[{"name": "interface_count", "value": len(interface_rows)}],
+                config_data=None,
+                status="ok" if interface_rows else "unknown",
+                reachable=True,
+                error_message=None,
+                execution_time_ms=execution_ms,
+                interface_rows=interface_rows,
+            )
+        except Exception as exc:
+            execution_ms = int((time.time() - start) * 1000)
+            return PollResult(
+                job_id=context.job.job_id,
+                device_id=context.job.device_id,
+                collector_node=context.node_id,
+                timestamp=time.time(),
+                metrics=[],
+                config_data=None,
+                status="critical",
+                reachable=False,
+                error_message=f"{type(exc).__name__}: {exc}",
+                execution_time_ms=execution_ms,
+            )
+'''
+
+    # Each tuple: (name, description, source_code, entry_class, requirements, config_schema, target_table)
+    # target_table defaults to "availability_latency" when omitted (6-element tuple)
     return [
         ("ping_check", "ICMP ping check", ping_check_code, "Poller", [], {
             "type": "object",
@@ -225,6 +381,26 @@ class Poller(BasePoller):
                 "snmp_credential": {"type": "string", "title": "Credential", "x-widget": "credential"},
             },
         }),
+        ("snmp_interface_poller", "SNMP interface poller (ifTable/ifXTable)", snmp_interface_code, "Poller",
+         ["pysnmp-lextudio>=6.0"], {
+            "type": "object",
+            "properties": {
+                "timeout": {"type": "integer", "title": "SNMP Timeout (s)", "default": 10, "minimum": 1, "maximum": 60},
+                "include_interfaces": {
+                    "type": "array", "title": "Include Interfaces (substring match)",
+                    "items": {"type": "string"}, "default": [],
+                },
+                "exclude_interfaces": {
+                    "type": "array", "title": "Exclude Interfaces (substring match)",
+                    "items": {"type": "string"}, "default": [],
+                },
+                "exclude_oper_status": {
+                    "type": "array", "title": "Exclude Oper Status",
+                    "items": {"type": "string", "enum": ["down", "notPresent", "lowerLayerDown", "dormant"]},
+                    "default": ["notPresent", "lowerLayerDown"],
+                },
+            },
+        }, "interface"),
     ]
 
 
@@ -292,7 +468,9 @@ async def lifespan(app: FastAPI):
         # Seed default apps with source code
         _DEFAULT_APPS = _get_default_apps()
         async with factory() as session:
-            for app_name, desc, source_code, entry_class, requirements, config_schema in _DEFAULT_APPS:
+            for app_tuple in _DEFAULT_APPS:
+                app_name, desc, source_code, entry_class, requirements, config_schema = app_tuple[:6]
+                target_table = app_tuple[6] if len(app_tuple) > 6 else "availability_latency"
                 existing_app = (
                     await session.execute(select(App).where(App.name == app_name))
                 ).scalar_one_or_none()
@@ -300,6 +478,7 @@ async def lifespan(app: FastAPI):
                     app_obj = App(
                         name=app_name, description=desc, app_type="script",
                         config_schema=config_schema,
+                        target_table=target_table,
                     )
                     session.add(app_obj)
                     await session.flush()
