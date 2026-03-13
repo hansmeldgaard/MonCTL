@@ -360,6 +360,41 @@ export interface MonitoringCheckConfig {
 export interface MonitoringConfig {
   availability: MonitoringCheckConfig | null;
   latency: MonitoringCheckConfig | null;
+  interface: MonitoringCheckConfig | null;
+}
+
+// ── Interface Results ─────────────────────────────────
+
+export interface InterfaceRecord {
+  assignment_id: string;
+  collector_id: string;
+  app_id: string;
+  device_id: string;
+  if_index: number;
+  if_name: string;
+  if_alias: string;
+  if_speed_mbps: number;
+  if_admin_status: string;
+  if_oper_status: string;
+  in_octets: number;
+  out_octets: number;
+  in_errors: number;
+  out_errors: number;
+  in_discards: number;
+  out_discards: number;
+  in_unicast_pkts: number;
+  out_unicast_pkts: number;
+  in_rate_bps: number;
+  out_rate_bps: number;
+  in_utilization_pct: number;
+  out_utilization_pct: number;
+  poll_interval_sec: number;
+  state: number;
+  executed_at: string;
+  collector_name: string;
+  device_name: string;
+  app_name: string;
+  tenant_id: string;
 }
 
 // ── System Settings ──────────────────────────────────────

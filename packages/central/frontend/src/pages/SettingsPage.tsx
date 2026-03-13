@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
+import { Select } from "@/components/ui/select.tsx";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import { useAuth } from "@/hooks/useAuth.tsx";
 import {
@@ -190,18 +191,21 @@ function DataRetentionTab() {
   const updateSettings = useUpdateSystemSettings();
   const [jobRetention, setJobRetention] = useState("");
   const [resultsRetention, setResultsRetention] = useState("");
+  const [ifaceInterval, setIfaceInterval] = useState("300");
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     if (settings) {
       setJobRetention(settings.job_status_retention_days ?? "7");
       setResultsRetention(settings.check_results_retention_days ?? "90");
+      setIfaceInterval(settings.interface_poll_interval_seconds ?? "300");
     }
   }, [settings]);
 
   const modified = settings && (
     jobRetention !== (settings.job_status_retention_days ?? "7") ||
-    resultsRetention !== (settings.check_results_retention_days ?? "90")
+    resultsRetention !== (settings.check_results_retention_days ?? "90") ||
+    ifaceInterval !== (settings.interface_poll_interval_seconds ?? "300")
   );
 
   async function handleSave() {
@@ -209,6 +213,7 @@ function DataRetentionTab() {
       settings: {
         job_status_retention_days: jobRetention,
         check_results_retention_days: resultsRetention,
+        interface_poll_interval_seconds: ifaceInterval,
       },
     });
     setSaved(true);
@@ -238,6 +243,18 @@ function DataRetentionTab() {
             <label className="text-sm text-zinc-400">Check Results Retention (days)</label>
             <Input type="number" value={resultsRetention} onChange={e => setResultsRetention(e.target.value)} className="max-w-32" />
             <p className="text-xs text-zinc-600">How long to keep check results in ClickHouse.</p>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm text-zinc-400">Default Interface Poll Interval</label>
+            <Select value={ifaceInterval} onChange={(e) => setIfaceInterval(e.target.value)} className="max-w-48">
+              <option value="60">1 minute</option>
+              <option value="120">2 minutes</option>
+              <option value="300">5 minutes (default)</option>
+              <option value="600">10 minutes</option>
+              <option value="900">15 minutes</option>
+              <option value="1800">30 minutes</option>
+            </Select>
+            <p className="text-xs text-zinc-600">Default polling interval for interface monitoring. Can be overridden per device.</p>
           </div>
           <div className="flex items-center gap-3 pt-2">
             <Button size="sm" onClick={handleSave} disabled={!modified || updateSettings.isPending}>

@@ -11,6 +11,7 @@ import {
   Layout,
   Loader2,
   Monitor,
+  Network,
   Plus,
   Save,
   Settings2,
@@ -53,14 +54,18 @@ import {
   useDeviceMonitoring,
   useDeviceResults,
   useDeviceTypes,
+  useInterfaceLatest,
+  useInterfaceHistory,
   useAppDetail,
   useApps,
   useSnmpOids,
+  useSystemSettings,
   useTenants,
   useUpdateDevice,
   useUpdateDeviceMonitoring,
 } from "@/api/hooks.ts";
-import type { Device as DeviceType, DeviceAssignment } from "@/types/api.ts";
+import type { Device as DeviceType, DeviceAssignment, InterfaceRecord } from "@/types/api.ts";
+import { InterfaceTrafficChart } from "@/components/InterfaceTrafficChart.tsx";
 import { timeAgo, formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 
@@ -847,7 +852,214 @@ function ConfigurationTab() {
   );
 }
 
+// ── Interface Helpers ─────────────────────────────────────
+
+function formatSpeed(mbps: number): string {
+  if (mbps >= 100000) return `${(mbps / 1000).toFixed(0)} Gbps`;
+  if (mbps >= 1000) return `${(mbps / 1000).toFixed(1)} Gbps`;
+  return `${mbps} Mbps`;
+}
+
+function formatBps(bps: number): string {
+  if (bps >= 1e9) return `${(bps / 1e9).toFixed(2)} Gbps`;
+  if (bps >= 1e6) return `${(bps / 1e6).toFixed(2)} Mbps`;
+  if (bps >= 1e3) return `${(bps / 1e3).toFixed(1)} Kbps`;
+  return `${bps.toFixed(0)} bps`;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1e12) return `${(bytes / 1e12).toFixed(2)} TB`;
+  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(2)} GB`;
+  if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(1)} MB`;
+  if (bytes >= 1e3) return `${(bytes / 1e3).toFixed(0)} KB`;
+  return `${bytes} B`;
+}
+
+// ── Tab: Interfaces ──────────────────────────────────────
+
+function InterfacesTab({ deviceId }: { deviceId: string }) {
+  const { data: interfaces, isLoading } = useInterfaceLatest(deviceId);
+  const [selectedIfIndex, setSelectedIfIndex] = useState<number | null>(null);
+  const [timeRange, setTimeRange] = useState<TimeRangeValue>(DEFAULT_RANGE);
+  const tz = useTimezone();
+  const { fromTs, toTs } = useMemo(() => rangeToTimestamps(timeRange), [timeRange]);
+
+  const { data: history } = useInterfaceHistory(
+    deviceId,
+    fromTs,
+    toTs,
+    selectedIfIndex,
+    2000,
+  );
+
+  if (isLoading) {
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
+      </div>
+    );
+  }
+
+  if (!interfaces?.length) {
+    return (
+      <Card>
+        <CardContent className="py-12">
+          <div className="flex flex-col items-center justify-center text-zinc-500">
+            <Network className="mb-2 h-8 w-8 text-zinc-600" />
+            <p className="text-sm">No interface data collected yet.</p>
+            <p className="text-xs text-zinc-600 mt-1">
+              Assign an interface poller app to this device to start collecting data.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // Sort: oper_status "up" first, then by if_index
+  const sorted = [...interfaces].sort((a, b) => {
+    if (a.if_oper_status === "up" && b.if_oper_status !== "up") return -1;
+    if (a.if_oper_status !== "up" && b.if_oper_status === "up") return 1;
+    return a.if_index - b.if_index;
+  });
+
+  const upCount = interfaces.filter((i) => i.if_oper_status === "up").length;
+  const downCount = interfaces.filter((i) => i.if_oper_status === "down").length;
+
+  return (
+    <div className="space-y-4">
+      {/* Summary bar */}
+      <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2 text-sm">
+          <span className="text-zinc-500">Interfaces:</span>
+          <Badge variant="default">{interfaces.length}</Badge>
+          <Badge variant="success">{upCount} up</Badge>
+          {downCount > 0 && <Badge variant="destructive">{downCount} down</Badge>}
+        </div>
+        <div className="ml-auto">
+          <TimeRangePicker value={timeRange} onChange={setTimeRange} timezone={tz} />
+        </div>
+      </div>
+
+      {/* Traffic chart for selected interface */}
+      {selectedIfIndex != null && history?.length ? (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-zinc-400 flex items-center gap-2">
+              Traffic — {interfaces.find((i) => i.if_index === selectedIfIndex)?.if_name ?? `if${selectedIfIndex}`}
+              <button
+                onClick={() => setSelectedIfIndex(null)}
+                className="ml-2 text-zinc-600 hover:text-zinc-300 cursor-pointer"
+              >
+                <X className="h-3.5 w-3.5 inline" />
+              </button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <InterfaceTrafficChart data={history} timezone={tz} />
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {/* Interface table */}
+      <Card>
+        <CardContent className="pt-4">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-10">Status</TableHead>
+                <TableHead>Index</TableHead>
+                <TableHead>Name</TableHead>
+                <TableHead>Alias</TableHead>
+                <TableHead>Speed</TableHead>
+                <TableHead>In Traffic</TableHead>
+                <TableHead>Out Traffic</TableHead>
+                <TableHead>In Errors</TableHead>
+                <TableHead>Out Errors</TableHead>
+                <TableHead>Last Polled</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {sorted.map((iface) => (
+                <TableRow
+                  key={iface.if_index}
+                  className={`cursor-pointer transition-colors ${
+                    selectedIfIndex === iface.if_index
+                      ? "bg-brand-500/10"
+                      : "hover:bg-zinc-800/50"
+                  }`}
+                  onClick={() =>
+                    setSelectedIfIndex(
+                      selectedIfIndex === iface.if_index ? null : iface.if_index,
+                    )
+                  }
+                >
+                  <TableCell>
+                    <div
+                      className={`h-2.5 w-2.5 rounded-full ${
+                        iface.if_oper_status === "up"
+                          ? "bg-emerald-500"
+                          : iface.if_oper_status === "down"
+                            ? "bg-red-500"
+                            : "bg-zinc-600"
+                      }`}
+                    />
+                  </TableCell>
+                  <TableCell className="font-mono text-xs text-zinc-500">
+                    {iface.if_index}
+                  </TableCell>
+                  <TableCell className="font-medium text-zinc-100">
+                    {iface.if_name}
+                  </TableCell>
+                  <TableCell className="text-zinc-400 text-sm">
+                    {iface.if_alias || "\u2014"}
+                  </TableCell>
+                  <TableCell className="text-zinc-300 text-sm">
+                    {formatSpeed(iface.if_speed_mbps)}
+                  </TableCell>
+                  <TableCell className="font-mono text-xs text-cyan-400">
+                    {iface.in_rate_bps > 0
+                      ? formatBps(iface.in_rate_bps)
+                      : formatBytes(iface.in_octets)}
+                  </TableCell>
+                  <TableCell className="font-mono text-xs text-indigo-400">
+                    {iface.out_rate_bps > 0
+                      ? formatBps(iface.out_rate_bps)
+                      : formatBytes(iface.out_octets)}
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">
+                    <span className={iface.in_errors > 0 ? "text-amber-400" : "text-zinc-600"}>
+                      {iface.in_errors.toLocaleString()}
+                    </span>
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">
+                    <span className={iface.out_errors > 0 ? "text-amber-400" : "text-zinc-600"}>
+                      {iface.out_errors.toLocaleString()}
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-zinc-500 text-xs">
+                    {timeAgo(iface.executed_at)}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 // ── Monitoring Config Card ────────────────────────────────
+
+const INTERFACE_INTERVAL_OPTIONS = [
+  { value: "60", label: "1 minute" },
+  { value: "120", label: "2 minutes" },
+  { value: "300", label: "5 minutes" },
+  { value: "600", label: "10 minutes" },
+  { value: "900", label: "15 minutes" },
+  { value: "1800", label: "30 minutes" },
+];
 
 const INTERVAL_OPTIONS = [
   { value: "30", label: "30 seconds" },
@@ -970,11 +1182,21 @@ function MonitoringCard({ deviceId, device }: { deviceId: string; device: Device
   const { data: allApps } = useApps();
   const updateMonitoring = useUpdateDeviceMonitoring();
 
-  // Only apps targeting availability_latency can be used for monitoring
+  // Only apps targeting availability_latency can be used for avail/latency monitoring
   const monitoringApps = useMemo(
     () => (allApps ?? []).filter((a) => a.target_table === "availability_latency"),
     [allApps],
   );
+
+  // Interface-capable apps (target_table = "interface")
+  const interfaceApps = useMemo(
+    () => (allApps ?? []).filter((a) => a.target_table === "interface"),
+    [allApps],
+  );
+
+  // System default for interface interval
+  const { data: systemSettings } = useSystemSettings();
+  const systemDefaultInterval = systemSettings?.interface_poll_interval_seconds ?? "300";
 
   // Fetch config_schema for selected apps
   const [availAppName, setAvailAppName] = useState("");
@@ -982,26 +1204,35 @@ function MonitoringCard({ deviceId, device }: { deviceId: string; device: Device
   const [availConfig, setAvailConfig] = useState<Record<string, unknown>>({});
   const [latencyConfig, setLatencyConfig] = useState<Record<string, unknown>>({});
   const [intervalSeconds, setIntervalSeconds] = useState("60");
+  const [interfaceAppName, setInterfaceAppName] = useState("");
+  const [interfaceConfig, setInterfaceConfig] = useState<Record<string, unknown>>({});
+  const [interfaceInterval, setInterfaceInterval] = useState("300");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
   const selectedAvApp = monitoringApps.find((a) => a.name === availAppName);
   const selectedLatApp = monitoringApps.find((a) => a.name === latencyAppName);
+  const selectedIfaceApp = interfaceApps.find((a) => a.name === interfaceAppName);
   const { data: avAppDetail } = useAppDetail(selectedAvApp?.id);
   const { data: latAppDetail } = useAppDetail(selectedLatApp?.id);
+  const { data: ifaceAppDetail } = useAppDetail(selectedIfaceApp?.id);
 
   // Sync state when monitoring data loads
   useEffect(() => {
     if (!monitoring) return;
     const av = monitoring.availability;
     const la = monitoring.latency;
+    const iface = monitoring.interface;
     setAvailAppName(av?.app_name ?? "");
     setAvailConfig(av?.config ?? {});
     setLatencyAppName(la?.app_name ?? "");
     setLatencyConfig(la?.config ?? {});
     const interval = av?.interval_seconds ?? la?.interval_seconds ?? 60;
     setIntervalSeconds(String(interval));
-  }, [monitoring]);
+    setInterfaceAppName(iface?.app_name ?? "");
+    setInterfaceConfig(iface?.config ?? {});
+    setInterfaceInterval(String(iface?.interval_seconds ?? systemDefaultInterval));
+  }, [monitoring, systemDefaultInterval]);
 
   function handleAppChange(role: "availability" | "latency", newAppName: string) {
     if (role === "availability") {
@@ -1018,12 +1249,12 @@ function MonitoringCard({ deviceId, device }: { deviceId: string; device: Device
     setSaveError(null);
     setSaveSuccess(false);
 
-    const makeCheck = (appName: string, config: Record<string, unknown>) => {
+    const makeCheck = (appName: string, config: Record<string, unknown>, interval: string) => {
       if (!appName) return null;
       return {
         app_name: appName,
         config,
-        interval_seconds: parseInt(intervalSeconds, 10),
+        interval_seconds: parseInt(interval, 10),
       };
     };
 
@@ -1031,8 +1262,9 @@ function MonitoringCard({ deviceId, device }: { deviceId: string; device: Device
       await updateMonitoring.mutateAsync({
         id: deviceId,
         data: {
-          availability: makeCheck(availAppName, availConfig),
-          latency: makeCheck(latencyAppName, latencyConfig),
+          availability: makeCheck(availAppName, availConfig, intervalSeconds),
+          latency: makeCheck(latencyAppName, latencyConfig, intervalSeconds),
+          interface: makeCheck(interfaceAppName, interfaceConfig, interfaceInterval),
         },
       });
       setSaveSuccess(true);
@@ -1131,6 +1363,65 @@ function MonitoringCard({ deviceId, device }: { deviceId: string; device: Device
                     prefix="la"
                     disabled={!hasGroup}
                   />
+                )}
+              </div>
+            </div>
+
+            {/* ── Interface Polling ─────────────────────── */}
+            <div className="border-t border-zinc-800 pt-4 mt-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Network className="h-4 w-4 text-zinc-400" />
+                <span className="text-sm font-medium text-zinc-200">Interface Polling</span>
+              </div>
+
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <span className="text-xs text-zinc-400">Interface Poller App</span>
+                  <Select
+                    value={interfaceAppName}
+                    onChange={(e) => {
+                      setInterfaceAppName(e.target.value);
+                      setInterfaceConfig({});
+                    }}
+                    disabled={!hasGroup}
+                  >
+                    <option value="">None</option>
+                    {interfaceApps.map((a) => (
+                      <option key={a.id} value={a.name}>
+                        {a.description || a.name}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+
+                {interfaceAppName && (
+                  <>
+                    <div className="space-y-1">
+                      <span className="text-xs text-zinc-400">
+                        Poll Interval
+                        <span className="text-zinc-600 ml-1">
+                          (system default: {INTERFACE_INTERVAL_OPTIONS.find((o) => o.value === systemDefaultInterval)?.label ?? `${systemDefaultInterval}s`})
+                        </span>
+                      </span>
+                      <Select
+                        value={interfaceInterval}
+                        onChange={(e) => setInterfaceInterval(e.target.value)}
+                        disabled={!hasGroup}
+                      >
+                        {INTERFACE_INTERVAL_OPTIONS.map((o) => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </Select>
+                    </div>
+
+                    <SchemaConfigFields
+                      schema={ifaceAppDetail?.config_schema}
+                      config={interfaceConfig}
+                      onChange={setInterfaceConfig}
+                      prefix="iface"
+                      disabled={!hasGroup}
+                    />
+                  </>
                 )}
               </div>
             </div>
@@ -1834,6 +2125,12 @@ export function DeviceDetailPage() {
               Performance
             </span>
           </TabTrigger>
+          <TabTrigger value="interfaces">
+            <span className="flex items-center gap-1.5">
+              <Network className="h-3.5 w-3.5" />
+              Interfaces
+            </span>
+          </TabTrigger>
           <TabTrigger value="configuration">
             <span className="flex items-center gap-1.5">
               <Wrench className="h-3.5 w-3.5" />
@@ -1859,6 +2156,9 @@ export function DeviceDetailPage() {
         </TabsContent>
         <TabsContent value="performance">
           <PerformanceTab deviceId={deviceId} />
+        </TabsContent>
+        <TabsContent value="interfaces">
+          <InterfacesTab deviceId={deviceId} />
         </TabsContent>
         <TabsContent value="configuration">
           <ConfigurationTab />

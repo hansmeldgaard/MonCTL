@@ -246,31 +246,39 @@ async def device_interfaces(
     device_id: str,
     from_ts: Optional[str] = Query(default=None, description="ISO datetime — return only results at or after this time"),
     to_ts: Optional[str] = Query(default=None, description="ISO datetime — return only results at or before this time"),
-    limit: int = Query(default=500, le=5000),
-    offset: int = Query(default=0, ge=0),
+    if_index: Optional[int] = Query(default=None, description="Filter by interface index"),
+    limit: int = Query(default=2000, le=10000),
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
-    """Return interface history for a device from the ClickHouse interface table."""
+    """Return interface history for a device, optionally filtered by interface and time range."""
     device = await db.get(Device, uuid.UUID(device_id))
     if device is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
     if not check_tenant_access(auth, device.tenant_id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-    from_dt = datetime.fromisoformat(from_ts.replace("Z", "+00:00")) if from_ts else None
-    to_dt = datetime.fromisoformat(to_ts.replace("Z", "+00:00")) if to_ts else None
-
     ch = get_clickhouse()
     try:
-        rows = ch.query_history(
-            table="interface",
-            device_id=device_id,
-            from_ts=from_dt,
-            to_ts=to_dt,
-            limit=limit,
-            offset=offset,
-        )
+        sql = "SELECT * FROM interface WHERE device_id = {device_id:UUID}"
+        params: dict = {"device_id": device_id}
+
+        if from_ts:
+            sql += " AND executed_at >= {from_ts:DateTime64}"
+            params["from_ts"] = from_ts.replace("Z", "+00:00")
+        if to_ts:
+            sql += " AND executed_at <= {to_ts:DateTime64}"
+            params["to_ts"] = to_ts.replace("Z", "+00:00")
+        if if_index is not None:
+            sql += " AND if_index = {if_index:UInt32}"
+            params["if_index"] = if_index
+
+        sql += " ORDER BY if_index, executed_at DESC LIMIT {limit:UInt32}"
+        params["limit"] = limit
+
+        client = ch._get_client()
+        result = client.query(sql, parameters=params)
+        rows = list(result.named_results())
     except Exception as exc:
         if ch._is_table_missing_error(exc):
             rows = []
@@ -281,7 +289,7 @@ async def device_interfaces(
     return {
         "status": "success",
         "data": data,
-        "meta": {"limit": limit, "offset": offset, "count": len(data)},
+        "meta": {"limit": limit, "count": len(data)},
     }
 
 

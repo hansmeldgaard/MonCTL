@@ -300,6 +300,7 @@ class MonitoringCheckConfig(BaseModel):
 class UpdateMonitoringRequest(BaseModel):
     availability: MonitoringCheckConfig | None = None
     latency: MonitoringCheckConfig | None = None
+    interface: MonitoringCheckConfig | None = None
 
 
 def _monitoring_config_from_assignment(assignment, app_name: str) -> dict:
@@ -333,12 +334,12 @@ async def get_device_monitoring(
             .join(App, AppAssignment.app_id == App.id)
             .where(
                 AppAssignment.device_id == uuid.UUID(device_id),
-                AppAssignment.role.in_(["availability", "latency"]),
+                AppAssignment.role.in_(["availability", "latency", "interface"]),
             )
         )
     ).all()
 
-    result: dict = {"availability": None, "latency": None}
+    result: dict = {"availability": None, "latency": None, "interface": None}
     for assignment, app in rows:
         if assignment.role in result:
             result[assignment.role] = _monitoring_config_from_assignment(assignment, app.name)
@@ -373,14 +374,22 @@ async def update_device_monitoring(
     await db.execute(
         sa_delete(AppAssignment).where(
             AppAssignment.device_id == uuid.UUID(device_id),
-            AppAssignment.role.in_(["availability", "latency"]),
+            AppAssignment.role.in_(["availability", "latency", "interface"]),
         )
     )
+
+    # Map role → allowed target_table
+    _ROLE_TARGET_TABLE = {
+        "availability": "availability_latency",
+        "latency": "availability_latency",
+        "interface": "interface",
+    }
 
     new_assignments: dict = {}
     for role_name, check_config in [
         ("availability", request.availability),
         ("latency", request.latency),
+        ("interface", request.interface),
     ]:
         if check_config is None or check_config.app_name is None:
             continue
@@ -395,11 +404,12 @@ async def update_device_monitoring(
                 detail=f"App '{check_config.app_name}' not found",
             )
 
-        # Only apps targeting availability_latency table can be used for monitoring
-        if app.target_table != "availability_latency":
+        # Validate app targets the correct table for this role
+        expected_table = _ROLE_TARGET_TABLE.get(role_name, "availability_latency")
+        if app.target_table != expected_table:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"App '{check_config.app_name}' targets '{app.target_table}', not 'availability_latency'",
+                detail=f"App '{check_config.app_name}' targets '{app.target_table}', not '{expected_table}'",
             )
 
         # Get the latest published version
@@ -417,6 +427,13 @@ async def update_device_monitoring(
                 detail=f"No version found for app '{check_config.app_name}'",
             )
 
+        # For interface role, resolve system default if interval not set
+        interval = check_config.interval_seconds
+        if role_name == "interface" and interval <= 0:
+            from monctl_central.storage.models import SystemSetting
+            setting = await db.get(SystemSetting, "interface_poll_interval_seconds")
+            interval = int(setting.value) if setting else 300
+
         assignment = AppAssignment(
             app_id=app.id,
             app_version_id=app_version.id,
@@ -424,7 +441,7 @@ async def update_device_monitoring(
             collector_id=None,
             config=check_config.config,
             schedule_type="interval",
-            schedule_value=str(check_config.interval_seconds),
+            schedule_value=str(interval),
             resource_limits={"timeout_seconds": 30, "memory_mb": 256},
             role=role_name,
             enabled=True,
@@ -442,7 +459,7 @@ async def update_device_monitoring(
     )
 
     # Return the updated monitoring config
-    result: dict = {"availability": None, "latency": None}
+    result: dict = {"availability": None, "latency": None, "interface": None}
     for role_name, (assignment, app_name) in new_assignments.items():
         result[role_name] = _monitoring_config_from_assignment(assignment, app_name)
 

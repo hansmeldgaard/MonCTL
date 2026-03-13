@@ -17,6 +17,7 @@ import type {
   DeviceResults,
   DeviceType,
   HealthStatus,
+  InterfaceRecord,
   MonitoringConfig,
   RegistrationToken,
   ResultRecord,
@@ -430,6 +431,42 @@ export function useDeviceHistory(
         ...(toTs ? { to_ts: toTs } : {}),
       });
       return apiGet<ResultRecord[]>(`/results?${params}`);
+    },
+    select: (res) => res.data,
+    enabled: !!deviceId,
+    refetchInterval: POLL_DETAIL,
+  });
+}
+
+// ── Interface Data ───────────────────────────────────────
+
+export function useInterfaceLatest(deviceId: string | undefined) {
+  return useQuery({
+    queryKey: ["interface-latest", deviceId],
+    queryFn: () => apiGet<InterfaceRecord[]>(`/results/interfaces/${deviceId}/latest`),
+    select: (res) => res.data,
+    enabled: !!deviceId,
+    refetchInterval: POLL_DETAIL,
+  });
+}
+
+export function useInterfaceHistory(
+  deviceId: string | undefined,
+  fromTs: string | null,
+  toTs: string | null = null,
+  ifIndex: number | null = null,
+  limit = 2000,
+) {
+  return useQuery({
+    queryKey: ["interface-history", deviceId, fromTs, toTs, ifIndex, limit],
+    queryFn: () => {
+      const params = new URLSearchParams({
+        limit: String(limit),
+        ...(fromTs ? { from_ts: fromTs } : {}),
+        ...(toTs ? { to_ts: toTs } : {}),
+        ...(ifIndex != null ? { if_index: String(ifIndex) } : {}),
+      });
+      return apiGet<InterfaceRecord[]>(`/results/interfaces/${deviceId}?${params}`);
     },
     select: (res) => res.data,
     enabled: !!deviceId,

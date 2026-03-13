@@ -16,6 +16,7 @@ router = APIRouter()
 _DEFAULTS = {
     "job_status_retention_days": "7",
     "check_results_retention_days": "90",
+    "interface_poll_interval_seconds": "300",
 }
 
 
