@@ -840,12 +840,14 @@ function RegistrationTokensCard() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {tokens.map((t) => (
-                  <TableRow key={t.id}>
-                    <TableCell className="font-medium text-zinc-100">{t.name}</TableCell>
+                {tokens.map((t) => {
+                  const isExpired = !!(t.expires_at && new Date(t.expires_at) < new Date());
+                  return (
+                  <TableRow key={t.id} className={isExpired ? "opacity-60" : ""}>
+                    <TableCell className={`font-medium ${isExpired ? "text-zinc-500 line-through" : "text-zinc-100"}`}>{t.name}</TableCell>
                     <TableCell>
                       {t.short_code ? (
-                        <code className="rounded bg-zinc-800 px-1.5 py-0.5 text-sm font-mono font-bold text-emerald-400 tracking-wider">
+                        <code className={`rounded bg-zinc-800 px-1.5 py-0.5 text-sm font-mono font-bold tracking-wider ${isExpired ? "text-zinc-500 line-through" : "text-emerald-400"}`}>
                           {t.short_code}
                         </code>
                       ) : (
@@ -858,11 +860,15 @@ function RegistrationTokensCard() {
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <Badge variant={t.used ? "destructive" : "success"}>
-                        {t.used ? "used" : "available"}
-                      </Badge>
+                      {isExpired ? (
+                        <Badge variant="destructive">expired</Badge>
+                      ) : (
+                        <Badge variant={t.used ? "destructive" : "success"}>
+                          {t.used ? "used" : "available"}
+                        </Badge>
+                      )}
                     </TableCell>
-                    <TableCell className="text-zinc-500 text-sm">
+                    <TableCell className={`text-sm ${isExpired ? "text-red-400" : "text-zinc-500"}`}>
                       {t.expires_at ? formatDate(t.expires_at, tz) : "—"}
                     </TableCell>
                     <TableCell className="text-zinc-500 text-sm">
@@ -878,7 +884,8 @@ function RegistrationTokensCard() {
                       </button>
                     </TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
               </TableBody>
             </Table>
           )}

@@ -15,17 +15,19 @@ depends_on = None
 
 
 def upgrade() -> None:
+    conn = op.get_bind()
+
     # 1. Add new credential keys for SNMPv3 (auth_password, priv_password, security_level)
-    op.execute(sa.text("""
+    conn.exec_driver_sql("""
         INSERT INTO credential_keys (id, name, description, is_secret) VALUES
         (gen_random_uuid(), 'auth_password', 'SNMPv3 auth passphrase', true),
         (gen_random_uuid(), 'priv_password', 'SNMPv3 privacy passphrase', true),
         (gen_random_uuid(), 'security_level', 'SNMPv3 security level (noAuthNoPriv, authNoPriv, authPriv)', false)
         ON CONFLICT (name) DO NOTHING
-    """))
+    """)
 
     # 2. Update snmpv3 template with security_level and auth_password/priv_password fields
-    op.execute(sa.text("""
+    conn.exec_driver_sql("""
         UPDATE credential_templates
         SET fields = '[
           {"key_name":"version","required":true,"default_value":"3","display_order":1},
@@ -39,10 +41,10 @@ def upgrade() -> None:
         ]'::jsonb,
         updated_at = now()
         WHERE name = 'snmpv3'
-    """))
+    """)
 
     # 3. Also add version field to snmpv2c template
-    op.execute(sa.text("""
+    conn.exec_driver_sql("""
         UPDATE credential_templates
         SET fields = '[
           {"key_name":"community","required":true,"default_value":null,"display_order":1},
@@ -51,12 +53,12 @@ def upgrade() -> None:
         ]'::jsonb,
         updated_at = now()
         WHERE name = 'snmpv2c'
-    """))
+    """)
 
 
 def downgrade() -> None:
-    # Revert snmpv3 template to original
-    op.execute(sa.text("""
+    conn = op.get_bind()
+    conn.exec_driver_sql("""
         UPDATE credential_templates
         SET fields = '[
           {"key_name":"username","required":true,"default_value":null,"display_order":1},
@@ -67,4 +69,4 @@ def downgrade() -> None:
           {"key_name":"port","required":false,"default_value":"161","display_order":6}
         ]'::jsonb
         WHERE name = 'snmpv3'
-    """))
+    """)
