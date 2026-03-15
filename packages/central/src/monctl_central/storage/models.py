@@ -488,6 +488,28 @@ class TlsCertificate(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
 
 
+class InterfaceMetadata(Base):
+    """Stable interface identity + cached metadata.
+    PK (id) = interface_id. Lookup key = (device_id, if_name)."""
+    __tablename__ = "interface_metadata"
+    __table_args__ = (UniqueConstraint("device_id", "if_name", name="uq_device_if_name"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("devices.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    if_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    current_if_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    if_descr: Mapped[str] = mapped_column(String(255), nullable=False, server_default="")
+    if_alias: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    if_speed_mbps: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    polling_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    alerting_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default="now()"
+    )
+
+
 class Template(Base):
     """Reusable monitoring template for bulk device configuration."""
     __tablename__ = "templates"

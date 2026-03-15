@@ -110,6 +110,64 @@ class AbsenceEvaluator:
         return {r["aid"] for r in rows}
 
 
+class InterfaceThresholdEvaluator:
+    """Evaluates interface-specific threshold rules against the interface table.
+
+    Condition format:
+    {
+        "metric": "in_utilization_pct",  # in_utilization_pct, out_utilization_pct,
+                                          # in_rate_bps, out_rate_bps, in_errors,
+                                          # out_errors, in_discards, out_discards,
+                                          # if_oper_status
+        "op": ">",
+        "value": 80,
+        "for": "15m",
+        "agg": "avg"
+    }
+    """
+
+    _VALID_OPS = {">", "<", ">=", "<=", "==", "!="}
+    _VALID_AGGS = {"avg", "max", "min", "sum", "count"}
+
+    def evaluate(self, rule: AlertRule, ch: ClickHouseClient) -> set[str]:
+        cond = rule.condition
+        metric = cond.get("metric", "in_utilization_pct")
+        op = cond.get("op", ">")
+        value = cond.get("value", 0)
+        window = cond.get("for", "5m")
+        agg = cond.get("agg", "avg")
+
+        if op not in self._VALID_OPS:
+            return set()
+        if agg not in self._VALID_AGGS:
+            agg = "avg"
+
+        interval = _parse_interval(window)
+        ch_op = "=" if op == "==" else op
+
+        # Special case for oper_status (string comparison)
+        if metric == "if_oper_status":
+            status_val = str(value).lower()
+            sql = (
+                "SELECT toString(interface_id) AS aid "
+                "FROM interface_latest FINAL "
+                "WHERE if_oper_status = {status_val:String}"
+            )
+            rows = ch.query_for_alert(sql, {"status_val": status_val})
+            return {r["aid"] for r in rows}
+
+        sql = (
+            f"SELECT toString(interface_id) AS aid, {agg}({metric}) AS val "
+            f"FROM interface "
+            f"WHERE executed_at > now() - INTERVAL {interval} "
+            f"GROUP BY interface_id "
+            f"HAVING val {ch_op} {{threshold:Float64}}"
+        )
+
+        rows = ch.query_for_alert(sql, {"threshold": float(value)})
+        return {r["aid"] for r in rows}
+
+
 def _parse_interval(s: str) -> str:
     """Parse '5m', '1h', '30s', '2d' into ClickHouse INTERVAL format like '5 MINUTE'."""
     s = s.strip()

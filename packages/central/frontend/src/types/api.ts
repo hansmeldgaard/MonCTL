@@ -391,6 +391,7 @@ export interface InterfaceRecord {
   collector_id: string;
   app_id: string;
   device_id: string;
+  interface_id: string;
   if_index: number;
   if_name: string;
   if_alias: string;
@@ -416,6 +417,46 @@ export interface InterfaceRecord {
   device_name: string;
   app_name: string;
   tenant_id: string;
+}
+
+export interface InterfaceRollupRecord {
+  device_id: string;
+  interface_id: string;
+  hour?: string;
+  day?: string;
+  in_rate_min: number;
+  in_rate_max: number;
+  in_rate_avg: number;
+  in_rate_p95: number;
+  out_rate_min: number;
+  out_rate_max: number;
+  out_rate_avg: number;
+  out_rate_p95: number;
+  in_utilization_max: number;
+  in_utilization_avg: number;
+  out_utilization_max: number;
+  out_utilization_avg: number;
+  in_octets_total: number;
+  out_octets_total: number;
+  in_errors_total: number;
+  out_errors_total: number;
+  availability_pct: number;
+  sample_count: number;
+  if_speed_mbps: number;
+  if_name: string;
+}
+
+export interface InterfaceMetadataRecord {
+  id: string;
+  device_id: string;
+  if_name: string;
+  current_if_index: number;
+  if_descr: string;
+  if_alias: string;
+  if_speed_mbps: number;
+  polling_enabled: boolean;
+  alerting_enabled: boolean;
+  updated_at: string | null;
 }
 
 // ── System Settings ──────────────────────────────────────

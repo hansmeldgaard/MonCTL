@@ -33,6 +33,7 @@ from monctl_central.storage.models import (
     Collector,
     Credential,
     Device,
+    InterfaceMetadata,
 )
 
 router = APIRouter()
@@ -562,6 +563,131 @@ _STATUS_TO_STATE = {
 }
 
 
+def _calculate_rate(
+    current_octets: int,
+    previous_octets: int,
+    dt_seconds: float,
+    if_speed_mbps: int = 0,
+) -> tuple[float, bool]:
+    """Calculate rate in bps from counter delta.
+
+    Returns (rate_bps, is_valid).
+    current < previous = always reset (no wrap detection).
+    Rejects rates > 110% of link speed as implausible.
+    """
+    if dt_seconds <= 0:
+        return 0.0, False
+    if current_octets < previous_octets:
+        return 0.0, False
+    if current_octets == previous_octets:
+        return 0.0, True
+
+    delta = current_octets - previous_octets
+    rate_bps = (delta * 8) / dt_seconds
+
+    # Reject implausible rates
+    max_rate = (if_speed_mbps * 1_000_000 * 1.1) if if_speed_mbps > 0 else 110_000_000_000
+    if rate_bps > max_rate:
+        return 0.0, False
+
+    return rate_bps, True
+
+
+def _calculate_utilization(rate_bps: float, if_speed_mbps: int) -> float:
+    """Returns utilization percentage, capped at 100%."""
+    if if_speed_mbps <= 0 or rate_bps <= 0:
+        return 0.0
+    pct = (rate_bps / (if_speed_mbps * 1_000_000)) * 100
+    return min(pct, 100.0)
+
+
+async def _resolve_interface_id(
+    db: AsyncSession,
+    device_id: str,
+    if_name: str,
+    if_index: int,
+    if_descr: str = "",
+    if_alias: str = "",
+    if_speed_mbps: int = 0,
+) -> str:
+    """Resolve or create stable interface_id from (device_id, if_name).
+
+    Redis cached (1h). Auto-creates InterfaceMetadata on first discovery.
+    Detects if_index changes and updates accordingly.
+    """
+    from monctl_central.cache import get_cached_interface_id, set_cached_interface_id
+
+    # 1. Check Redis cache
+    cached = await get_cached_interface_id(device_id, if_name)
+    if cached:
+        cached_id = cached["interface_id"]
+        cached_if_index = cached.get("current_if_index")
+        if cached_if_index == if_index:
+            return cached_id
+        # if_index changed — update PG and cache
+        try:
+            meta = await db.get(InterfaceMetadata, uuid.UUID(cached_id))
+            if meta:
+                meta.current_if_index = if_index
+                if if_descr:
+                    meta.if_descr = if_descr
+                if if_alias:
+                    meta.if_alias = if_alias
+                if if_speed_mbps:
+                    meta.if_speed_mbps = if_speed_mbps
+                from monctl_common.utils import utc_now
+                meta.updated_at = utc_now()
+                await db.flush()
+                logger.info(
+                    "if_index_changed",
+                    device_id=device_id,
+                    if_name=if_name,
+                    old_if_index=cached_if_index,
+                    new_if_index=if_index,
+                )
+            cache_data = {"interface_id": cached_id, "current_if_index": if_index}
+            await set_cached_interface_id(device_id, if_name, cache_data)
+        except Exception:
+            logger.debug("Failed to update if_index change", exc_info=True)
+        return cached_id
+
+    # 2. PG lookup by (device_id, if_name)
+    stmt = select(InterfaceMetadata).where(
+        InterfaceMetadata.device_id == uuid.UUID(device_id),
+        InterfaceMetadata.if_name == if_name,
+    )
+    result = await db.execute(stmt)
+    meta = result.scalar_one_or_none()
+
+    if meta is not None:
+        # Update if_index if changed
+        if meta.current_if_index != if_index:
+            meta.current_if_index = if_index
+            from monctl_common.utils import utc_now
+            meta.updated_at = utc_now()
+            await db.flush()
+        interface_id = str(meta.id)
+        cache_data = {"interface_id": interface_id, "current_if_index": if_index}
+        await set_cached_interface_id(device_id, if_name, cache_data)
+        return interface_id
+
+    # 3. Create new InterfaceMetadata
+    new_meta = InterfaceMetadata(
+        device_id=uuid.UUID(device_id),
+        if_name=if_name,
+        current_if_index=if_index,
+        if_descr=if_descr,
+        if_alias=if_alias,
+        if_speed_mbps=if_speed_mbps,
+    )
+    db.add(new_meta)
+    await db.flush()
+    interface_id = str(new_meta.id)
+    cache_data = {"interface_id": interface_id, "current_if_index": if_index}
+    await set_cached_interface_id(device_id, if_name, cache_data)
+    return interface_id
+
+
 @router.post("/results", status_code=status.HTTP_202_ACCEPTED, tags=["collector-api"])
 async def submit_results(
     request: SubmitResultsRequest,
@@ -624,31 +750,66 @@ async def submit_results(
 
         # Interface-table apps: unpack interface_rows into one CH row per interface
         if target_table == "interface" and r.interface_rows:
+            from monctl_central.cache import get_previous_counters, cache_current_counters
+
             for iface in r.interface_rows:
+                iface_name = iface.get("if_name", "")
+                iface_index = iface.get("if_index", 0)
+                iface_alias = iface.get("if_alias", "")
+                iface_speed = iface.get("if_speed_mbps", 0)
+                in_octets = iface.get("in_octets", 0)
+                out_octets = iface.get("out_octets", 0)
+
+                # Resolve stable interface_id
+                interface_id = await _resolve_interface_id(
+                    db, device_id_resolved, iface_name, iface_index,
+                    if_descr="", if_alias=iface_alias, if_speed_mbps=iface_speed,
+                )
+
+                # Central-side rate calculation
+                in_rate = 0.0
+                out_rate = 0.0
+                in_util = 0.0
+                out_util = 0.0
+                prev = await get_previous_counters(interface_id)
+                if prev:
+                    prev_ts = datetime.fromisoformat(prev["executed_at"])
+                    dt_sec = (executed_at - prev_ts).total_seconds()
+                    in_rate, _ = _calculate_rate(in_octets, prev["in_octets"], dt_sec, iface_speed)
+                    out_rate, _ = _calculate_rate(out_octets, prev["out_octets"], dt_sec, iface_speed)
+                    in_util = _calculate_utilization(in_rate, iface_speed)
+                    out_util = _calculate_utilization(out_rate, iface_speed)
+
+                # Always cache current counters as new baseline
+                await cache_current_counters(
+                    interface_id, in_octets, out_octets, executed_at.isoformat(),
+                )
+
                 ch_rows.append({
                     "_target_table": "interface",
                     "assignment_id": str(assignment_id),
                     "collector_id": collector_uuid,
                     "app_id": enrichment.get("app_id", str(assignment_id)),
                     "device_id": device_id_resolved,
-                    "if_index": iface.get("if_index", 0),
-                    "if_name": iface.get("if_name", ""),
-                    "if_alias": iface.get("if_alias", ""),
-                    "if_speed_mbps": iface.get("if_speed_mbps", 0),
+                    "interface_id": interface_id,
+                    "if_index": iface_index,
+                    "if_name": iface_name,
+                    "if_alias": iface_alias,
+                    "if_speed_mbps": iface_speed,
                     "if_admin_status": iface.get("if_admin_status", ""),
                     "if_oper_status": iface.get("if_oper_status", ""),
-                    "in_octets": iface.get("in_octets", 0),
-                    "out_octets": iface.get("out_octets", 0),
+                    "in_octets": in_octets,
+                    "out_octets": out_octets,
                     "in_errors": iface.get("in_errors", 0),
                     "out_errors": iface.get("out_errors", 0),
                     "in_discards": iface.get("in_discards", 0),
                     "out_discards": iface.get("out_discards", 0),
                     "in_unicast_pkts": iface.get("in_unicast_pkts", 0),
                     "out_unicast_pkts": iface.get("out_unicast_pkts", 0),
-                    "in_rate_bps": iface.get("in_rate_bps", 0.0),
-                    "out_rate_bps": iface.get("out_rate_bps", 0.0),
-                    "in_utilization_pct": iface.get("in_utilization_pct", 0.0),
-                    "out_utilization_pct": iface.get("out_utilization_pct", 0.0),
+                    "in_rate_bps": in_rate,
+                    "out_rate_bps": out_rate,
+                    "in_utilization_pct": in_util,
+                    "out_utilization_pct": out_util,
                     "poll_interval_sec": iface.get("poll_interval_sec", 0),
                     "state": iface.get("state", 0),
                     "executed_at": executed_at,

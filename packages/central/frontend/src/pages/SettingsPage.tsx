@@ -192,6 +192,10 @@ function DataRetentionTab() {
   const [jobRetention, setJobRetention] = useState("");
   const [resultsRetention, setResultsRetention] = useState("");
   const [ifaceInterval, setIfaceInterval] = useState("300");
+  const [ifaceMetaRefresh, setIfaceMetaRefresh] = useState("3600");
+  const [ifaceRawRetention, setIfaceRawRetention] = useState("7");
+  const [ifaceHourlyRetention, setIfaceHourlyRetention] = useState("90");
+  const [ifaceDailyRetention, setIfaceDailyRetention] = useState("730");
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
@@ -199,13 +203,21 @@ function DataRetentionTab() {
       setJobRetention(settings.job_status_retention_days ?? "7");
       setResultsRetention(settings.check_results_retention_days ?? "90");
       setIfaceInterval(settings.interface_poll_interval_seconds ?? "300");
+      setIfaceMetaRefresh(settings.interface_metadata_refresh_seconds ?? "3600");
+      setIfaceRawRetention(settings.interface_raw_retention_days ?? "7");
+      setIfaceHourlyRetention(settings.interface_hourly_retention_days ?? "90");
+      setIfaceDailyRetention(settings.interface_daily_retention_days ?? "730");
     }
   }, [settings]);
 
   const modified = settings && (
     jobRetention !== (settings.job_status_retention_days ?? "7") ||
     resultsRetention !== (settings.check_results_retention_days ?? "90") ||
-    ifaceInterval !== (settings.interface_poll_interval_seconds ?? "300")
+    ifaceInterval !== (settings.interface_poll_interval_seconds ?? "300") ||
+    ifaceMetaRefresh !== (settings.interface_metadata_refresh_seconds ?? "3600") ||
+    ifaceRawRetention !== (settings.interface_raw_retention_days ?? "7") ||
+    ifaceHourlyRetention !== (settings.interface_hourly_retention_days ?? "90") ||
+    ifaceDailyRetention !== (settings.interface_daily_retention_days ?? "730")
   );
 
   async function handleSave() {
@@ -214,6 +226,10 @@ function DataRetentionTab() {
         job_status_retention_days: jobRetention,
         check_results_retention_days: resultsRetention,
         interface_poll_interval_seconds: ifaceInterval,
+        interface_metadata_refresh_seconds: ifaceMetaRefresh,
+        interface_raw_retention_days: ifaceRawRetention,
+        interface_hourly_retention_days: ifaceHourlyRetention,
+        interface_daily_retention_days: ifaceDailyRetention,
       },
     });
     setSaved(true);
@@ -255,6 +271,64 @@ function DataRetentionTab() {
               <option value="1800">30 minutes</option>
             </Select>
             <p className="text-xs text-zinc-600">Default polling interval for interface monitoring. Can be overridden per device.</p>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm text-zinc-400">Interface Metadata Refresh</label>
+            <Select value={ifaceMetaRefresh} onChange={(e) => setIfaceMetaRefresh(e.target.value)} className="max-w-48">
+              <option value="900">15 minutes</option>
+              <option value="1800">30 minutes</option>
+              <option value="3600">1 hour (default)</option>
+              <option value="7200">2 hours</option>
+              <option value="14400">4 hours</option>
+              <option value="21600">6 hours</option>
+              <option value="43200">12 hours</option>
+              <option value="86400">24 hours</option>
+            </Select>
+            <p className="text-xs text-zinc-600">How often to refresh interface metadata (name, alias, speed) from devices.</p>
+          </div>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Database className="h-4 w-4" />
+            Interface Data Retention
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-1.5">
+            <label className="text-sm text-zinc-400">Raw Data</label>
+            <Select value={ifaceRawRetention} onChange={(e) => setIfaceRawRetention(e.target.value)} className="max-w-48">
+              <option value="3">3 days</option>
+              <option value="7">7 days (default)</option>
+              <option value="14">14 days</option>
+              <option value="30">30 days</option>
+              <option value="60">60 days</option>
+              <option value="90">90 days</option>
+            </Select>
+            <p className="text-xs text-zinc-600">Full-resolution interface data (every poll interval).</p>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm text-zinc-400">Hourly Rollup</label>
+            <Select value={ifaceHourlyRetention} onChange={(e) => setIfaceHourlyRetention(e.target.value)} className="max-w-48">
+              <option value="30">30 days</option>
+              <option value="60">60 days</option>
+              <option value="90">90 days (default)</option>
+              <option value="180">180 days</option>
+              <option value="365">1 year</option>
+            </Select>
+            <p className="text-xs text-zinc-600">Hourly aggregated data (avg, max, p95).</p>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm text-zinc-400">Daily Rollup</label>
+            <Select value={ifaceDailyRetention} onChange={(e) => setIfaceDailyRetention(e.target.value)} className="max-w-48">
+              <option value="180">180 days</option>
+              <option value="365">1 year</option>
+              <option value="730">2 years (default)</option>
+              <option value="1095">3 years</option>
+              <option value="1825">5 years</option>
+            </Select>
+            <p className="text-xs text-zinc-600">Daily aggregated data for long-term trends.</p>
           </div>
           <div className="flex items-center gap-3 pt-2">
             <Button size="sm" onClick={handleSave} disabled={!modified || updateSettings.isPending}>

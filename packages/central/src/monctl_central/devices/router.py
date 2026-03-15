@@ -13,7 +13,7 @@ from typing import Optional
 import sqlalchemy as sa
 from monctl_central.dependencies import apply_tenant_filter, check_tenant_access, get_db, require_auth
 from sqlalchemy.orm import selectinload
-from monctl_central.storage.models import Credential, CollectorGroup, Device, Tenant
+from monctl_central.storage.models import Credential, CollectorGroup, Device, InterfaceMetadata, Tenant
 from monctl_common.utils import utc_now
 
 router = APIRouter()
@@ -464,6 +464,111 @@ async def update_device_monitoring(
         result[role_name] = _monitoring_config_from_assignment(assignment, app_name)
 
     return {"status": "success", "data": result}
+
+
+# ---------------------------------------------------------------------------
+# Interface Metadata endpoints
+# ---------------------------------------------------------------------------
+
+def _fmt_iface_meta(m: InterfaceMetadata) -> dict:
+    return {
+        "id": str(m.id),
+        "device_id": str(m.device_id),
+        "if_name": m.if_name,
+        "current_if_index": m.current_if_index,
+        "if_descr": m.if_descr,
+        "if_alias": m.if_alias,
+        "if_speed_mbps": m.if_speed_mbps,
+        "polling_enabled": m.polling_enabled,
+        "alerting_enabled": m.alerting_enabled,
+        "updated_at": m.updated_at.isoformat() if m.updated_at else None,
+    }
+
+
+@router.get("/{device_id}/interface-metadata")
+async def get_interface_metadata(
+    device_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Get cached interface metadata for a device."""
+    device = await db.get(Device, uuid.UUID(device_id))
+    if device is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+    if not check_tenant_access(auth, device.tenant_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    stmt = select(InterfaceMetadata).where(
+        InterfaceMetadata.device_id == uuid.UUID(device_id),
+    ).order_by(InterfaceMetadata.current_if_index)
+    rows = (await db.execute(stmt)).scalars().all()
+    return {"status": "success", "data": [_fmt_iface_meta(m) for m in rows]}
+
+
+class UpdateInterfaceSettingsRequest(BaseModel):
+    polling_enabled: Optional[bool] = None
+    alerting_enabled: Optional[bool] = None
+
+
+@router.patch("/{device_id}/interface-metadata/{interface_id}")
+async def update_interface_settings(
+    device_id: str,
+    interface_id: str,
+    req: UpdateInterfaceSettingsRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Toggle polling/alerting for a single interface."""
+    device = await db.get(Device, uuid.UUID(device_id))
+    if device is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+    if not check_tenant_access(auth, device.tenant_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    meta = await db.get(InterfaceMetadata, uuid.UUID(interface_id))
+    if meta is None or str(meta.device_id) != device_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Interface not found")
+
+    if req.polling_enabled is not None:
+        meta.polling_enabled = req.polling_enabled
+    if req.alerting_enabled is not None:
+        meta.alerting_enabled = req.alerting_enabled
+    meta.updated_at = utc_now()
+    await db.flush()
+    return {"status": "success", "data": _fmt_iface_meta(meta)}
+
+
+class BulkInterfaceSettingsRequest(BaseModel):
+    interface_ids: list[str]
+    polling_enabled: Optional[bool] = None
+    alerting_enabled: Optional[bool] = None
+
+
+@router.patch("/{device_id}/interface-metadata")
+async def bulk_update_interface_settings(
+    device_id: str,
+    req: BulkInterfaceSettingsRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Bulk toggle polling/alerting for multiple interfaces."""
+    device = await db.get(Device, uuid.UUID(device_id))
+    if device is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+    if not check_tenant_access(auth, device.tenant_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    updated = []
+    for iid in req.interface_ids:
+        meta = await db.get(InterfaceMetadata, uuid.UUID(iid))
+        if meta and str(meta.device_id) == device_id:
+            if req.polling_enabled is not None:
+                meta.polling_enabled = req.polling_enabled
+            if req.alerting_enabled is not None:
+                meta.alerting_enabled = req.alerting_enabled
+            meta.updated_at = utc_now()
+            updated.append(_fmt_iface_meta(meta))
+    await db.flush()
+    return {"status": "success", "data": updated}
 
 
 @router.delete("/{device_id}", status_code=status.HTTP_204_NO_CONTENT)

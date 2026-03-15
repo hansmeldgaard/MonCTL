@@ -123,6 +123,77 @@ async def set_cached_enrichment(assignment_id: str, data: dict) -> None:
         pass
 
 
+# ---------------------------------------------------------------------------
+# Interface identity cache (stable interface_id resolution)
+# ---------------------------------------------------------------------------
+
+_IFACE_ID_PREFIX = "iface-id:"
+_IFACE_ID_TTL = 3600  # 1 hour
+
+
+async def get_cached_interface_id(device_id: str, if_name: str) -> dict | None:
+    if _redis is None:
+        return None
+    try:
+        cached = await _redis.get(f"{_IFACE_ID_PREFIX}{device_id}:{if_name}")
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass
+    return None
+
+
+async def set_cached_interface_id(
+    device_id: str, if_name: str, data: dict,
+) -> None:
+    if _redis is None:
+        return
+    try:
+        await _redis.setex(
+            f"{_IFACE_ID_PREFIX}{device_id}:{if_name}", _IFACE_ID_TTL, json.dumps(data),
+        )
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Interface previous counter cache (for rate calculation)
+# ---------------------------------------------------------------------------
+
+_IFACE_PREV_PREFIX = "iface-prev:"
+_IFACE_PREV_TTL = 1200  # 20 minutes
+
+
+async def get_previous_counters(interface_id: str) -> dict | None:
+    if _redis is None:
+        return None
+    try:
+        cached = await _redis.get(f"{_IFACE_PREV_PREFIX}{interface_id}")
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass
+    return None
+
+
+async def cache_current_counters(
+    interface_id: str, in_octets: int, out_octets: int, executed_at_iso: str,
+) -> None:
+    if _redis is None:
+        return
+    try:
+        data = {
+            "in_octets": in_octets,
+            "out_octets": out_octets,
+            "executed_at": executed_at_iso,
+        }
+        await _redis.setex(
+            f"{_IFACE_PREV_PREFIX}{interface_id}", _IFACE_PREV_TTL, json.dumps(data),
+        )
+    except Exception:
+        pass
+
+
 async def get_or_load_enrichment(
     assignment_id: str,
     loader,

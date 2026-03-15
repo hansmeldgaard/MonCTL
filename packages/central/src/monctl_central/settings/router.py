@@ -17,6 +17,10 @@ _DEFAULTS = {
     "job_status_retention_days": "7",
     "check_results_retention_days": "90",
     "interface_poll_interval_seconds": "300",
+    "interface_metadata_refresh_seconds": "3600",
+    "interface_raw_retention_days": "7",
+    "interface_hourly_retention_days": "90",
+    "interface_daily_retention_days": "730",
 }
 
 

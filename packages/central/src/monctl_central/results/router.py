@@ -214,6 +214,7 @@ def _format_interface_row(r: dict) -> dict:
         "app_name": r.get("app_name", ""),
         "device_id": str(r.get("device_id", "")),
         "device_name": r.get("device_name", ""),
+        "interface_id": str(r.get("interface_id", "")),
         "if_index": r.get("if_index", 0),
         "if_name": r.get("if_name", ""),
         "if_alias": r.get("if_alias", ""),
@@ -241,12 +242,46 @@ def _format_interface_row(r: dict) -> dict:
     }
 
 
+_VALID_TIERS = {"raw", "hourly", "daily"}
+_TIER_TABLE = {"raw": "interface", "hourly": "interface_hourly", "daily": "interface_daily"}
+_TIER_TIME_COL = {"raw": "executed_at", "hourly": "hour", "daily": "day"}
+
+
+async def _auto_select_tier(from_ts_str: str | None, db: AsyncSession) -> str:
+    """Auto-select interface data tier based on age of query vs configured retention."""
+    if not from_ts_str:
+        return "raw"
+    from monctl_central.storage.models import SystemSetting
+    from_dt = datetime.fromisoformat(from_ts_str.replace("Z", "+00:00"))
+    age = datetime.now(tz=from_dt.tzinfo or None) - from_dt
+
+    raw_days = 7
+    hourly_days = 90
+    try:
+        setting = await db.get(SystemSetting, "interface_raw_retention_days")
+        if setting:
+            raw_days = int(setting.value)
+        setting = await db.get(SystemSetting, "interface_hourly_retention_days")
+        if setting:
+            hourly_days = int(setting.value)
+    except Exception:
+        pass
+
+    if age.days <= raw_days:
+        return "raw"
+    elif age.days <= hourly_days:
+        return "hourly"
+    return "daily"
+
+
 @router.get("/interfaces/{device_id}")
 async def device_interfaces(
     device_id: str,
     from_ts: Optional[str] = Query(default=None, description="ISO datetime — return only results at or after this time"),
     to_ts: Optional[str] = Query(default=None, description="ISO datetime — return only results at or before this time"),
     if_index: Optional[int] = Query(default=None, description="Filter by interface index"),
+    interface_id: Optional[str] = Query(default=None, description="Filter by stable interface UUID (preferred over if_index)"),
+    tier: Optional[str] = Query(default=None, description="Data tier: raw, hourly, daily (omit for auto)"),
     limit: int = Query(default=2000, le=10000),
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
@@ -258,22 +293,35 @@ async def device_interfaces(
     if not check_tenant_access(auth, device.tenant_id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
+    # Resolve tier
+    if tier and tier in _VALID_TIERS:
+        selected_tier = tier
+    else:
+        selected_tier = await _auto_select_tier(from_ts, db)
+
+    table = _TIER_TABLE[selected_tier]
+    time_col = _TIER_TIME_COL[selected_tier]
+
     ch = get_clickhouse()
     try:
-        sql = "SELECT * FROM interface WHERE device_id = {device_id:UUID}"
+        sql = f"SELECT * FROM {table} WHERE device_id = {{device_id:UUID}}"
         params: dict = {"device_id": device_id}
 
         if from_ts:
-            sql += " AND executed_at >= {from_ts:DateTime64}"
+            sql += f" AND {time_col} >= {{from_ts:DateTime64}}"
             params["from_ts"] = from_ts.replace("Z", "+00:00")
         if to_ts:
-            sql += " AND executed_at <= {to_ts:DateTime64}"
+            sql += f" AND {time_col} <= {{to_ts:DateTime64}}"
             params["to_ts"] = to_ts.replace("Z", "+00:00")
-        if if_index is not None:
+        # Prefer interface_id over if_index when both provided
+        if interface_id is not None:
+            sql += " AND interface_id = {interface_id:UUID}"
+            params["interface_id"] = interface_id
+        elif if_index is not None and selected_tier == "raw":
             sql += " AND if_index = {if_index:UInt32}"
             params["if_index"] = if_index
 
-        sql += " ORDER BY if_index, executed_at DESC LIMIT {limit:UInt32}"
+        sql += f" ORDER BY interface_id, {time_col} DESC LIMIT {{limit:UInt32}}"
         params["limit"] = limit
 
         client = ch._get_client()
@@ -289,7 +337,7 @@ async def device_interfaces(
     return {
         "status": "success",
         "data": data,
-        "meta": {"limit": limit, "count": len(data)},
+        "meta": {"limit": limit, "count": len(data), "tier": selected_tier},
     }
 
 

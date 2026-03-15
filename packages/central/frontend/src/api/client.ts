@@ -77,6 +77,16 @@ export function apiPut<T>(
   });
 }
 
+export function apiPatch<T>(
+  endpoint: string,
+  body?: unknown,
+): Promise<ApiResponse<T>> {
+  return request<ApiResponse<T>>(endpoint, {
+    method: "PATCH",
+    body: body ? JSON.stringify(body) : undefined,
+  });
+}
+
 export function apiDelete(endpoint: string): Promise<void> {
   return request<void>(endpoint, { method: "DELETE" });
 }

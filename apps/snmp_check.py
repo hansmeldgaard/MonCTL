@@ -83,11 +83,18 @@ def _build_v3_auth(config: dict):
     if priv_proto_name and priv_proto_name in _priv_map and _priv_map[priv_proto_name]:
         priv_proto = getattr(hlapi, _priv_map[priv_proto_name], None)
 
+    security_level = (config.get("security_level") or "authPriv").lower()
+
     kwargs: dict = {"userName": username}
+
+    if security_level == "noauthnopriv":
+        return UsmUserData(**kwargs)
+
     if auth_proto and auth_key:
         kwargs["authKey"] = auth_key
         kwargs["authProtocol"] = auth_proto
-    if priv_proto and priv_key and auth_proto:
+
+    if security_level == "authpriv" and priv_proto and priv_key and auth_proto:
         kwargs["privKey"] = priv_key
         kwargs["privProtocol"] = priv_proto
 

@@ -123,6 +123,7 @@ CREATE TABLE IF NOT EXISTS interface ON CLUSTER '{cluster}'
     collector_id       UUID,
     app_id             UUID,
     device_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    interface_id       UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
 
     if_index           UInt32        DEFAULT 0,
     if_name            String        DEFAULT '',
@@ -161,7 +162,7 @@ ENGINE = ReplicatedMergeTree(
     '/clickhouse/tables/{{shard}}/interface', '{{replica}}'
 )
 PARTITION BY toYYYYMM(executed_at)
-ORDER BY (device_id, if_index, executed_at)
+ORDER BY (device_id, interface_id, executed_at)
 SETTINGS index_granularity = 8192
 """
 
@@ -171,7 +172,7 @@ ENGINE = ReplicatedReplacingMergeTree(
     '/clickhouse/tables/{{shard}}/interface_latest', '{{replica}}',
     executed_at
 )
-ORDER BY (device_id, if_index)
+ORDER BY (device_id, interface_id)
 AS SELECT * FROM interface
 """
 
@@ -314,6 +315,7 @@ CREATE TABLE IF NOT EXISTS interface
     collector_id       UUID,
     app_id             UUID,
     device_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    interface_id       UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
 
     if_index           UInt32        DEFAULT 0,
     if_name            String        DEFAULT '',
@@ -350,14 +352,14 @@ CREATE TABLE IF NOT EXISTS interface
 )
 ENGINE = MergeTree()
 PARTITION BY toYYYYMM(executed_at)
-ORDER BY (device_id, if_index, executed_at)
+ORDER BY (device_id, interface_id, executed_at)
 SETTINGS index_granularity = 8192
 """
 
 _INTERFACE_LATEST_DDL_LOCAL = """
 CREATE MATERIALIZED VIEW IF NOT EXISTS interface_latest
 ENGINE = ReplacingMergeTree(executed_at)
-ORDER BY (device_id, if_index)
+ORDER BY (device_id, interface_id)
 AS SELECT * FROM interface
 """
 
@@ -422,7 +424,7 @@ _PERF_INSERT_COLUMNS = [
 ]
 
 _IFACE_INSERT_COLUMNS = [
-    "assignment_id", "collector_id", "app_id", "device_id",
+    "assignment_id", "collector_id", "app_id", "device_id", "interface_id",
     "if_index", "if_name", "if_alias", "if_speed_mbps",
     "if_admin_status", "if_oper_status",
     "in_octets", "out_octets", "in_errors", "out_errors",
@@ -447,6 +449,96 @@ _OLD_TABLES = [
     "check_results",
     "events",
 ]
+
+# Interface tables to recreate (ORDER BY changed to use interface_id)
+_INTERFACE_RECREATE = [
+    "interface_latest",  # MV must be dropped before base table
+    "interface",
+]
+
+# ---------------------------------------------------------------------------
+# Rollup table definitions
+# ---------------------------------------------------------------------------
+
+_ROLLUP_COLUMNS = """
+    device_id          UUID,
+    interface_id       UUID,
+    {time_col}         DateTime('UTC'),
+    in_rate_min        Float64       DEFAULT 0,
+    in_rate_max        Float64       DEFAULT 0,
+    in_rate_avg        Float64       DEFAULT 0,
+    in_rate_p95        Float64       DEFAULT 0,
+    out_rate_min       Float64       DEFAULT 0,
+    out_rate_max       Float64       DEFAULT 0,
+    out_rate_avg       Float64       DEFAULT 0,
+    out_rate_p95       Float64       DEFAULT 0,
+    in_utilization_max Float32       DEFAULT 0,
+    in_utilization_avg Float32       DEFAULT 0,
+    out_utilization_max Float32      DEFAULT 0,
+    out_utilization_avg Float32      DEFAULT 0,
+    in_octets_total    UInt64        DEFAULT 0,
+    out_octets_total   UInt64        DEFAULT 0,
+    in_errors_total    UInt64        DEFAULT 0,
+    out_errors_total   UInt64        DEFAULT 0,
+    in_discards_total  UInt64        DEFAULT 0,
+    out_discards_total UInt64        DEFAULT 0,
+    availability_pct   Float32       DEFAULT 0,
+    sample_count       UInt16        DEFAULT 0,
+    if_speed_mbps      UInt32        DEFAULT 0,
+    device_name        String        DEFAULT '',
+    if_name            String        DEFAULT '',
+    tenant_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000')
+"""
+
+_INTERFACE_HOURLY_DDL = """
+CREATE TABLE IF NOT EXISTS interface_hourly ON CLUSTER '{cluster}'
+(
+""" + _ROLLUP_COLUMNS.format(time_col="hour") + """
+)
+ENGINE = ReplicatedReplacingMergeTree(
+    '/clickhouse/tables/{{shard}}/interface_hourly', '{{replica}}',
+    hour
+)
+PARTITION BY toYYYYMM(hour)
+ORDER BY (device_id, interface_id, hour)
+SETTINGS index_granularity = 8192
+"""
+
+_INTERFACE_DAILY_DDL = """
+CREATE TABLE IF NOT EXISTS interface_daily ON CLUSTER '{cluster}'
+(
+""" + _ROLLUP_COLUMNS.format(time_col="day") + """
+)
+ENGINE = ReplicatedReplacingMergeTree(
+    '/clickhouse/tables/{{shard}}/interface_daily', '{{replica}}',
+    day
+)
+PARTITION BY toYear(day)
+ORDER BY (device_id, interface_id, day)
+SETTINGS index_granularity = 8192
+"""
+
+_INTERFACE_HOURLY_DDL_LOCAL = """
+CREATE TABLE IF NOT EXISTS interface_hourly
+(
+""" + _ROLLUP_COLUMNS.format(time_col="hour") + """
+)
+ENGINE = ReplacingMergeTree(hour)
+PARTITION BY toYYYYMM(hour)
+ORDER BY (device_id, interface_id, hour)
+SETTINGS index_granularity = 8192
+"""
+
+_INTERFACE_DAILY_DDL_LOCAL = """
+CREATE TABLE IF NOT EXISTS interface_daily
+(
+""" + _ROLLUP_COLUMNS.format(time_col="day") + """
+)
+ENGINE = ReplacingMergeTree(day)
+PARTITION BY toYear(day)
+ORDER BY (device_id, interface_id, day)
+SETTINGS index_granularity = 8192
+"""
 
 
 class ClickHouseClient:
@@ -527,6 +619,39 @@ class ClickHouseClient:
             except Exception:
                 logger.debug("Could not drop old table %s (may not exist)", table)
 
+    def _recreate_interface_tables(self, has_cluster: bool) -> None:
+        """Drop and recreate interface tables to update ORDER BY to use interface_id.
+
+        Safe to run — no existing interface data in production.
+        Only drops if the table exists and uses the old ORDER BY (if_index).
+        """
+        client = self._get_client()
+        try:
+            # Check if interface table exists and uses old ORDER BY
+            result = client.query(
+                "SELECT create_table_query FROM system.tables "
+                "WHERE database = {db:String} AND name = 'interface'",
+                parameters={"db": self._database},
+            )
+            if not result.result_rows:
+                return  # Table doesn't exist yet, will be created normally
+            create_query = result.first_row[0]
+            if "interface_id" in create_query:
+                return  # Already has interface_id in ORDER BY
+        except Exception:
+            return  # Can't check, skip recreation
+
+        logger.info("Recreating interface tables with interface_id ORDER BY")
+        for table in _INTERFACE_RECREATE:
+            try:
+                if has_cluster:
+                    client.command(f"DROP TABLE IF EXISTS {table} ON CLUSTER '{self._cluster_name}'")
+                else:
+                    client.command(f"DROP TABLE IF EXISTS {table}")
+                logger.info("Dropped interface table %s for recreation", table)
+            except Exception:
+                logger.warning("Could not drop interface table %s", table)
+
     def ensure_tables(self) -> None:
         """Create tables if they don't exist. Safe to call on every startup."""
         client = self._get_client()
@@ -547,12 +672,17 @@ class ClickHouseClient:
         # Drop old tables first
         self._drop_old_tables(has_cluster)
 
+        # Recreate interface tables with updated ORDER BY (interface_id instead of if_index)
+        self._recreate_interface_tables(has_cluster)
+
         if has_cluster:
             for ddl in [
                 _AVAILABILITY_LATENCY_DDL,
                 _PERFORMANCE_DDL,
                 _INTERFACE_DDL,
                 _CONFIG_DDL,
+                _INTERFACE_HOURLY_DDL,
+                _INTERFACE_DAILY_DDL,
             ]:
                 client.command(ddl.format(cluster=self._cluster_name))
             for mv_ddl in [
@@ -569,6 +699,8 @@ class ClickHouseClient:
                 _PERFORMANCE_DDL_LOCAL,
                 _INTERFACE_DDL_LOCAL,
                 _CONFIG_DDL_LOCAL,
+                _INTERFACE_HOURLY_DDL_LOCAL,
+                _INTERFACE_DAILY_DDL_LOCAL,
             ]:
                 client.command(ddl)
             for mv_ddl in [
@@ -593,6 +725,7 @@ class ClickHouseClient:
             "ALTER TABLE performance ADD INDEX IF NOT EXISTS idx_state set(state) GRANULARITY 4",
             # interface
             "ALTER TABLE interface ADD INDEX IF NOT EXISTS idx_device bloom_filter(device_id) GRANULARITY 4",
+            "ALTER TABLE interface ADD INDEX IF NOT EXISTS idx_iface bloom_filter(interface_id) GRANULARITY 4",
             "ALTER TABLE interface ADD INDEX IF NOT EXISTS idx_collector bloom_filter(collector_id) GRANULARITY 4",
             "ALTER TABLE interface ADD INDEX IF NOT EXISTS idx_tenant bloom_filter(tenant_id) GRANULARITY 4",
             # config
@@ -791,6 +924,30 @@ class ClickHouseClient:
                 result = client.query(sql, parameters=params)
                 return list(result.named_results())
             raise
+
+    def execute_rollup(self, sql: str, params: dict[str, Any] | None = None) -> None:
+        """Execute a rollup INSERT INTO ... SELECT statement."""
+        try:
+            client = self._get_client()
+            client.command(sql, parameters=params or {})
+        except Exception as exc:
+            if self._is_connection_error(exc):
+                client = self._reconnect()
+                client.command(sql, parameters=params or {})
+            else:
+                raise
+
+    def execute_cleanup(self, sql: str) -> None:
+        """Execute a data cleanup ALTER TABLE DELETE statement."""
+        try:
+            client = self._get_client()
+            client.command(sql)
+        except Exception as exc:
+            if self._is_connection_error(exc):
+                client = self._reconnect()
+                client.command(sql)
+            else:
+                raise
 
     def query_for_alert(self, sql: str, params: dict[str, Any] | None = None) -> list[dict]:
         """Execute an arbitrary read query for alert evaluation."""

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiDelete, apiGet, apiGetRaw, apiPost, apiPut } from "@/api/client.ts";
+import { apiDelete, apiGet, apiGetRaw, apiPatch, apiPost, apiPut } from "@/api/client.ts";
 import type {
   ActiveAlert,
   AlertRule,
@@ -19,6 +19,7 @@ import type {
   DeviceResults,
   DeviceType,
   HealthStatus,
+  InterfaceMetadataRecord,
   InterfaceRecord,
   MonitoringConfig,
   RegistrationToken,
@@ -456,23 +457,53 @@ export function useInterfaceHistory(
   deviceId: string | undefined,
   fromTs: string | null,
   toTs: string | null = null,
-  ifIndex: number | null = null,
+  interfaceId: string | null = null,
   limit = 2000,
 ) {
   return useQuery({
-    queryKey: ["interface-history", deviceId, fromTs, toTs, ifIndex, limit],
+    queryKey: ["interface-history", deviceId, fromTs, toTs, interfaceId, limit],
     queryFn: () => {
       const params = new URLSearchParams({
         limit: String(limit),
         ...(fromTs ? { from_ts: fromTs } : {}),
         ...(toTs ? { to_ts: toTs } : {}),
-        ...(ifIndex != null ? { if_index: String(ifIndex) } : {}),
+        ...(interfaceId != null ? { interface_id: interfaceId } : {}),
       });
       return apiGet<InterfaceRecord[]>(`/results/interfaces/${deviceId}?${params}`);
     },
     select: (res) => res.data,
     enabled: !!deviceId,
     refetchInterval: POLL_DETAIL,
+  });
+}
+
+// ── Interface Metadata ───────────────────────────────────
+
+export function useInterfaceMetadata(deviceId: string | undefined) {
+  return useQuery({
+    queryKey: ["interface-metadata", deviceId],
+    queryFn: () => apiGet<InterfaceMetadataRecord[]>(`/devices/${deviceId}/interface-metadata`),
+    select: (res) => res.data,
+    enabled: !!deviceId,
+    refetchInterval: POLL_DETAIL,
+  });
+}
+
+export function useUpdateInterfaceSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      deviceId,
+      interfaceId,
+      data,
+    }: {
+      deviceId: string;
+      interfaceId: string;
+      data: { polling_enabled?: boolean; alerting_enabled?: boolean };
+    }) => apiPatch(`/devices/${deviceId}/interface-metadata/${interfaceId}`, data),
+    onSuccess: (_res, vars) => {
+      qc.invalidateQueries({ queryKey: ["interface-metadata", vars.deviceId] });
+    },
   });
 }
 

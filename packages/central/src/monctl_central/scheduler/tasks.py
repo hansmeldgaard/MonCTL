@@ -3,13 +3,15 @@
 Responsibilities:
 - Health monitor: mark stale collectors as DOWN
 - Alert engine: evaluate alert rules against ClickHouse data
+- Interface data rollup: hourly and daily aggregation
+- Data retention cleanup
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from monctl_central.scheduler.leader import LeaderElection
 
@@ -29,6 +31,8 @@ class SchedulerRunner:
         self._session_factory = session_factory
         self._ch = clickhouse_client
         self._task: asyncio.Task | None = None
+        self._last_hourly_rollup: datetime | None = None
+        self._last_daily_rollup: datetime | None = None
 
     async def start(self) -> asyncio.Task:
         self._task = asyncio.create_task(self._run())
@@ -55,6 +59,8 @@ class SchedulerRunner:
                     await self._health_check()
                 # Alert evaluation runs every 30s
                 await self._evaluate_alerts()
+                # Rollup + cleanup (checked every cycle, runs based on time)
+                await self._run_rollups()
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -120,3 +126,158 @@ class SchedulerRunner:
             await engine.evaluate_all()
         except Exception:
             logger.exception("alert_evaluation_error")
+
+    async def _run_rollups(self) -> None:
+        """Run hourly/daily rollups and retention cleanup when due."""
+        if self._ch is None:
+            return
+
+        now = datetime.now(timezone.utc)
+
+        # Hourly rollup — run after :05 of each hour, once per hour
+        if now.minute >= 5 and (
+            self._last_hourly_rollup is None
+            or (now - self._last_hourly_rollup).total_seconds() >= 3600
+        ):
+            try:
+                await self._hourly_rollup()
+                self._last_hourly_rollup = now
+            except Exception:
+                logger.exception("hourly_rollup_error")
+
+        # Daily rollup + cleanup — run after 00:15 UTC, once per day
+        if now.hour == 0 and now.minute >= 15 and (
+            self._last_daily_rollup is None
+            or (now - self._last_daily_rollup).total_seconds() >= 86400
+        ):
+            try:
+                await self._daily_rollup()
+                await self._retention_cleanup()
+                self._last_daily_rollup = now
+            except Exception:
+                logger.exception("daily_rollup_error")
+
+    async def _hourly_rollup(self) -> None:
+        """Aggregate raw interface data into interface_hourly."""
+        sql = """
+        INSERT INTO interface_hourly
+        SELECT
+            device_id, interface_id,
+            toStartOfHour(executed_at) AS hour,
+            min(in_rate_bps) AS in_rate_min,
+            max(in_rate_bps) AS in_rate_max,
+            avg(in_rate_bps) AS in_rate_avg,
+            quantile(0.95)(in_rate_bps) AS in_rate_p95,
+            min(out_rate_bps) AS out_rate_min,
+            max(out_rate_bps) AS out_rate_max,
+            avg(out_rate_bps) AS out_rate_avg,
+            quantile(0.95)(out_rate_bps) AS out_rate_p95,
+            max(in_utilization_pct) AS in_utilization_max,
+            avg(in_utilization_pct) AS in_utilization_avg,
+            max(out_utilization_pct) AS out_utilization_max,
+            avg(out_utilization_pct) AS out_utilization_avg,
+            if(max(in_octets) > min(in_octets), max(in_octets) - min(in_octets), 0) AS in_octets_total,
+            if(max(out_octets) > min(out_octets), max(out_octets) - min(out_octets), 0) AS out_octets_total,
+            sum(in_errors) AS in_errors_total,
+            sum(out_errors) AS out_errors_total,
+            sum(in_discards) AS in_discards_total,
+            sum(out_discards) AS out_discards_total,
+            (countIf(if_oper_status = 'up') / count()) * 100 AS availability_pct,
+            toUInt16(count()) AS sample_count,
+            max(if_speed_mbps) AS if_speed_mbps,
+            any(device_name) AS device_name,
+            any(if_name) AS if_name,
+            any(tenant_id) AS tenant_id
+        FROM interface
+        WHERE executed_at >= toStartOfHour(now() - INTERVAL 1 HOUR)
+          AND executed_at < toStartOfHour(now())
+        GROUP BY device_id, interface_id, hour
+        """
+        self._ch.execute_rollup(sql)
+        logger.info("hourly_rollup_complete")
+
+    async def _daily_rollup(self) -> None:
+        """Aggregate hourly data into interface_daily."""
+        sql = """
+        INSERT INTO interface_daily
+        SELECT
+            device_id, interface_id,
+            toStartOfDay(hour) AS day,
+            min(in_rate_min) AS in_rate_min,
+            max(in_rate_max) AS in_rate_max,
+            avg(in_rate_avg) AS in_rate_avg,
+            quantile(0.95)(in_rate_p95) AS in_rate_p95,
+            min(out_rate_min) AS out_rate_min,
+            max(out_rate_max) AS out_rate_max,
+            avg(out_rate_avg) AS out_rate_avg,
+            quantile(0.95)(out_rate_p95) AS out_rate_p95,
+            max(in_utilization_max) AS in_utilization_max,
+            avg(in_utilization_avg) AS in_utilization_avg,
+            max(out_utilization_max) AS out_utilization_max,
+            avg(out_utilization_avg) AS out_utilization_avg,
+            sum(in_octets_total) AS in_octets_total,
+            sum(out_octets_total) AS out_octets_total,
+            sum(in_errors_total) AS in_errors_total,
+            sum(out_errors_total) AS out_errors_total,
+            sum(in_discards_total) AS in_discards_total,
+            sum(out_discards_total) AS out_discards_total,
+            avg(availability_pct) AS availability_pct,
+            toUInt16(sum(sample_count)) AS sample_count,
+            max(if_speed_mbps) AS if_speed_mbps,
+            any(device_name) AS device_name,
+            any(if_name) AS if_name,
+            any(tenant_id) AS tenant_id
+        FROM interface_hourly
+        WHERE hour >= toStartOfDay(now() - INTERVAL 1 DAY)
+          AND hour < toStartOfDay(now())
+        GROUP BY device_id, interface_id, day
+        """
+        self._ch.execute_rollup(sql)
+        logger.info("daily_rollup_complete")
+
+    async def _retention_cleanup(self) -> None:
+        """Delete data older than configured retention periods."""
+        from sqlalchemy import select
+        from monctl_central.storage.models import SystemSetting
+
+        # Load retention settings
+        raw_days = 7
+        hourly_days = 90
+        daily_days = 730
+
+        try:
+            async with self._session_factory() as session:
+                for key, default in [
+                    ("interface_raw_retention_days", 7),
+                    ("interface_hourly_retention_days", 90),
+                    ("interface_daily_retention_days", 730),
+                ]:
+                    setting = await session.get(SystemSetting, key)
+                    val = int(setting.value) if setting else default
+                    if key == "interface_raw_retention_days":
+                        raw_days = val
+                    elif key == "interface_hourly_retention_days":
+                        hourly_days = val
+                    else:
+                        daily_days = val
+        except Exception:
+            logger.debug("Could not load retention settings, using defaults")
+
+        cleanup_sqls = [
+            f"ALTER TABLE interface DELETE WHERE executed_at < now() - INTERVAL {raw_days} DAY",
+            f"ALTER TABLE interface_hourly DELETE WHERE hour < now() - INTERVAL {hourly_days} DAY",
+            f"ALTER TABLE interface_daily DELETE WHERE day < today() - INTERVAL {daily_days} DAY",
+        ]
+
+        for sql in cleanup_sqls:
+            try:
+                self._ch.execute_cleanup(sql)
+            except Exception:
+                logger.debug("Cleanup query failed: %s", sql, exc_info=True)
+
+        logger.info(
+            "retention_cleanup_complete",
+            raw_days=raw_days,
+            hourly_days=hourly_days,
+            daily_days=daily_days,
+        )

@@ -56,6 +56,8 @@ import {
   useDeviceTypes,
   useInterfaceLatest,
   useInterfaceHistory,
+  useInterfaceMetadata,
+  useUpdateInterfaceSettings,
   useAppDetail,
   useApps,
   useSnmpOids,
@@ -949,10 +951,19 @@ function formatBytes(bytes: number): string {
 
 // ── Tab: Interfaces ──────────────────────────────────────
 
+type IfaceSortKey = "status" | "if_index" | "if_name" | "if_alias" | "speed" | "in_traffic" | "out_traffic" | "in_errors" | "out_errors" | "last_polled";
+
 function InterfacesTab({ deviceId }: { deviceId: string }) {
   const { data: interfaces, isLoading } = useInterfaceLatest(deviceId);
-  const [selectedIfIndex, setSelectedIfIndex] = useState<number | null>(null);
+  const { data: metadata } = useInterfaceMetadata(deviceId);
+  const updateSettings = useUpdateInterfaceSettings();
+  const [selectedInterfaceId, setSelectedInterfaceId] = useState<string | null>(null);
   const [timeRange, setTimeRange] = useState<TimeRangeValue>(DEFAULT_RANGE);
+  const [searchText, setSearchText] = useState("");
+  const [filterOperStatus, setFilterOperStatus] = useState<string>("");
+  const [filterSpeed, setFilterSpeed] = useState<string>("");
+  const [sortKey, setSortKey] = useState<IfaceSortKey>("if_index");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const tz = useTimezone();
   const { fromTs, toTs } = useMemo(() => rangeToTimestamps(timeRange), [timeRange]);
 
@@ -960,8 +971,75 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
     deviceId,
     fromTs,
     toTs,
-    selectedIfIndex,
+    selectedInterfaceId,
     2000,
+  );
+
+  // Build metadata lookup
+  const metaMap = useMemo(() => {
+    const m = new Map<string, { polling_enabled: boolean; alerting_enabled: boolean }>();
+    for (const meta of metadata ?? []) {
+      m.set(meta.id, { polling_enabled: meta.polling_enabled, alerting_enabled: meta.alerting_enabled });
+    }
+    return m;
+  }, [metadata]);
+
+  // Dynamic filter options
+  const availableOperStatuses = useMemo(() =>
+    [...new Set((interfaces ?? []).map(i => i.if_oper_status))].sort(), [interfaces]);
+  const availableSpeeds = useMemo(() =>
+    [...new Set((interfaces ?? []).map(i => i.if_speed_mbps))].filter(Boolean).sort((a, b) => a - b), [interfaces]);
+
+  // Filter
+  const filtered = useMemo(() => {
+    let data = interfaces ?? [];
+    if (searchText) {
+      const q = searchText.toLowerCase();
+      data = data.filter(i =>
+        i.if_name.toLowerCase().includes(q) ||
+        i.if_alias.toLowerCase().includes(q) ||
+        String(i.if_index).includes(q)
+      );
+    }
+    if (filterOperStatus) data = data.filter(i => i.if_oper_status === filterOperStatus);
+    if (filterSpeed) data = data.filter(i => i.if_speed_mbps === Number(filterSpeed));
+    return data;
+  }, [interfaces, searchText, filterOperStatus, filterSpeed]);
+
+  // Sort
+  const sorted = useMemo(() => {
+    const arr = [...filtered];
+    const dir = sortDir === "asc" ? 1 : -1;
+    arr.sort((a, b) => {
+      switch (sortKey) {
+        case "status": return (a.if_oper_status === "up" ? 0 : 1) - (b.if_oper_status === "up" ? 0 : 1);
+        case "if_index": return (a.if_index - b.if_index) * dir;
+        case "if_name": return a.if_name.localeCompare(b.if_name) * dir;
+        case "if_alias": return (a.if_alias || "").localeCompare(b.if_alias || "") * dir;
+        case "speed": return (a.if_speed_mbps - b.if_speed_mbps) * dir;
+        case "in_traffic": return (a.in_rate_bps - b.in_rate_bps) * dir;
+        case "out_traffic": return (a.out_rate_bps - b.out_rate_bps) * dir;
+        case "in_errors": return (a.in_errors - b.in_errors) * dir;
+        case "out_errors": return (a.out_errors - b.out_errors) * dir;
+        case "last_polled": return a.executed_at.localeCompare(b.executed_at) * dir;
+        default: return 0;
+      }
+    });
+    return arr;
+  }, [filtered, sortKey, sortDir]);
+
+  const toggleSort = (key: IfaceSortKey) => {
+    if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
+    else { setSortKey(key); setSortDir("asc"); }
+  };
+
+  const SortHead = ({ col, children }: { col: IfaceSortKey; children: React.ReactNode }) => (
+    <TableHead className="cursor-pointer select-none" onClick={() => toggleSort(col)}>
+      <span className="flex items-center gap-1">
+        {children}
+        {sortKey === col ? (sortDir === "asc" ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />) : <ArrowUpDown className="h-3 w-3 text-zinc-600" />}
+      </span>
+    </TableHead>
   );
 
   if (isLoading) {
@@ -988,39 +1066,50 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
     );
   }
 
-  // Sort: oper_status "up" first, then by if_index
-  const sorted = [...interfaces].sort((a, b) => {
-    if (a.if_oper_status === "up" && b.if_oper_status !== "up") return -1;
-    if (a.if_oper_status !== "up" && b.if_oper_status === "up") return 1;
-    return a.if_index - b.if_index;
-  });
-
   const upCount = interfaces.filter((i) => i.if_oper_status === "up").length;
   const downCount = interfaces.filter((i) => i.if_oper_status === "down").length;
 
   return (
     <div className="space-y-4">
       {/* Summary bar */}
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-4 flex-wrap">
         <div className="flex items-center gap-2 text-sm">
           <span className="text-zinc-500">Interfaces:</span>
           <Badge variant="default">{interfaces.length}</Badge>
           <Badge variant="success">{upCount} up</Badge>
           {downCount > 0 && <Badge variant="destructive">{downCount} down</Badge>}
         </div>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
+          <Input
+            placeholder="Search name/alias/index..."
+            value={searchText}
+            onChange={e => setSearchText(e.target.value)}
+            className="h-7 w-48 text-xs"
+          />
+          {availableOperStatuses.length > 1 && (
+            <Select value={filterOperStatus} onChange={e => setFilterOperStatus(e.target.value)} className="h-7 text-xs w-28">
+              <option value="">All status</option>
+              {availableOperStatuses.map(s => <option key={s} value={s}>{s}</option>)}
+            </Select>
+          )}
+          {availableSpeeds.length > 1 && (
+            <Select value={filterSpeed} onChange={e => setFilterSpeed(e.target.value)} className="h-7 text-xs w-28">
+              <option value="">All speeds</option>
+              {availableSpeeds.map(s => <option key={s} value={String(s)}>{formatSpeed(s)}</option>)}
+            </Select>
+          )}
           <TimeRangePicker value={timeRange} onChange={setTimeRange} timezone={tz} />
         </div>
       </div>
 
       {/* Traffic chart for selected interface */}
-      {selectedIfIndex != null && history?.length ? (
+      {selectedInterfaceId != null && history?.length ? (
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-zinc-400 flex items-center gap-2">
-              Traffic — {interfaces.find((i) => i.if_index === selectedIfIndex)?.if_name ?? `if${selectedIfIndex}`}
+              Traffic — {interfaces.find((i) => i.interface_id === selectedInterfaceId)?.if_name ?? selectedInterfaceId}
               <button
-                onClick={() => setSelectedIfIndex(null)}
+                onClick={() => setSelectedInterfaceId(null)}
                 className="ml-2 text-zinc-600 hover:text-zinc-300 cursor-pointer"
               >
                 <X className="h-3.5 w-3.5 inline" />
@@ -1039,30 +1128,36 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-10">Status</TableHead>
-                <TableHead>Index</TableHead>
-                <TableHead>Name</TableHead>
-                <TableHead>Alias</TableHead>
-                <TableHead>Speed</TableHead>
-                <TableHead>In Traffic</TableHead>
-                <TableHead>Out Traffic</TableHead>
-                <TableHead>In Errors</TableHead>
-                <TableHead>Out Errors</TableHead>
-                <TableHead>Last Polled</TableHead>
+                <SortHead col="status">Status</SortHead>
+                <SortHead col="if_index">Index</SortHead>
+                <SortHead col="if_name">Name</SortHead>
+                <SortHead col="if_alias">Alias</SortHead>
+                <SortHead col="speed">Speed</SortHead>
+                <SortHead col="in_traffic">In Traffic</SortHead>
+                <SortHead col="out_traffic">Out Traffic</SortHead>
+                <SortHead col="in_errors">In Errors</SortHead>
+                <SortHead col="out_errors">Out Errors</SortHead>
+                <SortHead col="last_polled">Last Polled</SortHead>
+                <TableHead className="w-14 text-center">Poll</TableHead>
+                <TableHead className="w-14 text-center">Alert</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {sorted.map((iface) => (
+              {sorted.map((iface) => {
+                const meta = metaMap.get(iface.interface_id);
+                const pollingOn = meta?.polling_enabled ?? true;
+                const alertingOn = meta?.alerting_enabled ?? true;
+                return (
                 <TableRow
-                  key={iface.if_index}
+                  key={iface.interface_id}
                   className={`cursor-pointer transition-colors ${
-                    selectedIfIndex === iface.if_index
+                    selectedInterfaceId === iface.interface_id
                       ? "bg-brand-500/10"
                       : "hover:bg-zinc-800/50"
                   }`}
                   onClick={() =>
-                    setSelectedIfIndex(
-                      selectedIfIndex === iface.if_index ? null : iface.if_index,
+                    setSelectedInterfaceId(
+                      selectedInterfaceId === iface.interface_id ? null : iface.interface_id,
                     )
                   }
                 >
@@ -1112,8 +1207,33 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
                   <TableCell className="text-zinc-500 text-xs">
                     {timeAgo(iface.executed_at)}
                   </TableCell>
+                  <TableCell className="text-center" onClick={e => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={pollingOn}
+                      onChange={() => updateSettings.mutate({
+                        deviceId,
+                        interfaceId: iface.interface_id,
+                        data: { polling_enabled: !pollingOn },
+                      })}
+                      className="accent-brand-500 cursor-pointer"
+                    />
+                  </TableCell>
+                  <TableCell className="text-center" onClick={e => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={alertingOn}
+                      onChange={() => updateSettings.mutate({
+                        deviceId,
+                        interfaceId: iface.interface_id,
+                        data: { alerting_enabled: !alertingOn },
+                      })}
+                      className="accent-amber-500 cursor-pointer"
+                    />
+                  </TableCell>
                 </TableRow>
-              ))}
+                );
+              })}
             </TableBody>
           </Table>
         </CardContent>

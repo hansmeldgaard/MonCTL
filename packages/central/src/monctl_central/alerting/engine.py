@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from monctl_central.alerting.evaluators import (
     AbsenceEvaluator,
+    InterfaceThresholdEvaluator,
     StateChangeEvaluator,
     ThresholdEvaluator,
 )
@@ -28,6 +29,7 @@ _EVALUATORS = {
     "threshold": ThresholdEvaluator(),
     "state_change": StateChangeEvaluator(),
     "absence": AbsenceEvaluator(),
+    "interface_threshold": InterfaceThresholdEvaluator(),
 }
 
 
