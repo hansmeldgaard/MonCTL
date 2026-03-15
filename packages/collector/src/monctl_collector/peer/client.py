@@ -1,8 +1,6 @@
-"""gRPC peer client — connects to a remote cache-node.
+"""gRPC peer client — connects to the local cache-node.
 
 Used by:
-  - Cache-nodes to communicate with peer cache-nodes (gossip, cache replication,
-    work-stealing)
   - Poll-workers to talk to their local cache-node (via localhost:50051)
   - Forwarder to talk to its local cache-node
 
@@ -13,7 +11,6 @@ Timeout: 5 seconds per RPC. Retries: 1 automatic retry on transient errors.
 from __future__ import annotations
 
 import json
-from typing import Any
 
 import grpc
 import structlog
@@ -32,14 +29,9 @@ _CHANNEL_OPTIONS = [
 
 
 class PeerClient:
-    """gRPC client for CollectorPeer service on a single remote node."""
+    """gRPC client for CollectorPeer service on the local cache-node."""
 
     def __init__(self, address: str, timeout: float = _DEFAULT_TIMEOUT) -> None:
-        """
-        Args:
-            address: host:port of the remote cache-node.
-            timeout: RPC timeout in seconds.
-        """
         self._address = address
         self._timeout = timeout
         self._channel: grpc.aio.Channel | None = None
@@ -54,71 +46,6 @@ class PeerClient:
             await self._channel.close()
             self._channel = None
             self._stub = None
-
-    # ── Cache ─────────────────────────────────────────────────────────────────
-
-    async def get_cache(self, key: str) -> pb.CacheResponse | None:
-        try:
-            return await self._stub.GetCache(
-                pb.CacheRequest(key=key), timeout=self._timeout
-            )
-        except grpc.aio.AioRpcError as e:
-            logger.debug("get_cache_rpc_error", address=self._address, key=key, error=str(e))
-            return None
-
-    async def put_cache(
-        self, key: str, value: bytes, ttl: int, origin_node: str, is_replica: bool = False
-    ) -> bool:
-        try:
-            resp = await self._stub.PutCache(
-                pb.CachePutRequest(
-                    key=key, value=value, ttl=ttl,
-                    origin_node=origin_node, is_replica=is_replica,
-                ),
-                timeout=self._timeout,
-            )
-            return resp.success
-        except grpc.aio.AioRpcError as e:
-            logger.debug("put_cache_rpc_error", address=self._address, error=str(e))
-            return False
-
-    # ── Cluster ───────────────────────────────────────────────────────────────
-
-    async def ping(self, node_id: str, generation: int) -> pb.PingResponse | None:
-        try:
-            return await self._stub.Ping(
-                pb.PingRequest(node_id=node_id, generation=generation),
-                timeout=self._timeout,
-            )
-        except grpc.aio.AioRpcError:
-            return None
-
-    async def gossip_exchange(self, sender_id: str, members: list[dict]) -> list[dict]:
-        """Send gossip and return the remote node's member list."""
-        pb_members = [
-            pb.MemberInfo(
-                node_id=m["node_id"],
-                address=m.get("address", ""),
-                status=m.get("status", "ALIVE"),
-                generation=m.get("generation", 0),
-                last_seen=m.get("last_seen", 0.0),
-                load_score=m.get("load_info", {}).get("load_score", 0.0),
-                worker_count=m.get("load_info", {}).get("worker_count", 0),
-                effective_load=m.get("load_info", {}).get("effective_load", 0.0),
-                deadline_miss_rate=m.get("load_info", {}).get("deadline_miss_rate", 0.0),
-                total_jobs=m.get("load_info", {}).get("total_jobs", 0),
-                stolen_job_count=m.get("load_info", {}).get("stolen_job_count", 0),
-            )
-            for m in members
-        ]
-        try:
-            resp = await self._stub.GossipExchange(
-                pb.GossipMessage(sender_id=sender_id, members=pb_members),
-                timeout=self._timeout,
-            )
-            return [_member_info_to_dict(m) for m in resp.members]
-        except grpc.aio.AioRpcError:
-            return []
 
     # ── Job Distribution ──────────────────────────────────────────────────────
 
@@ -223,31 +150,6 @@ class PeerClient:
         except grpc.aio.AioRpcError:
             return False
 
-    # ── Work-Stealing ─────────────────────────────────────────────────────────
-
-    async def offer_job(self, job_id: str, job: dict, from_node: str) -> bool:
-        """Offer a job to this node (work-stealing). Returns True if accepted."""
-        pb_job = _dict_to_job_pb(job)
-        try:
-            resp = await self._stub.OfferJob(
-                pb.OfferJobRequest(job_id=job_id, job=pb_job, from_node=from_node),
-                timeout=self._timeout,
-            )
-            return resp.accepted
-        except grpc.aio.AioRpcError:
-            return False
-
-    async def reclaim_job(self, job_id: str, from_node: str) -> bool:
-        """Reclaim a previously stolen job back to this node."""
-        try:
-            resp = await self._stub.ReclaimJob(
-                pb.ReclaimJobRequest(job_id=job_id, from_node=from_node),
-                timeout=self._timeout,
-            )
-            return resp.ok
-        except grpc.aio.AioRpcError:
-            return False
-
 
 # ── Channel pool (one channel per address) ────────────────────────────────────
 
@@ -273,24 +175,6 @@ class PeerChannelPool:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _member_info_to_dict(m: pb.MemberInfo) -> dict:
-    return {
-        "node_id": m.node_id,
-        "address": m.address,
-        "status": m.status,
-        "generation": m.generation,
-        "last_seen": m.last_seen,
-        "load_info": {
-            "load_score": m.load_score,
-            "worker_count": m.worker_count,
-            "effective_load": m.effective_load,
-            "deadline_miss_rate": m.deadline_miss_rate,
-            "total_jobs": m.total_jobs,
-            "stolen_job_count": m.stolen_job_count,
-        },
-    }
-
-
 def _job_to_dict(j: pb.JobWithProfile) -> dict:
     return {
         "job_id": j.job_id,
@@ -306,20 +190,3 @@ def _job_to_dict(j: pb.JobWithProfile) -> dict:
         "is_heavy": j.is_heavy,
         "role": j.role,
     }
-
-
-def _dict_to_job_pb(j: dict) -> pb.JobWithProfile:
-    return pb.JobWithProfile(
-        job_id=j.get("job_id", ""),
-        device_id=j.get("device_id") or "",
-        device_host=j.get("device_host") or "",
-        app_id=j.get("app_id", ""),
-        app_version=j.get("app_version", ""),
-        credential_names=j.get("credential_names", []),
-        interval=j.get("interval", 60),
-        parameters_json=json.dumps(j.get("parameters", {})),
-        max_execution_time=j.get("max_execution_time", 120),
-        avg_execution_time=j.get("avg_execution_time", 5.0),
-        is_heavy=j.get("is_heavy", False),
-        role=j.get("role") or "",
-    )

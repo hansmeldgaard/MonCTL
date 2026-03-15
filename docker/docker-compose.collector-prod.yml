@@ -12,22 +12,21 @@ services:
     hostname: ${NODE_ID:-collector-node}
     ports:
       - "50051:50051"
-      - "50052:50052"
+      - "127.0.0.1:50052:50052"
     environment:
       MONCTL_NODE_ID:           ${NODE_ID}
       MONCTL_CENTRAL_URL:       ${CENTRAL_URL}
       MONCTL_CENTRAL_API_KEY:   ${CENTRAL_API_KEY}
       MONCTL_VERIFY_SSL:        ${VERIFY_SSL:-true}
       MONCTL_GRPC_ADDRESS:      0.0.0.0:50051
-      MONCTL_PEERS:             ${PEERS:-}
-      MONCTL_ADVERTISE_ADDR:    ${MONCTL_ADVERTISE_ADDR:-}
       MONCTL_DB_PATH:           /data/cache.db
       MONCTL_COLLECTOR_ID:      ${MONCTL_COLLECTOR_ID:-}
       MONCTL_COLLECTOR_API_KEY: ${CENTRAL_API_KEY}
       MONCTL_SETUP_YAML:        /etc/monctl/setup.yaml
     volumes:
       - cache_data:/data
-      - /etc/monctl/setup.yaml:/etc/monctl/setup.yaml:ro
+      - /etc/monctl/setup.yaml:/etc/monctl/setup.yaml:rw
+      - /etc/machine-id:/etc/machine-id:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c",

@@ -3,37 +3,27 @@
 Responsibilities:
   1. Sync job definitions from central every `sync_interval` seconds
      (delta-sync using `since` timestamp after first full fetch).
-  2. Determine which jobs belong to this node via consistent hashing.
-  3. Assign jobs to workers using app-affinity: workers specialise in
+  2. Assign jobs to workers using app-affinity: workers specialise in
      1-3 app types, minimising venv creation on poll-workers.
-  4. Track execution profiles (EMA) per job for load calculation.
-  5. Expose current load info for gossip piggybacking.
-  6. Provide APIs for the work-stealer (add/remove stolen jobs).
+  3. Track execution profiles (EMA) per job for load calculation.
+  4. Expose current load info for heartbeat reporting.
 
 App-affinity assignment algorithm:
-  - Group available jobs by app_id.
-  - For each registered worker, if it has loaded_apps: assign jobs whose
-    app_id matches one of the worker's loaded apps.
-  - For new workers (no loaded apps yet): assign a set of 1-3 app types
-    from the least-served bucket.
-  - Round-robin across workers within the same app type.
-  - Jobs with no matching worker go to any worker (catch-all).
+  - Sort all jobs deterministically by job_id.
+  - Round-robin distribute across sorted worker list.
+  - Each job goes to exactly one worker — no duplicates.
 """
 
 from __future__ import annotations
 
 import asyncio
-import collections
 import time
 from datetime import datetime, timezone
-from typing import Any
 
 import structlog
 
 from monctl_collector.cache.local_cache import LocalCache
 from monctl_collector.central.api_client import CentralAPIClient
-from monctl_collector.cluster.hash_ring import HashRing
-from monctl_collector.cluster.membership import MembershipTable
 from monctl_collector.config import SchedulingConfig
 from monctl_collector.jobs.models import (
     JobDefinition,
@@ -54,8 +44,6 @@ class JobScheduler:
         node_id: str,
         local_cache: LocalCache,
         central_client: CentralAPIClient,
-        hash_ring: HashRing,
-        membership: MembershipTable,
         config: SchedulingConfig,
         sync_interval: float = 60.0,
         collector_id: str = "",
@@ -63,16 +51,12 @@ class JobScheduler:
         self._node_id = node_id
         self._cache = local_cache
         self._central = central_client
-        self._ring = hash_ring
-        self._membership = membership
         self._config = config
         self._sync_interval = sync_interval
         self._collector_id = collector_id
 
-        # Jobs that hash to this node (our "home" jobs)
+        # All jobs assigned to this collector by central
         self._my_jobs: dict[str, JobDefinition] = {}
-        # Jobs stolen from other (overloaded) nodes
-        self._stolen_jobs: dict[str, JobDefinition] = {}
         # Registered poll-workers
         self._workers: dict[str, WorkerRegistration] = {}
         # In-memory EMA profiles (authoritative; synced to SQLite asynchronously)
@@ -170,7 +154,6 @@ class JobScheduler:
         # Apply deletions
         for job_id in deleted_ids:
             self._my_jobs.pop(job_id, None)
-            self._stolen_jobs.pop(job_id, None)
             self._profiles.pop(job_id, None)
             await self._cache.delete_job(job_id)
             logger.debug("job_deleted", job_id=job_id)
@@ -192,10 +175,8 @@ class JobScheduler:
                 continue
 
             await self._cache.upsert_job(job)
-
-            # Central partitions jobs server-side (weighted consistent hashing) —
-            # all jobs returned from the /jobs endpoint belong to this collector.
             self._my_jobs[job.job_id] = job
+
             # Ensure we have a profile
             if job.job_id not in self._profiles:
                 row = await self._cache.get_profile(job.job_id)
@@ -207,7 +188,6 @@ class JobScheduler:
         logger.debug(
             "job_sync_complete",
             my_jobs=len(self._my_jobs),
-            stolen=len(self._stolen_jobs),
             deleted=len(deleted_ids),
             changed=len(jobs),
         )
@@ -232,24 +212,22 @@ class JobScheduler:
         worker_id: str,
         loaded_apps: list[tuple[str, str]],
     ) -> list[tuple[JobDefinition, JobProfile]]:
-        """Return the jobs assigned to this worker, with their profiles.
-
-        Assignment is sticky (based on app-affinity) — the same worker always
-        gets the same set of app types, minimising venv creation.
-        """
+        """Return the jobs assigned to this worker, with their profiles."""
         # Refresh worker registration
         self.register_worker(worker_id, set(loaded_apps))
 
-        all_jobs = {**self._my_jobs, **self._stolen_jobs}
-        if not all_jobs:
+        if not self._my_jobs:
             return []
 
-        # Assign jobs to this worker using app-affinity
-        assigned = self._assign_jobs_to_worker(worker_id, all_jobs)
+        assigned = self._assign_jobs_to_worker(worker_id)
         return [
             (job, self._get_or_create_profile(job.job_id))
             for job in assigned
         ]
+
+    def get_registered_workers(self) -> dict[str, WorkerRegistration]:
+        """Return currently registered workers (for status API)."""
+        return dict(self._workers)
 
     def update_job_profile(
         self, job_id: str, execution_time: float, error: bool
@@ -270,13 +248,12 @@ class JobScheduler:
             name=f"persist_profile_{job_id}",
         )
 
-    # ── Load info (for gossip piggyback) ─────────────────────────────────────
+    # ── Load info (for heartbeat reporting) ───────────────────────────────────
 
     def get_current_load_info(self) -> NodeLoadInfo:
         """Calculate and return the current load score for this node."""
-        all_jobs = {**self._my_jobs, **self._stolen_jobs}
         load_score = 0.0
-        for job in all_jobs.values():
+        for job in self._my_jobs.values():
             profile = self._profiles.get(job.job_id)
             if profile:
                 load_score += profile.load_contribution(job.interval)
@@ -286,7 +263,6 @@ class JobScheduler:
 
         worker_count = len(self._workers)
         effective_load = load_score / worker_count if worker_count > 0 else load_score
-        stolen_count = len(self._stolen_jobs)
 
         return NodeLoadInfo(
             node_id=self._node_id,
@@ -294,64 +270,17 @@ class JobScheduler:
             worker_count=worker_count,
             effective_load=round(effective_load, 4),
             deadline_miss_rate=round(self._deadline_miss_ema, 4),
-            total_jobs=len(all_jobs),
-            stolen_job_count=stolen_count,
-            available_capacity=max(0.0, round(1.0 - effective_load, 4)),
+            total_jobs=len(self._my_jobs),
         )
 
-    # ── Work-stealer API ─────────────────────────────────────────────────────
-
-    def get_all_jobs(self) -> dict[str, JobDefinition]:
-        """Return all active jobs (home + stolen) — used by the work-stealer."""
-        return {**self._my_jobs, **self._stolen_jobs}
-
-    def get_home_jobs(self) -> dict[str, JobDefinition]:
-        """Return only home jobs (hashed to this node)."""
-        return dict(self._my_jobs)
-
-    def add_stolen_job(self, job: JobDefinition) -> None:
-        """Accept a job stolen from another node."""
-        self._stolen_jobs[job.job_id] = job
-        if job.job_id not in self._profiles:
-            self._profiles[job.job_id] = JobProfile(job_id=job.job_id)
-        logger.info("job_stolen_added", job_id=job.job_id)
-
-    def remove_stolen_job(self, job_id: str) -> None:
-        """Remove a stolen job (reclaimed by original node or pushed elsewhere)."""
-        removed = self._stolen_jobs.pop(job_id, None)
-        if removed:
-            logger.info("stolen_job_removed", job_id=job_id)
-
-    def remove_home_job(self, job_id: str) -> None:
-        """Remove a home job that we offered to another node via work-stealing."""
-        self._my_jobs.pop(job_id, None)
-
-    def notify_ring_changed(self) -> None:
-        """Called when the hash ring changes (node added/removed).
-
-        Forces a full re-sync from central on the next cycle so that
-        job ownership is re-evaluated with the updated ring.
-        """
-        self._last_sync = None
-        logger.info("ring_changed_forcing_full_sync")
-
     # ── Private helpers ──────────────────────────────────────────────────────
-
-    def _is_mine(self, job_id: str) -> bool:
-        """True if this job's home node is us (via consistent hashing)."""
-        primary = self._ring.get_node(job_id)
-        return primary == self._node_id
 
     def _get_or_create_profile(self, job_id: str) -> JobProfile:
         if job_id not in self._profiles:
             self._profiles[job_id] = JobProfile(job_id=job_id)
         return self._profiles[job_id]
 
-    def _assign_jobs_to_worker(
-        self,
-        worker_id: str,
-        all_jobs: dict[str, JobDefinition],
-    ) -> list[JobDefinition]:
+    def _assign_jobs_to_worker(self, worker_id: str) -> list[JobDefinition]:
         """Return the subset of jobs assigned to `worker_id`.
 
         Algorithm:
@@ -367,7 +296,7 @@ class JobScheduler:
             return []
 
         worker_pos = active_workers.index(worker_id)
-        sorted_jobs = sorted(all_jobs.values(), key=lambda j: j.job_id)
+        sorted_jobs = sorted(self._my_jobs.values(), key=lambda j: j.job_id)
 
         return [job for i, job in enumerate(sorted_jobs) if i % n_workers == worker_pos]
 
@@ -401,6 +330,4 @@ def _row_to_profile(job_id: str, row: dict) -> JobProfile:
         error_count=row.get("error_count", 0),
         last_run=row.get("last_run", 0.0),
         is_heavy=bool(row.get("is_heavy", 0)),
-        stolen_from=row.get("stolen_from"),
-        steal_cooldown_until=row.get("steal_cooldown_until", 0.0),
     )

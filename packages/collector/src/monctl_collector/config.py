@@ -11,19 +11,9 @@ import yaml
 
 
 @dataclass
-class ClusterConfig:
-    gossip_interval: float = 1.0          # seconds between gossip rounds
-    suspicion_timeout: float = 5.0        # seconds before marking SUSPECTED → DEAD
-    dead_timeout: float = 60.0            # seconds before removing dead node from ring
-    replication_factor: int = 3           # number of distinct nodes that hold each cache key
-    vnodes: int = 150                     # virtual nodes per physical node on hash ring
-
-
-@dataclass
 class CacheConfig:
     db_path: str = "/data/cache.db"
     default_ttl: int = 300               # TTL for cached monitoring data (seconds)
-    remote_cache_ttl: int = 60           # TTL for data fetched from remote peer
     cleanup_interval: int = 30           # how often to purge expired cache rows (seconds)
 
 
@@ -46,16 +36,7 @@ class SchedulingConfig:
     light_slots: int = 45
     default_avg_time: float = 5.0        # assumed avg execution time for new jobs
     ema_alpha: float = 0.3               # EMA smoothing factor
-    deadline_miss_threshold: float = 0.05  # trigger work-stealing above 5% miss rate
-
-
-@dataclass
-class WorkStealingConfig:
-    enabled: bool = False  # Central handles load-aware partitioning server-side
-    check_interval: int = 30            # seconds between work-steal rounds
-    overload_factor: float = 1.3        # steal if load > median * overload_factor
-    max_steals_per_round: int = 1
-    cooldown: int = 300                 # seconds before a stolen job can be stolen again
+    deadline_miss_threshold: float = 0.05
 
 
 @dataclass
@@ -73,14 +54,10 @@ class CollectorConfig:
     collector_id: str = ""              # UUID from central registration (for config/peer discovery)
     collector_api_key: str = ""         # individual collector API key (from setup.yaml)
     listen_address: str = "0.0.0.0"
-    listen_port: int = 50051            # gRPC port for peer and worker communication
-    advertise_address: str = ""         # external IP:port to advertise to peers (default: listen_address:listen_port)
-    seeds: list[str] = field(default_factory=list)  # host:port of seed cache-nodes
-    cluster: ClusterConfig = field(default_factory=ClusterConfig)
+    listen_port: int = 50051            # gRPC port for worker communication
     cache: CacheConfig = field(default_factory=CacheConfig)
     central: CentralConfig = field(default_factory=CentralConfig)
     scheduling: SchedulingConfig = field(default_factory=SchedulingConfig)
-    work_stealing: WorkStealingConfig = field(default_factory=WorkStealingConfig)
     apps: AppsConfig = field(default_factory=AppsConfig)
 
 
@@ -90,10 +67,8 @@ def load_config(yaml_path: str = "/etc/collector/config.yaml") -> CollectorConfi
     Environment variables (all optional):
         NODE_ID             — unique node identifier (default: hostname)
         LISTEN_PORT         — gRPC listen port (default: 50051)
-        SEEDS               — comma-separated list of seed nodes (host:port)
         CENTRAL_URL         — central server URL
         CENTRAL_API_KEY     — API key for central server authentication
-        ENCRYPTION_KEY      — 32-byte hex key for local credential encryption
         CACHE_DB_PATH       — path to SQLite database (default: /data/cache.db)
         APPS_DIR            — path to apps directory (default: /data/apps)
         VENVS_DIR           — path to venvs directory (default: /data/venvs)
@@ -108,17 +83,9 @@ def load_config(yaml_path: str = "/etc/collector/config.yaml") -> CollectorConfi
         return raw.get(section, {}).get(key, default)
 
     # Build sub-configs from YAML
-    cluster = ClusterConfig(
-        gossip_interval=_get("cluster", "gossip_interval", 1.0),
-        suspicion_timeout=_get("cluster", "suspicion_timeout", 5.0),
-        dead_timeout=_get("cluster", "dead_timeout", 60.0),
-        replication_factor=_get("cluster", "replication_factor", 3),
-        vnodes=_get("cluster", "vnodes", 150),
-    )
     cache = CacheConfig(
         db_path=_get("cache", "db_path", "/data/cache.db"),
         default_ttl=_get("cache", "default_ttl", 300),
-        remote_cache_ttl=_get("cache", "remote_cache_ttl", 60),
         cleanup_interval=_get("cache", "cleanup_interval", 30),
     )
     central = CentralConfig(
@@ -138,13 +105,6 @@ def load_config(yaml_path: str = "/etc/collector/config.yaml") -> CollectorConfi
         ema_alpha=_get("scheduling", "ema_alpha", 0.3),
         deadline_miss_threshold=_get("scheduling", "deadline_miss_threshold", 0.05),
     )
-    work_stealing = WorkStealingConfig(
-        enabled=_get("work_stealing", "enabled", False),
-        check_interval=_get("work_stealing", "check_interval", 30),
-        overload_factor=_get("work_stealing", "overload_factor", 1.3),
-        max_steals_per_round=_get("work_stealing", "max_steals_per_round", 1),
-        cooldown=_get("work_stealing", "cooldown", 300),
-    )
     apps = AppsConfig(
         apps_dir=_get("apps", "apps_dir", "/data/apps"),
         venvs_dir=_get("apps", "venvs_dir", "/data/venvs"),
@@ -160,12 +120,9 @@ def load_config(yaml_path: str = "/etc/collector/config.yaml") -> CollectorConfi
         node_id=raw.get("node_id", default_node_id),
         listen_address=raw.get("listen_address", "0.0.0.0"),
         listen_port=int(raw.get("listen_port", 50051)),
-        seeds=raw.get("seeds", []),
-        cluster=cluster,
         cache=cache,
         central=central,
         scheduling=scheduling,
-        work_stealing=work_stealing,
         apps=apps,
     )
 
@@ -181,8 +138,6 @@ def load_config(yaml_path: str = "/etc/collector/config.yaml") -> CollectorConfi
         cfg.node_id = v
     if v := _env("MONCTL_LISTEN_PORT", "LISTEN_PORT"):
         cfg.listen_port = int(v)
-    if v := _env("MONCTL_PEERS", "MONCTL_SEEDS", "SEEDS"):
-        cfg.seeds = [s.strip() for s in v.split(",") if s.strip()]
     if v := _env("MONCTL_CENTRAL_URL", "CENTRAL_URL"):
         cfg.central.url = v
     if v := _env("MONCTL_CENTRAL_API_KEY", "CENTRAL_API_KEY"):
@@ -201,10 +156,8 @@ def load_config(yaml_path: str = "/etc/collector/config.yaml") -> CollectorConfi
         if len(parts) == 2:
             cfg.listen_address = parts[0]
             cfg.listen_port = int(parts[1])
-    if v := _env("MONCTL_ADVERTISE_ADDR", "ADVERTISE_ADDR"):
-        cfg.advertise_address = v  # e.g. "192.168.1.31:50051"
 
-    # Read collector_id and individual API key from setup.yaml (written by monctl-setup TUI)
+    # Read collector_id and individual API key from setup.yaml (written by monctl CLI)
     setup_path = Path(_env("MONCTL_SETUP_YAML") or "/etc/monctl/setup.yaml")
     if setup_path.exists():
         try:

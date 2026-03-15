@@ -44,9 +44,6 @@ class JobProfile:
     status: str = "idle"
     is_stable: bool = False            # True after 3+ executions
     is_heavy: bool = False             # avg_execution_time >= heavy_threshold
-    stolen_from: str | None = None     # node_id this job was stolen from
-    steal_cooldown_until: float = 0.0  # Unix timestamp
-
     def update_after_execution(
         self,
         actual_time: float,
@@ -91,18 +88,13 @@ class JobProfile:
 
 @dataclass
 class NodeLoadInfo:
-    """Load information for one cache-node, shared via gossip.
-
-    Piggybacked on membership messages — no extra traffic.
-    """
+    """Load information for one cache-node, reported via heartbeat."""
     node_id: str
     load_score: float        # sum(avg_time/interval) for all active jobs
     worker_count: int
     effective_load: float    # load_score / worker_count
     deadline_miss_rate: float
     total_jobs: int
-    stolen_job_count: int
-    available_capacity: float  # approximate remaining capacity
 
     @classmethod
     def empty(cls, node_id: str) -> "NodeLoadInfo":
@@ -113,8 +105,6 @@ class NodeLoadInfo:
             effective_load=0.0,
             deadline_miss_rate=0.0,
             total_jobs=0,
-            stolen_job_count=0,
-            available_capacity=1.0,
         )
 
 

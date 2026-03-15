@@ -1,13 +1,10 @@
-"""gRPC peer server — listens for connections from peers and local workers.
+"""gRPC peer server — listens for connections from local poll-workers.
 
 The server delegates each RPC to the appropriate component:
-  Cache RPCs          → DistributedCache (or LocalCache for simple ops)
-  Gossip RPCs         → GossipProtocol + MembershipTable
   Job RPCs            → JobScheduler
   Credential RPCs     → CredentialManager
   Result RPCs         → LocalCache (results buffer)
   App Code RPCs       → AppManager
-  Work-stealing RPCs  → WorkStealer
 
 Components are injected at construction time to keep the server thin.
 """
@@ -19,7 +16,6 @@ import json
 import grpc
 import structlog
 
-from monctl_collector.cluster.membership import MemberStatus
 from monctl_collector.proto import collector_pb2 as pb
 from monctl_collector.proto import collector_pb2_grpc as pb_grpc
 
@@ -33,118 +29,16 @@ class CollectorPeerServicer(pb_grpc.CollectorPeerServicer):
         self,
         *,
         local_cache=None,
-        distributed_cache=None,
-        membership=None,
-        gossip=None,
         job_scheduler=None,
         credential_manager=None,
         app_manager=None,
-        work_stealer=None,
         node_id: str = "",
     ) -> None:
         self._local_cache = local_cache
-        self._dist_cache = distributed_cache
-        self._membership = membership
-        self._gossip = gossip
         self._scheduler = job_scheduler
         self._creds = credential_manager
         self._apps = app_manager
-        self._stealer = work_stealer
         self._node_id = node_id
-
-    # ── Cache ─────────────────────────────────────────────────────────────────
-
-    async def GetCache(self, request, context):
-        cache = self._dist_cache or self._local_cache
-        if cache is None:
-            return pb.CacheResponse(found=False)
-        entry = await cache.get(request.key)
-        if entry is None:
-            return pb.CacheResponse(found=False)
-        return pb.CacheResponse(
-            found=True,
-            value=entry.value if hasattr(entry, "value") else entry.get("value", b""),
-            created_at=entry.created_at if hasattr(entry, "created_at") else 0.0,
-            ttl=entry.ttl_seconds if hasattr(entry, "ttl_seconds") else 0,
-            origin_node=entry.origin_node if hasattr(entry, "origin_node") else "",
-        )
-
-    async def PutCache(self, request, context):
-        cache = self._dist_cache or self._local_cache
-        if cache is None:
-            return pb.CachePutResponse(success=False)
-        await cache.put(
-            request.key,
-            request.value,
-            request.ttl,
-            request.origin_node,
-            is_primary=not request.is_replica,
-        )
-        return pb.CachePutResponse(success=True)
-
-    # ── Cluster ───────────────────────────────────────────────────────────────
-
-    async def Ping(self, request, context):
-        if self._membership:
-            self._membership.mark_alive(request.node_id, generation=request.generation)
-        return pb.PingResponse(node_id=self._node_id, generation=0)
-
-    async def GossipExchange(self, request, context):
-        if self._membership is None:
-            return pb.GossipMessage(sender_id=self._node_id, members=[])
-
-        # Merge incoming member list
-        incoming = [
-            {
-                "node_id": m.node_id,
-                "address": m.address,
-                "status": m.status,
-                "generation": m.generation,
-                "last_seen": m.last_seen,
-                "load_info": {
-                    "load_score": m.load_score,
-                    "worker_count": m.worker_count,
-                    "effective_load": m.effective_load,
-                    "deadline_miss_rate": m.deadline_miss_rate,
-                    "total_jobs": m.total_jobs,
-                    "stolen_job_count": m.stolen_job_count,
-                },
-            }
-            for m in request.members
-        ]
-        events = self._membership.merge(incoming)
-
-        # Process merge events: update hash ring for state transitions
-        for ev in events:
-            if self._gossip is not None:
-                if ev.new_status == MemberStatus.ALIVE:
-                    self._gossip._ring.add_node(ev.node_id)
-                    if self._gossip._on_ring_changed:
-                        self._gossip._on_ring_changed()
-                elif ev.new_status == MemberStatus.DEAD:
-                    self._gossip._ring.remove_node(ev.node_id)
-                    if self._gossip._on_ring_changed:
-                        self._gossip._on_ring_changed()
-
-        # Return our own view
-        local_members = self._membership.to_gossip_list()
-        pb_members = [
-            pb.MemberInfo(
-                node_id=m["node_id"],
-                address=m.get("address", ""),
-                status=m.get("status", "ALIVE"),
-                generation=m.get("generation", 0),
-                last_seen=m.get("last_seen", 0.0),
-                load_score=m.get("load_info", {}).get("load_score", 0.0),
-                worker_count=m.get("load_info", {}).get("worker_count", 0),
-                effective_load=m.get("load_info", {}).get("effective_load", 0.0),
-                deadline_miss_rate=m.get("load_info", {}).get("deadline_miss_rate", 0.0),
-                total_jobs=m.get("load_info", {}).get("total_jobs", 0),
-                stolen_job_count=m.get("load_info", {}).get("stolen_job_count", 0),
-            )
-            for m in local_members
-        ]
-        return pb.GossipMessage(sender_id=self._node_id, members=pb_members)
 
     # ── Jobs ─────────────────────────────────────────────────────────────────
 
@@ -273,22 +167,6 @@ class CollectorPeerServicer(pb_grpc.CollectorPeerServicer):
                 logger.error("get_app_code_error", app=request.app_id, error=str(exc))
 
         return pb.AppCodeResponse(found=False)
-
-    # ── Work-Stealing ─────────────────────────────────────────────────────────
-
-    async def OfferJob(self, request, context):
-        if self._stealer is None:
-            return pb.OfferJobResponse(accepted=False)
-        accepted = await self._stealer.accept_offered_job(
-            request.job_id, request.job, request.from_node
-        )
-        return pb.OfferJobResponse(accepted=accepted)
-
-    async def ReclaimJob(self, request, context):
-        if self._stealer is None:
-            return pb.ReclaimJobResponse(ok=False)
-        ok = await self._stealer.handle_reclaim(request.job_id, request.from_node)
-        return pb.ReclaimJobResponse(ok=ok)
 
 
 async def start_server(

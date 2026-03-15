@@ -3,7 +3,7 @@
 import grpc
 import warnings
 
-import collector_pb2 as collector__pb2
+from monctl_collector.proto import collector_pb2 as monctl__collector_dot_proto_dot_collector__pb2
 
 GRPC_GENERATED_VERSION = '1.78.0'
 GRPC_VERSION = grpc.__version__
@@ -18,7 +18,7 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + ' but the generated code in collector_pb2_grpc.py depends on'
+        + ' but the generated code in monctl_collector/proto/collector_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
@@ -26,8 +26,7 @@ if _version_not_supported:
 
 
 class CollectorPeerStub(object):
-    """CollectorPeer — gRPC service between cache-nodes (peer-to-peer)
-    and between poll-workers/forwarder and their local cache-node.
+    """CollectorPeer — gRPC service between poll-workers/forwarder and their local cache-node.
     """
 
     def __init__(self, channel):
@@ -36,98 +35,41 @@ class CollectorPeerStub(object):
         Args:
             channel: A grpc.Channel.
         """
-        self.GetCache = channel.unary_unary(
-                '/collector.CollectorPeer/GetCache',
-                request_serializer=collector__pb2.CacheRequest.SerializeToString,
-                response_deserializer=collector__pb2.CacheResponse.FromString,
-                _registered_method=True)
-        self.PutCache = channel.unary_unary(
-                '/collector.CollectorPeer/PutCache',
-                request_serializer=collector__pb2.CachePutRequest.SerializeToString,
-                response_deserializer=collector__pb2.CachePutResponse.FromString,
-                _registered_method=True)
-        self.Ping = channel.unary_unary(
-                '/collector.CollectorPeer/Ping',
-                request_serializer=collector__pb2.PingRequest.SerializeToString,
-                response_deserializer=collector__pb2.PingResponse.FromString,
-                _registered_method=True)
-        self.GossipExchange = channel.unary_unary(
-                '/collector.CollectorPeer/GossipExchange',
-                request_serializer=collector__pb2.GossipMessage.SerializeToString,
-                response_deserializer=collector__pb2.GossipMessage.FromString,
-                _registered_method=True)
         self.GetMyJobs = channel.unary_unary(
                 '/collector.CollectorPeer/GetMyJobs',
-                request_serializer=collector__pb2.GetJobsRequest.SerializeToString,
-                response_deserializer=collector__pb2.GetJobsResponse.FromString,
+                request_serializer=monctl__collector_dot_proto_dot_collector__pb2.GetJobsRequest.SerializeToString,
+                response_deserializer=monctl__collector_dot_proto_dot_collector__pb2.GetJobsResponse.FromString,
                 _registered_method=True)
         self.ReportExecution = channel.unary_unary(
                 '/collector.CollectorPeer/ReportExecution',
-                request_serializer=collector__pb2.ReportExecutionReq.SerializeToString,
-                response_deserializer=collector__pb2.ReportExecutionResp.FromString,
+                request_serializer=monctl__collector_dot_proto_dot_collector__pb2.ReportExecutionReq.SerializeToString,
+                response_deserializer=monctl__collector_dot_proto_dot_collector__pb2.ReportExecutionResp.FromString,
                 _registered_method=True)
         self.RegisterWorker = channel.unary_unary(
                 '/collector.CollectorPeer/RegisterWorker',
-                request_serializer=collector__pb2.RegisterWorkerReq.SerializeToString,
-                response_deserializer=collector__pb2.RegisterWorkerResp.FromString,
+                request_serializer=monctl__collector_dot_proto_dot_collector__pb2.RegisterWorkerReq.SerializeToString,
+                response_deserializer=monctl__collector_dot_proto_dot_collector__pb2.RegisterWorkerResp.FromString,
                 _registered_method=True)
         self.GetCredential = channel.unary_unary(
                 '/collector.CollectorPeer/GetCredential',
-                request_serializer=collector__pb2.CredentialRequest.SerializeToString,
-                response_deserializer=collector__pb2.CredentialResponse.FromString,
+                request_serializer=monctl__collector_dot_proto_dot_collector__pb2.CredentialRequest.SerializeToString,
+                response_deserializer=monctl__collector_dot_proto_dot_collector__pb2.CredentialResponse.FromString,
                 _registered_method=True)
         self.SubmitResult = channel.unary_unary(
                 '/collector.CollectorPeer/SubmitResult',
-                request_serializer=collector__pb2.SubmitResultRequest.SerializeToString,
-                response_deserializer=collector__pb2.SubmitResultResponse.FromString,
+                request_serializer=monctl__collector_dot_proto_dot_collector__pb2.SubmitResultRequest.SerializeToString,
+                response_deserializer=monctl__collector_dot_proto_dot_collector__pb2.SubmitResultResponse.FromString,
                 _registered_method=True)
         self.GetAppCode = channel.unary_unary(
                 '/collector.CollectorPeer/GetAppCode',
-                request_serializer=collector__pb2.AppCodeRequest.SerializeToString,
-                response_deserializer=collector__pb2.AppCodeResponse.FromString,
-                _registered_method=True)
-        self.OfferJob = channel.unary_unary(
-                '/collector.CollectorPeer/OfferJob',
-                request_serializer=collector__pb2.OfferJobRequest.SerializeToString,
-                response_deserializer=collector__pb2.OfferJobResponse.FromString,
-                _registered_method=True)
-        self.ReclaimJob = channel.unary_unary(
-                '/collector.CollectorPeer/ReclaimJob',
-                request_serializer=collector__pb2.ReclaimJobRequest.SerializeToString,
-                response_deserializer=collector__pb2.ReclaimJobResponse.FromString,
+                request_serializer=monctl__collector_dot_proto_dot_collector__pb2.AppCodeRequest.SerializeToString,
+                response_deserializer=monctl__collector_dot_proto_dot_collector__pb2.AppCodeResponse.FromString,
                 _registered_method=True)
 
 
 class CollectorPeerServicer(object):
-    """CollectorPeer — gRPC service between cache-nodes (peer-to-peer)
-    and between poll-workers/forwarder and their local cache-node.
+    """CollectorPeer — gRPC service between poll-workers/forwarder and their local cache-node.
     """
-
-    def GetCache(self, request, context):
-        """Cache operations (distributed key-value store)
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def PutCache(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def Ping(self, request, context):
-        """Cluster health (cache-node ↔ cache-node only)
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def GossipExchange(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
 
     def GetMyJobs(self, request, context):
         """Job distribution (poll-worker → local cache-node)
@@ -163,21 +105,8 @@ class CollectorPeerServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def GetAppCode(self, request, context):
-        """App code distribution (poll-worker → local cache-node → peers)
+        """App code distribution (poll-worker → local cache-node)
         """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def OfferJob(self, request, context):
-        """Work-stealing (cache-node ↔ cache-node)
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def ReclaimJob(self, request, context):
-        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -185,65 +114,35 @@ class CollectorPeerServicer(object):
 
 def add_CollectorPeerServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'GetCache': grpc.unary_unary_rpc_method_handler(
-                    servicer.GetCache,
-                    request_deserializer=collector__pb2.CacheRequest.FromString,
-                    response_serializer=collector__pb2.CacheResponse.SerializeToString,
-            ),
-            'PutCache': grpc.unary_unary_rpc_method_handler(
-                    servicer.PutCache,
-                    request_deserializer=collector__pb2.CachePutRequest.FromString,
-                    response_serializer=collector__pb2.CachePutResponse.SerializeToString,
-            ),
-            'Ping': grpc.unary_unary_rpc_method_handler(
-                    servicer.Ping,
-                    request_deserializer=collector__pb2.PingRequest.FromString,
-                    response_serializer=collector__pb2.PingResponse.SerializeToString,
-            ),
-            'GossipExchange': grpc.unary_unary_rpc_method_handler(
-                    servicer.GossipExchange,
-                    request_deserializer=collector__pb2.GossipMessage.FromString,
-                    response_serializer=collector__pb2.GossipMessage.SerializeToString,
-            ),
             'GetMyJobs': grpc.unary_unary_rpc_method_handler(
                     servicer.GetMyJobs,
-                    request_deserializer=collector__pb2.GetJobsRequest.FromString,
-                    response_serializer=collector__pb2.GetJobsResponse.SerializeToString,
+                    request_deserializer=monctl__collector_dot_proto_dot_collector__pb2.GetJobsRequest.FromString,
+                    response_serializer=monctl__collector_dot_proto_dot_collector__pb2.GetJobsResponse.SerializeToString,
             ),
             'ReportExecution': grpc.unary_unary_rpc_method_handler(
                     servicer.ReportExecution,
-                    request_deserializer=collector__pb2.ReportExecutionReq.FromString,
-                    response_serializer=collector__pb2.ReportExecutionResp.SerializeToString,
+                    request_deserializer=monctl__collector_dot_proto_dot_collector__pb2.ReportExecutionReq.FromString,
+                    response_serializer=monctl__collector_dot_proto_dot_collector__pb2.ReportExecutionResp.SerializeToString,
             ),
             'RegisterWorker': grpc.unary_unary_rpc_method_handler(
                     servicer.RegisterWorker,
-                    request_deserializer=collector__pb2.RegisterWorkerReq.FromString,
-                    response_serializer=collector__pb2.RegisterWorkerResp.SerializeToString,
+                    request_deserializer=monctl__collector_dot_proto_dot_collector__pb2.RegisterWorkerReq.FromString,
+                    response_serializer=monctl__collector_dot_proto_dot_collector__pb2.RegisterWorkerResp.SerializeToString,
             ),
             'GetCredential': grpc.unary_unary_rpc_method_handler(
                     servicer.GetCredential,
-                    request_deserializer=collector__pb2.CredentialRequest.FromString,
-                    response_serializer=collector__pb2.CredentialResponse.SerializeToString,
+                    request_deserializer=monctl__collector_dot_proto_dot_collector__pb2.CredentialRequest.FromString,
+                    response_serializer=monctl__collector_dot_proto_dot_collector__pb2.CredentialResponse.SerializeToString,
             ),
             'SubmitResult': grpc.unary_unary_rpc_method_handler(
                     servicer.SubmitResult,
-                    request_deserializer=collector__pb2.SubmitResultRequest.FromString,
-                    response_serializer=collector__pb2.SubmitResultResponse.SerializeToString,
+                    request_deserializer=monctl__collector_dot_proto_dot_collector__pb2.SubmitResultRequest.FromString,
+                    response_serializer=monctl__collector_dot_proto_dot_collector__pb2.SubmitResultResponse.SerializeToString,
             ),
             'GetAppCode': grpc.unary_unary_rpc_method_handler(
                     servicer.GetAppCode,
-                    request_deserializer=collector__pb2.AppCodeRequest.FromString,
-                    response_serializer=collector__pb2.AppCodeResponse.SerializeToString,
-            ),
-            'OfferJob': grpc.unary_unary_rpc_method_handler(
-                    servicer.OfferJob,
-                    request_deserializer=collector__pb2.OfferJobRequest.FromString,
-                    response_serializer=collector__pb2.OfferJobResponse.SerializeToString,
-            ),
-            'ReclaimJob': grpc.unary_unary_rpc_method_handler(
-                    servicer.ReclaimJob,
-                    request_deserializer=collector__pb2.ReclaimJobRequest.FromString,
-                    response_serializer=collector__pb2.ReclaimJobResponse.SerializeToString,
+                    request_deserializer=monctl__collector_dot_proto_dot_collector__pb2.AppCodeRequest.FromString,
+                    response_serializer=monctl__collector_dot_proto_dot_collector__pb2.AppCodeResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -254,117 +153,8 @@ def add_CollectorPeerServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class CollectorPeer(object):
-    """CollectorPeer — gRPC service between cache-nodes (peer-to-peer)
-    and between poll-workers/forwarder and their local cache-node.
+    """CollectorPeer — gRPC service between poll-workers/forwarder and their local cache-node.
     """
-
-    @staticmethod
-    def GetCache(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/collector.CollectorPeer/GetCache',
-            collector__pb2.CacheRequest.SerializeToString,
-            collector__pb2.CacheResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def PutCache(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/collector.CollectorPeer/PutCache',
-            collector__pb2.CachePutRequest.SerializeToString,
-            collector__pb2.CachePutResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def Ping(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/collector.CollectorPeer/Ping',
-            collector__pb2.PingRequest.SerializeToString,
-            collector__pb2.PingResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def GossipExchange(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/collector.CollectorPeer/GossipExchange',
-            collector__pb2.GossipMessage.SerializeToString,
-            collector__pb2.GossipMessage.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
 
     @staticmethod
     def GetMyJobs(request,
@@ -381,8 +171,8 @@ class CollectorPeer(object):
             request,
             target,
             '/collector.CollectorPeer/GetMyJobs',
-            collector__pb2.GetJobsRequest.SerializeToString,
-            collector__pb2.GetJobsResponse.FromString,
+            monctl__collector_dot_proto_dot_collector__pb2.GetJobsRequest.SerializeToString,
+            monctl__collector_dot_proto_dot_collector__pb2.GetJobsResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -408,8 +198,8 @@ class CollectorPeer(object):
             request,
             target,
             '/collector.CollectorPeer/ReportExecution',
-            collector__pb2.ReportExecutionReq.SerializeToString,
-            collector__pb2.ReportExecutionResp.FromString,
+            monctl__collector_dot_proto_dot_collector__pb2.ReportExecutionReq.SerializeToString,
+            monctl__collector_dot_proto_dot_collector__pb2.ReportExecutionResp.FromString,
             options,
             channel_credentials,
             insecure,
@@ -435,8 +225,8 @@ class CollectorPeer(object):
             request,
             target,
             '/collector.CollectorPeer/RegisterWorker',
-            collector__pb2.RegisterWorkerReq.SerializeToString,
-            collector__pb2.RegisterWorkerResp.FromString,
+            monctl__collector_dot_proto_dot_collector__pb2.RegisterWorkerReq.SerializeToString,
+            monctl__collector_dot_proto_dot_collector__pb2.RegisterWorkerResp.FromString,
             options,
             channel_credentials,
             insecure,
@@ -462,8 +252,8 @@ class CollectorPeer(object):
             request,
             target,
             '/collector.CollectorPeer/GetCredential',
-            collector__pb2.CredentialRequest.SerializeToString,
-            collector__pb2.CredentialResponse.FromString,
+            monctl__collector_dot_proto_dot_collector__pb2.CredentialRequest.SerializeToString,
+            monctl__collector_dot_proto_dot_collector__pb2.CredentialResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -489,8 +279,8 @@ class CollectorPeer(object):
             request,
             target,
             '/collector.CollectorPeer/SubmitResult',
-            collector__pb2.SubmitResultRequest.SerializeToString,
-            collector__pb2.SubmitResultResponse.FromString,
+            monctl__collector_dot_proto_dot_collector__pb2.SubmitResultRequest.SerializeToString,
+            monctl__collector_dot_proto_dot_collector__pb2.SubmitResultResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -516,62 +306,8 @@ class CollectorPeer(object):
             request,
             target,
             '/collector.CollectorPeer/GetAppCode',
-            collector__pb2.AppCodeRequest.SerializeToString,
-            collector__pb2.AppCodeResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def OfferJob(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/collector.CollectorPeer/OfferJob',
-            collector__pb2.OfferJobRequest.SerializeToString,
-            collector__pb2.OfferJobResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def ReclaimJob(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/collector.CollectorPeer/ReclaimJob',
-            collector__pb2.ReclaimJobRequest.SerializeToString,
-            collector__pb2.ReclaimJobResponse.FromString,
+            monctl__collector_dot_proto_dot_collector__pb2.AppCodeRequest.SerializeToString,
+            monctl__collector_dot_proto_dot_collector__pb2.AppCodeResponse.FromString,
             options,
             channel_credentials,
             insecure,

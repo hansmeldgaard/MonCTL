@@ -11,8 +11,6 @@
 #   NODE_ID          — unique name (e.g. collector-vm-01)
 #   CENTRAL_URL      — e.g. https://central.example.com or http://192.168.1.10:8443
 #   CENTRAL_API_KEY  — API key from central admin
-#   PEERS            — comma-separated host:port of other cache-nodes
-#                      e.g. 192.168.1.32:50051,192.168.1.33:50051
 
 services:
 
@@ -25,20 +23,19 @@ services:
     hostname: ${NODE_ID:-collector-node}
     ports:
       - "50051:50051"           # gRPC: peer↔peer + worker→cache communication
-      - "50052:50052"           # HTTP: status endpoint for TUI
+      - "127.0.0.1:50052:50052" # HTTP: management API for CLI
     environment:
       MONCTL_NODE_ID:           ${NODE_ID}
       MONCTL_CENTRAL_URL:       ${CENTRAL_URL}
       MONCTL_CENTRAL_API_KEY:   ${CENTRAL_API_KEY}
       MONCTL_VERIFY_SSL:        ${VERIFY_SSL:-true}
       MONCTL_GRPC_ADDRESS:      0.0.0.0:50051
-      MONCTL_PEERS:             ${PEERS:-}
-      MONCTL_ADVERTISE_ADDR:    ${MONCTL_ADVERTISE_ADDR:-}
       MONCTL_DB_PATH:           /data/cache.db
       MONCTL_SETUP_YAML:        /etc/monctl/setup.yaml
     volumes:
       - cache_data:/data
-      - /etc/monctl/setup.yaml:/etc/monctl/setup.yaml:ro
+      - /etc/monctl/setup.yaml:/etc/monctl/setup.yaml:rw
+      - /etc/machine-id:/etc/machine-id:ro
     restart: unless-stopped
     healthcheck:
       # Python socket check — works in python:3.12-slim (no ss/nc needed)
