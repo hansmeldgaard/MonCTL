@@ -14,17 +14,23 @@ from monctl_central.storage.models import CredentialKey
 
 router = APIRouter()
 
+VALID_KEY_TYPES = {"plain", "secret", "enum"}
+
 
 class CreateCredentialKeyRequest(BaseModel):
-    name: str = Field(description="Unique key name, e.g. 'username', 'password'")
+    name: str = Field(max_length=64)
     description: str | None = None
-    is_secret: bool = Field(default=False, description="If true, values are treated as secrets")
+    key_type: str = Field(default="plain", description="plain | secret | enum")
+    enum_values: list[str] | None = Field(
+        default=None, description="Allowed values when key_type is 'enum'"
+    )
 
 
 class UpdateCredentialKeyRequest(BaseModel):
     name: str | None = None
     description: str | None = None
-    is_secret: bool | None = None
+    key_type: str | None = None
+    enum_values: list[str] | None = None
 
 
 def _fmt(k: CredentialKey) -> dict:
@@ -32,9 +38,25 @@ def _fmt(k: CredentialKey) -> dict:
         "id": str(k.id),
         "name": k.name,
         "description": k.description,
+        "key_type": k.key_type,
         "is_secret": k.is_secret,
+        "enum_values": k.enum_values,
         "created_at": k.created_at.isoformat() if k.created_at else None,
     }
+
+
+def _validate_key_type(key_type: str, enum_values: list[str] | None) -> None:
+    if key_type not in VALID_KEY_TYPES:
+        raise HTTPException(400,
+            f"Invalid key_type '{key_type}'. Must be: {', '.join(sorted(VALID_KEY_TYPES))}")
+    if key_type == "enum":
+        if not enum_values or len(enum_values) < 2:
+            raise HTTPException(400, "Enum requires at least 2 values")
+        if len(enum_values) != len(set(enum_values)):
+            raise HTTPException(400, "Enum values must be unique")
+    elif enum_values is not None:
+        raise HTTPException(400,
+            f"enum_values only allowed when key_type is 'enum', not '{key_type}'")
 
 
 @router.get("")
@@ -62,7 +84,14 @@ async def create_credential_key(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Credential key '{request.name}' already exists",
         )
-    key = CredentialKey(name=request.name, description=request.description, is_secret=request.is_secret)
+
+    _validate_key_type(request.key_type, request.enum_values)
+    key = CredentialKey(
+        name=request.name,
+        description=request.description,
+        key_type=request.key_type,
+        enum_values=request.enum_values,
+    )
     db.add(key)
     await db.flush()
     return {"status": "success", "data": _fmt(key)}
@@ -79,12 +108,26 @@ async def update_credential_key(
     key = await db.get(CredentialKey, uuid.UUID(key_id))
     if key is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Credential key not found")
+
+    # Resolve final state for cross-field validation
+    final_type = request.key_type if request.key_type is not None else key.key_type
+    final_enums = request.enum_values if request.enum_values is not None else key.enum_values
+    # If switching away from enum, clear enum_values
+    if request.key_type is not None and request.key_type != "enum":
+        final_enums = None
+    _validate_key_type(final_type, final_enums)
+
     if request.name is not None:
         key.name = request.name
     if request.description is not None:
         key.description = request.description
-    if request.is_secret is not None:
-        key.is_secret = request.is_secret
+    if request.key_type is not None:
+        key.key_type = request.key_type
+        if request.key_type != "enum":
+            key.enum_values = None
+    if request.enum_values is not None:
+        key.enum_values = request.enum_values
+
     return {"status": "success", "data": _fmt(key)}
 
 

@@ -60,7 +60,9 @@ export interface CredentialKey {
   id: string;
   name: string;
   description: string | null;
+  key_type: "plain" | "secret" | "enum";
   is_secret: boolean;
+  enum_values: string[] | null;
   created_at: string;
 }
 
@@ -453,5 +455,5 @@ export interface Template {
 // ── Credential Detail ────────────────────────────────────
 
 export interface CredentialDetail extends Credential {
-  values: { key_name: string; is_secret: boolean }[];
+  values: { key_name: string; is_secret: boolean; value: string | null }[];
 }

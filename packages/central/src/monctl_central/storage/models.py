@@ -219,10 +219,15 @@ class CredentialKey(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
-    is_secret: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    key_type: Mapped[str] = mapped_column(String(16), nullable=False, default="plain")
+    enum_values: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default="now()"
     )
+
+    @property
+    def is_secret(self) -> bool:
+        return self.key_type == "secret"
 
 
 class CredentialTemplate(Base):

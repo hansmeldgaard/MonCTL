@@ -47,17 +47,31 @@ def _fmt(t: CredentialTemplate) -> dict:
 
 
 async def _validate_fields(fields: list[TemplateField], db: AsyncSession) -> None:
-    """Ensure all referenced key_names exist in credential_keys."""
+    """Ensure all referenced key_names exist and defaults are valid for enum keys."""
     key_names = {f.key_name for f in fields}
-    existing = (await db.execute(
-        select(CredentialKey.name).where(CredentialKey.name.in_(key_names))
+    rows = (await db.execute(
+        select(CredentialKey).where(CredentialKey.name.in_(key_names))
     )).scalars().all()
-    missing = key_names - set(existing)
+    keys_by_name = {k.name: k for k in rows}
+
+    missing = key_names - set(keys_by_name.keys())
     if missing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unknown credential keys: {', '.join(sorted(missing))}",
+            detail=f"Unknown credential keys: {', '.join(sorted(missing))}. "
+                   "Create them first via /v1/credential-keys.",
         )
+
+    # Validate default_value against enum_values
+    for f in fields:
+        key_def = keys_by_name[f.key_name]
+        if f.default_value is not None and key_def.key_type == "enum" and key_def.enum_values:
+            if f.default_value not in key_def.enum_values:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid default for '{f.key_name}': '{f.default_value}'. "
+                           f"Must be one of: {', '.join(key_def.enum_values)}",
+                )
 
 
 @router.get("")

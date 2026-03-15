@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { FileText, KeyRound, Loader2, Pencil, Plus, Settings2, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, FileText, KeyRound, Loader2, Pencil, Plus, Settings2, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
@@ -28,6 +28,7 @@ import {
   useDeleteCredentialKey,
   useCredentialTemplates,
   useCreateCredentialTemplate,
+  useUpdateCredentialTemplate,
   useDeleteCredentialTemplate,
 } from "@/api/hooks.ts";
 import type { Credential, CredentialKey, CredentialTemplate } from "@/types/api.ts";
@@ -35,6 +36,12 @@ import { formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 
 // ── Credential Keys Section ──────────────────────────────
+
+const KEY_TYPE_BADGE: Record<string, { variant: "default" | "destructive" | "info"; label: string }> = {
+  plain: { variant: "default", label: "Plain" },
+  secret: { variant: "destructive", label: "Secret" },
+  enum: { variant: "info", label: "Enum" },
+};
 
 function CredentialKeysCard() {
   const { data: keys, isLoading } = useCredentialKeys();
@@ -45,24 +52,38 @@ function CredentialKeysCard() {
   const [addOpen, setAddOpen] = useState(false);
   const [addName, setAddName] = useState("");
   const [addDesc, setAddDesc] = useState("");
-  const [addSecret, setAddSecret] = useState(false);
+  const [addKeyType, setAddKeyType] = useState<"plain" | "secret" | "enum">("plain");
+  const [addEnumValues, setAddEnumValues] = useState<string[]>([]);
+  const [addEnumInput, setAddEnumInput] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
 
   const [editTarget, setEditTarget] = useState<CredentialKey | null>(null);
   const [editName, setEditName] = useState("");
   const [editDesc, setEditDesc] = useState("");
-  const [editSecret, setEditSecret] = useState(false);
+  const [editKeyType, setEditKeyType] = useState<"plain" | "secret" | "enum">("plain");
+  const [editEnumValues, setEditEnumValues] = useState<string[]>([]);
+  const [editEnumInput, setEditEnumInput] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
 
   const [deleteTarget, setDeleteTarget] = useState<CredentialKey | null>(null);
+
+  function resetAdd() {
+    setAddName(""); setAddDesc(""); setAddKeyType("plain"); setAddEnumValues([]); setAddEnumInput(""); setAddError(null); setAddOpen(true);
+  }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setAddError(null);
     if (!addName.trim()) { setAddError("Name is required."); return; }
+    if (addKeyType === "enum" && addEnumValues.length < 2) { setAddError("Enum requires at least 2 values."); return; }
     try {
-      await createKey.mutateAsync({ name: addName.trim(), description: addDesc.trim() || undefined, is_secret: addSecret });
-      setAddName(""); setAddDesc(""); setAddSecret(false); setAddOpen(false);
+      await createKey.mutateAsync({
+        name: addName.trim(),
+        description: addDesc.trim() || undefined,
+        key_type: addKeyType,
+        enum_values: addKeyType === "enum" ? addEnumValues : undefined,
+      });
+      setAddOpen(false);
     } catch (err) {
       setAddError(err instanceof Error ? err.message : "Failed to create key");
     }
@@ -72,7 +93,9 @@ function CredentialKeysCard() {
     setEditTarget(k);
     setEditName(k.name);
     setEditDesc(k.description ?? "");
-    setEditSecret(k.is_secret);
+    setEditKeyType(k.key_type);
+    setEditEnumValues(k.enum_values ?? []);
+    setEditEnumInput("");
     setEditError(null);
   }
 
@@ -80,10 +103,16 @@ function CredentialKeysCard() {
     e.preventDefault();
     if (!editTarget) return;
     setEditError(null);
+    if (editKeyType === "enum" && editEnumValues.length < 2) { setEditError("Enum requires at least 2 values."); return; }
     try {
       await updateKey.mutateAsync({
         id: editTarget.id,
-        data: { name: editName.trim(), description: editDesc.trim() || undefined, is_secret: editSecret },
+        data: {
+          name: editName.trim(),
+          description: editDesc.trim() || undefined,
+          key_type: editKeyType,
+          enum_values: editKeyType === "enum" ? editEnumValues : undefined,
+        },
       });
       setEditTarget(null);
     } catch (err) {
@@ -94,6 +123,48 @@ function CredentialKeysCard() {
   async function handleDelete() {
     if (!deleteTarget) return;
     try { await deleteKey.mutateAsync(deleteTarget.id); setDeleteTarget(null); } catch { /* silent */ }
+  }
+
+  function addEnumValue(values: string[], setValues: (v: string[]) => void, input: string, setInput: (v: string) => void) {
+    const val = input.trim();
+    if (!val) return;
+    if (values.includes(val)) return;
+    setValues([...values, val]);
+    setInput("");
+  }
+
+  function renderEnumEditor(
+    values: string[], setValues: (v: string[]) => void,
+    input: string, setInput: (v: string) => void,
+  ) {
+    return (
+      <div className="space-y-2 rounded border border-zinc-800 p-3">
+        <Label className="text-xs text-zinc-400">Enum Values</Label>
+        {values.map((v, i) => (
+          <div key={i} className="flex items-center gap-2">
+            <Input value={v} onChange={(e) => {
+              const next = [...values]; next[i] = e.target.value; setValues(next);
+            }} className="flex-1 text-xs" />
+            <button type="button" onClick={() => setValues(values.filter((_, j) => j !== i))} className="rounded p-1 text-zinc-600 hover:text-red-400 cursor-pointer">
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        ))}
+        <div className="flex items-center gap-2">
+          <Input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addEnumValue(values, setValues, input, setInput); } }}
+            placeholder="Add value..."
+            className="flex-1 text-xs"
+          />
+          <Button type="button" size="sm" variant="secondary" onClick={() => addEnumValue(values, setValues, input, setInput)}>
+            <Plus className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+        {values.length < 2 && <p className="text-xs text-amber-400">Minimum 2 values required</p>}
+      </div>
+    );
   }
 
   return (
@@ -119,38 +190,43 @@ function CredentialKeysCard() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Values</TableHead>
                   <TableHead>Description</TableHead>
-                  <TableHead>Secret</TableHead>
                   <TableHead className="w-20"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {keys.map((k) => (
-                  <TableRow key={k.id}>
-                    <TableCell className="font-medium font-mono text-sm text-zinc-100">{k.name}</TableCell>
-                    <TableCell className="text-zinc-400 text-sm">{k.description ?? "—"}</TableCell>
-                    <TableCell>
-                      <Badge variant={k.is_secret ? "destructive" : "default"}>
-                        {k.is_secret ? "secret" : "plain"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1">
-                        <button onClick={() => openEdit(k)} className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer" title="Edit">
-                          <Pencil className="h-4 w-4" />
-                        </button>
-                        <button onClick={() => setDeleteTarget(k)} className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer" title="Delete">
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {keys.map((k) => {
+                  const badge = KEY_TYPE_BADGE[k.key_type] ?? KEY_TYPE_BADGE.plain;
+                  return (
+                    <TableRow key={k.id}>
+                      <TableCell className="font-medium font-mono text-sm text-zinc-100">{k.name}</TableCell>
+                      <TableCell>
+                        <Badge variant={badge.variant}>{badge.label}</Badge>
+                      </TableCell>
+                      <TableCell className="text-zinc-400 text-sm max-w-[200px] truncate">
+                        {k.key_type === "enum" && k.enum_values ? k.enum_values.join(", ") : "—"}
+                      </TableCell>
+                      <TableCell className="text-zinc-400 text-sm">{k.description ?? "—"}</TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => openEdit(k)} className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer" title="Edit">
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button onClick={() => setDeleteTarget(k)} className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer" title="Delete">
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           )}
           <div className="mt-4 flex justify-end border-t border-zinc-800 pt-4">
-            <Button size="sm" variant="secondary" onClick={() => { setAddName(""); setAddDesc(""); setAddSecret(false); setAddError(null); setAddOpen(true); }} className="gap-1.5">
+            <Button size="sm" variant="secondary" onClick={resetAdd} className="gap-1.5">
               <Plus className="h-4 w-4" /> New Key
             </Button>
           </div>
@@ -168,10 +244,15 @@ function CredentialKeysCard() {
             <Label htmlFor="ck-desc">Description <span className="font-normal text-zinc-500">(optional)</span></Label>
             <Input id="ck-desc" placeholder="What this key stores" value={addDesc} onChange={(e) => setAddDesc(e.target.value)} />
           </div>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" checked={addSecret} onChange={(e) => setAddSecret(e.target.checked)} className="rounded border-zinc-600 bg-zinc-800 text-brand-500 focus:ring-brand-500" />
-            <span className="text-sm text-zinc-300">Secret value (encrypted at rest)</span>
-          </label>
+          <div className="space-y-1.5">
+            <Label htmlFor="ck-type">Type</Label>
+            <Select id="ck-type" value={addKeyType} onChange={(e) => { setAddKeyType(e.target.value as "plain" | "secret" | "enum"); if (e.target.value !== "enum") setAddEnumValues([]); }}>
+              <option value="plain">Plain — visible text value</option>
+              <option value="secret">Secret — masked, encrypted at rest</option>
+              <option value="enum">Enum — fixed list of allowed values</option>
+            </Select>
+          </div>
+          {addKeyType === "enum" && renderEnumEditor(addEnumValues, setAddEnumValues, addEnumInput, setAddEnumInput)}
           {addError && <p className="text-sm text-red-400">{addError}</p>}
           <DialogFooter>
             <Button type="button" variant="secondary" onClick={() => setAddOpen(false)}>Cancel</Button>
@@ -191,10 +272,15 @@ function CredentialKeysCard() {
             <Label htmlFor="ck-edit-desc">Description</Label>
             <Input id="ck-edit-desc" value={editDesc} onChange={(e) => setEditDesc(e.target.value)} />
           </div>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" checked={editSecret} onChange={(e) => setEditSecret(e.target.checked)} className="rounded border-zinc-600 bg-zinc-800 text-brand-500 focus:ring-brand-500" />
-            <span className="text-sm text-zinc-300">Secret value</span>
-          </label>
+          <div className="space-y-1.5">
+            <Label htmlFor="ck-edit-type">Type</Label>
+            <Select id="ck-edit-type" value={editKeyType} onChange={(e) => { setEditKeyType(e.target.value as "plain" | "secret" | "enum"); if (e.target.value !== "enum") setEditEnumValues([]); }}>
+              <option value="plain">Plain</option>
+              <option value="secret">Secret</option>
+              <option value="enum">Enum</option>
+            </Select>
+          </div>
+          {editKeyType === "enum" && renderEnumEditor(editEnumValues, setEditEnumValues, editEnumInput, setEditEnumInput)}
           {editError && <p className="text-sm text-red-400">{editError}</p>}
           <DialogFooter>
             <Button type="button" variant="secondary" onClick={() => setEditTarget(null)}>Cancel</Button>
@@ -224,11 +310,18 @@ function CredentialDetailRow({ credentialId }: { credentialId: string }) {
   return (
     <div className="py-2 space-y-1">
       <p className="text-xs font-medium text-zinc-400 mb-1">Credential Keys:</p>
-      <div className="flex flex-wrap gap-1.5">
+      <div className="space-y-1">
         {detail.values.map((v) => (
-          <Badge key={v.key_name} variant={v.is_secret ? "destructive" : "default"} className="text-xs">
-            {v.key_name}{v.is_secret ? " (secret)" : ""}
-          </Badge>
+          <div key={v.key_name} className="flex items-center gap-2">
+            <Badge variant={v.is_secret ? "destructive" : "default"} className="text-xs">
+              {v.key_name}
+            </Badge>
+            {v.is_secret ? (
+              <span className="text-xs text-zinc-600 italic">********</span>
+            ) : v.value ? (
+              <span className="text-xs font-mono text-zinc-300">{v.value}</span>
+            ) : null}
+          </div>
         ))}
       </div>
     </div>
@@ -272,6 +365,38 @@ function CredentialsCard() {
   const [editType, setEditType] = useState("");
   const [editValues, setEditValues] = useState<Record<string, string>>({});
   const [editError, setEditError] = useState<string | null>(null);
+  const [editReady, setEditReady] = useState(false);
+
+  // Fetch credential detail when editing, to get existing key names
+  const { data: editDetail } = useCredentialDetail(editTarget?.id);
+
+  // Pre-populate edit fields when detail loads
+  useEffect(() => {
+    if (!editTarget || !editDetail || editReady) return;
+    const vals: Record<string, string> = {};
+    // Build a lookup of existing values from the detail response
+    const existingValues: Record<string, string | null> = {};
+    for (const v of editDetail.values ?? []) {
+      existingValues[v.key_name] = v.value; // null for secrets, actual value for plain/enum
+    }
+    // If template-based, populate from template fields
+    if (editTarget.template_id) {
+      const tmpl = (templates ?? []).find((t) => t.id === editTarget.template_id);
+      if (tmpl) {
+        for (const f of tmpl.fields) {
+          vals[f.key_name] = existingValues[f.key_name] ?? "";
+        }
+      }
+    }
+    // Also add any keys from credential detail (covers non-template + extra keys)
+    for (const v of editDetail.values ?? []) {
+      if (!(v.key_name in vals)) {
+        vals[v.key_name] = v.value ?? "";
+      }
+    }
+    setEditValues(vals);
+    setEditReady(true);
+  }, [editTarget, editDetail, editReady, templates]);
 
   const [deleteTarget, setDeleteTarget] = useState<Credential | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -295,11 +420,12 @@ function CredentialsCard() {
   }
 
   function openEdit(c: Credential) {
-    setEditTarget(c);
     setEditDesc(c.description || "");
     setEditType(c.credential_type);
-    setEditValues({});
     setEditError(null);
+    setEditValues({});
+    setEditReady(false);
+    setEditTarget(c);
   }
 
   async function handleEdit(e: React.FormEvent) {
@@ -311,11 +437,16 @@ function CredentialsCard() {
         description: editDesc.trim(),
         credential_type: editType,
       };
-      if (Object.keys(editValues).length > 0) {
-        data.secret = editValues;
+      // Only include values that were actually changed (non-empty)
+      const changedValues: Record<string, string> = {};
+      for (const [k, v] of Object.entries(editValues)) {
+        if (v !== "") changedValues[k] = v;
+      }
+      if (Object.keys(changedValues).length > 0) {
+        data.secret = changedValues;
       }
       await updateCredential.mutateAsync({ id: editTarget.id, data });
-      setEditTarget(null);
+      setEditTarget(null); setEditReady(false);
     } catch (err) {
       setEditError(err instanceof Error ? err.message : "Failed to update credential");
     }
@@ -450,24 +581,22 @@ function CredentialsCard() {
                 const showPriv = secLevel === "authpriv";
                 return sortedFields.map((f) => {
                   // Hide auth/priv fields based on security_level
-                  if (!showAuth && ["auth_protocol", "auth_password"].includes(f.key_name)) return null;
-                  if (!showPriv && ["priv_protocol", "priv_password"].includes(f.key_name)) return null;
+                  if (!showAuth && ["auth_protocol", "auth_password", "auth_key"].includes(f.key_name)) return null;
+                  if (!showPriv && ["priv_protocol", "priv_password", "priv_key"].includes(f.key_name)) return null;
                   const keyDef = (credentialKeys ?? []).find((k) => k.name === f.key_name);
-                  // Render security_level as a select
-                  if (f.key_name === "security_level") {
+                  // Render enum keys as select dropdown
+                  if (keyDef?.key_type === "enum" && keyDef.enum_values) {
                     return (
                       <div key={f.key_name} className="flex items-center gap-2">
                         <span className="text-xs font-mono text-zinc-400 w-28 shrink-0">
                           {f.key_name}{f.required ? " *" : ""}
                         </span>
                         <Select
-                          value={addValues[f.key_name] ?? f.default_value ?? "authPriv"}
+                          value={addValues[f.key_name] ?? f.default_value ?? ""}
                           onChange={(e) => setAddValues((prev) => ({ ...prev, [f.key_name]: e.target.value }))}
                           className="flex-1 text-xs"
                         >
-                          <option value="noAuthNoPriv">noAuthNoPriv</option>
-                          <option value="authNoPriv">authNoPriv</option>
-                          <option value="authPriv">authPriv</option>
+                          {keyDef.enum_values.map((v) => <option key={v} value={v}>{v}</option>)}
                         </Select>
                       </div>
                     );
@@ -478,10 +607,10 @@ function CredentialsCard() {
                         {f.key_name}{f.required ? " *" : ""}
                       </span>
                       <Input
-                        type={keyDef?.is_secret ? "password" : "text"}
+                        type={keyDef?.key_type === "secret" ? "password" : "text"}
                         value={addValues[f.key_name] ?? f.default_value ?? ""}
                         onChange={(e) => setAddValues((prev) => ({ ...prev, [f.key_name]: e.target.value }))}
-                        placeholder={keyDef?.is_secret ? "••••••" : (f.default_value ?? "value")}
+                        placeholder={keyDef?.key_type === "secret" ? "••••••" : (f.default_value ?? "value")}
                         className="flex-1 text-xs"
                       />
                     </div>
@@ -493,14 +622,32 @@ function CredentialsCard() {
               <>
                 {Object.entries(addValues).map(([key, val]) => {
                   const keyDef = (credentialKeys ?? []).find((k) => k.name === key);
+                  if (keyDef?.key_type === "enum" && keyDef.enum_values) {
+                    return (
+                      <div key={key} className="flex items-center gap-2">
+                        <span className="text-xs font-mono text-zinc-400 w-24 shrink-0">{key}</span>
+                        <Select
+                          value={val}
+                          onChange={(e) => setAddValues((prev) => ({ ...prev, [key]: e.target.value }))}
+                          className="flex-1 text-xs"
+                        >
+                          <option value="">Select...</option>
+                          {keyDef.enum_values.map((v) => <option key={v} value={v}>{v}</option>)}
+                        </Select>
+                        <button type="button" onClick={() => handleRemoveAddValue(key)} className="rounded p-1 text-zinc-600 hover:text-red-400 cursor-pointer">
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    );
+                  }
                   return (
                     <div key={key} className="flex items-center gap-2">
                       <span className="text-xs font-mono text-zinc-400 w-24 shrink-0">{key}</span>
                       <Input
-                        type={keyDef?.is_secret ? "password" : "text"}
+                        type={keyDef?.key_type === "secret" ? "password" : "text"}
                         value={val}
                         onChange={(e) => setAddValues((prev) => ({ ...prev, [key]: e.target.value }))}
-                        placeholder={keyDef?.is_secret ? "••••••" : "value"}
+                        placeholder={keyDef?.key_type === "secret" ? "••••••" : "value"}
                         className="flex-1 text-xs"
                       />
                       <button type="button" onClick={() => handleRemoveAddValue(key)} className="rounded p-1 text-zinc-600 hover:text-red-400 cursor-pointer">
@@ -513,7 +660,7 @@ function CredentialsCard() {
                   <Select onChange={(e) => { if (e.target.value) { handleAddKeyValue(e.target.value); e.target.value = ""; } }}>
                     <option value="">+ Add field...</option>
                     {availableKeys.map((k) => (
-                      <option key={k.id} value={k.name}>{k.name}{k.is_secret ? " (secret)" : ""}</option>
+                      <option key={k.id} value={k.name}>{k.name} ({k.key_type})</option>
                     ))}
                   </Select>
                 )}
@@ -529,7 +676,10 @@ function CredentialsCard() {
       </Dialog>
 
       {/* Edit Credential Dialog */}
-      <Dialog open={!!editTarget} onClose={() => setEditTarget(null)} title={`Edit: ${editTarget?.name ?? ""}`}>
+      <Dialog open={!!editTarget} onClose={() => { setEditTarget(null); setEditReady(false); }} title={`Edit: ${editTarget?.name ?? ""}`}>
+        {!editReady ? (
+          <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin text-zinc-500" /></div>
+        ) : (
         <form onSubmit={handleEdit} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="cr-edit-desc">Description</Label>
@@ -537,42 +687,113 @@ function CredentialsCard() {
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="cr-edit-type">Type</Label>
-            <Input id="cr-edit-type" value={editType} onChange={(e) => setEditType(e.target.value)} />
+            <Input id="cr-edit-type" value={editType} onChange={(e) => setEditType(e.target.value)} disabled={!!editTarget?.template_id} />
           </div>
           <div className="space-y-2">
-            <Label>Update Secret Values <span className="font-normal text-zinc-500">(leave empty to keep existing)</span></Label>
-            {Object.entries(editValues).map(([key, val]) => {
-              const keyDef = (credentialKeys ?? []).find((k) => k.name === key);
-              return (
-                <div key={key} className="flex items-center gap-2">
-                  <span className="text-xs font-mono text-zinc-400 w-24 shrink-0">{key}</span>
-                  <Input
-                    type={keyDef?.is_secret ? "password" : "text"}
-                    value={val}
-                    onChange={(e) => setEditValues((prev) => ({ ...prev, [key]: e.target.value }))}
-                    className="flex-1 text-xs"
-                  />
-                  <button type="button" onClick={() => { setEditValues((prev) => { const n = { ...prev }; delete n[key]; return n; }); }} className="rounded p-1 text-zinc-600 hover:text-red-400 cursor-pointer">
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              );
-            })}
-            {availableEditKeys.length > 0 && (
-              <Select onChange={(e) => { if (e.target.value) { setEditValues((prev) => ({ ...prev, [e.target.value]: "" })); e.target.value = ""; } }}>
-                <option value="">+ Add field...</option>
-                {availableEditKeys.map((k) => (
-                  <option key={k.id} value={k.name}>{k.name}</option>
-                ))}
-              </Select>
+            <Label>Secret Values <span className="font-normal text-zinc-500">(empty fields keep existing value)</span></Label>
+            {editTarget?.template_id ? (
+              /* Template mode: show template fields in order */
+              (() => {
+                const tmpl = (templates ?? []).find((t) => t.id === editTarget.template_id);
+                if (!tmpl) return null;
+                const sortedFields = [...tmpl.fields].sort((a, b) => a.display_order - b.display_order);
+                const secLevel = (editValues.security_level ?? "").toLowerCase() || "authpriv";
+                const showAuth = secLevel !== "noauthnopriv";
+                const showPriv = secLevel === "authpriv";
+                return sortedFields.map((f) => {
+                  if (!showAuth && ["auth_protocol", "auth_password", "auth_key"].includes(f.key_name)) return null;
+                  if (!showPriv && ["priv_protocol", "priv_password", "priv_key"].includes(f.key_name)) return null;
+                  const keyDef = (credentialKeys ?? []).find((k) => k.name === f.key_name);
+                  if (keyDef?.key_type === "enum" && keyDef.enum_values) {
+                    return (
+                      <div key={f.key_name} className="flex items-center gap-2">
+                        <span className="text-xs font-mono text-zinc-400 w-28 shrink-0">
+                          {f.key_name}{f.required ? " *" : ""}
+                        </span>
+                        <Select
+                          value={editValues[f.key_name] ?? ""}
+                          onChange={(e) => setEditValues((prev) => ({ ...prev, [f.key_name]: e.target.value }))}
+                          className="flex-1 text-xs"
+                        >
+                          <option value="">Keep existing</option>
+                          {keyDef.enum_values.map((v) => <option key={v} value={v}>{v}</option>)}
+                        </Select>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div key={f.key_name} className="flex items-center gap-2">
+                      <span className="text-xs font-mono text-zinc-400 w-28 shrink-0">
+                        {f.key_name}{f.required ? " *" : ""}
+                      </span>
+                      <Input
+                        type={keyDef?.key_type === "secret" ? "password" : "text"}
+                        value={editValues[f.key_name] ?? ""}
+                        onChange={(e) => setEditValues((prev) => ({ ...prev, [f.key_name]: e.target.value }))}
+                        placeholder={keyDef?.key_type === "secret" ? "Keep existing" : "Keep existing"}
+                        className="flex-1 text-xs"
+                      />
+                    </div>
+                  );
+                });
+              })()
+            ) : (
+              /* Custom mode: free key picker */
+              <>
+                {Object.entries(editValues).map(([key, val]) => {
+                  const keyDef = (credentialKeys ?? []).find((k) => k.name === key);
+                  if (keyDef?.key_type === "enum" && keyDef.enum_values) {
+                    return (
+                      <div key={key} className="flex items-center gap-2">
+                        <span className="text-xs font-mono text-zinc-400 w-24 shrink-0">{key}</span>
+                        <Select
+                          value={val}
+                          onChange={(e) => setEditValues((prev) => ({ ...prev, [key]: e.target.value }))}
+                          className="flex-1 text-xs"
+                        >
+                          <option value="">Keep existing</option>
+                          {keyDef.enum_values.map((v) => <option key={v} value={v}>{v}</option>)}
+                        </Select>
+                        <button type="button" onClick={() => { setEditValues((prev) => { const n = { ...prev }; delete n[key]; return n; }); }} className="rounded p-1 text-zinc-600 hover:text-red-400 cursor-pointer">
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div key={key} className="flex items-center gap-2">
+                      <span className="text-xs font-mono text-zinc-400 w-24 shrink-0">{key}</span>
+                      <Input
+                        type={keyDef?.key_type === "secret" ? "password" : "text"}
+                        value={val}
+                        onChange={(e) => setEditValues((prev) => ({ ...prev, [key]: e.target.value }))}
+                        placeholder="Keep existing"
+                        className="flex-1 text-xs"
+                      />
+                      <button type="button" onClick={() => { setEditValues((prev) => { const n = { ...prev }; delete n[key]; return n; }); }} className="rounded p-1 text-zinc-600 hover:text-red-400 cursor-pointer">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  );
+                })}
+                {availableEditKeys.length > 0 && (
+                  <Select onChange={(e) => { if (e.target.value) { setEditValues((prev) => ({ ...prev, [e.target.value]: "" })); e.target.value = ""; } }}>
+                    <option value="">+ Add field...</option>
+                    {availableEditKeys.map((k) => (
+                      <option key={k.id} value={k.name}>{k.name} ({k.key_type})</option>
+                    ))}
+                  </Select>
+                )}
+              </>
             )}
           </div>
           {editError && <p className="text-sm text-red-400">{editError}</p>}
           <DialogFooter>
-            <Button type="button" variant="secondary" onClick={() => setEditTarget(null)}>Cancel</Button>
+            <Button type="button" variant="secondary" onClick={() => { setEditTarget(null); setEditReady(false); }}>Cancel</Button>
             <Button type="submit" disabled={updateCredential.isPending}>{updateCredential.isPending && <Loader2 className="h-4 w-4 animate-spin" />} Save</Button>
           </DialogFooter>
         </form>
+        )}
       </Dialog>
 
       {/* Delete Credential Dialog */}
@@ -599,6 +820,7 @@ function CredentialTemplatesCard() {
   const { data: templates, isLoading } = useCredentialTemplates();
   const { data: credentialKeys } = useCredentialKeys();
   const createTemplate = useCreateCredentialTemplate();
+  const updateTemplate = useUpdateCredentialTemplate();
   const deleteTemplate = useDeleteCredentialTemplate();
 
   const [addOpen, setAddOpen] = useState(false);
@@ -608,8 +830,16 @@ function CredentialTemplatesCard() {
   const [addError, setAddError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<CredentialTemplate | null>(null);
 
-  const usedKeyNames = new Set(addFields.map((f) => f.key_name));
-  const availableKeys = (credentialKeys ?? []).filter((k) => !usedKeyNames.has(k.name));
+  const [editTarget, setEditTarget] = useState<CredentialTemplate | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editDesc, setEditDesc] = useState("");
+  const [editFields, setEditFields] = useState<{ key_name: string; required: boolean; default_value: string }[]>([]);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  const addUsedKeyNames = new Set(addFields.map((f) => f.key_name));
+  const editUsedKeyNames = new Set(editFields.map((f) => f.key_name));
+  const availableAddKeys = (credentialKeys ?? []).filter((k) => !addUsedKeyNames.has(k.name));
+  const availableEditKeys = (credentialKeys ?? []).filter((k) => !editUsedKeyNames.has(k.name));
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -631,6 +861,57 @@ function CredentialTemplatesCard() {
     } catch (err) {
       setAddError(err instanceof Error ? err.message : "Failed to create template");
     }
+  }
+
+  function openEdit(t: CredentialTemplate) {
+    setEditName(t.name);
+    setEditDesc(t.description ?? "");
+    setEditFields(
+      [...t.fields]
+        .sort((a, b) => a.display_order - b.display_order)
+        .map((f) => ({ key_name: f.key_name, required: f.required, default_value: f.default_value ?? "" }))
+    );
+    setEditError(null);
+    setEditTarget(t);
+  }
+
+  async function handleEdit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editTarget) return;
+    setEditError(null);
+    if (!editName.trim()) { setEditError("Name is required."); return; }
+    if (editFields.length === 0) { setEditError("At least one field is required."); return; }
+    try {
+      await updateTemplate.mutateAsync({
+        id: editTarget.id,
+        data: {
+          name: editName.trim(),
+          description: editDesc.trim() || undefined,
+          fields: editFields.map((f, i) => ({
+            key_name: f.key_name,
+            required: f.required,
+            default_value: f.default_value || null,
+            display_order: i + 1,
+          })),
+        },
+      });
+      setEditTarget(null);
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : "Failed to update template");
+    }
+  }
+
+  function swapFields(
+    fields: typeof addFields,
+    setFields: typeof setAddFields,
+    idx: number,
+    dir: -1 | 1,
+  ) {
+    const next = [...fields];
+    const target = idx + dir;
+    if (target < 0 || target >= next.length) return;
+    [next[idx], next[target]] = [next[target], next[idx]];
+    setFields(next);
   }
 
   async function handleDelete() {
@@ -683,9 +964,14 @@ function CredentialTemplatesCard() {
                     </TableCell>
                     <TableCell className="text-zinc-500 text-sm">{formatDate(t.created_at, tz)}</TableCell>
                     <TableCell>
-                      <button onClick={() => setDeleteTarget(t)} className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer" title="Delete">
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+                      <div className="flex gap-1">
+                        <button onClick={() => openEdit(t)} className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700/50 transition-colors cursor-pointer" title="Edit">
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                        <button onClick={() => setDeleteTarget(t)} className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer" title="Delete">
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -717,35 +1003,58 @@ function CredentialTemplatesCard() {
             <Label>Fields</Label>
             {addFields.map((f, idx) => {
               const keyDef = (credentialKeys ?? []).find((k) => k.name === f.key_name);
+              const badge = keyDef ? KEY_TYPE_BADGE[keyDef.key_type] ?? KEY_TYPE_BADGE.plain : KEY_TYPE_BADGE.plain;
               return (
                 <div key={f.key_name} className="flex items-center gap-2 rounded border border-zinc-800 px-2 py-1.5">
                   <span className="text-xs font-mono text-zinc-300 w-28 shrink-0">{f.key_name}</span>
-                  {keyDef?.is_secret && <Badge variant="destructive" className="text-[10px]">secret</Badge>}
+                  <Badge variant={badge.variant} className="text-[10px]">{badge.label}</Badge>
                   <label className="flex items-center gap-1 text-xs text-zinc-400 ml-auto">
                     <input type="checkbox" checked={f.required} onChange={(e) => {
                       const next = [...addFields]; next[idx] = { ...f, required: e.target.checked }; setAddFields(next);
                     }} className="accent-brand-500" />
                     Required
                   </label>
-                  <Input
-                    value={f.default_value}
-                    onChange={(e) => {
-                      const next = [...addFields]; next[idx] = { ...f, default_value: e.target.value }; setAddFields(next);
-                    }}
-                    placeholder="default"
-                    className="w-24 text-xs"
-                  />
+                  {keyDef?.key_type === "enum" && keyDef.enum_values ? (
+                    <Select
+                      value={f.default_value || ""}
+                      onChange={(e) => {
+                        const next = [...addFields]; next[idx] = { ...f, default_value: e.target.value || "" }; setAddFields(next);
+                      }}
+                      className="w-28 text-xs"
+                    >
+                      <option value="">No default</option>
+                      {keyDef.enum_values.map((v) => <option key={v} value={v}>{v}</option>)}
+                    </Select>
+                  ) : (
+                    <Input
+                      type={keyDef?.key_type === "secret" ? "password" : "text"}
+                      value={f.default_value}
+                      onChange={(e) => {
+                        const next = [...addFields]; next[idx] = { ...f, default_value: e.target.value }; setAddFields(next);
+                      }}
+                      placeholder={keyDef?.key_type === "secret" ? "no default" : "default"}
+                      className="w-28 text-xs"
+                    />
+                  )}
+                  <div className="flex gap-0.5">
+                    <button type="button" disabled={idx === 0} onClick={() => swapFields(addFields, setAddFields, idx, -1)} className="rounded p-1 text-zinc-600 hover:text-zinc-300 disabled:opacity-20 disabled:cursor-default cursor-pointer">
+                      <ArrowUp className="h-3.5 w-3.5" />
+                    </button>
+                    <button type="button" disabled={idx === addFields.length - 1} onClick={() => swapFields(addFields, setAddFields, idx, 1)} className="rounded p-1 text-zinc-600 hover:text-zinc-300 disabled:opacity-20 disabled:cursor-default cursor-pointer">
+                      <ArrowDown className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
                   <button type="button" onClick={() => setAddFields(addFields.filter((_, i) => i !== idx))} className="rounded p-1 text-zinc-600 hover:text-red-400 cursor-pointer">
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </div>
               );
             })}
-            {availableKeys.length > 0 && (
+            {availableAddKeys.length > 0 && (
               <Select onChange={(e) => { if (e.target.value) { setAddFields([...addFields, { key_name: e.target.value, required: true, default_value: "" }]); e.target.value = ""; } }}>
                 <option value="">+ Add field...</option>
-                {availableKeys.map((k) => (
-                  <option key={k.id} value={k.name}>{k.name}{k.is_secret ? " (secret)" : ""}</option>
+                {availableAddKeys.map((k) => (
+                  <option key={k.id} value={k.name}>{k.name} ({k.key_type})</option>
                 ))}
               </Select>
             )}
@@ -754,6 +1063,87 @@ function CredentialTemplatesCard() {
           <DialogFooter>
             <Button type="button" variant="secondary" onClick={() => setAddOpen(false)}>Cancel</Button>
             <Button type="submit" disabled={createTemplate.isPending}>{createTemplate.isPending && <Loader2 className="h-4 w-4 animate-spin" />} Create</Button>
+          </DialogFooter>
+        </form>
+      </Dialog>
+
+      {/* Edit Template Dialog */}
+      <Dialog open={!!editTarget} onClose={() => setEditTarget(null)} title="Edit Credential Template">
+        <form onSubmit={handleEdit} className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="ct-edit-name">Name</Label>
+              <Input id="ct-edit-name" value={editName} onChange={(e) => setEditName(e.target.value)} autoFocus />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="ct-edit-desc">Description</Label>
+              <Input id="ct-edit-desc" value={editDesc} onChange={(e) => setEditDesc(e.target.value)} />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label>Fields</Label>
+            {editFields.map((f, idx) => {
+              const keyDef = (credentialKeys ?? []).find((k) => k.name === f.key_name);
+              const badge = keyDef ? KEY_TYPE_BADGE[keyDef.key_type] ?? KEY_TYPE_BADGE.plain : KEY_TYPE_BADGE.plain;
+              return (
+                <div key={f.key_name} className="flex items-center gap-2 rounded border border-zinc-800 px-2 py-1.5">
+                  <span className="text-xs font-mono text-zinc-300 w-28 shrink-0">{f.key_name}</span>
+                  <Badge variant={badge.variant} className="text-[10px]">{badge.label}</Badge>
+                  <label className="flex items-center gap-1 text-xs text-zinc-400 ml-auto">
+                    <input type="checkbox" checked={f.required} onChange={(e) => {
+                      const next = [...editFields]; next[idx] = { ...f, required: e.target.checked }; setEditFields(next);
+                    }} className="accent-brand-500" />
+                    Required
+                  </label>
+                  {keyDef?.key_type === "enum" && keyDef.enum_values ? (
+                    <Select
+                      value={f.default_value || ""}
+                      onChange={(e) => {
+                        const next = [...editFields]; next[idx] = { ...f, default_value: e.target.value || "" }; setEditFields(next);
+                      }}
+                      className="w-28 text-xs"
+                    >
+                      <option value="">No default</option>
+                      {keyDef.enum_values.map((v) => <option key={v} value={v}>{v}</option>)}
+                    </Select>
+                  ) : (
+                    <Input
+                      type={keyDef?.key_type === "secret" ? "password" : "text"}
+                      value={f.default_value}
+                      onChange={(e) => {
+                        const next = [...editFields]; next[idx] = { ...f, default_value: e.target.value }; setEditFields(next);
+                      }}
+                      placeholder={keyDef?.key_type === "secret" ? "no default" : "default"}
+                      className="w-28 text-xs"
+                    />
+                  )}
+                  <div className="flex gap-0.5">
+                    <button type="button" disabled={idx === 0} onClick={() => swapFields(editFields, setEditFields, idx, -1)} className="rounded p-1 text-zinc-600 hover:text-zinc-300 disabled:opacity-20 disabled:cursor-default cursor-pointer">
+                      <ArrowUp className="h-3.5 w-3.5" />
+                    </button>
+                    <button type="button" disabled={idx === editFields.length - 1} onClick={() => swapFields(editFields, setEditFields, idx, 1)} className="rounded p-1 text-zinc-600 hover:text-zinc-300 disabled:opacity-20 disabled:cursor-default cursor-pointer">
+                      <ArrowDown className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  <button type="button" onClick={() => setEditFields(editFields.filter((_, i) => i !== idx))} className="rounded p-1 text-zinc-600 hover:text-red-400 cursor-pointer">
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              );
+            })}
+            {availableEditKeys.length > 0 && (
+              <Select onChange={(e) => { if (e.target.value) { setEditFields([...editFields, { key_name: e.target.value, required: true, default_value: "" }]); e.target.value = ""; } }}>
+                <option value="">+ Add field...</option>
+                {availableEditKeys.map((k) => (
+                  <option key={k.id} value={k.name}>{k.name} ({k.key_type})</option>
+                ))}
+              </Select>
+            )}
+          </div>
+          {editError && <p className="text-sm text-red-400">{editError}</p>}
+          <DialogFooter>
+            <Button type="button" variant="secondary" onClick={() => setEditTarget(null)}>Cancel</Button>
+            <Button type="submit" disabled={updateTemplate.isPending}>{updateTemplate.isPending && <Loader2 className="h-4 w-4 animate-spin" />} Save</Button>
           </DialogFooter>
         </form>
       </Dialog>

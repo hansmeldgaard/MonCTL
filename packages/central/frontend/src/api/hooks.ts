@@ -792,8 +792,12 @@ export function useCredentialKeys() {
 export function useCreateCredentialKey() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { name: string; description?: string; is_secret?: boolean }) =>
-      apiPost<CredentialKey>("/credential-keys", data),
+    mutationFn: (data: {
+      name: string;
+      description?: string;
+      key_type: "plain" | "secret" | "enum";
+      enum_values?: string[];
+    }) => apiPost<CredentialKey>("/credential-keys", data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["credential-keys"] });
     },
@@ -803,8 +807,10 @@ export function useCreateCredentialKey() {
 export function useUpdateCredentialKey() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: { name?: string; description?: string; is_secret?: boolean } }) =>
-      apiPut<CredentialKey>(`/credential-keys/${id}`, data),
+    mutationFn: ({ id, data }: {
+      id: string;
+      data: { name?: string; description?: string; key_type?: string; enum_values?: string[] };
+    }) => apiPut<CredentialKey>(`/credential-keys/${id}`, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["credential-keys"] });
     },

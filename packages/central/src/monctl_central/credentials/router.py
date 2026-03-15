@@ -155,7 +155,7 @@ async def create_credential(
     secret_to_store = request.secret
 
     if request.template_id:
-        from monctl_central.storage.models import CredentialTemplate
+        from monctl_central.storage.models import CredentialTemplate, CredentialKey
 
         template = await db.get(CredentialTemplate, uuid.UUID(request.template_id))
         if template is None:
@@ -164,14 +164,33 @@ async def create_credential(
         template_id = template.id
         credential_type = template.name
 
-        # Validate required fields
+        # Load credential key definitions for enum validation
+        key_names = {f["key_name"] for f in template.fields}
+        key_rows = (await db.execute(
+            select(CredentialKey).where(CredentialKey.name.in_(key_names))
+        )).scalars().all()
+        keys_by_name = {k.name: k for k in key_rows}
+
+        # Validate required fields + enum values
         for field in template.fields:
-            if field.get("required") and field["key_name"] not in request.secret:
-                if field.get("default_value") is None:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Missing required field: {field['key_name']}",
-                    )
+            key_name = field["key_name"]
+            value = request.secret.get(key_name)
+
+            if field.get("required") and value is None and field.get("default_value") is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Missing required field: {key_name}",
+                )
+
+            if value is not None:
+                key_def = keys_by_name.get(key_name)
+                if key_def and key_def.key_type == "enum" and key_def.enum_values:
+                    if value not in key_def.enum_values:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Invalid value for '{key_name}': '{value}'. "
+                                   f"Must be one of: {', '.join(key_def.enum_values)}",
+                        )
 
         # Merge defaults for missing optional fields
         merged = {}
@@ -208,23 +227,35 @@ async def get_credential(
     auth: dict = Depends(require_auth),
 ):
     """Get credential metadata by ID including its key composition (no secret values)."""
-    from monctl_central.storage.models import CredentialValue, CredentialKey
+    from monctl_central.credentials.crypto import decrypt_dict
+    from monctl_central.storage.models import CredentialKey
 
     cred = await db.get(Credential, uuid.UUID(credential_id))
     if cred is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Credential not found")
 
-    # Fetch credential values with their key definitions
-    stmt = (
-        select(CredentialValue, CredentialKey)
-        .join(CredentialKey, CredentialValue.key_id == CredentialKey.id)
-        .where(CredentialValue.credential_id == cred.id)
-    )
-    rows = (await db.execute(stmt)).all()
-    values = [
-        {"key_name": row.CredentialKey.name, "is_secret": row.CredentialKey.is_secret}
-        for row in rows
-    ]
+    # Derive key names from encrypted secret_data
+    # Non-secret values are returned; secret values are masked
+    values = []
+    if cred.secret_data:
+        try:
+            secret_dict = decrypt_dict(cred.secret_data)
+            key_names = list(secret_dict.keys())
+            # Look up key definitions to determine is_secret
+            key_rows = (await db.execute(
+                select(CredentialKey).where(CredentialKey.name.in_(key_names))
+            )).scalars().all()
+            keys_by_name = {k.name: k for k in key_rows}
+            values = [
+                {
+                    "key_name": name,
+                    "is_secret": keys_by_name[name].is_secret if name in keys_by_name else False,
+                    "value": None if (name in keys_by_name and keys_by_name[name].is_secret) else secret_dict[name],
+                }
+                for name in key_names
+            ]
+        except Exception:
+            pass  # If decryption fails, return empty values
 
     data = _format_credential(cred)
     data["values"] = values
@@ -248,7 +279,16 @@ async def update_credential(
     if request.credential_type is not None:
         cred.credential_type = request.credential_type
     if request.secret is not None:
-        cred.secret_data = encrypt_dict(request.secret)
+        # Merge with existing secret data so unchanged fields are preserved
+        from monctl_central.credentials.crypto import decrypt_dict as _decrypt
+        existing = {}
+        if cred.secret_data:
+            try:
+                existing = _decrypt(cred.secret_data)
+            except Exception:
+                pass
+        existing.update(request.secret)
+        cred.secret_data = encrypt_dict(existing)
     cred.updated_at = utc_now()
 
     return {"status": "success", "data": _format_credential(cred)}
