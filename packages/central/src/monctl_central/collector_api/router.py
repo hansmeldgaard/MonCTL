@@ -256,6 +256,30 @@ async def get_jobs(
         for lv in latest_result.scalars().all():
             latest_versions[lv.app_id] = lv
 
+    # Pre-load monitored interfaces for interface-type jobs (batch query)
+    interface_device_ids = {
+        row.Device.id for row in rows
+        if row.App.target_table == "interface" and row.Device is not None
+    }
+    monitored_map: dict[str, list[dict]] = {}
+    if interface_device_ids:
+        iface_stmt = (
+            select(InterfaceMetadata)
+            .where(
+                InterfaceMetadata.device_id.in_(interface_device_ids),
+                InterfaceMetadata.polling_enabled == True,  # noqa: E712
+            )
+            .order_by(InterfaceMetadata.current_if_index)
+        )
+        iface_result = await db.execute(iface_stmt)
+        for meta in iface_result.scalars().all():
+            dev_key = str(meta.device_id)
+            monitored_map.setdefault(dev_key, []).append({
+                "if_index": meta.current_if_index,
+                "if_name": meta.if_name,
+                "poll_metrics": meta.poll_metrics,
+            })
+
     jobs = []
     for row in rows:
         assignment: AppAssignment = row.AppAssignment
@@ -290,6 +314,14 @@ async def get_jobs(
         # credential names referenced in config
         credential_names = _extract_credential_names(assignment.config)
 
+        # Inject monitored_interfaces for interface-type apps
+        params = dict(assignment.config)
+        if app.target_table == "interface" and device is not None:
+            dev_key = str(device.id)
+            if dev_key in monitored_map:
+                params["monitored_interfaces"] = monitored_map[dev_key]
+            # If not in monitored_map, no interfaces known yet → walk mode (no key injected)
+
         jobs.append({
             "job_id": str(assignment.id),
             "device_id": str(assignment.device_id) if assignment.device_id else None,
@@ -298,7 +330,7 @@ async def get_jobs(
             "app_version": app_version.version,
             "credential_names": credential_names,  # collector fetches each via /credentials/{name}
             "interval": interval,
-            "parameters": assignment.config,
+            "parameters": params,
             "role": assignment.role,
             "max_execution_time": max_exec,
             "enabled": assignment.enabled,
@@ -609,11 +641,13 @@ async def _resolve_interface_id(
     if_descr: str = "",
     if_alias: str = "",
     if_speed_mbps: int = 0,
-) -> str:
+) -> tuple[str, bool]:
     """Resolve or create stable interface_id from (device_id, if_name).
 
     Redis cached (1h). Auto-creates InterfaceMetadata on first discovery.
     Detects if_index changes and updates accordingly.
+
+    Returns (interface_id, polling_enabled).
     """
     from monctl_central.cache import get_cached_interface_id, set_cached_interface_id
 
@@ -622,8 +656,9 @@ async def _resolve_interface_id(
     if cached:
         cached_id = cached["interface_id"]
         cached_if_index = cached.get("current_if_index")
+        polling_enabled = cached.get("polling_enabled", True)
         if cached_if_index == if_index:
-            return cached_id
+            return cached_id, polling_enabled
         # if_index changed — update PG and cache
         try:
             meta = await db.get(InterfaceMetadata, uuid.UUID(cached_id))
@@ -638,6 +673,7 @@ async def _resolve_interface_id(
                 from monctl_common.utils import utc_now
                 meta.updated_at = utc_now()
                 await db.flush()
+                polling_enabled = meta.polling_enabled
                 logger.info(
                     "if_index_changed",
                     device_id=device_id,
@@ -645,11 +681,15 @@ async def _resolve_interface_id(
                     old_if_index=cached_if_index,
                     new_if_index=if_index,
                 )
-            cache_data = {"interface_id": cached_id, "current_if_index": if_index}
+            cache_data = {
+                "interface_id": cached_id,
+                "current_if_index": if_index,
+                "polling_enabled": polling_enabled,
+            }
             await set_cached_interface_id(device_id, if_name, cache_data)
         except Exception:
             logger.debug("Failed to update if_index change", exc_info=True)
-        return cached_id
+        return cached_id, polling_enabled
 
     # 2. PG lookup by (device_id, if_name)
     stmt = select(InterfaceMetadata).where(
@@ -667,11 +707,16 @@ async def _resolve_interface_id(
             meta.updated_at = utc_now()
             await db.flush()
         interface_id = str(meta.id)
-        cache_data = {"interface_id": interface_id, "current_if_index": if_index}
+        polling_enabled = meta.polling_enabled
+        cache_data = {
+            "interface_id": interface_id,
+            "current_if_index": if_index,
+            "polling_enabled": polling_enabled,
+        }
         await set_cached_interface_id(device_id, if_name, cache_data)
-        return interface_id
+        return interface_id, polling_enabled
 
-    # 3. Create new InterfaceMetadata
+    # 3. Create new InterfaceMetadata (new interfaces default to polling_enabled=True)
     new_meta = InterfaceMetadata(
         device_id=uuid.UUID(device_id),
         if_name=if_name,
@@ -683,9 +728,13 @@ async def _resolve_interface_id(
     db.add(new_meta)
     await db.flush()
     interface_id = str(new_meta.id)
-    cache_data = {"interface_id": interface_id, "current_if_index": if_index}
+    cache_data = {
+        "interface_id": interface_id,
+        "current_if_index": if_index,
+        "polling_enabled": True,
+    }
     await set_cached_interface_id(device_id, if_name, cache_data)
-    return interface_id
+    return interface_id, True
 
 
 @router.post("/results", status_code=status.HTTP_202_ACCEPTED, tags=["collector-api"])
@@ -765,11 +814,15 @@ async def submit_results(
                 in_octets = iface.get("in_octets", 0)
                 out_octets = iface.get("out_octets", 0)
 
-                # Resolve stable interface_id
-                interface_id = await _resolve_interface_id(
+                # Resolve stable interface_id + polling_enabled flag
+                interface_id, polling_enabled = await _resolve_interface_id(
                     db, device_id_resolved, iface_name, iface_index,
                     if_descr="", if_alias=iface_alias, if_speed_mbps=iface_speed,
                 )
+
+                # Skip interfaces where polling has been disabled
+                if not polling_enabled:
+                    continue
 
                 # Central-side rate calculation
                 in_rate = 0.0

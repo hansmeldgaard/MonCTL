@@ -156,6 +156,16 @@ async def set_cached_interface_id(
         pass
 
 
+async def invalidate_cached_interface(device_id: str, if_name: str) -> None:
+    """Remove cached interface entry so polling_enabled changes take effect immediately."""
+    if _redis is None:
+        return
+    try:
+        await _redis.delete(f"{_IFACE_ID_PREFIX}{device_id}:{if_name}")
+    except Exception:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Interface previous counter cache (for rate calculation)
 # ---------------------------------------------------------------------------

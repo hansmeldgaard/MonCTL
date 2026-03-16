@@ -481,6 +481,7 @@ def _fmt_iface_meta(m: InterfaceMetadata) -> dict:
         "if_speed_mbps": m.if_speed_mbps,
         "polling_enabled": m.polling_enabled,
         "alerting_enabled": m.alerting_enabled,
+        "poll_metrics": m.poll_metrics,
         "updated_at": m.updated_at.isoformat() if m.updated_at else None,
     }
 
@@ -504,9 +505,13 @@ async def get_interface_metadata(
     return {"status": "success", "data": [_fmt_iface_meta(m) for m in rows]}
 
 
+_VALID_POLL_METRICS = {"all", "traffic", "errors", "status"}
+
+
 class UpdateInterfaceSettingsRequest(BaseModel):
     polling_enabled: Optional[bool] = None
     alerting_enabled: Optional[bool] = None
+    poll_metrics: Optional[str] = None
 
 
 @router.patch("/{device_id}/interface-metadata/{interface_id}")
@@ -532,8 +537,18 @@ async def update_interface_settings(
         meta.polling_enabled = req.polling_enabled
     if req.alerting_enabled is not None:
         meta.alerting_enabled = req.alerting_enabled
+    if req.poll_metrics is not None:
+        if req.poll_metrics not in _VALID_POLL_METRICS:
+            raise HTTPException(status_code=400, detail=f"Invalid poll_metrics: must be one of {_VALID_POLL_METRICS}")
+        meta.poll_metrics = req.poll_metrics
     meta.updated_at = utc_now()
     await db.flush()
+
+    # Invalidate Redis cache so ingestion/jobs see the change immediately
+    if req.polling_enabled is not None or req.poll_metrics is not None:
+        from monctl_central.cache import invalidate_cached_interface
+        await invalidate_cached_interface(device_id, meta.if_name)
+
     return {"status": "success", "data": _fmt_iface_meta(meta)}
 
 
@@ -541,6 +556,7 @@ class BulkInterfaceSettingsRequest(BaseModel):
     interface_ids: list[str]
     polling_enabled: Optional[bool] = None
     alerting_enabled: Optional[bool] = None
+    poll_metrics: Optional[str] = None
 
 
 @router.patch("/{device_id}/interface-metadata")
@@ -558,16 +574,31 @@ async def bulk_update_interface_settings(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     updated = []
+    invalidate_names = []
     for iid in req.interface_ids:
         meta = await db.get(InterfaceMetadata, uuid.UUID(iid))
         if meta and str(meta.device_id) == device_id:
             if req.polling_enabled is not None:
                 meta.polling_enabled = req.polling_enabled
+                invalidate_names.append(meta.if_name)
             if req.alerting_enabled is not None:
                 meta.alerting_enabled = req.alerting_enabled
+            if req.poll_metrics is not None:
+                if req.poll_metrics not in _VALID_POLL_METRICS:
+                    raise HTTPException(status_code=400, detail=f"Invalid poll_metrics: must be one of {_VALID_POLL_METRICS}")
+                meta.poll_metrics = req.poll_metrics
+                if meta.if_name not in invalidate_names:
+                    invalidate_names.append(meta.if_name)
             meta.updated_at = utc_now()
             updated.append(_fmt_iface_meta(meta))
     await db.flush()
+
+    # Invalidate Redis cache for affected interfaces
+    if invalidate_names:
+        from monctl_central.cache import invalidate_cached_interface
+        for name in invalidate_names:
+            await invalidate_cached_interface(device_id, name)
+
     return {"status": "success", "data": updated}
 
 

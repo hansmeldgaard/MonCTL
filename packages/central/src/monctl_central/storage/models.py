@@ -505,6 +505,7 @@ class InterfaceMetadata(Base):
     if_speed_mbps: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     polling_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     alerting_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    poll_metrics: Mapped[str] = mapped_column(String(50), nullable=False, server_default="all")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default="now()"
     )

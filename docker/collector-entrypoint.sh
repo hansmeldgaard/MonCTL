@@ -6,21 +6,40 @@ CENTRAL_URL="${MONCTL_CENTRAL_URL}"
 API_KEY="${MONCTL_CENTRAL_API_KEY}"
 REG_TOKEN="${MONCTL_REGISTRATION_TOKEN}"
 
+# Build curl flags (skip TLS verify if configured)
+CURL_OPTS="-sf"
+if [ "${MONCTL_VERIFY_SSL:-true}" = "false" ]; then
+    CURL_OPTS="-skf"
+fi
+
 # Wait for central to be ready
 echo "Waiting for central server at ${CENTRAL_URL}..."
-until curl -sf "${CENTRAL_URL}/v1/health" > /dev/null 2>&1; do
+until curl $CURL_OPTS "${CENTRAL_URL}/v1/health" > /dev/null 2>&1; do
     sleep 2
 done
 echo "Central server is ready."
 
-# Register if not already registered
-if [ ! -f "$CREDS_FILE" ]; then
-    if [ -z "$REG_TOKEN" ]; then
-        echo "No registration token set and no credentials file found."
-        echo "Set MONCTL_REGISTRATION_TOKEN to register, or mount credentials."
-        exit 1
-    fi
+# If arguments were passed (e.g. from compose "command: monctl-poll-worker"),
+# and we don't need to resolve collector credentials, just run the command.
+# poll-worker and forwarder connect to cache-node, not central directly.
+if [ $# -gt 0 ] && [ -z "$MONCTL_REGISTRATION_TOKEN" ] && [ -z "$MONCTL_COLLECTOR_ID" ] && [ ! -f "$CREDS_FILE" ]; then
+    echo "Starting: $@"
+    exec "$@"
+fi
 
+# If MONCTL_COLLECTOR_ID is already set in env, skip registration
+if [ -n "$MONCTL_COLLECTOR_ID" ] && [ -n "$MONCTL_COLLECTOR_API_KEY" ]; then
+    echo "Collector ID already set: ${MONCTL_COLLECTOR_ID}"
+elif [ -f "$CREDS_FILE" ]; then
+    echo "Loading credentials from ${CREDS_FILE}..."
+    COLLECTOR_ID=$(python3 -c "import json; print(json.load(open('$CREDS_FILE'))['collector_id'])")
+    REG_API_KEY=$(python3 -c "import json; print(json.load(open('$CREDS_FILE'))['api_key'])")
+
+    export MONCTL_COLLECTOR_ID="$COLLECTOR_ID"
+    export MONCTL_COLLECTOR_API_KEY="$REG_API_KEY"
+
+    echo "Loaded collector ${COLLECTOR_ID}"
+elif [ -n "$REG_TOKEN" ]; then
     echo "Registering collector with central..."
 
     REG_JSON=$(python3 -c "
@@ -36,7 +55,7 @@ if cluster_id:
 print(json.dumps(payload))
 ")
 
-    RESPONSE=$(curl -sf -X POST "${CENTRAL_URL}/v1/collectors/register" \
+    RESPONSE=$(curl $CURL_OPTS -X POST "${CENTRAL_URL}/v1/collectors/register" \
         -H "Content-Type: application/json" \
         -d "$REG_JSON")
 
@@ -58,17 +77,19 @@ print(json.dumps(payload))
     export MONCTL_COLLECTOR_ID="$COLLECTOR_ID"
     export MONCTL_COLLECTOR_API_KEY="$REG_API_KEY"
 else
-    echo "Already registered, loading credentials..."
-    COLLECTOR_ID=$(python3 -c "import json; print(json.load(open('$CREDS_FILE'))['collector_id'])")
-    REG_API_KEY=$(python3 -c "import json; print(json.load(open('$CREDS_FILE'))['api_key'])")
-
-    export MONCTL_COLLECTOR_ID="$COLLECTOR_ID"
-    export MONCTL_COLLECTOR_API_KEY="$REG_API_KEY"
-
-    echo "Loaded collector ${COLLECTOR_ID}"
+    echo "No registration token set and no credentials file found."
+    echo "Set MONCTL_REGISTRATION_TOKEN or MONCTL_COLLECTOR_ID to proceed."
+    exit 1
 fi
 
-# Start all three collector processes
+# If arguments were passed (e.g. from compose "command: monctl-cache-node"),
+# execute that command instead of starting all processes
+if [ $# -gt 0 ]; then
+    echo "Starting: $@"
+    exec "$@"
+fi
+
+# Standalone mode: start all three collector processes
 echo "Starting collector processes..."
 
 monctl-cache-node &

@@ -346,13 +346,13 @@ class Poller(BasePoller):
 '''
 
     snmp_interface_code = '''\
-"""SNMP interface poller — walks ifTable/ifXTable for per-interface metrics."""
+"""SNMP interface poller — targeted GET or full walk of ifTable/ifXTable."""
 import asyncio
 import time
 from monctl_collector.polling.base import BasePoller
 from monctl_collector.jobs.models import PollContext, PollResult
 
-# SNMP OIDs for interface data
+# SNMP OIDs for interface data (base OIDs, append .ifIndex for GET)
 _IF_OIDS = {
     "ifIndex":       "1.3.6.1.2.1.2.2.1.1",
     "ifDescr":       "1.3.6.1.2.1.2.2.1.2",
@@ -375,8 +375,18 @@ _IFX_OIDS = {
     "ifHCInOctets":  "1.3.6.1.2.1.31.1.1.1.6",
     "ifHCOutOctets": "1.3.6.1.2.1.31.1.1.1.10",
 }
+_ALL_OIDS = {**_IF_OIDS, **_IFX_OIDS}
 _ADMIN_STATUS = {1: "up", 2: "down", 3: "testing"}
 _OPER_STATUS = {1: "up", 2: "down", 3: "testing", 4: "unknown", 5: "dormant", 6: "notPresent", 7: "lowerLayerDown"}
+
+# OID groups per poll_metrics mode
+_IDENTITY_OIDS = ["ifIndex", "ifDescr", "ifName", "ifAlias", "ifOperStatus", "ifAdminStatus", "ifHighSpeed", "ifSpeed"]
+_METRIC_OIDS = {
+    "all": list(_ALL_OIDS.keys()),
+    "traffic": _IDENTITY_OIDS + ["ifHCInOctets", "ifHCOutOctets", "ifInOctets", "ifOutOctets"],
+    "errors": _IDENTITY_OIDS + ["ifInErrors", "ifOutErrors", "ifInDiscards", "ifOutDiscards"],
+    "status": _IDENTITY_OIDS,
+}
 
 
 class Poller(BasePoller):
@@ -434,81 +444,124 @@ class Poller(BasePoller):
         include_filter = context.parameters.get("include_interfaces", [])
         exclude_filter = context.parameters.get("exclude_interfaces", [])
         exclude_oper = set(context.parameters.get("exclude_oper_status", []))
+        monitored = context.parameters.get("monitored_interfaces")
         poll_interval = context.job.interval
         start = time.time()
 
         try:
             from pysnmp.hlapi.asyncio import (
                 CommunityData, ContextData, ObjectIdentity, ObjectType,
-                SnmpEngine, UdpTransportTarget, UsmUserData, bulkCmd,
+                SnmpEngine, UdpTransportTarget, UsmUserData, bulkCmd, getCmd,
             )
-            from pysnmp.smi.rfc1902 import ObjectIdentity as ObjId
 
             engine = SnmpEngine()
             auth_data = self._build_auth(context.credential)
             port = int(context.credential.get("port", 161))
             transport = UdpTransportTarget((host, port), timeout=timeout, retries=1)
 
-            async def _manual_bulk_walk(base_oid_str, max_rows=500):
-                """Walk an OID tree using repeated bulkCmd (avoids buggy bulkWalkCmd)."""
-                results = {}
-                current_oid = base_oid_str
-                base_tuple = tuple(int(x) for x in base_oid_str.split("."))
-                base_len = len(base_tuple)
-                while len(results) < max_rows:
-                    err_ind, err_st, err_idx, var_binds = await bulkCmd(
-                        engine, auth_data, transport, ContextData(),
-                        0, 25,
-                        ObjectType(ObjectIdentity(current_oid)),
-                    )
-                    if err_ind or err_st:
-                        break
-                    if not var_binds:
-                        break
-                    out_of_tree = False
-                    last_oid = None
-                    for row in var_binds:
-                        for oid, val in row:
-                            oid_tuple = tuple(oid)
-                            if oid_tuple[:base_len] != base_tuple:
-                                out_of_tree = True
-                                break
-                            if_index = oid_tuple[-1]
-                            results[if_index] = val.prettyPrint() if hasattr(val, "prettyPrint") else str(val)
-                            last_oid = ".".join(str(x) for x in oid_tuple)
-                        if out_of_tree:
-                            break
-                    if out_of_tree or last_oid is None or last_oid == current_oid:
-                        break
-                    current_oid = last_oid
-                return results
-
-            # Walk all needed OIDs sequentially
             raw: dict[str, dict[int, str | int]] = {}
-            all_oids = list(_IF_OIDS.items()) + list(_IFX_OIDS.items())
 
-            for oid_name, oid_str in all_oids:
-                try:
-                    raw[oid_name] = await _manual_bulk_walk(oid_str)
-                except Exception:
-                    raw[oid_name] = {}  # Skip this OID tree on error
+            if monitored:
+                # ── Targeted GET mode ──────────────────────────────────────
+                # Build OID requests per interface based on poll_metrics
+                oid_requests = []  # list of (oid_name, if_index, full_oid_str)
+                for iface in monitored:
+                    idx = int(iface["if_index"])
+                    metrics_mode = iface.get("poll_metrics", "all")
+                    oid_names = _METRIC_OIDS.get(metrics_mode, _METRIC_OIDS["all"])
+                    for oid_name in oid_names:
+                        base_oid = _ALL_OIDS.get(oid_name)
+                        if base_oid:
+                            oid_requests.append((oid_name, idx, f"{base_oid}.{idx}"))
+
+                # Batch into chunks of 20 OIDs per SNMP GET
+                batch_size = 20
+                for i in range(0, len(oid_requests), batch_size):
+                    batch = oid_requests[i:i + batch_size]
+                    varbinds = [ObjectType(ObjectIdentity(oid)) for _, _, oid in batch]
+                    try:
+                        err_ind, err_st, err_idx, var_binds = await getCmd(
+                            engine, auth_data, transport, ContextData(),
+                            *varbinds,
+                        )
+                        if err_ind or err_st:
+                            continue
+                        # var_binds is a list of ObjectType (oid, val) pairs
+                        for j, (oid, val) in enumerate(var_binds):
+                            if j < len(batch):
+                                oid_name, if_index, _ = batch[j]
+                                val_str = val.prettyPrint() if hasattr(val, "prettyPrint") else str(val)
+                                raw.setdefault(oid_name, {})[if_index] = val_str
+                    except Exception:
+                        continue  # Skip failed batch
+
+                # Use monitored list as the if_indices
+                if_indices = [int(iface["if_index"]) for iface in monitored]
+                # Build poll_metrics lookup
+                metrics_lookup = {int(iface["if_index"]): iface.get("poll_metrics", "all") for iface in monitored}
+            else:
+                # ── Walk mode (discovery / first run) ──────────────────────
+                async def _manual_bulk_walk(base_oid_str, max_rows=500):
+                    """Walk an OID tree using repeated bulkCmd."""
+                    results = {}
+                    current_oid = base_oid_str
+                    base_tuple = tuple(int(x) for x in base_oid_str.split("."))
+                    base_len = len(base_tuple)
+                    while len(results) < max_rows:
+                        err_ind, err_st, err_idx, var_binds = await bulkCmd(
+                            engine, auth_data, transport, ContextData(),
+                            0, 25,
+                            ObjectType(ObjectIdentity(current_oid)),
+                        )
+                        if err_ind or err_st:
+                            break
+                        if not var_binds:
+                            break
+                        out_of_tree = False
+                        last_oid = None
+                        for row in var_binds:
+                            for oid, val in row:
+                                oid_tuple = tuple(oid)
+                                if oid_tuple[:base_len] != base_tuple:
+                                    out_of_tree = True
+                                    break
+                                if_index = oid_tuple[-1]
+                                results[if_index] = val.prettyPrint() if hasattr(val, "prettyPrint") else str(val)
+                                last_oid = ".".join(str(x) for x in oid_tuple)
+                            if out_of_tree:
+                                break
+                        if out_of_tree or last_oid is None or last_oid == current_oid:
+                            break
+                        current_oid = last_oid
+                    return results
+
+                all_oids = list(_IF_OIDS.items()) + list(_IFX_OIDS.items())
+                for oid_name, oid_str in all_oids:
+                    try:
+                        raw[oid_name] = await _manual_bulk_walk(oid_str)
+                    except Exception:
+                        raw[oid_name] = {}
+
+                if_indices = sorted(raw.get("ifIndex", {}).keys())
+                metrics_lookup = {}  # Walk mode: all metrics for all interfaces
 
             # Build per-interface rows
-            if_indices = sorted(raw.get("ifIndex", {}).keys())
             interface_rows = []
-
             for idx in if_indices:
                 if_name = str(raw.get("ifName", {}).get(idx, raw.get("ifDescr", {}).get(idx, f"if{idx}")))
                 if_alias = str(raw.get("ifAlias", {}).get(idx, ""))
                 oper_status = _OPER_STATUS.get(int(raw.get("ifOperStatus", {}).get(idx, 4)), "unknown")
 
-                # Apply filters
-                if exclude_oper and oper_status in exclude_oper:
-                    continue
-                if include_filter and not any(p in if_name for p in include_filter):
-                    continue
-                if exclude_filter and any(p in if_name for p in exclude_filter):
-                    continue
+                # Apply filters (walk mode only — targeted mode is pre-filtered)
+                if not monitored:
+                    if exclude_oper and oper_status in exclude_oper:
+                        continue
+                    if include_filter and not any(p in if_name for p in include_filter):
+                        continue
+                    if exclude_filter and any(p in if_name for p in exclude_filter):
+                        continue
+
+                metrics_mode = metrics_lookup.get(idx, "all")
 
                 # Use HC counters if available, else fall back to 32-bit
                 in_octets = int(raw.get("ifHCInOctets", {}).get(idx, raw.get("ifInOctets", {}).get(idx, 0)))
@@ -524,23 +577,24 @@ class Poller(BasePoller):
 
                 admin_status = _ADMIN_STATUS.get(int(raw.get("ifAdminStatus", {}).get(idx, 3)), "unknown")
 
-                interface_rows.append({
+                row = {
                     "if_index": idx,
                     "if_name": if_name,
                     "if_alias": if_alias,
                     "if_speed_mbps": speed_mbps,
                     "if_admin_status": admin_status,
                     "if_oper_status": oper_status,
-                    "in_octets": in_octets,
-                    "out_octets": out_octets,
-                    "in_errors": int(raw.get("ifInErrors", {}).get(idx, 0)),
-                    "out_errors": int(raw.get("ifOutErrors", {}).get(idx, 0)),
-                    "in_discards": int(raw.get("ifInDiscards", {}).get(idx, 0)),
-                    "out_discards": int(raw.get("ifOutDiscards", {}).get(idx, 0)),
-                    "in_unicast_pkts": int(raw.get("ifInUcastPkts", {}).get(idx, 0)),
-                    "out_unicast_pkts": int(raw.get("ifOutUcastPkts", {}).get(idx, 0)),
+                    "in_octets": in_octets if metrics_mode in ("all", "traffic") else 0,
+                    "out_octets": out_octets if metrics_mode in ("all", "traffic") else 0,
+                    "in_errors": int(raw.get("ifInErrors", {}).get(idx, 0)) if metrics_mode in ("all", "errors") else 0,
+                    "out_errors": int(raw.get("ifOutErrors", {}).get(idx, 0)) if metrics_mode in ("all", "errors") else 0,
+                    "in_discards": int(raw.get("ifInDiscards", {}).get(idx, 0)) if metrics_mode in ("all", "errors") else 0,
+                    "out_discards": int(raw.get("ifOutDiscards", {}).get(idx, 0)) if metrics_mode in ("all", "errors") else 0,
+                    "in_unicast_pkts": int(raw.get("ifInUcastPkts", {}).get(idx, 0)) if metrics_mode == "all" else 0,
+                    "out_unicast_pkts": int(raw.get("ifOutUcastPkts", {}).get(idx, 0)) if metrics_mode == "all" else 0,
                     "poll_interval_sec": poll_interval,
-                })
+                }
+                interface_rows.append(row)
 
             execution_ms = int((time.time() - start) * 1000)
             return PollResult(
@@ -548,7 +602,10 @@ class Poller(BasePoller):
                 device_id=context.job.device_id,
                 collector_node=context.node_id,
                 timestamp=time.time(),
-                metrics=[{"name": "interface_count", "value": len(interface_rows)}],
+                metrics=[
+                    {"name": "interface_count", "value": len(interface_rows)},
+                    {"name": "poll_mode", "value": 1 if monitored else 0},
+                ],
                 config_data=None,
                 status="ok" if interface_rows else "unknown",
                 reachable=True,

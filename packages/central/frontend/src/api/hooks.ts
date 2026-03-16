@@ -499,7 +499,7 @@ export function useUpdateInterfaceSettings() {
     }: {
       deviceId: string;
       interfaceId: string;
-      data: { polling_enabled?: boolean; alerting_enabled?: boolean };
+      data: { polling_enabled?: boolean; alerting_enabled?: boolean; poll_metrics?: string };
     }) => apiPatch(`/devices/${deviceId}/interface-metadata/${interfaceId}`, data),
     onSuccess: (_res, vars) => {
       qc.invalidateQueries({ queryKey: ["interface-metadata", vars.deviceId] });

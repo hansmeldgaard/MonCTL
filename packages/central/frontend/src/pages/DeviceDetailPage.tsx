@@ -977,9 +977,9 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
 
   // Build metadata lookup
   const metaMap = useMemo(() => {
-    const m = new Map<string, { polling_enabled: boolean; alerting_enabled: boolean }>();
+    const m = new Map<string, { polling_enabled: boolean; alerting_enabled: boolean; poll_metrics: string }>();
     for (const meta of metadata ?? []) {
-      m.set(meta.id, { polling_enabled: meta.polling_enabled, alerting_enabled: meta.alerting_enabled });
+      m.set(meta.id, { polling_enabled: meta.polling_enabled, alerting_enabled: meta.alerting_enabled, poll_metrics: meta.poll_metrics ?? "all" });
     }
     return m;
   }, [metadata]);
@@ -1140,6 +1140,7 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
                 <SortHead col="last_polled">Last Polled</SortHead>
                 <TableHead className="w-14 text-center">Poll</TableHead>
                 <TableHead className="w-14 text-center">Alert</TableHead>
+                <TableHead className="w-24 text-center">Metrics</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -1230,6 +1231,22 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
                       })}
                       className="accent-amber-500 cursor-pointer"
                     />
+                  </TableCell>
+                  <TableCell className="text-center" onClick={e => e.stopPropagation()}>
+                    <select
+                      value={meta?.poll_metrics ?? "all"}
+                      onChange={e => updateSettings.mutate({
+                        deviceId,
+                        interfaceId: iface.interface_id,
+                        data: { poll_metrics: e.target.value },
+                      })}
+                      className="bg-zinc-800 border border-zinc-700 rounded px-1 py-0.5 text-xs text-zinc-300 cursor-pointer"
+                    >
+                      <option value="all">All</option>
+                      <option value="traffic">Traffic</option>
+                      <option value="errors">Errors</option>
+                      <option value="status">Status</option>
+                    </select>
                   </TableCell>
                 </TableRow>
                 );

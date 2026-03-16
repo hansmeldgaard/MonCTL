@@ -456,6 +456,7 @@ export interface InterfaceMetadataRecord {
   if_speed_mbps: number;
   polling_enabled: boolean;
   alerting_enabled: boolean;
+  poll_metrics: "all" | "traffic" | "errors" | "status";
   updated_at: string | null;
 }
 
