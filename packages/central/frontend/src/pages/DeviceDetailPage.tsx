@@ -51,6 +51,7 @@ import {
   useUpdateAssignment,
   useDevice,
   useDeviceAssignments,
+  useDeviceConfigData,
   useDeviceHistory,
   useDeviceMonitoring,
   useDeviceResults,
@@ -68,6 +69,7 @@ import {
   useUpdateDeviceMonitoring,
 } from "@/api/hooks.ts";
 import type { Device as DeviceType, DeviceAssignment } from "@/types/api.ts";
+import { ConfigDataRenderer } from "@/components/ConfigDataRenderer.tsx";
 import { InterfaceTrafficChart } from "@/components/InterfaceTrafficChart.tsx";
 import { timeAgo, formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
@@ -910,19 +912,65 @@ function PerformanceTab({ deviceId }: { deviceId: string }) {
 
 // ── Tab 3: Configuration ─────────────────────────────────
 
-function ConfigurationTab() {
+function ConfigurationTab({ deviceId }: { deviceId: string }) {
+  const { data: configRows, isLoading } = useDeviceConfigData(deviceId);
+
+  if (isLoading) {
+    return (
+      <div className="flex h-32 items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-brand-500" />
+      </div>
+    );
+  }
+
+  if (!configRows || configRows.length === 0) {
+    return (
+      <div className="space-y-4">
+        <Card>
+          <CardContent className="py-12 flex flex-col items-center gap-3 text-zinc-600">
+            <Wrench className="h-8 w-8 text-zinc-700" />
+            <p className="text-sm text-zinc-500">No configuration data yet.</p>
+            <p className="text-xs text-zinc-700 text-center max-w-sm">
+              Config apps will populate structured data here once they have been assigned and executed.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  // Group by app_id → component_type → component, collect latest key/value pairs
+  const grouped = new Map<string, { appName: string; data: Record<string, string> }>();
+  for (const row of configRows) {
+    const appId = String(row.app_id ?? "unknown");
+    const key = String(row.config_key ?? "");
+    const value = String(row.config_value ?? "");
+    const appName = String(row.app_name ?? appId);
+    if (!grouped.has(appId)) {
+      grouped.set(appId, { appName, data: {} });
+    }
+    const entry = grouped.get(appId)!;
+    // Keep the latest value (results are newest-first)
+    if (!(key in entry.data)) {
+      entry.data[key] = value;
+    }
+  }
+
   return (
     <div className="space-y-4">
-      <Card>
-        <CardContent className="py-12 flex flex-col items-center gap-3 text-zinc-600">
-          <Wrench className="h-8 w-8 text-zinc-700" />
-          <p className="text-sm text-zinc-500">Configuration data will be populated by monitoring apps.</p>
-          <p className="text-xs text-zinc-700 text-center max-w-sm">
-            Apps can report structured configuration data (serial numbers, CPU/RAM info, module inventory, etc.)
-            that will be displayed here once implemented.
-          </p>
-        </CardContent>
-      </Card>
+      {[...grouped.entries()].map(([appId, { appName, data }]) => (
+        <Card key={appId}>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <Wrench className="h-4 w-4" />
+              {appName}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ConfigDataRenderer template={null} data={data} />
+          </CardContent>
+        </Card>
+      ))}
     </div>
   );
 }
@@ -2476,7 +2524,7 @@ export function DeviceDetailPage() {
           <InterfacesTab deviceId={deviceId} />
         </TabsContent>
         <TabsContent value="configuration">
-          <ConfigurationTab />
+          <ConfigurationTab deviceId={deviceId} />
         </TabsContent>
         <TabsContent value="settings">
           <SettingsTab deviceId={deviceId} />

@@ -9,6 +9,7 @@ const SIZE_CLASSES = {
   lg: "max-w-2xl",
   xl: "max-w-4xl",
   full: "max-w-6xl",
+  fullscreen: "max-w-none",
 } as const;
 
 type DialogSize = keyof typeof SIZE_CLASSES;
@@ -44,22 +45,34 @@ export function Dialog({ open, onClose, title, children, className, size = "md" 
 
   if (!open) return null;
 
+  const isFullscreen = size === "fullscreen";
+
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className={cn(
+      "fixed inset-0 z-50 flex",
+      isFullscreen ? "" : "items-center justify-center p-4",
+    )}>
       {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/60"
-        onClick={onClose}
-      />
+      {!isFullscreen && (
+        <div
+          className="absolute inset-0 bg-black/60"
+          onClick={onClose}
+        />
+      )}
       {/* Panel */}
       <div
         className={cn(
-          `relative z-10 w-full ${SIZE_CLASSES[size]} rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl`,
+          isFullscreen
+            ? "relative z-10 w-full h-full flex flex-col bg-zinc-900"
+            : `relative z-10 w-full ${SIZE_CLASSES[size]} rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl`,
           className,
         )}
       >
         {title && (
-          <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
+          <div className={cn(
+            "flex items-center justify-between border-b border-zinc-800 px-6 py-4",
+            isFullscreen && "shrink-0",
+          )}>
             <h2 className="text-base font-semibold text-zinc-100">{title}</h2>
             <button
               onClick={onClose}
@@ -69,7 +82,9 @@ export function Dialog({ open, onClose, title, children, className, size = "md" 
             </button>
           </div>
         )}
-        <div className="px-6 py-5">{children}</div>
+        <div className={cn(
+          isFullscreen ? "flex-1 overflow-y-auto px-6 py-5" : "px-6 py-5",
+        )}>{children}</div>
       </div>
     </div>,
     document.body,

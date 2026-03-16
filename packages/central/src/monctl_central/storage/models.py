@@ -140,6 +140,7 @@ class AppVersion(Base):
     requirements: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
     entry_class: Mapped[str | None] = mapped_column(String(200))
     is_latest: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    display_template: Mapped[dict | None] = mapped_column(JSONB)
 
     app: Mapped[App] = relationship(back_populates="versions")
 

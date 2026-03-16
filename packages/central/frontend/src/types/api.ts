@@ -272,6 +272,18 @@ export interface AppDetail extends AppSummary {
   versions: AppVersion[];
 }
 
+export interface DisplayTemplate {
+  html: string;
+  css?: string;
+  key_mappings: string[];
+}
+
+export interface ConfigKeysResponse {
+  source_code_keys: string[];
+  clickhouse_keys: string[];
+  all_keys: string[];
+}
+
 // ── Credentials ───────────────────────────────────────────
 
 export interface Credential {

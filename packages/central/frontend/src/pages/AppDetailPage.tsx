@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
-import { ArrowLeft, AppWindow, Code2, Loader2, Pencil, Plus, Star, Trash2 } from "lucide-react";
+import { ArrowLeft, AppWindow, Code2, Layout, Loader2, Pencil, Plus, Star, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/table.tsx";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import { CodeEditor } from "@/components/CodeEditor.tsx";
+import { DisplayTemplateEditor } from "@/components/DisplayTemplateEditor.tsx";
 import {
   useAppDetail,
   useUpdateApp,
@@ -26,6 +27,7 @@ import {
   useDeleteAppVersion,
 } from "@/api/hooks.ts";
 import { apiGet } from "@/api/client.ts";
+import type { DisplayTemplate } from "@/types/api.ts";
 
 interface VersionDetail {
   id: string;
@@ -35,6 +37,7 @@ interface VersionDetail {
   entry_class: string | null;
   checksum: string;
   published_at: string | null;
+  display_template: DisplayTemplate | null;
 }
 
 export function AppDetailPage() {
@@ -47,6 +50,7 @@ export function AppDetailPage() {
   const deleteVersion = useDeleteAppVersion();
 
   const [activeTab, setActiveTab] = useState("overview");
+  const isConfigApp = app?.target_table === "config";
 
   // Edit app state
   const [editOpen, setEditOpen] = useState(false);
@@ -61,6 +65,8 @@ export function AppDetailPage() {
   const [versionReqs, setVersionReqs] = useState("");
   const [versionEntry, setVersionEntry] = useState("");
   const [versionError, setVersionError] = useState<string | null>(null);
+  const [newVersionTab, setNewVersionTab] = useState("code");
+  const [newVersionTemplate, setNewVersionTemplate] = useState<DisplayTemplate | null>(null);
 
   // Version detail viewer
   const [viewVersion, setViewVersion] = useState<VersionDetail | null>(null);
@@ -72,6 +78,10 @@ export function AppDetailPage() {
   const [editVersionReqs, setEditVersionReqs] = useState("");
   const [editVersionEntry, setEditVersionEntry] = useState("");
   const [editVersionError, setEditVersionError] = useState<string | null>(null);
+
+  // Version dialog tab (for config apps)
+  const [viewDialogTab, setViewDialogTab] = useState("code");
+  const [editDialogTab, setEditDialogTab] = useState("code");
 
   // Delete version state
   const [deleteVersionTarget, setDeleteVersionTarget] = useState<{ id: string; version: string } | null>(null);
@@ -103,9 +113,10 @@ export function AppDetailPage() {
           source_code: versionCode,
           requirements: versionReqs.trim() ? versionReqs.trim().split("\n").map((r) => r.trim()).filter(Boolean) : [],
           entry_class: versionEntry.trim() || undefined,
+          display_template: newVersionTemplate ?? undefined,
         },
       });
-      setVersionString(""); setVersionCode(""); setVersionReqs(""); setVersionEntry(""); setVersionOpen(false);
+      setVersionString(""); setVersionCode(""); setVersionReqs(""); setVersionEntry(""); setNewVersionTemplate(null); setNewVersionTab("code"); setVersionOpen(false);
     } catch (err) {
       setVersionError(err instanceof Error ? err.message : "Failed to create version");
     }
@@ -145,6 +156,7 @@ export function AppDetailPage() {
   async function openEditVersion(versionId: string) {
     if (!id) return;
     setLoadingVersion(true);
+    setEditDialogTab("code");
     try {
       const res = await apiGet<VersionDetail>(`/apps/${id}/versions/${versionId}`);
       const v = res.data;
@@ -163,6 +175,7 @@ export function AppDetailPage() {
   async function loadVersion(versionId: string) {
     if (!id) return;
     setLoadingVersion(true);
+    setViewDialogTab("code");
     try {
       const res = await apiGet<VersionDetail>(`/apps/${id}/versions/${versionId}`);
       setViewVersion(res.data);
@@ -172,6 +185,25 @@ export function AppDetailPage() {
       setLoadingVersion(false);
     }
   }
+
+  const handleSaveDisplayTemplate = useCallback(
+    async (versionId: string, template: DisplayTemplate) => {
+      if (!id) return;
+      await updateVersion.mutateAsync({
+        appId: id,
+        versionId,
+        data: { display_template: template },
+      });
+      // Refresh view version data
+      try {
+        const res = await apiGet<VersionDetail>(`/apps/${id}/versions/${versionId}`);
+        setViewVersion(res.data);
+      } catch {
+        // silent
+      }
+    },
+    [id, updateVersion],
+  );
 
   if (isLoading) {
     return (
@@ -271,7 +303,7 @@ export function AppDetailPage() {
                   size="sm"
                   variant="secondary"
                   className="ml-auto gap-1.5"
-                  onClick={() => { setVersionString(""); setVersionCode("# New version\n"); setVersionReqs(""); setVersionEntry(""); setVersionError(null); setVersionOpen(true); }}
+                  onClick={() => { setVersionString(""); setVersionCode("# New version\n"); setVersionReqs(""); setVersionEntry(""); setVersionError(null); setNewVersionTab("code"); setNewVersionTemplate(null); setVersionOpen(true); }}
                 >
                   <Plus className="h-4 w-4" /> New Version
                 </Button>
@@ -373,74 +405,79 @@ export function AppDetailPage() {
       </Dialog>
 
       {/* New Version Dialog */}
-      <Dialog open={versionOpen} onClose={() => setVersionOpen(false)} title="New Version" size="xl">
-        <form onSubmit={handleCreateVersion} className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="ver-string">Version</Label>
-              <Input id="ver-string" placeholder="e.g. 1.1.0" value={versionString} onChange={(e) => setVersionString(e.target.value)} autoFocus />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="ver-entry">Entry Class <span className="font-normal text-zinc-500">(optional)</span></Label>
-              <Input id="ver-entry" placeholder="e.g. MyCheck" value={versionEntry} onChange={(e) => setVersionEntry(e.target.value)} />
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Source Code (Python)</Label>
-            <CodeEditor value={versionCode} onChange={setVersionCode} height="500px" />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="ver-reqs">Requirements <span className="font-normal text-zinc-500">(one per line)</span></Label>
-            <textarea
-              id="ver-reqs"
-              value={versionReqs}
-              onChange={(e) => setVersionReqs(e.target.value)}
-              placeholder="requests>=2.28&#10;pyyaml"
-              rows={3}
-              className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 font-mono focus:outline-none focus:ring-2 focus:ring-brand-500 placeholder:text-zinc-600"
-            />
-          </div>
-          {versionError && <p className="text-sm text-red-400">{versionError}</p>}
-          <DialogFooter>
-            <Button type="button" variant="secondary" onClick={() => setVersionOpen(false)}>Cancel</Button>
-            <Button type="submit" disabled={createVersion.isPending}>
-              {createVersion.isPending && <Loader2 className="h-4 w-4 animate-spin" />} Create Version
-            </Button>
-          </DialogFooter>
-        </form>
+      <Dialog open={versionOpen} onClose={() => setVersionOpen(false)} title="New Version" size="fullscreen">
+        {isConfigApp ? (
+          <Tabs value={newVersionTab} onChange={setNewVersionTab}>
+            <TabsList>
+              <TabTrigger value="code">
+                <span className="flex items-center gap-1.5"><Code2 className="h-3.5 w-3.5" /> Code</span>
+              </TabTrigger>
+              <TabTrigger value="template">
+                <span className="flex items-center gap-1.5"><Layout className="h-3.5 w-3.5" /> Display Template</span>
+              </TabTrigger>
+            </TabsList>
+            <TabsContent value="code">
+              <NewVersionCodeForm
+                versionString={versionString} setVersionString={setVersionString}
+                versionCode={versionCode} setVersionCode={setVersionCode}
+                versionReqs={versionReqs} setVersionReqs={setVersionReqs}
+                versionEntry={versionEntry} setVersionEntry={setVersionEntry}
+                versionError={versionError}
+                onSubmit={handleCreateVersion}
+                onCancel={() => setVersionOpen(false)}
+                isPending={createVersion.isPending}
+              />
+            </TabsContent>
+            <TabsContent value="template">
+              <DisplayTemplateEditor
+                appId={id!}
+                initialTemplate={newVersionTemplate}
+                onSave={async (tpl) => { setNewVersionTemplate(tpl); setNewVersionTab("code"); }}
+              />
+            </TabsContent>
+          </Tabs>
+        ) : (
+          <NewVersionCodeForm
+            versionString={versionString} setVersionString={setVersionString}
+            versionCode={versionCode} setVersionCode={setVersionCode}
+            versionReqs={versionReqs} setVersionReqs={setVersionReqs}
+            versionEntry={versionEntry} setVersionEntry={setVersionEntry}
+            versionError={versionError}
+            onSubmit={handleCreateVersion}
+            onCancel={() => setVersionOpen(false)}
+            isPending={createVersion.isPending}
+          />
+        )}
       </Dialog>
 
       {/* View Version Dialog */}
-      <Dialog open={!!viewVersion} onClose={() => setViewVersion(null)} title={`Version ${viewVersion?.version ?? ""}`} size="xl">
+      <Dialog open={!!viewVersion} onClose={() => setViewVersion(null)} title={`Version ${viewVersion?.version ?? ""}`} size="fullscreen">
         {viewVersion && (
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3 text-sm">
-              <div className="rounded-md bg-zinc-800/50 px-3 py-2">
-                <span className="text-zinc-500">Entry Class:</span>{" "}
-                <span className="text-zinc-200 font-mono">{viewVersion.entry_class ?? "—"}</span>
-              </div>
-              <div className="rounded-md bg-zinc-800/50 px-3 py-2">
-                <span className="text-zinc-500">Checksum:</span>{" "}
-                <span className="text-zinc-200 font-mono text-xs">{viewVersion.checksum?.slice(0, 12)}...</span>
-              </div>
-            </div>
-            {viewVersion.requirements && viewVersion.requirements.length > 0 && (
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-1">Requirements</p>
-                <div className="flex flex-wrap gap-1">
-                  {viewVersion.requirements.map((r, i) => (
-                    <Badge key={i} variant="default" className="font-mono text-xs">{r}</Badge>
-                  ))}
-                </div>
-              </div>
-            )}
-            {viewVersion.source_code && (
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-1">Source Code</p>
-                <CodeEditor value={viewVersion.source_code} readOnly height="500px" />
-              </div>
-            )}
-          </div>
+          isConfigApp ? (
+            <Tabs value={viewDialogTab} onChange={setViewDialogTab}>
+              <TabsList>
+                <TabTrigger value="code">
+                  <span className="flex items-center gap-1.5"><Code2 className="h-3.5 w-3.5" /> Code</span>
+                </TabTrigger>
+                <TabTrigger value="template">
+                  <span className="flex items-center gap-1.5"><Layout className="h-3.5 w-3.5" /> Display Template</span>
+                </TabTrigger>
+              </TabsList>
+              <TabsContent value="code">
+                <VersionCodeView version={viewVersion} />
+              </TabsContent>
+              <TabsContent value="template">
+                <DisplayTemplateEditor
+                  appId={id!}
+                  versionId={viewVersion.id}
+                  initialTemplate={viewVersion.display_template}
+                  onSave={(tpl) => handleSaveDisplayTemplate(viewVersion.id, tpl)}
+                />
+              </TabsContent>
+            </Tabs>
+          ) : (
+            <VersionCodeView version={viewVersion} />
+          )
         )}
         <DialogFooter>
           <Button variant="secondary" onClick={() => setViewVersion(null)}>Close</Button>
@@ -448,35 +485,56 @@ export function AppDetailPage() {
       </Dialog>
 
       {/* Edit Version Dialog */}
-      <Dialog open={!!editVersionTarget} onClose={() => setEditVersionTarget(null)} title={`Edit Version ${editVersionTarget?.version ?? ""}`} size="xl">
-        <form onSubmit={handleEditVersion} className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="edit-ver-entry">Entry Class <span className="font-normal text-zinc-500">(optional)</span></Label>
-            <Input id="edit-ver-entry" placeholder="e.g. Poller" value={editVersionEntry} onChange={(e) => setEditVersionEntry(e.target.value)} />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Source Code (Python)</Label>
-            <CodeEditor value={editVersionCode} onChange={setEditVersionCode} height="500px" />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="edit-ver-reqs">Requirements <span className="font-normal text-zinc-500">(one per line)</span></Label>
-            <textarea
-              id="edit-ver-reqs"
-              value={editVersionReqs}
-              onChange={(e) => setEditVersionReqs(e.target.value)}
-              placeholder="requests>=2.28&#10;pyyaml"
-              rows={3}
-              className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 font-mono focus:outline-none focus:ring-2 focus:ring-brand-500 placeholder:text-zinc-600"
-            />
-          </div>
-          {editVersionError && <p className="text-sm text-red-400">{editVersionError}</p>}
-          <DialogFooter>
-            <Button type="button" variant="secondary" onClick={() => setEditVersionTarget(null)}>Cancel</Button>
-            <Button type="submit" disabled={updateVersion.isPending}>
-              {updateVersion.isPending && <Loader2 className="h-4 w-4 animate-spin" />} Save
-            </Button>
-          </DialogFooter>
-        </form>
+      <Dialog open={!!editVersionTarget} onClose={() => setEditVersionTarget(null)} title={`Edit Version ${editVersionTarget?.version ?? ""}`} size="fullscreen">
+        {isConfigApp ? (
+          <Tabs value={editDialogTab} onChange={setEditDialogTab}>
+            <TabsList>
+              <TabTrigger value="code">
+                <span className="flex items-center gap-1.5"><Code2 className="h-3.5 w-3.5" /> Code</span>
+              </TabTrigger>
+              <TabTrigger value="template">
+                <span className="flex items-center gap-1.5"><Layout className="h-3.5 w-3.5" /> Display Template</span>
+              </TabTrigger>
+            </TabsList>
+            <TabsContent value="code">
+              <EditVersionCodeForm
+                editVersionCode={editVersionCode}
+                setEditVersionCode={setEditVersionCode}
+                editVersionReqs={editVersionReqs}
+                setEditVersionReqs={setEditVersionReqs}
+                editVersionEntry={editVersionEntry}
+                setEditVersionEntry={setEditVersionEntry}
+                editVersionError={editVersionError}
+                onSubmit={handleEditVersion}
+                onCancel={() => setEditVersionTarget(null)}
+                isPending={updateVersion.isPending}
+              />
+            </TabsContent>
+            <TabsContent value="template">
+              {editVersionTarget && (
+                <DisplayTemplateEditor
+                  appId={id!}
+                  versionId={editVersionTarget.id}
+                  initialTemplate={editVersionTarget.display_template}
+                  onSave={(tpl) => handleSaveDisplayTemplate(editVersionTarget.id, tpl)}
+                />
+              )}
+            </TabsContent>
+          </Tabs>
+        ) : (
+          <EditVersionCodeForm
+            editVersionCode={editVersionCode}
+            setEditVersionCode={setEditVersionCode}
+            editVersionReqs={editVersionReqs}
+            setEditVersionReqs={setEditVersionReqs}
+            editVersionEntry={editVersionEntry}
+            setEditVersionEntry={setEditVersionEntry}
+            editVersionError={editVersionError}
+            onSubmit={handleEditVersion}
+            onCancel={() => setEditVersionTarget(null)}
+            isPending={updateVersion.isPending}
+          />
+        )}
       </Dialog>
 
       {/* Delete Version Dialog */}
@@ -494,5 +552,152 @@ export function AppDetailPage() {
         </DialogFooter>
       </Dialog>
     </div>
+  );
+}
+
+// ── Helper components extracted for View/Edit dialogs ────
+
+function VersionCodeView({ version }: { version: VersionDetail }) {
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 text-sm">
+        <div className="rounded-md bg-zinc-800/50 px-3 py-2">
+          <span className="text-zinc-500">Entry Class:</span>{" "}
+          <span className="text-zinc-200 font-mono">{version.entry_class ?? "\u2014"}</span>
+        </div>
+        <div className="rounded-md bg-zinc-800/50 px-3 py-2">
+          <span className="text-zinc-500">Checksum:</span>{" "}
+          <span className="text-zinc-200 font-mono text-xs">{version.checksum?.slice(0, 12)}...</span>
+        </div>
+      </div>
+      {version.requirements && version.requirements.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-1">Requirements</p>
+          <div className="flex flex-wrap gap-1">
+            {version.requirements.map((r, i) => (
+              <Badge key={i} variant="default" className="font-mono text-xs">{r}</Badge>
+            ))}
+          </div>
+        </div>
+      )}
+      {version.source_code && (
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-1">Source Code</p>
+          <CodeEditor value={version.source_code} readOnly height="calc(100vh - 300px)" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EditVersionCodeForm({
+  editVersionCode,
+  setEditVersionCode,
+  editVersionReqs,
+  setEditVersionReqs,
+  editVersionEntry,
+  setEditVersionEntry,
+  editVersionError,
+  onSubmit,
+  onCancel,
+  isPending,
+}: {
+  editVersionCode: string;
+  setEditVersionCode: (v: string) => void;
+  editVersionReqs: string;
+  setEditVersionReqs: (v: string) => void;
+  editVersionEntry: string;
+  setEditVersionEntry: (v: string) => void;
+  editVersionError: string | null;
+  onSubmit: (e: React.FormEvent) => void;
+  onCancel: () => void;
+  isPending: boolean;
+}) {
+  return (
+    <form onSubmit={onSubmit} className="space-y-4">
+      <div className="space-y-1.5">
+        <Label htmlFor="edit-ver-entry">Entry Class <span className="font-normal text-zinc-500">(optional)</span></Label>
+        <Input id="edit-ver-entry" placeholder="e.g. Poller" value={editVersionEntry} onChange={(e) => setEditVersionEntry(e.target.value)} />
+      </div>
+      <div className="space-y-1.5">
+        <Label>Source Code (Python)</Label>
+        <CodeEditor value={editVersionCode} onChange={setEditVersionCode} height="calc(100vh - 300px)" />
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="edit-ver-reqs">Requirements <span className="font-normal text-zinc-500">(one per line)</span></Label>
+        <textarea
+          id="edit-ver-reqs"
+          value={editVersionReqs}
+          onChange={(e) => setEditVersionReqs(e.target.value)}
+          placeholder="requests>=2.28&#10;pyyaml"
+          rows={3}
+          className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 font-mono focus:outline-none focus:ring-2 focus:ring-brand-500 placeholder:text-zinc-600"
+        />
+      </div>
+      {editVersionError && <p className="text-sm text-red-400">{editVersionError}</p>}
+      <DialogFooter>
+        <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
+        <Button type="submit" disabled={isPending}>
+          {isPending && <Loader2 className="h-4 w-4 animate-spin" />} Save
+        </Button>
+      </DialogFooter>
+    </form>
+  );
+}
+
+function NewVersionCodeForm({
+  versionString, setVersionString,
+  versionCode, setVersionCode,
+  versionReqs, setVersionReqs,
+  versionEntry, setVersionEntry,
+  versionError,
+  onSubmit,
+  onCancel,
+  isPending,
+}: {
+  versionString: string; setVersionString: (v: string) => void;
+  versionCode: string; setVersionCode: (v: string) => void;
+  versionReqs: string; setVersionReqs: (v: string) => void;
+  versionEntry: string; setVersionEntry: (v: string) => void;
+  versionError: string | null;
+  onSubmit: (e: React.FormEvent) => void;
+  onCancel: () => void;
+  isPending: boolean;
+}) {
+  return (
+    <form onSubmit={onSubmit} className="space-y-4">
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <Label htmlFor="ver-string">Version</Label>
+          <Input id="ver-string" placeholder="e.g. 1.1.0" value={versionString} onChange={(e) => setVersionString(e.target.value)} autoFocus />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="ver-entry">Entry Class <span className="font-normal text-zinc-500">(optional)</span></Label>
+          <Input id="ver-entry" placeholder="e.g. MyCheck" value={versionEntry} onChange={(e) => setVersionEntry(e.target.value)} />
+        </div>
+      </div>
+      <div className="space-y-1.5">
+        <Label>Source Code (Python)</Label>
+        <CodeEditor value={versionCode} onChange={setVersionCode} height="calc(100vh - 300px)" />
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="ver-reqs">Requirements <span className="font-normal text-zinc-500">(one per line)</span></Label>
+        <textarea
+          id="ver-reqs"
+          value={versionReqs}
+          onChange={(e) => setVersionReqs(e.target.value)}
+          placeholder="requests>=2.28&#10;pyyaml"
+          rows={3}
+          className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 font-mono focus:outline-none focus:ring-2 focus:ring-brand-500 placeholder:text-zinc-600"
+        />
+      </div>
+      {versionError && <p className="text-sm text-red-400">{versionError}</p>}
+      <DialogFooter>
+        <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
+        <Button type="submit" disabled={isPending}>
+          {isPending && <Loader2 className="h-4 w-4 animate-spin" />} Create Version
+        </Button>
+      </DialogFooter>
+    </form>
   );
 }

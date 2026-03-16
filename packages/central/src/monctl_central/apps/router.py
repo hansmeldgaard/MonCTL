@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -209,6 +210,7 @@ class CreateVersionRequest(BaseModel):
     requirements: list[str] = Field(default_factory=list)
     entry_class: str | None = None
     set_latest: bool = False
+    display_template: dict | None = None
 
 
 # --- Assignment routes must be registered BEFORE /{app_id} to avoid path conflict ---
@@ -630,6 +632,7 @@ async def get_app_version(
             "checksum": version.checksum_sha256,
             "is_latest": version.is_latest,
             "published_at": version.published_at.isoformat() if version.published_at else None,
+            "display_template": version.display_template,
         },
     }
 
@@ -638,6 +641,7 @@ class UpdateVersionRequest(BaseModel):
     source_code: str | None = None
     requirements: list[str] | None = None
     entry_class: str | None = None
+    display_template: dict | None = None
 
 
 @router.put("/{app_id}/versions/{version_id}")
@@ -667,6 +671,8 @@ async def update_app_version(
         version.requirements = request.requirements
     if request.entry_class is not None:
         version.entry_class = request.entry_class
+    if request.display_template is not None:
+        version.display_template = request.display_template
 
     await db.flush()
     return {
@@ -743,6 +749,7 @@ async def create_app_version(
         entry_class=request.entry_class,
         checksum_sha256=checksum,
         is_latest=should_be_latest,
+        display_template=request.display_template,
     )
     db.add(version)
 
@@ -756,3 +763,88 @@ async def create_app_version(
         "status": "success",
         "data": {"id": str(version.id), "version": version.version, "checksum": checksum, "is_latest": version.is_latest},
     }
+
+
+@router.get("/{app_id}/config-keys")
+async def get_app_config_keys(
+    app_id: str,
+    version_id: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Return detected config_key values for a config app."""
+    app = await db.get(App, uuid.UUID(app_id))
+    if app is None:
+        raise HTTPException(status_code=404, detail="App not found")
+    if app.target_table != "config":
+        return {"status": "success", "data": {"source_code_keys": [], "clickhouse_keys": [], "all_keys": []}}
+
+    # 1. Parse source code
+    source_code_keys: list[str] = []
+    if version_id:
+        stmt = select(AppVersion).where(
+            AppVersion.id == uuid.UUID(version_id),
+            AppVersion.app_id == app.id,
+        )
+    else:
+        stmt = (
+            select(AppVersion)
+            .where(AppVersion.app_id == app.id, AppVersion.is_latest == True)  # noqa: E712
+            .limit(1)
+        )
+    version = (await db.execute(stmt)).scalar_one_or_none()
+
+    if version and version.source_code:
+        source_code_keys = _extract_config_keys_from_source(version.source_code)
+
+    # 2. ClickHouse lookup (supplement)
+    clickhouse_keys: list[str] = []
+    try:
+        from monctl_central.dependencies import get_clickhouse
+
+        ch = get_clickhouse()
+        rows = ch._get_client().query(
+            "SELECT DISTINCT config_key FROM config WHERE app_id = %(app_id)s ORDER BY config_key",
+            parameters={"app_id": str(app_id)},
+        )
+        clickhouse_keys = [row[0] for row in rows.result_rows if row[0]]
+    except Exception:
+        pass
+
+    return {
+        "status": "success",
+        "data": {
+            "source_code_keys": source_code_keys,
+            "clickhouse_keys": clickhouse_keys,
+            "all_keys": sorted(set(source_code_keys + clickhouse_keys)),
+        },
+    }
+
+
+def _extract_config_keys_from_source(source_code: str) -> list[str]:
+    """Extract likely config_key string values from Python source code."""
+    keys: set[str] = set()
+
+    # Pattern 1: config_key="some_key" or config_key='some_key'
+    for m in re.finditer(r'config_key\s*[=:]\s*["\']([a-zA-Z_][a-zA-Z0-9_.-]*)["\']', source_code):
+        keys.add(m.group(1))
+
+    # Pattern 2: "config_key": "some_key" (dict literal)
+    for m in re.finditer(
+        r'["\']config_key["\']\s*:\s*["\']([a-zA-Z_][a-zA-Z0-9_.-]*)["\']', source_code
+    ):
+        keys.add(m.group(1))
+
+    # Pattern 3: String arrays that may be key lists
+    for m in re.finditer(
+        r'\[(["\'][a-zA-Z_][a-zA-Z0-9_."-]*["\']'
+        r'(?:\s*,\s*["\'][a-zA-Z_][a-zA-Z0-9_."-]*["\'])*)\]',
+        source_code,
+    ):
+        block = m.group(1)
+        for s in re.finditer(r'["\']([a-zA-Z_][a-zA-Z0-9_.-]*)["\']', block):
+            candidate = s.group(1)
+            if "_" in candidate or len(candidate) > 4:
+                keys.add(candidate)
+
+    return sorted(keys)

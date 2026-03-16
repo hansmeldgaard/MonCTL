@@ -8,6 +8,7 @@ import type {
   Assignment,
   Collector,
   CollectorGroup,
+  ConfigKeysResponse,
   Credential,
   CredentialDetail,
   CredentialKey,
@@ -16,6 +17,7 @@ import type {
   Device,
   DeviceAssignment,
   DeviceListParams,
+  DisplayTemplate,
   DeviceResults,
   DeviceType,
   HealthStatus,
@@ -74,6 +76,19 @@ export function useDeviceResults(deviceId: string | undefined) {
   return useQuery({
     queryKey: ["device-results", deviceId],
     queryFn: () => apiGet<DeviceResults>(`/results/by-device/${deviceId}`),
+    select: (res) => res.data,
+    enabled: !!deviceId,
+    refetchInterval: POLL_DETAIL,
+  });
+}
+
+// ── Device Config Data (from config table) ──────────────
+
+export function useDeviceConfigData(deviceId: string | undefined) {
+  return useQuery({
+    queryKey: ["device-config-data", deviceId],
+    queryFn: () =>
+      apiGet<Record<string, unknown>[]>(`/results?table=config&device_id=${deviceId}&limit=1000`),
     select: (res) => res.data,
     enabled: !!deviceId,
     refetchInterval: POLL_DETAIL,
@@ -1107,7 +1122,7 @@ export function useCreateAppVersion() {
   return useMutation({
     mutationFn: ({ appId, data }: {
       appId: string;
-      data: { version: string; source_code: string; requirements?: string[]; entry_class?: string };
+      data: { version: string; source_code: string; requirements?: string[]; entry_class?: string; display_template?: DisplayTemplate };
     }) => apiPost<{ id: string }>(`/apps/${appId}/versions`, data),
     onSuccess: (_res, { appId }) => {
       qc.invalidateQueries({ queryKey: ["app-detail", appId] });
@@ -1133,7 +1148,7 @@ export function useUpdateAppVersion() {
     mutationFn: ({ appId, versionId, data }: {
       appId: string;
       versionId: string;
-      data: { source_code?: string; requirements?: string[]; entry_class?: string };
+      data: { source_code?: string; requirements?: string[]; entry_class?: string; display_template?: DisplayTemplate | null };
     }) => apiPut<{ id: string }>(`/apps/${appId}/versions/${versionId}`, data),
     onSuccess: (_res, { appId }) => {
       qc.invalidateQueries({ queryKey: ["app-detail", appId] });
@@ -1150,6 +1165,18 @@ export function useDeleteAppVersion() {
       qc.invalidateQueries({ queryKey: ["app-detail", appId] });
       qc.invalidateQueries({ queryKey: ["apps"] });
     },
+  });
+}
+
+export function useAppConfigKeys(appId: string | undefined, versionId?: string) {
+  return useQuery({
+    queryKey: ["app-config-keys", appId, versionId],
+    queryFn: () => {
+      const params = versionId ? `?version_id=${versionId}` : "";
+      return apiGet<ConfigKeysResponse>(`/apps/${appId}/config-keys${params}`);
+    },
+    select: (res) => res.data,
+    enabled: !!appId,
   });
 }
 
