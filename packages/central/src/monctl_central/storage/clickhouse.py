@@ -761,12 +761,29 @@ class ClickHouseClient:
         data = [[r.get(col) for col in _PERF_INSERT_COLUMNS] for r in results]
         client.insert("performance", data, column_names=_PERF_INSERT_COLUMNS)
 
+    # Columns that must never be None (ClickHouse UInt/Float, no Nullable)
+    _IFACE_NUMERIC_DEFAULTS: dict[str, int | float] = {
+        "if_index": 0, "if_speed_mbps": 0,
+        "in_octets": 0, "out_octets": 0,
+        "in_errors": 0, "out_errors": 0,
+        "in_discards": 0, "out_discards": 0,
+        "in_unicast_pkts": 0, "out_unicast_pkts": 0,
+        "in_rate_bps": 0.0, "out_rate_bps": 0.0,
+        "in_utilization_pct": 0.0, "out_utilization_pct": 0.0,
+        "poll_interval_sec": 0, "state": 0,
+    }
+
     def insert_interface(self, results: list[dict]) -> None:
         """Batch insert interface results."""
         if not results:
             return
         client = self._get_client()
-        data = [[r.get(col) for col in _IFACE_INSERT_COLUMNS] for r in results]
+        nd = self._IFACE_NUMERIC_DEFAULTS
+        data = [
+            [r.get(col) if r.get(col) is not None else nd.get(col, r.get(col))
+             for col in _IFACE_INSERT_COLUMNS]
+            for r in results
+        ]
         client.insert("interface", data, column_names=_IFACE_INSERT_COLUMNS)
 
     def insert_config(self, results: list[dict]) -> None:
@@ -903,10 +920,10 @@ class ClickHouseClient:
             params["tenant_id"] = tenant_id
         if from_ts:
             wheres.append("executed_at >= {from_ts:DateTime64(3)}")
-            params["from_ts"] = from_ts
+            params["from_ts"] = from_ts.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] if hasattr(from_ts, "strftime") else str(from_ts)
         if to_ts:
             wheres.append("executed_at <= {to_ts:DateTime64(3)}")
-            params["to_ts"] = to_ts
+            params["to_ts"] = to_ts.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] if hasattr(to_ts, "strftime") else str(to_ts)
 
         if wheres:
             sql += " WHERE " + " AND ".join(wheres)

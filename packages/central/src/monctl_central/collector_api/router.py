@@ -135,7 +135,7 @@ def _weighted_job_owner(
     return ring_nodes[idx]
 
 
-_CRED_REF_RE = re.compile(r"\$credential:([^\"}\s]+)")
+_CRED_REF_RE = re.compile(r"\$credential:([^\"}]+)")
 
 
 def _extract_credential_names(config: dict) -> list[str]:
@@ -749,6 +749,11 @@ async def submit_results(
         started_at_dt = datetime.fromtimestamp(r.started_at, tz=timezone.utc) if r.started_at else executed_at
 
         # Interface-table apps: unpack interface_rows into one CH row per interface
+        # If interface_rows is empty/None (e.g. SNMP timeout), fall through to
+        # availability_latency so the error/status is still recorded.
+        if target_table == "interface" and not r.interface_rows:
+            target_table = "availability_latency"
+
         if target_table == "interface" and r.interface_rows:
             from monctl_central.cache import get_previous_counters, cache_current_counters
 

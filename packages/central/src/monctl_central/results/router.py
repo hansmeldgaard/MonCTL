@@ -309,10 +309,12 @@ async def device_interfaces(
 
         if from_ts:
             sql += f" AND {time_col} >= {{from_ts:DateTime64}}"
-            params["from_ts"] = from_ts.replace("Z", "+00:00")
+            from_dt = datetime.fromisoformat(from_ts.replace("Z", "+00:00"))
+            params["from_ts"] = from_dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         if to_ts:
             sql += f" AND {time_col} <= {{to_ts:DateTime64}}"
-            params["to_ts"] = to_ts.replace("Z", "+00:00")
+            to_dt = datetime.fromisoformat(to_ts.replace("Z", "+00:00"))
+            params["to_ts"] = to_dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         # Prefer interface_id over if_index when both provided
         if interface_id is not None:
             sql += " AND interface_id = {interface_id:UUID}"

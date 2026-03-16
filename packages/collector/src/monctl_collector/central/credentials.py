@@ -72,7 +72,11 @@ class CredentialManager:
 
         if row is not None and row["refresh_after"] > now + _REFRESH_MARGIN:
             # Fresh enough — decrypt and return
-            return self._decrypt(row["encrypted_data"])
+            try:
+                return self._decrypt(row["encrypted_data"])
+            except Exception:
+                # Encryption key changed (e.g. container restart) — force refresh
+                logger.info("credential_rekey_needed", name=credential_name)
 
         # Need to refresh
         try:
@@ -89,8 +93,11 @@ class CredentialManager:
             )
             # Fall back to cached copy (even if stale)
             if row is not None:
-                logger.info("credential_using_stale_cache", name=credential_name)
-                return self._decrypt(row["encrypted_data"])
+                try:
+                    logger.info("credential_using_stale_cache", name=credential_name)
+                    return self._decrypt(row["encrypted_data"])
+                except Exception:
+                    logger.warning("credential_decrypt_failed", name=credential_name)
             return {}
 
     async def refresh_all(self, credential_names: set[str]) -> None:

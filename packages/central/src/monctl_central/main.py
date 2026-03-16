@@ -190,8 +190,8 @@ from monctl_collector.jobs.models import PollContext, PollResult
 
 def _build_v3_auth(cred: dict):
     """Build UsmUserData from credential dict for SNMPv3."""
-    from pysnmp.hlapi.v3arch.asyncio import UsmUserData
-    import pysnmp.hlapi.v3arch.asyncio as hlapi
+    from pysnmp.hlapi.asyncio import UsmUserData
+    import pysnmp.hlapi.asyncio as hlapi
 
     username = cred.get("username", "")
     security_level = cred.get("security_level", "authPriv").lower()
@@ -241,9 +241,9 @@ class Poller(BasePoller):
         start = time.time()
 
         try:
-            from pysnmp.hlapi.v3arch.asyncio import (
+            from pysnmp.hlapi.asyncio import (
                 CommunityData, ContextData, ObjectIdentity, ObjectType,
-                SnmpEngine, UdpTransportTarget, get_cmd,
+                SnmpEngine, UdpTransportTarget, getCmd,
             )
 
             engine = SnmpEngine()
@@ -255,11 +255,11 @@ class Poller(BasePoller):
                     mpModel=0 if snmp_version == "1" else 1,
                 )
 
-            transport = await UdpTransportTarget.create(
+            transport = UdpTransportTarget(
                 (host, snmp_port), timeout=timeout, retries=1,
             )
 
-            error_indication, error_status, error_index, var_binds = await get_cmd(
+            error_indication, error_status, error_index, var_binds = await getCmd(
                 engine, auth_data, transport, ContextData(),
                 ObjectType(ObjectIdentity(oid)),
             )
@@ -326,7 +326,7 @@ class Poller(BasePoller):
                 config_data=None,
                 status="critical",
                 reachable=False,
-                error_message="pysnmp not installed — add pysnmp-lextudio>=6.0 to app requirements",
+                error_message="pysnmp not installed — add pysnmp>=6.0 to app requirements",
                 execution_time_ms=execution_ms,
             )
         except Exception as exc:
@@ -383,8 +383,8 @@ class Poller(BasePoller):
     @staticmethod
     def _build_auth(cred: dict):
         """Build pysnmp auth object from credential data. Supports v1, v2c, and v3."""
-        from pysnmp.hlapi.v3arch.asyncio import CommunityData, UsmUserData
-        import pysnmp.hlapi.v3arch.asyncio as hlapi
+        from pysnmp.hlapi.asyncio import CommunityData, UsmUserData
+        import pysnmp.hlapi.asyncio as hlapi
 
         version = str(cred.get("version", "2c")).lower()
 
@@ -438,15 +438,15 @@ class Poller(BasePoller):
         start = time.time()
 
         try:
-            from pysnmp.hlapi.v3arch.asyncio import (
+            from pysnmp.hlapi.asyncio import (
                 CommunityData, ContextData, ObjectIdentity, ObjectType,
-                SnmpEngine, UdpTransportTarget, UsmUserData, bulk_walk_cmd,
+                SnmpEngine, UdpTransportTarget, UsmUserData, bulkWalkCmd,
             )
 
             engine = SnmpEngine()
             auth_data = self._build_auth(context.credential)
             port = int(context.credential.get("port", 161))
-            transport = await UdpTransportTarget.create((host, port), timeout=timeout, retries=1)
+            transport = UdpTransportTarget((host, port), timeout=timeout, retries=1)
 
             # Walk all needed OIDs
             raw: dict[str, dict[int, str | int]] = {}
@@ -455,7 +455,7 @@ class Poller(BasePoller):
             for oid_name, oid_str in all_oids:
                 raw[oid_name] = {}
                 objects = []
-                async for err_indication, err_status, err_index, var_binds in bulk_walk_cmd(
+                async for err_indication, err_status, err_index, var_binds in bulkWalkCmd(
                     engine, auth_data, transport, ContextData(),
                     0, 25,
                     ObjectType(ObjectIdentity(oid_str)),
@@ -562,7 +562,7 @@ class Poller(BasePoller):
                 "port": {"type": "integer", "title": "Port", "default": 443, "minimum": 1, "maximum": 65535},
             },
         }),
-        ("snmp_check", "SNMP check (v1/v2c/v3)", snmp_check_code, "Poller", ["pysnmp-lextudio>=6.0"], {
+        ("snmp_check", "SNMP check (v1/v2c/v3)", snmp_check_code, "Poller", ["pysnmp>=6.0"], {
             "type": "object",
             "properties": {
                 "snmp_credential": {"type": "string", "title": "SNMP Credential", "x-widget": "credential"},
@@ -571,7 +571,7 @@ class Poller(BasePoller):
             },
         }),
         ("snmp_interface_poller", "SNMP interface poller (ifTable/ifXTable)", snmp_interface_code, "Poller",
-         ["pysnmp-lextudio>=6.0"], {
+         ["pysnmp>=6.0"], {
             "type": "object",
             "properties": {
                 "snmp_credential": {"type": "string", "title": "SNMP Credential", "x-widget": "credential"},
@@ -686,18 +686,22 @@ async def lifespan(app: FastAPI):
                     # Update existing app: backfill config_schema if missing
                     if existing_app.config_schema is None and config_schema:
                         existing_app.config_schema = config_schema
-                    # Update existing app version if source_code is missing
+                    # Always sync target_table from seed definition
+                    if existing_app.target_table != target_table:
+                        existing_app.target_table = target_table
+                    # Always sync source_code, entry_class, requirements for built-in apps
                     from sqlalchemy.orm import selectinload
                     stmt = select(App).options(selectinload(App.versions)).where(App.name == app_name)
                     app_row = (await session.execute(stmt)).scalar_one_or_none()
                     if app_row and app_row.versions:
+                        import hashlib as _hl
                         v = app_row.versions[0]
-                        if not v.source_code:
-                            import hashlib as _hl
+                        new_checksum = _hl.sha256(source_code.encode()).hexdigest()
+                        if v.checksum_sha256 != new_checksum:
                             v.source_code = source_code
                             v.entry_class = entry_class
                             v.requirements = requirements
-                            v.checksum_sha256 = _hl.sha256(source_code.encode()).hexdigest()
+                            v.checksum_sha256 = new_checksum
             await session.commit()
             logger.info("default_apps_seeded")
 

@@ -1315,12 +1315,16 @@ function SchemaConfigFields({
 
         // Credential selector
         if (widget === "credential") {
+          // Strip "$credential:" prefix for display — stored as "$credential:name"
+          const credName = typeof currentVal === "string" && currentVal.startsWith("$credential:")
+            ? currentVal.slice("$credential:".length)
+            : String(currentVal);
           return (
             <div key={key} className="space-y-1">
               <span className="text-xs text-zinc-400">{title}</span>
               <Select
                 id={`${prefix}-${key}`}
-                value={String(currentVal)}
+                value={credName}
                 onChange={(e) => setField(key, e.target.value ? `$credential:${e.target.value}` : "")}
                 disabled={disabled}
               >

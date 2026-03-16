@@ -55,9 +55,7 @@ CREATE TABLE IF NOT EXISTS job_profiles (
     execution_count     INTEGER DEFAULT 0,
     error_count         INTEGER DEFAULT 0,
     last_run            REAL DEFAULT 0.0,
-    is_heavy            INTEGER DEFAULT 0,
-    stolen_from         TEXT,
-    steal_cooldown_until REAL DEFAULT 0.0
+    is_heavy            INTEGER DEFAULT 0
 );
 
 -- 4. Apps — permanent, versioned
@@ -292,8 +290,8 @@ class LocalCache:
         await self._db.execute(
             """INSERT INTO job_profiles
                (job_id, avg_execution_time, last_execution_time, max_execution_time,
-                execution_count, error_count, last_run, is_heavy, stolen_from, steal_cooldown_until)
-               VALUES (?,?,?,?,?,?,?,?,?,?)
+                execution_count, error_count, last_run, is_heavy)
+               VALUES (?,?,?,?,?,?,?,?)
                ON CONFLICT(job_id) DO UPDATE SET
                  avg_execution_time=excluded.avg_execution_time,
                  last_execution_time=excluded.last_execution_time,
@@ -301,13 +299,11 @@ class LocalCache:
                  execution_count=excluded.execution_count,
                  error_count=excluded.error_count,
                  last_run=excluded.last_run,
-                 is_heavy=excluded.is_heavy,
-                 stolen_from=excluded.stolen_from,
-                 steal_cooldown_until=excluded.steal_cooldown_until""",
+                 is_heavy=excluded.is_heavy""",
             (
                 p.job_id, p.avg_execution_time, p.last_execution_time,
                 p.max_execution_time, p.execution_count, p.error_count,
-                p.last_run, int(p.is_heavy), p.stolen_from, p.steal_cooldown_until,
+                p.last_run, int(p.is_heavy),
             ),
         )
         await self._db.commit()
