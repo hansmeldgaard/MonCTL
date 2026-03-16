@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { AppWindow, Loader2, Plus, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
@@ -23,12 +23,14 @@ export function AppsPage() {
   const { data: apps, isLoading } = useApps();
   const createApp = useCreateApp();
   const deleteApp = useDeleteApp();
+  const navigate = useNavigate();
 
   const [addOpen, setAddOpen] = useState(false);
   const [addName, setAddName] = useState("");
   const [addDesc, setAddDesc] = useState("");
   const [addType, setAddType] = useState("script");
   const [addTargetTable, setAddTargetTable] = useState("availability_latency");
+  const [addConfigSchema, setAddConfigSchema] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
 
   const [deleteTarget, setDeleteTarget] = useState<AppSummary | null>(null);
@@ -38,14 +40,24 @@ export function AppsPage() {
     e.preventDefault();
     setAddError(null);
     if (!addName.trim()) { setAddError("Name is required."); return; }
+    let parsedSchema: Record<string, unknown> | undefined;
+    if (addConfigSchema.trim()) {
+      try {
+        parsedSchema = JSON.parse(addConfigSchema.trim());
+      } catch {
+        setAddError("Config Schema is not valid JSON."); return;
+      }
+    }
     try {
-      await createApp.mutateAsync({
+      const result = await createApp.mutateAsync({
         name: addName.trim(),
         description: addDesc.trim() || undefined,
         app_type: addType,
         target_table: addTargetTable,
+        config_schema: parsedSchema,
       });
-      setAddName(""); setAddDesc(""); setAddType("script"); setAddTargetTable("availability_latency"); setAddOpen(false);
+      setAddName(""); setAddDesc(""); setAddType("script"); setAddTargetTable("availability_latency"); setAddConfigSchema(""); setAddOpen(false);
+      if (result.data?.id) navigate(`/apps/${result.data.id}`);
     } catch (err) {
       setAddError(err instanceof Error ? err.message : "Failed to create app");
     }
@@ -79,7 +91,7 @@ export function AppsPage() {
             Manage monitoring apps and their versions.
           </p>
         </div>
-        <Button size="sm" onClick={() => { setAddName(""); setAddDesc(""); setAddType("script"); setAddTargetTable("availability_latency"); setAddError(null); setAddOpen(true); }} className="gap-1.5">
+        <Button size="sm" onClick={() => { setAddName(""); setAddDesc(""); setAddType("script"); setAddTargetTable("availability_latency"); setAddConfigSchema(""); setAddError(null); setAddOpen(true); }} className="gap-1.5">
           <Plus className="h-4 w-4" />
           New App
         </Button>
@@ -177,6 +189,17 @@ export function AppsPage() {
           <div className="space-y-1.5">
             <Label htmlFor="app-desc">Description <span className="font-normal text-zinc-500">(optional)</span></Label>
             <Input id="app-desc" value={addDesc} onChange={(e) => setAddDesc(e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="app-schema">Config Schema <span className="font-normal text-zinc-500">(JSON, optional)</span></Label>
+            <textarea
+              id="app-schema"
+              value={addConfigSchema}
+              onChange={(e) => setAddConfigSchema(e.target.value)}
+              placeholder='{"type": "object", "properties": { ... }}'
+              rows={5}
+              className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 font-mono focus:outline-none focus:ring-2 focus:ring-brand-500 placeholder:text-zinc-600"
+            />
           </div>
           {addError && <p className="text-sm text-red-400">{addError}</p>}
           <DialogFooter>

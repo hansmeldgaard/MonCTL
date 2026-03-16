@@ -56,6 +56,7 @@ export function AppDetailPage() {
   const [editOpen, setEditOpen] = useState(false);
   const [editName, setEditName] = useState("");
   const [editDesc, setEditDesc] = useState("");
+  const [editConfigSchema, setEditConfigSchema] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
 
   // New version state
@@ -91,8 +92,16 @@ export function AppDetailPage() {
     e.preventDefault();
     if (!id) return;
     setEditError(null);
+    let parsedSchema: Record<string, unknown> | undefined;
+    if (editConfigSchema.trim()) {
+      try {
+        parsedSchema = JSON.parse(editConfigSchema.trim());
+      } catch {
+        setEditError("Config Schema is not valid JSON."); return;
+      }
+    }
     try {
-      await updateApp.mutateAsync({ id, data: { name: editName.trim(), description: editDesc.trim() } });
+      await updateApp.mutateAsync({ id, data: { name: editName.trim(), description: editDesc.trim(), config_schema: parsedSchema ?? {} } });
       setEditOpen(false);
     } catch (err) {
       setEditError(err instanceof Error ? err.message : "Failed to update");
@@ -238,7 +247,7 @@ export function AppDetailPage() {
           <h2 className="text-xl font-semibold text-zinc-100">{app.name}</h2>
           <Badge variant="info">{app.app_type}</Badge>
           <button
-            onClick={() => { setEditName(app.name); setEditDesc(app.description ?? ""); setEditError(null); setEditOpen(true); }}
+            onClick={() => { setEditName(app.name); setEditDesc(app.description ?? ""); setEditConfigSchema(app.config_schema ? JSON.stringify(app.config_schema, null, 2) : ""); setEditError(null); setEditOpen(true); }}
             className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer"
             title="Edit"
           >
@@ -393,6 +402,17 @@ export function AppDetailPage() {
           <div className="space-y-1.5">
             <Label htmlFor="app-edit-desc">Description</Label>
             <Input id="app-edit-desc" value={editDesc} onChange={(e) => setEditDesc(e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="app-edit-schema">Config Schema <span className="font-normal text-zinc-500">(JSON, optional)</span></Label>
+            <textarea
+              id="app-edit-schema"
+              value={editConfigSchema}
+              onChange={(e) => setEditConfigSchema(e.target.value)}
+              placeholder='{"type": "object", "properties": { ... }}'
+              rows={6}
+              className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 font-mono focus:outline-none focus:ring-2 focus:ring-brand-500 placeholder:text-zinc-600"
+            />
           </div>
           {editError && <p className="text-sm text-red-400">{editError}</p>}
           <DialogFooter>
