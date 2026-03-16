@@ -16,7 +16,14 @@ from monctl_common.utils import utc_now
 router = APIRouter()
 
 
-def _fmt_user(u: User) -> dict:
+def _fmt_user(u: User, role_name: str | None = None) -> dict:
+    # Try to get role_name from eagerly loaded relationship, fallback to explicit param
+    rn = role_name
+    if rn is None:
+        try:
+            rn = u.assigned_role.name if u.assigned_role else None
+        except Exception:
+            rn = None
     return {
         "id": str(u.id),
         "username": u.username,
@@ -24,7 +31,7 @@ def _fmt_user(u: User) -> dict:
         "email": u.email,
         "role": u.role,
         "role_id": str(u.role_id) if u.role_id else None,
-        "role_name": u.assigned_role.name if u.assigned_role else None,
+        "role_name": rn,
         "all_tenants": u.all_tenants,
         "is_active": u.is_active,
         "created_at": u.created_at.isoformat() if u.created_at else None,
@@ -132,6 +139,11 @@ async def create_user(
         user.role_id = uuid.UUID(request.role_id)
     db.add(user)
     await db.flush()
+    # Reload with relationship
+    from sqlalchemy.orm import selectinload
+    user = (await db.execute(
+        select(User).options(selectinload(User.assigned_role)).where(User.id == user.id)
+    )).scalar_one()
     return {"status": "success", "data": _fmt_user(user)}
 
 
@@ -193,6 +205,12 @@ async def update_user(
     if request.timezone is not None:
         user.timezone = request.timezone
     user.updated_at = utc_now()
+    await db.flush()
+    # Reload with relationship
+    from sqlalchemy.orm import selectinload
+    user = (await db.execute(
+        select(User).options(selectinload(User.assigned_role)).where(User.id == uuid.UUID(user_id))
+    )).scalar_one()
 
     return {"status": "success", "data": _fmt_user(user)}
 
