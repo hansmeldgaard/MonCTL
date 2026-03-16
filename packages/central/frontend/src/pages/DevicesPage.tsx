@@ -25,7 +25,7 @@ import {
   TableRow,
 } from "@/components/ui/table.tsx";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
-import { useDevices, useLatestResults, useBulkDeleteDevices } from "@/api/hooks.ts";
+import { useDevices, useLatestResults, useBulkDeleteDevices, useLabelKeys } from "@/api/hooks.ts";
 import { AddDeviceDialog } from "@/components/AddDeviceDialog.tsx";
 
 export function DevicesPage() {
@@ -102,6 +102,8 @@ export function DevicesPage() {
 
   // ── Latest results for status dots ──────────────────────
   const { data: latestResults } = useLatestResults();
+  const { data: labelKeys } = useLabelKeys();
+  const labelColorMap = new Map((labelKeys ?? []).map((lk) => [lk.key, lk.color]));
 
   // Build status maps
   const availReachability = new Map<string, boolean>();
@@ -524,15 +526,19 @@ export function DevicesPage() {
                           {/* Labels */}
                           <TableCell>
                             <div className="flex flex-wrap gap-1">
-                              {shownLabels.map(([k, v]) => (
-                                <Badge
-                                  key={k}
-                                  variant="default"
-                                  className="text-xs"
-                                >
-                                  {k}: {v}
-                                </Badge>
-                              ))}
+                              {shownLabels.map(([k, v]) => {
+                                const lColor = labelColorMap.get(k);
+                                return (
+                                  <Badge
+                                    key={k}
+                                    variant="default"
+                                    className="text-xs"
+                                    style={lColor ? { backgroundColor: `${lColor}20`, color: lColor, borderColor: `${lColor}40` } : undefined}
+                                  >
+                                    {k}: {v}
+                                  </Badge>
+                                );
+                              })}
                               {extraLabelCount > 0 && (
                                 <Badge
                                   variant="default"

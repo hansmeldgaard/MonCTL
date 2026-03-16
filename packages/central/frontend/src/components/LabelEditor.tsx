@@ -61,17 +61,25 @@ export function LabelEditor({ labels, onChange, disabled }: LabelEditorProps) {
             const displayKey = keyDef?.show_description && keyDef?.description
               ? keyDef.description
               : key;
+            const lColor = keyDef?.color;
             return (
-              <div key={key} className="flex items-center gap-2 px-3 py-2">
-                <span className="text-xs font-mono text-zinc-300 flex-1">
+              <div
+                key={key}
+                className="flex items-center gap-2 px-3 py-2 rounded-md"
+                style={lColor ? { backgroundColor: `${lColor}10` } : undefined}
+              >
+                <span
+                  className="text-xs font-mono flex-1 inline-flex items-center gap-1.5"
+                  style={lColor ? { color: lColor } : undefined}
+                >
                   <span
-                    className="text-zinc-400"
+                    className={lColor ? "font-medium" : "text-zinc-400"}
                     title={keyDef?.description ? `${keyDef.description} (${key})` : key}
                   >
                     {displayKey}
                   </span>
-                  <span className="text-zinc-600 mx-1">=</span>
-                  <span className="text-zinc-200">{val}</span>
+                  <span className="text-zinc-600">=</span>
+                  <span className={lColor ? "text-zinc-200" : "text-zinc-200"}>{val}</span>
                 </span>
                 {!disabled && (
                   <button

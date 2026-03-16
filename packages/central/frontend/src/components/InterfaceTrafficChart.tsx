@@ -22,23 +22,27 @@ function formatBpsShort(bps: number): string {
   return `${bps.toFixed(0)}`;
 }
 
+function formatTimeLabel(ts: number, timezone: string): string {
+  return new Date(ts).toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: timezone,
+  });
+}
+
 export function InterfaceTrafficChart({ data, timezone = "UTC" }: Props) {
   const reversed = [...data].reverse();
 
   // Check if pre-calculated rates exist
   const hasRates = reversed.some((r) => r.in_rate_bps > 0 || r.out_rate_bps > 0);
 
-  // Build chart data — if no pre-calculated rates, compute deltas from counters
-  let chartData: { time: string; in_bps: number; out_bps: number }[];
+  // Build chart data with numeric timestamps for proper time-based axis
+  let chartData: { ts: number; in_bps: number; out_bps: number }[];
 
   if (hasRates) {
     chartData = reversed.map((r) => ({
-      time: new Date(r.executed_at).toLocaleTimeString("en-US", {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-        timeZone: timezone,
-      }),
+      ts: new Date(r.executed_at).getTime(),
       in_bps: r.in_rate_bps,
       out_bps: r.out_rate_bps,
     }));
@@ -59,12 +63,7 @@ export function InterfaceTrafficChart({ data, timezone = "UTC" }: Props) {
       if (outDelta < 0) outDelta += 2 ** 32;
 
       chartData.push({
-        time: new Date(curr.executed_at).toLocaleTimeString("en-US", {
-          hour: "2-digit",
-          minute: "2-digit",
-          hour12: false,
-          timeZone: timezone,
-        }),
+        ts: new Date(curr.executed_at).getTime(),
         in_bps: (inDelta * 8) / dtSec,
         out_bps: (outDelta * 8) / dtSec,
       });
@@ -79,11 +78,22 @@ export function InterfaceTrafficChart({ data, timezone = "UTC" }: Props) {
     );
   }
 
+  // Compute domain from actual data range
+  const minTs = chartData[0].ts;
+  const maxTs = chartData[chartData.length - 1].ts;
+
   return (
     <ResponsiveContainer width="100%" height={250}>
       <AreaChart data={chartData} throttleDelay={0}>
         <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-        <XAxis dataKey="time" tick={{ fill: "#71717a", fontSize: 11 }} />
+        <XAxis
+          dataKey="ts"
+          type="number"
+          scale="time"
+          domain={[minTs, maxTs]}
+          tick={{ fill: "#71717a", fontSize: 11 }}
+          tickFormatter={(ts) => formatTimeLabel(ts, timezone)}
+        />
         <YAxis tick={{ fill: "#71717a", fontSize: 11 }} tickFormatter={formatBpsShort} />
         <Tooltip
           contentStyle={{
@@ -92,6 +102,7 @@ export function InterfaceTrafficChart({ data, timezone = "UTC" }: Props) {
             borderRadius: "0.5rem",
             fontSize: "0.75rem",
           }}
+          labelFormatter={(ts) => formatTimeLabel(Number(ts), timezone)}
           formatter={(value, name) => [
             formatBpsShort(Number(value)),
             name === "in_bps" ? "Inbound" : "Outbound",
@@ -108,6 +119,7 @@ export function InterfaceTrafficChart({ data, timezone = "UTC" }: Props) {
           fillOpacity={0.15}
           strokeWidth={1.5}
           isAnimationActive={false}
+          connectNulls={false}
         />
         <Area
           type="monotone"
@@ -118,6 +130,7 @@ export function InterfaceTrafficChart({ data, timezone = "UTC" }: Props) {
           fillOpacity={0.15}
           strokeWidth={1.5}
           isAnimationActive={false}
+          connectNulls={false}
         />
       </AreaChart>
     </ResponsiveContainer>

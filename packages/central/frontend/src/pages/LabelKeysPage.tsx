@@ -14,6 +14,58 @@ import {
 } from "@/api/hooks.ts";
 import type { LabelKey } from "@/types/api.ts";
 
+const PRESET_COLORS = [
+  "#EF4444", "#F97316", "#F59E0B", "#EAB308",
+  "#84CC16", "#22C55E", "#14B8A6", "#06B6D4",
+  "#3B82F6", "#6366F1", "#8B5CF6", "#A855F7",
+  "#D946EF", "#EC4899", "#F43F5E", "#78716C",
+];
+
+function ColorPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-8 gap-1.5">
+        {PRESET_COLORS.map((c) => (
+          <button
+            key={c}
+            type="button"
+            onClick={() => onChange(c)}
+            className={`h-7 w-7 rounded-md border-2 cursor-pointer transition-transform hover:scale-110 ${
+              value.toLowerCase() === c.toLowerCase()
+                ? "border-white scale-110"
+                : "border-transparent"
+            }`}
+            style={{ backgroundColor: c }}
+          />
+        ))}
+      </div>
+      <div className="flex items-center gap-2">
+        <Input
+          placeholder="#3B82F6"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="text-xs flex-1 font-mono"
+        />
+        {value && (
+          <span
+            className="h-6 w-6 rounded-full border border-zinc-700 shrink-0"
+            style={{ backgroundColor: value }}
+          />
+        )}
+        {value && (
+          <button
+            type="button"
+            onClick={() => onChange("")}
+            className="text-zinc-500 hover:text-zinc-300 cursor-pointer"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function TagInput({ values, onChange }: { values: string[]; onChange: (v: string[]) => void }) {
   const [input, setInput] = useState("");
 
@@ -171,14 +223,21 @@ export function LabelKeysPage() {
                     <th className="pb-2 pr-4 font-medium">Key</th>
                     <th className="pb-2 pr-4 font-medium">Display Name</th>
                     <th className="pb-2 pr-4 font-medium">Predefined Values</th>
-                    <th className="pb-2 pr-4 font-medium">Color</th>
                     <th className="pb-2 font-medium text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-800/50">
                   {labelKeys.map((lk) => (
                     <tr key={lk.id} className="text-zinc-300">
-                      <td className="py-2.5 pr-4 font-mono text-xs">{lk.key}</td>
+                      <td className="py-2.5 pr-4 text-xs">
+                        <Badge
+                          variant="default"
+                          className="text-xs font-mono"
+                          style={lk.color ? { backgroundColor: `${lk.color}20`, color: lk.color, borderColor: `${lk.color}40` } : undefined}
+                        >
+                          {lk.key}
+                        </Badge>
+                      </td>
                       <td className="py-2.5 pr-4 text-xs">
                         {lk.show_description && lk.description ? (
                           <span>{lk.description}</span>
@@ -200,19 +259,6 @@ export function LabelKeysPage() {
                             <span className="text-zinc-600 text-xs">—</span>
                           )}
                         </div>
-                      </td>
-                      <td className="py-2.5 pr-4">
-                        {lk.color ? (
-                          <span className="inline-flex items-center gap-1.5 text-xs">
-                            <span
-                              className="h-3 w-3 rounded-full border border-zinc-700"
-                              style={{ backgroundColor: lk.color }}
-                            />
-                            {lk.color}
-                          </span>
-                        ) : (
-                          <span className="text-zinc-600 text-xs">—</span>
-                        )}
                       </td>
                       <td className="py-2.5 text-right">
                         <div className="flex items-center justify-end gap-1">
@@ -277,20 +323,7 @@ export function LabelKeysPage() {
           </div>
           <div className="space-y-1.5">
             <Label>Color</Label>
-            <div className="flex items-center gap-2">
-              <Input
-                placeholder="#3B82F6"
-                value={newColor}
-                onChange={(e) => setNewColor(e.target.value)}
-                className="text-xs flex-1"
-              />
-              {newColor && (
-                <span
-                  className="h-6 w-6 rounded-full border border-zinc-700"
-                  style={{ backgroundColor: newColor }}
-                />
-              )}
-            </div>
+            <ColorPicker value={newColor} onChange={setNewColor} />
           </div>
           <div className="space-y-1.5">
             <Label>Predefined Values</Label>
@@ -343,20 +376,7 @@ export function LabelKeysPage() {
           </div>
           <div className="space-y-1.5">
             <Label>Color</Label>
-            <div className="flex items-center gap-2">
-              <Input
-                placeholder="#3B82F6"
-                value={editColor}
-                onChange={(e) => setEditColor(e.target.value)}
-                className="text-xs flex-1"
-              />
-              {editColor && (
-                <span
-                  className="h-6 w-6 rounded-full border border-zinc-700"
-                  style={{ backgroundColor: editColor }}
-                />
-              )}
-            </div>
+            <ColorPicker value={editColor} onChange={setEditColor} />
           </div>
           <div className="space-y-1.5">
             <Label>Predefined Values</Label>
