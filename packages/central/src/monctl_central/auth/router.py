@@ -154,7 +154,10 @@ async def get_me(request: Request, db: AsyncSession = Depends(get_db)):
     role = payload["role"]
 
     # Load tenant info for the current user
-    user = await db.get(User, uuid.UUID(user_id))
+    from sqlalchemy.orm import selectinload
+    user = (await db.execute(
+        sa_select(User).options(selectinload(User.assigned_role)).where(User.id == uuid.UUID(user_id))
+    )).scalar_one_or_none()
     all_tenants = getattr(user, "all_tenants", False) if user else False
 
     if role == "admin" or all_tenants:
@@ -167,14 +170,24 @@ async def get_me(request: Request, db: AsyncSession = Depends(get_db)):
         )).scalars().all()
         tenant_ids = [str(t) for t in rows]
 
+    # Load permissions for non-admin users
+    permissions_list = None
+    if role != "admin" and user and user.role_id:
+        from monctl_central.dependencies import _load_user_permissions
+        perms = await _load_user_permissions(db, user_id)
+        permissions_list = list(perms)
+
     return {
         "status": "success",
         "data": {
             "user_id": user_id,
             "username": payload["username"],
             "role": role,
+            "role_id": str(user.role_id) if user and user.role_id else None,
+            "role_name": user.assigned_role.name if user and user.assigned_role else None,
             "timezone": user.timezone if user else "UTC",
             "all_tenants": all_tenants,
             "tenant_ids": tenant_ids,
+            "permissions": permissions_list,
         },
     }

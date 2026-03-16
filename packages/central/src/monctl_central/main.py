@@ -822,6 +822,41 @@ async def lifespan(app: FastAPI):
             await session.commit()
             logger.info("default_apps_seeded")
 
+    # ── Seed default RBAC roles ────────────────────────────────────────────
+    from monctl_central.storage.models import Role, RolePermission
+
+    async with factory() as session:
+        existing_role = (await session.execute(select(Role).limit(1))).scalar_one_or_none()
+        if existing_role is None:
+            viewer = Role(name="Viewer", description="Read-only access to all resources", is_system=True)
+            session.add(viewer)
+            await session.flush()
+            for res in ["device", "app", "assignment", "credential", "alert", "collector",
+                        "tenant", "user", "template", "settings", "result"]:
+                session.add(RolePermission(role_id=viewer.id, resource=res, action="view"))
+
+            operator = Role(
+                name="Operator",
+                description="Can view and edit devices, apps, and assignments",
+                is_system=True,
+            )
+            session.add(operator)
+            await session.flush()
+            for res, act in [
+                ("device", "view"), ("device", "create"), ("device", "edit"),
+                ("app", "view"), ("app", "create"), ("app", "edit"),
+                ("assignment", "view"), ("assignment", "create"), ("assignment", "edit"),
+                ("credential", "view"),
+                ("alert", "view"), ("alert", "create"), ("alert", "edit"),
+                ("collector", "view"),
+                ("template", "view"), ("template", "create"), ("template", "edit"),
+                ("result", "view"),
+            ]:
+                session.add(RolePermission(role_id=operator.id, resource=res, action=act))
+
+            await session.commit()
+            logger.info("default_roles_seeded")
+
     # ── ClickHouse schema init ─────────────────────────────────────────────
     from monctl_central.dependencies import get_clickhouse
 

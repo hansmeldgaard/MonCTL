@@ -216,6 +216,7 @@ async def _get_user_from_cookie(request: Request, db: AsyncSession) -> dict | No
             "role": role,
             "auth_type": "user",
             "tenant_ids": tenant_ids,
+            "role_id": str(user.role_id) if (role != "admin" and user and user.role_id) else None,
         }
     except Exception:
         return None
@@ -263,6 +264,68 @@ async def require_admin(auth: dict = Depends(require_auth)) -> dict:
             detail="Admin role required",
         )
     return auth
+
+
+async def _load_user_permissions(db: AsyncSession, user_id: str) -> set[str]:
+    """Load permissions for a user as a set of 'resource:action' strings."""
+    from monctl_central.cache import _redis
+
+    cache_key = f"user_perms:{user_id}"
+    if _redis:
+        cached = await _redis.get(cache_key)
+        if cached is not None:
+            import json
+            return set(json.loads(cached))
+
+    from sqlalchemy import select
+    from monctl_central.storage.models import User, RolePermission
+
+    user = await db.get(User, uuid.UUID(user_id))
+    if user is None or user.role_id is None:
+        return set()
+
+    rows = (await db.execute(
+        select(RolePermission.resource, RolePermission.action).where(
+            RolePermission.role_id == user.role_id
+        )
+    )).all()
+
+    perms = {f"{r.resource}:{r.action}" for r in rows}
+
+    if _redis:
+        import json
+        await _redis.set(cache_key, json.dumps(list(perms)), ex=300)
+
+    return perms
+
+
+def require_permission(resource: str, action: str):
+    """FastAPI dependency factory: require that the user has a specific permission.
+
+    Admins always pass. Non-admin users must have the permission in their role.
+    """
+    async def _check(
+        request: Request,
+        credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer_optional),
+        db: AsyncSession = Depends(get_db),
+    ) -> dict:
+        auth = await require_auth(request, credentials, db)
+
+        # Admins and API keys bypass permission checks
+        if auth.get("role") == "admin" or auth.get("auth_type") == "api_key":
+            return auth
+
+        perms = await _load_user_permissions(db, auth["user_id"])
+        if f"{resource}:{action}" not in perms:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Permission required: {resource}:{action}",
+            )
+
+        auth["permissions"] = perms
+        return auth
+
+    return _check
 
 
 async def require_collector_auth(

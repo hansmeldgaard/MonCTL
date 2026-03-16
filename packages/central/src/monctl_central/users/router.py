@@ -23,6 +23,8 @@ def _fmt_user(u: User) -> dict:
         "display_name": u.display_name,
         "email": u.email,
         "role": u.role,
+        "role_id": str(u.role_id) if u.role_id else None,
+        "role_name": u.assigned_role.name if u.assigned_role else None,
         "all_tenants": u.all_tenants,
         "is_active": u.is_active,
         "created_at": u.created_at.isoformat() if u.created_at else None,
@@ -34,7 +36,8 @@ def _fmt_user(u: User) -> dict:
 class CreateUserRequest(BaseModel):
     username: str = Field(min_length=2, max_length=150)
     password: str = Field(min_length=6)
-    role: str = Field(default="viewer", description="'admin' or 'viewer'")
+    role: str = Field(default="user", description="'admin' or 'user'")
+    role_id: str | None = None
     display_name: str | None = None
     email: str | None = None
     all_tenants: bool = False
@@ -42,6 +45,7 @@ class CreateUserRequest(BaseModel):
 
 class UpdateUserRequest(BaseModel):
     role: str | None = None
+    role_id: str | None = None
     display_name: str | None = None
     email: str | None = None
     all_tenants: bool | None = None
@@ -80,7 +84,10 @@ async def list_users(
     auth: dict = Depends(require_admin),
 ):
     """List all users (admin only)."""
-    users = (await db.execute(select(User).order_by(User.username))).scalars().all()
+    from sqlalchemy.orm import selectinload
+    users = (await db.execute(
+        select(User).options(selectinload(User.assigned_role)).order_by(User.username)
+    )).scalars().all()
     result = []
     for u in users:
         # Count tenant assignments
@@ -121,6 +128,8 @@ async def create_user(
         email=request.email,
         all_tenants=request.all_tenants,
     )
+    if request.role_id:
+        user.role_id = uuid.UUID(request.role_id)
     db.add(user)
     await db.flush()
     return {"status": "success", "data": _fmt_user(user)}
@@ -133,7 +142,10 @@ async def get_user(
     auth: dict = Depends(require_admin),
 ):
     """Get a user by ID including their tenant assignments (admin only)."""
-    user = await db.get(User, uuid.UUID(user_id))
+    from sqlalchemy.orm import selectinload
+    user = (await db.execute(
+        select(User).options(selectinload(User.assigned_role)).where(User.id == uuid.UUID(user_id))
+    )).scalar_one_or_none()
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
@@ -164,6 +176,12 @@ async def update_user(
 
     if request.role is not None:
         user.role = request.role
+    if request.role_id is not None:
+        user.role_id = uuid.UUID(request.role_id) if request.role_id else None
+        # Invalidate permission cache
+        from monctl_central.cache import _redis
+        if _redis:
+            await _redis.delete(f"user_perms:{user_id}")
     if request.display_name is not None:
         user.display_name = request.display_name
     if request.email is not None:

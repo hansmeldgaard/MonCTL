@@ -11,9 +11,12 @@ export interface AuthUser {
   user_id: string;
   username: string;
   role: string;
+  role_id?: string | null;
+  role_name?: string | null;
   timezone: string;
   all_tenants?: boolean;
   tenant_ids?: string[] | null; // null = unrestricted, [] = see nothing, [ids] = specific
+  permissions?: string[] | null; // null = admin (full access), ["resource:action", ...]
 }
 
 export interface LoginPayload {
@@ -351,11 +354,33 @@ export interface User {
   display_name: string | null;
   email: string | null;
   role: string;
+  role_id: string | null;
+  role_name: string | null;
   all_tenants: boolean;
   is_active: boolean;
   created_at: string;
   tenant_count?: number;
 }
+
+// ── Roles (RBAC) ─────────────────────────────────────────
+
+export interface Permission {
+  id: string;
+  resource: string;
+  action: string;
+}
+
+export interface Role {
+  id: string;
+  name: string;
+  description: string | null;
+  is_system: boolean;
+  permissions: Permission[];
+  created_at: string;
+  updated_at: string;
+}
+
+export type ResourceActions = Record<string, string[]>;
 
 export interface UserWithTenants extends User {
   tenants: { id: string; name: string }[];

@@ -24,7 +24,9 @@ import type {
   LabelKey,
   MonitoringConfig,
   RegistrationToken,
+  ResourceActions,
   ResultRecord,
+  Role,
   SnmpOid,
   SystemHealthReport,
   SystemSettings,
@@ -634,6 +636,7 @@ export function useCreateUser() {
       username: string;
       password: string;
       role: string;
+      role_id?: string;
       display_name?: string;
       email?: string;
       all_tenants?: boolean;
@@ -654,6 +657,7 @@ export function useUpdateUser() {
       id: string;
       data: Partial<{
         role: string;
+        role_id: string | null;
         display_name: string | null;
         email: string | null;
         all_tenants: boolean;
@@ -719,6 +723,69 @@ export function useRemoveTenantFromUser() {
       qc.invalidateQueries({ queryKey: ["user-tenants", userId] });
       qc.invalidateQueries({ queryKey: ["user", userId] });
       qc.invalidateQueries({ queryKey: ["users"] });
+    },
+  });
+}
+
+// ── Roles (RBAC) ────────────────────────────────────────
+
+export function useRoles() {
+  return useQuery({
+    queryKey: ["roles"],
+    queryFn: () => apiGet<Role[]>("/roles"),
+    select: (res) => res.data,
+    refetchInterval: POLL_LIST,
+  });
+}
+
+export function useRoleResources() {
+  return useQuery({
+    queryKey: ["role-resources"],
+    queryFn: () => apiGet<ResourceActions>("/roles/resources"),
+    select: (res) => res.data,
+  });
+}
+
+export function useCreateRole() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: {
+      name: string;
+      description?: string;
+      permissions: { resource: string; action: string }[];
+    }) => apiPost<Role>("/roles", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["roles"] });
+    },
+  });
+}
+
+export function useUpdateRole() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      data,
+    }: {
+      id: string;
+      data: {
+        name?: string;
+        description?: string;
+        permissions?: { resource: string; action: string }[];
+      };
+    }) => apiPut<Role>(`/roles/${id}`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["roles"] });
+    },
+  });
+}
+
+export function useDeleteRole() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/roles/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["roles"] });
     },
   });
 }

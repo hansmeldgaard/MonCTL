@@ -32,6 +32,7 @@ import {
   useAssignTenantToUser,
   useRemoveTenantFromUser,
   useTenants,
+  useRoles,
 } from "@/api/hooks.ts";
 import type { User } from "@/types/api.ts";
 import { useAuth } from "@/hooks/useAuth.tsx";
@@ -58,13 +59,15 @@ interface AddUserDialogProps {
 function AddUserDialog({ open, onClose }: AddUserDialogProps) {
   const createUser = useCreateUser();
   const { data: allTenantsList } = useTenants();
+  const { data: roles } = useRoles();
   const assignTenant = useAssignTenantToUser();
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState("viewer");
+  const [role, setRole] = useState("user");
+  const [roleId, setRoleId] = useState("");
   const [allTenants, setAllTenants] = useState(false);
   const [selectedTenantIds, setSelectedTenantIds] = useState<Set<string>>(new Set());
   const [formError, setFormError] = useState<string | null>(null);
@@ -74,7 +77,8 @@ function AddUserDialog({ open, onClose }: AddUserDialogProps) {
     setPassword("");
     setDisplayName("");
     setEmail("");
-    setRole("viewer");
+    setRole("user");
+    setRoleId("");
     setAllTenants(false);
     setSelectedTenantIds(new Set());
     setFormError(null);
@@ -112,6 +116,7 @@ function AddUserDialog({ open, onClose }: AddUserDialogProps) {
         username: username.trim(),
         password,
         role,
+        role_id: role !== "admin" && roleId ? roleId : undefined,
         display_name: displayName.trim() || undefined,
         email: email.trim() || undefined,
         all_tenants: allTenants,
@@ -184,13 +189,27 @@ function AddUserDialog({ open, onClose }: AddUserDialogProps) {
 
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">
-            <Label htmlFor="nu-role">Role</Label>
-            <Select id="nu-role" value={role} onChange={(e) => setRole(e.target.value)}>
-              <option value="viewer">viewer</option>
-              <option value="admin">admin</option>
+            <Label htmlFor="nu-role">User Type</Label>
+            <Select id="nu-role" value={role} onChange={(e) => { setRole(e.target.value); if (e.target.value === "admin") setRoleId(""); }}>
+              <option value="user">User</option>
+              <option value="admin">Admin</option>
             </Select>
           </div>
-          <div className="flex items-end pb-1">
+          {role !== "admin" && (
+            <div className="space-y-1.5">
+              <Label htmlFor="nu-role-id">Assigned Role</Label>
+              <Select id="nu-role-id" value={roleId} onChange={(e) => setRoleId(e.target.value)}>
+                <option value="">— No role —</option>
+                {(roles ?? []).map((r) => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
+                ))}
+              </Select>
+            </div>
+          )}
+        </div>
+
+        {role !== "admin" && (
+          <div className="flex items-center">
             <label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
@@ -201,7 +220,7 @@ function AddUserDialog({ open, onClose }: AddUserDialogProps) {
               <span className="text-sm text-zinc-300">All tenants</span>
             </label>
           </div>
-        </div>
+        )}
 
         {!allTenants && allTenantsList && allTenantsList.length > 0 && (
           <div className="space-y-1.5">
@@ -263,10 +282,12 @@ function EditUserDialog({ user, onClose }: EditUserDialogProps) {
   const updateUser = useUpdateUser();
   const { data: assignedTenants, isLoading: tenantsLoading } = useUserTenants(user?.id);
   const { data: allTenantsList } = useTenants();
+  const { data: roles } = useRoles();
   const assignTenant = useAssignTenantToUser();
   const removeTenant = useRemoveTenantFromUser();
 
-  const [role, setRole] = useState(user?.role ?? "viewer");
+  const [role, setRole] = useState(user?.role ?? "user");
+  const [roleId, setRoleId] = useState(user?.role_id ?? "");
   const [displayName, setDisplayName] = useState(user?.display_name ?? "");
   const [email, setEmail] = useState(user?.email ?? "");
   const [allTenants, setAllTenants] = useState(user?.all_tenants ?? false);
@@ -280,7 +301,8 @@ function EditUserDialog({ user, onClose }: EditUserDialogProps) {
   // Sync state when user prop changes (dialog re-opens for different user)
   useEffect(() => {
     if (user) {
-      setRole(user.role ?? "viewer");
+      setRole(user.role ?? "user");
+      setRoleId(user.role_id ?? "");
       setDisplayName(user.display_name ?? "");
       setEmail(user.email ?? "");
       setAllTenants(user.all_tenants ?? false);
@@ -298,6 +320,7 @@ function EditUserDialog({ user, onClose }: EditUserDialogProps) {
         id: userId,
         data: {
           role,
+          role_id: role !== "admin" ? (roleId || null) : null,
           display_name: displayName.trim() || null,
           email: email.trim() || null,
           all_tenants: allTenants,
@@ -363,14 +386,32 @@ function EditUserDialog({ user, onClose }: EditUserDialogProps) {
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label htmlFor="eu-role">Role</Label>
-              <Select id="eu-role" value={role} onChange={(e) => setRole(e.target.value)}>
-                <option value="viewer">viewer</option>
-                <option value="admin">admin</option>
+              <Label htmlFor="eu-role">User Type</Label>
+              <Select id="eu-role" value={role} onChange={(e) => { setRole(e.target.value); if (e.target.value === "admin") setRoleId(""); }}>
+                <option value="user">User</option>
+                <option value="admin">Admin</option>
               </Select>
             </div>
-            <div className="space-y-2 pt-1">
-              <label className="flex items-center gap-2 cursor-pointer mt-6">
+            {role !== "admin" ? (
+              <div className="space-y-1.5">
+                <Label htmlFor="eu-role-id">Assigned Role</Label>
+                <Select id="eu-role-id" value={roleId} onChange={(e) => setRoleId(e.target.value)}>
+                  <option value="">— No role —</option>
+                  {(roles ?? []).map((r) => (
+                    <option key={r.id} value={r.id}>{r.name}</option>
+                  ))}
+                </Select>
+              </div>
+            ) : (
+              <div className="flex items-end pb-1">
+                <p className="text-xs text-zinc-500">Admins have full access</p>
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center gap-6">
+            {role !== "admin" && (
+              <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={allTenants}
@@ -379,16 +420,16 @@ function EditUserDialog({ user, onClose }: EditUserDialogProps) {
                 />
                 <span className="text-sm text-zinc-300">All tenants</span>
               </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={isActive}
-                  onChange={(e) => setIsActive(e.target.checked)}
-                  className="rounded border-zinc-600 bg-zinc-800 text-brand-500 focus:ring-brand-500"
-                />
-                <span className="text-sm text-zinc-300">Active</span>
-              </label>
-            </div>
+            )}
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isActive}
+                onChange={(e) => setIsActive(e.target.checked)}
+                className="rounded border-zinc-600 bg-zinc-800 text-brand-500 focus:ring-brand-500"
+              />
+              <span className="text-sm text-zinc-300">Active</span>
+            </label>
           </div>
 
           {saveError && <p className="text-sm text-red-400">{saveError}</p>}
@@ -576,7 +617,12 @@ export function UsersPage() {
                       {u.display_name ?? <span className="text-zinc-600">—</span>}
                     </TableCell>
                     <TableCell>
-                      <RoleBadge role={u.role} />
+                      <div className="flex items-center gap-1.5">
+                        <RoleBadge role={u.role} />
+                        {u.role_name && (
+                          <span className="text-xs text-zinc-500">{u.role_name}</span>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="text-zinc-400 text-sm">
                       {u.role === "admin" || u.all_tenants ? (

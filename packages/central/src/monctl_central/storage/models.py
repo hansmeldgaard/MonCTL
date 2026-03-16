@@ -416,7 +416,10 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     email: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
     display_name: Mapped[str | None] = mapped_column(String(255))
-    role: Mapped[str] = mapped_column(String(20), nullable=False, default="viewer")
+    role: Mapped[str] = mapped_column(String(20), nullable=False, default="user")
+    role_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("roles.id", ondelete="SET NULL"), nullable=True
+    )
     timezone: Mapped[str] = mapped_column(String(50), nullable=False, default="UTC")
     # Legacy single-tenant FK (kept for backward compat, not used for access control)
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -432,6 +435,7 @@ class User(Base):
         DateTime(timezone=True), nullable=False, server_default="now()"
     )
 
+    assigned_role: Mapped["Role | None"] = relationship()
     tenant_assignments: Mapped[list["UserTenant"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
@@ -450,6 +454,43 @@ class UserTenant(Base):
 
     user: Mapped["User"] = relationship(back_populates="tenant_assignments")
     tenant: Mapped["Tenant"] = relationship(back_populates="user_assignments")
+
+
+class Role(Base):
+    """A named role with a set of permissions."""
+    __tablename__ = "roles"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_system: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default="now()"
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default="now()"
+    )
+
+    permissions: Mapped[list["RolePermission"]] = relationship(
+        back_populates="role", cascade="all, delete-orphan"
+    )
+
+
+class RolePermission(Base):
+    """A single permission entry (resource + action) belonging to a role."""
+    __tablename__ = "role_permissions"
+    __table_args__ = (
+        UniqueConstraint("role_id", "resource", "action", name="uq_role_resource_action"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    role_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("roles.id", ondelete="CASCADE"), nullable=False
+    )
+    resource: Mapped[str] = mapped_column(String(50), nullable=False)
+    action: Mapped[str] = mapped_column(String(20), nullable=False)
+
+    role: Mapped["Role"] = relationship(back_populates="permissions")
 
 
 class SnmpOid(Base):

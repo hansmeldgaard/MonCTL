@@ -11,6 +11,7 @@ import {
   Server,
   Settings,
   Shield,
+  ShieldCheck,
   Tag,
   User,
   Users,
@@ -42,6 +43,7 @@ import { SnmpOidsPage } from "@/pages/SnmpOidsPage.tsx";
 import { UsersPage } from "@/pages/UsersPage.tsx";
 import { TenantsPage } from "@/pages/TenantsPage.tsx";
 import { LabelKeysPage } from "@/pages/LabelKeysPage.tsx";
+import { RolesPage } from "@/pages/RolesPage.tsx";
 
 const TABS = [
   { key: "profile", label: "Profile", icon: User },
@@ -53,6 +55,7 @@ const TABS = [
   { key: "snmp-oids", label: "SNMP OIDs", icon: Network },
   { key: "data-retention", label: "Data Retention", icon: Database },
   { key: "tls", label: "TLS / HTTPS", icon: Shield },
+  { key: "roles", label: "Roles", icon: ShieldCheck },
   { key: "users", label: "Users", icon: Users },
   { key: "tenants", label: "Tenants", icon: Building2 },
 ] as const;
@@ -446,6 +449,7 @@ export function SettingsPage() {
       case "snmp-oids": return <SnmpOidsPage />;
       case "data-retention": return <DataRetentionTab />;
       case "tls": return <TlsTab />;
+      case "roles": return <RolesPage />;
       case "users": return <UsersPage />;
       case "tenants": return <TenantsPage />;
       default: return <ProfileTab />;
