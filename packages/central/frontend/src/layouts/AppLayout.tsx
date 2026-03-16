@@ -30,7 +30,7 @@ export function AppLayout() {
       <div className="flex flex-1 flex-col overflow-hidden">
         <Header />
         <main className="flex-1 overflow-y-auto p-6">
-          <div className="mx-auto max-w-7xl animate-fade-in">
+          <div className="animate-fade-in">
             <Outlet />
           </div>
         </main>
