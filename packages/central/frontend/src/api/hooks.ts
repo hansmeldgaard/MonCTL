@@ -21,6 +21,7 @@ import type {
   HealthStatus,
   InterfaceMetadataRecord,
   InterfaceRecord,
+  LabelKey,
   MonitoringConfig,
   RegistrationToken,
   ResultRecord,
@@ -501,6 +502,22 @@ export function useUpdateInterfaceSettings() {
       interfaceId: string;
       data: { polling_enabled?: boolean; alerting_enabled?: boolean; poll_metrics?: string };
     }) => apiPatch(`/devices/${deviceId}/interface-metadata/${interfaceId}`, data),
+    onSuccess: (_res, vars) => {
+      qc.invalidateQueries({ queryKey: ["interface-metadata", vars.deviceId] });
+    },
+  });
+}
+
+export function useBulkUpdateInterfaceSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      deviceId,
+      data,
+    }: {
+      deviceId: string;
+      data: { interface_ids: string[]; polling_enabled?: boolean; alerting_enabled?: boolean; poll_metrics?: string };
+    }) => apiPatch(`/devices/${deviceId}/interface-metadata`, data),
     onSuccess: (_res, vars) => {
       qc.invalidateQueries({ queryKey: ["interface-metadata", vars.deviceId] });
     },
@@ -1161,6 +1178,67 @@ export function useApplyTemplate() {
       apiPost<{ applied: number }>(`/templates/${templateId}/apply`, { device_ids: deviceIds }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["devices"] });
+    },
+  });
+}
+
+// ── Label Keys ───────────────────────────────────────────
+
+export function useLabelKeys() {
+  return useQuery({
+    queryKey: ["label-keys"],
+    queryFn: () => apiGet<LabelKey[]>("/label-keys"),
+    select: (res) => res.data,
+  });
+}
+
+export function useLabelValues(keyName: string | null) {
+  return useQuery({
+    queryKey: ["label-values", keyName],
+    queryFn: () => apiGet<string[]>(`/label-keys/values/${keyName}`),
+    select: (res) => res.data,
+    enabled: !!keyName,
+  });
+}
+
+export function useCreateLabelKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: {
+      key: string;
+      description?: string;
+      color?: string;
+      show_description?: boolean;
+      predefined_values?: string[];
+    }) => apiPost<LabelKey>("/label-keys", data),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["label-keys"] });
+    },
+  });
+}
+
+export function useUpdateLabelKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      data,
+    }: {
+      id: string;
+      data: Partial<{ description: string; color: string; show_description: boolean; predefined_values: string[] }>;
+    }) => apiPut<LabelKey>(`/label-keys/${id}`, data),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["label-keys"] });
+    },
+  });
+}
+
+export function useDeleteLabelKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/label-keys/${id}`),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["label-keys"] });
     },
   });
 }

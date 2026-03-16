@@ -19,6 +19,7 @@ from monctl_central.auth.router import router as auth_router
 from monctl_central.snmp_oids.router import router as snmp_oids_router
 from monctl_central.registration_tokens.router import router as registration_tokens_router
 from monctl_central.credential_keys.router import router as credential_keys_router
+from monctl_central.label_keys.router import router as label_keys_router
 from monctl_central.settings.router import router as settings_router
 from monctl_central.tls.router import router as tls_router
 from monctl_central.templates.router import router as templates_router
@@ -42,6 +43,7 @@ api_router.include_router(users_router, prefix="/users", tags=["users"])
 api_router.include_router(snmp_oids_router, prefix="/snmp-oids", tags=["snmp-oids"])
 api_router.include_router(registration_tokens_router, prefix="/registration-tokens", tags=["registration-tokens"])
 api_router.include_router(credential_keys_router, prefix="/credential-keys", tags=["credential-keys"])
+api_router.include_router(label_keys_router, prefix="/label-keys", tags=["label-keys"])
 api_router.include_router(credential_templates_router, prefix="/credential-templates", tags=["credentials"])
 api_router.include_router(settings_router, prefix="/settings", tags=["settings"])
 api_router.include_router(tls_router, prefix="/settings/tls", tags=["tls"])

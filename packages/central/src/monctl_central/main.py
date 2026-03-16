@@ -383,10 +383,25 @@ _OPER_STATUS = {1: "up", 2: "down", 3: "testing", 4: "unknown", 5: "dormant", 6:
 _IDENTITY_OIDS = ["ifIndex", "ifDescr", "ifName", "ifAlias", "ifOperStatus", "ifAdminStatus", "ifHighSpeed", "ifSpeed"]
 _METRIC_OIDS = {
     "all": list(_ALL_OIDS.keys()),
-    "traffic": _IDENTITY_OIDS + ["ifHCInOctets", "ifHCOutOctets", "ifInOctets", "ifOutOctets"],
-    "errors": _IDENTITY_OIDS + ["ifInErrors", "ifOutErrors", "ifInDiscards", "ifOutDiscards"],
-    "status": _IDENTITY_OIDS,
+    "traffic": ["ifHCInOctets", "ifHCOutOctets", "ifInOctets", "ifOutOctets"],
+    "errors": ["ifInErrors", "ifOutErrors"],
+    "discards": ["ifInDiscards", "ifOutDiscards"],
+    "status": [],
 }
+
+def _resolve_poll_metrics(mode: str) -> list[str]:
+    """Resolve a poll_metrics value (possibly comma-separated) into a list of OID names."""
+    if mode == "all":
+        return list(_ALL_OIDS.keys())
+    parts = [p.strip() for p in mode.split(",") if p.strip()]
+    oids = set(_IDENTITY_OIDS)
+    for part in parts:
+        oids.update(_METRIC_OIDS.get(part, []))
+    return list(oids)
+
+def _has_metric(mode: str, metric: str) -> bool:
+    """Check if a metrics mode includes a specific metric type."""
+    return mode == "all" or metric in mode.split(",")
 
 
 class Poller(BasePoller):
@@ -468,7 +483,7 @@ class Poller(BasePoller):
                 for iface in monitored:
                     idx = int(iface["if_index"])
                     metrics_mode = iface.get("poll_metrics", "all")
-                    oid_names = _METRIC_OIDS.get(metrics_mode, _METRIC_OIDS["all"])
+                    oid_names = _resolve_poll_metrics(metrics_mode)
                     for oid_name in oid_names:
                         base_oid = _ALL_OIDS.get(oid_name)
                         if base_oid:
@@ -584,12 +599,12 @@ class Poller(BasePoller):
                     "if_speed_mbps": speed_mbps,
                     "if_admin_status": admin_status,
                     "if_oper_status": oper_status,
-                    "in_octets": in_octets if metrics_mode in ("all", "traffic") else 0,
-                    "out_octets": out_octets if metrics_mode in ("all", "traffic") else 0,
-                    "in_errors": int(raw.get("ifInErrors", {}).get(idx, 0)) if metrics_mode in ("all", "errors") else 0,
-                    "out_errors": int(raw.get("ifOutErrors", {}).get(idx, 0)) if metrics_mode in ("all", "errors") else 0,
-                    "in_discards": int(raw.get("ifInDiscards", {}).get(idx, 0)) if metrics_mode in ("all", "errors") else 0,
-                    "out_discards": int(raw.get("ifOutDiscards", {}).get(idx, 0)) if metrics_mode in ("all", "errors") else 0,
+                    "in_octets": in_octets if _has_metric(metrics_mode, "traffic") else 0,
+                    "out_octets": out_octets if _has_metric(metrics_mode, "traffic") else 0,
+                    "in_errors": int(raw.get("ifInErrors", {}).get(idx, 0)) if _has_metric(metrics_mode, "errors") else 0,
+                    "out_errors": int(raw.get("ifOutErrors", {}).get(idx, 0)) if _has_metric(metrics_mode, "errors") else 0,
+                    "in_discards": int(raw.get("ifInDiscards", {}).get(idx, 0)) if _has_metric(metrics_mode, "discards") else 0,
+                    "out_discards": int(raw.get("ifOutDiscards", {}).get(idx, 0)) if _has_metric(metrics_mode, "discards") else 0,
                     "in_unicast_pkts": int(raw.get("ifInUcastPkts", {}).get(idx, 0)) if metrics_mode == "all" else 0,
                     "out_unicast_pkts": int(raw.get("ifOutUcastPkts", {}).get(idx, 0)) if metrics_mode == "all" else 0,
                     "poll_interval_sec": poll_interval,
@@ -694,7 +709,7 @@ async def lifespan(app: FastAPI):
     )
 
     from sqlalchemy import select
-    from monctl_central.storage.models import App, AppVersion, DeviceType, User
+    from monctl_central.storage.models import App, AppVersion, DeviceType, LabelKey, User
 
     factory = get_session_factory()
 
@@ -737,6 +752,25 @@ async def lifespan(app: FastAPI):
                     session.add(DeviceType(name=name, description=description, category=category))
                 await session.commit()
                 logger.info("device_types_seeded", count=len(_DEFAULT_DEVICE_TYPES))
+
+        # Seed default label keys
+        async with factory() as session:
+            existing_lk = (await session.execute(select(LabelKey).limit(1))).scalar_one_or_none()
+            if existing_lk is None:
+                default_label_keys = [
+                    LabelKey(key="site", description="Lokation", show_description=True,
+                             predefined_values=["aarhus", "copenhagen"]),
+                    LabelKey(key="env", description="Miljø", show_description=True,
+                             predefined_values=["production", "staging", "development", "test"]),
+                    LabelKey(key="role", description="Rolle", show_description=True,
+                             predefined_values=["web", "db", "cache", "proxy", "monitoring"]),
+                    LabelKey(key="owner", description="Ansvarlig", show_description=True),
+                    LabelKey(key="criticality", description="Kritikalitet", show_description=True,
+                             predefined_values=["critical", "high", "medium", "low"]),
+                ]
+                session.add_all(default_label_keys)
+                await session.commit()
+                logger.info("label_keys_seeded", count=len(default_label_keys))
 
         # Seed default apps with source code
         _DEFAULT_APPS = _get_default_apps()

@@ -39,6 +39,7 @@ import {
 } from "@/components/ui/table.tsx";
 import { StatusBadge } from "@/components/StatusBadge.tsx";
 import { AvailabilityChart } from "@/components/AvailabilityChart.tsx";
+import { LabelEditor } from "@/components/LabelEditor.tsx";
 import { TimeRangePicker, rangeToTimestamps } from "@/components/TimeRangePicker.tsx";
 import type { TimeRangeValue } from "@/components/TimeRangePicker.tsx";
 import {
@@ -953,11 +954,25 @@ function formatBytes(bytes: number): string {
 
 type IfaceSortKey = "status" | "if_index" | "if_name" | "if_alias" | "speed" | "in_traffic" | "out_traffic" | "in_errors" | "out_errors" | "last_polled";
 
+const METRIC_TYPES = ["traffic", "errors", "discards", "status"] as const;
+
+function parseMetrics(poll_metrics: string): Set<string> {
+  if (poll_metrics === "all") return new Set(METRIC_TYPES);
+  return new Set(poll_metrics.split(",").filter(Boolean));
+}
+
+function serializeMetrics(set: Set<string>): string {
+  if (METRIC_TYPES.every(m => set.has(m))) return "all";
+  if (set.size === 0) return "status"; // minimum: always poll status
+  return [...set].join(",");
+}
+
 function InterfacesTab({ deviceId }: { deviceId: string }) {
   const { data: interfaces, isLoading } = useInterfaceLatest(deviceId);
   const { data: metadata } = useInterfaceMetadata(deviceId);
   const updateSettings = useUpdateInterfaceSettings();
   const [selectedInterfaceId, setSelectedInterfaceId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [timeRange, setTimeRange] = useState<TimeRangeValue>(DEFAULT_RANGE);
   const [searchText, setSearchText] = useState("");
   const [filterOperStatus, setFilterOperStatus] = useState<string>("");
@@ -990,16 +1005,29 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
   const availableSpeeds = useMemo(() =>
     [...new Set((interfaces ?? []).map(i => i.if_speed_mbps))].filter(Boolean).sort((a, b) => a - b), [interfaces]);
 
-  // Filter
+  // Filter — supports multiple terms: plain text matches name/alias/index,
+  // "o:up" matches oper status, "a:down" matches admin status
   const filtered = useMemo(() => {
     let data = interfaces ?? [];
     if (searchText) {
-      const q = searchText.toLowerCase();
-      data = data.filter(i =>
-        i.if_name.toLowerCase().includes(q) ||
-        i.if_alias.toLowerCase().includes(q) ||
-        String(i.if_index).includes(q)
-      );
+      const terms = searchText.toLowerCase().split(/\s+/).filter(Boolean);
+      data = data.filter(i => {
+        return terms.every(term => {
+          if (term.startsWith("o:")) {
+            const val = term.slice(2);
+            return val ? i.if_oper_status.toLowerCase().includes(val) : true;
+          }
+          if (term.startsWith("a:")) {
+            const val = term.slice(2);
+            return val ? i.if_admin_status.toLowerCase().includes(val) : true;
+          }
+          return (
+            i.if_name.toLowerCase().includes(term) ||
+            i.if_alias.toLowerCase().includes(term) ||
+            String(i.if_index).includes(term)
+          );
+        });
+      });
     }
     if (filterOperStatus) data = data.filter(i => i.if_oper_status === filterOperStatus);
     if (filterSpeed) data = data.filter(i => i.if_speed_mbps === Number(filterSpeed));
@@ -1031,6 +1059,64 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
   const toggleSort = (key: IfaceSortKey) => {
     if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
     else { setSortKey(key); setSortDir("asc"); }
+  };
+
+  // Selection helpers
+  const filteredIds = useMemo(() => new Set(filtered.map(i => i.interface_id)), [filtered]);
+  const allFilteredSelected = filtered.length > 0 && filtered.every(i => selectedIds.has(i.interface_id));
+  const someFilteredSelected = filtered.some(i => selectedIds.has(i.interface_id));
+
+  const toggleSelectAll = () => {
+    if (allFilteredSelected) {
+      // Deselect all filtered
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        for (const i of filtered) next.delete(i.interface_id);
+        return next;
+      });
+    } else {
+      // Select all filtered
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        for (const i of filtered) next.add(i.interface_id);
+        return next;
+      });
+    }
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  // Bulk metric toggle for selected interfaces
+  const bulkToggleMetric = (metric: string, enable: boolean) => {
+    const ids = [...selectedIds].filter(id => filteredIds.has(id));
+    if (ids.length === 0) return;
+
+    // For each selected interface, compute new poll_metrics
+    for (const id of ids) {
+      const meta = metaMap.get(id);
+      const current = parseMetrics(meta?.poll_metrics ?? "all");
+      if (enable) current.add(metric);
+      else current.delete(metric);
+      const newVal = serializeMetrics(current);
+      updateSettings.mutate({ deviceId, interfaceId: id, data: { poll_metrics: newVal } });
+    }
+  };
+
+  // Check if all selected interfaces have a given metric enabled
+  const selectedHaveMetric = (metric: string): boolean | "mixed" => {
+    const ids = [...selectedIds].filter(id => filteredIds.has(id));
+    if (ids.length === 0) return false;
+    const states = ids.map(id => parseMetrics(metaMap.get(id)?.poll_metrics ?? "all").has(metric));
+    if (states.every(Boolean)) return true;
+    if (states.some(Boolean)) return "mixed";
+    return false;
   };
 
   const SortHead = ({ col, children }: { col: IfaceSortKey; children: React.ReactNode }) => (
@@ -1068,6 +1154,7 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
 
   const upCount = interfaces.filter((i) => i.if_oper_status === "up").length;
   const downCount = interfaces.filter((i) => i.if_oper_status === "down").length;
+  const activeSelectedCount = [...selectedIds].filter(id => filteredIds.has(id)).length;
 
   return (
     <div className="space-y-4">
@@ -1078,13 +1165,16 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
           <Badge variant="default">{interfaces.length}</Badge>
           <Badge variant="success">{upCount} up</Badge>
           {downCount > 0 && <Badge variant="destructive">{downCount} down</Badge>}
+          {activeSelectedCount > 0 && (
+            <Badge variant="default">{activeSelectedCount} selected</Badge>
+          )}
         </div>
         <div className="ml-auto flex items-center gap-2">
           <Input
-            placeholder="Search name/alias/index..."
+            placeholder="Search name/alias o:up a:down..."
             value={searchText}
             onChange={e => setSearchText(e.target.value)}
-            className="h-7 w-48 text-xs"
+            className="h-7 w-64 text-xs"
           />
           {availableOperStatuses.length > 1 && (
             <Select value={filterOperStatus} onChange={e => setFilterOperStatus(e.target.value)} className="h-7 text-xs w-28">
@@ -1101,6 +1191,32 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
           <TimeRangePicker value={timeRange} onChange={setTimeRange} timezone={tz} />
         </div>
       </div>
+
+      {/* Bulk metric controls — shown when interfaces are selected */}
+      {activeSelectedCount > 0 && (
+        <Card>
+          <CardContent className="py-2">
+            <div className="flex items-center gap-6 text-xs">
+              <span className="text-zinc-400 font-medium">Metrics for {activeSelectedCount} selected:</span>
+              {METRIC_TYPES.map(metric => {
+                const state = selectedHaveMetric(metric);
+                return (
+                  <label key={metric} className="flex items-center gap-1.5 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={state === true}
+                      ref={el => { if (el) el.indeterminate = state === "mixed"; }}
+                      onChange={() => bulkToggleMetric(metric, state !== true)}
+                      className="accent-brand-500 cursor-pointer"
+                    />
+                    <span className="text-zinc-300 capitalize">{metric}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Traffic chart for selected interface */}
       {selectedInterfaceId != null && history?.length ? (
@@ -1128,6 +1244,15 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-10" onClick={e => e.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    checked={allFilteredSelected}
+                    ref={el => { if (el) el.indeterminate = !allFilteredSelected && someFilteredSelected; }}
+                    onChange={toggleSelectAll}
+                    className="accent-brand-500 cursor-pointer"
+                  />
+                </TableHead>
                 <SortHead col="status">Status</SortHead>
                 <SortHead col="if_index">Index</SortHead>
                 <SortHead col="if_name">Name</SortHead>
@@ -1135,12 +1260,15 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
                 <SortHead col="speed">Speed</SortHead>
                 <SortHead col="in_traffic">In Traffic</SortHead>
                 <SortHead col="out_traffic">Out Traffic</SortHead>
-                <SortHead col="in_errors">In Errors</SortHead>
-                <SortHead col="out_errors">Out Errors</SortHead>
+                <SortHead col="in_errors">In Err</SortHead>
+                <SortHead col="out_errors">Out Err</SortHead>
                 <SortHead col="last_polled">Last Polled</SortHead>
                 <TableHead className="w-14 text-center">Poll</TableHead>
                 <TableHead className="w-14 text-center">Alert</TableHead>
-                <TableHead className="w-24 text-center">Metrics</TableHead>
+                <TableHead className="text-center">Traffic</TableHead>
+                <TableHead className="text-center">Errors</TableHead>
+                <TableHead className="text-center">Discards</TableHead>
+                <TableHead className="text-center">Status</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -1148,13 +1276,29 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
                 const meta = metaMap.get(iface.interface_id);
                 const pollingOn = meta?.polling_enabled ?? true;
                 const alertingOn = meta?.alerting_enabled ?? true;
+                const metrics = parseMetrics(meta?.poll_metrics ?? "all");
+                const isSelected = selectedIds.has(iface.interface_id);
+
+                const toggleMetric = (metric: string) => {
+                  const next = new Set(metrics);
+                  if (next.has(metric)) next.delete(metric);
+                  else next.add(metric);
+                  updateSettings.mutate({
+                    deviceId,
+                    interfaceId: iface.interface_id,
+                    data: { poll_metrics: serializeMetrics(next) },
+                  });
+                };
+
                 return (
                 <TableRow
                   key={iface.interface_id}
                   className={`cursor-pointer transition-colors ${
                     selectedInterfaceId === iface.interface_id
                       ? "bg-brand-500/10"
-                      : "hover:bg-zinc-800/50"
+                      : isSelected
+                        ? "bg-zinc-800/70"
+                        : "hover:bg-zinc-800/50"
                   }`}
                   onClick={() =>
                     setSelectedInterfaceId(
@@ -1162,6 +1306,14 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
                     )
                   }
                 >
+                  <TableCell onClick={e => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleSelect(iface.interface_id)}
+                      className="accent-brand-500 cursor-pointer"
+                    />
+                  </TableCell>
                   <TableCell>
                     <div
                       className={`h-2.5 w-2.5 rounded-full ${
@@ -1233,20 +1385,36 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
                     />
                   </TableCell>
                   <TableCell className="text-center" onClick={e => e.stopPropagation()}>
-                    <select
-                      value={meta?.poll_metrics ?? "all"}
-                      onChange={e => updateSettings.mutate({
-                        deviceId,
-                        interfaceId: iface.interface_id,
-                        data: { poll_metrics: e.target.value },
-                      })}
-                      className="bg-zinc-800 border border-zinc-700 rounded px-1 py-0.5 text-xs text-zinc-300 cursor-pointer"
-                    >
-                      <option value="all">All</option>
-                      <option value="traffic">Traffic</option>
-                      <option value="errors">Errors</option>
-                      <option value="status">Status</option>
-                    </select>
+                    <input
+                      type="checkbox"
+                      checked={metrics.has("traffic")}
+                      onChange={() => toggleMetric("traffic")}
+                      className="accent-cyan-500 cursor-pointer"
+                    />
+                  </TableCell>
+                  <TableCell className="text-center" onClick={e => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={metrics.has("errors")}
+                      onChange={() => toggleMetric("errors")}
+                      className="accent-amber-500 cursor-pointer"
+                    />
+                  </TableCell>
+                  <TableCell className="text-center" onClick={e => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={metrics.has("discards")}
+                      onChange={() => toggleMetric("discards")}
+                      className="accent-orange-500 cursor-pointer"
+                    />
+                  </TableCell>
+                  <TableCell className="text-center" onClick={e => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={metrics.has("status")}
+                      onChange={() => toggleMetric("status")}
+                      className="accent-emerald-500 cursor-pointer"
+                    />
                   </TableCell>
                 </TableRow>
                 );
@@ -1680,8 +1848,6 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
   const [labelsModified, setLabelsModified] = useState(false);
   const [labelsSaving, setLabelsSaving] = useState(false);
   const [labelsSaveSuccess, setLabelsSaveSuccess] = useState(false);
-  const [newLabelKey, setNewLabelKey] = useState("");
-  const [newLabelValue, setNewLabelValue] = useState("");
   const [labelError, setLabelError] = useState<string | null>(null);
 
   // Assignment dialogs
@@ -1722,29 +1888,6 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Failed to save");
     }
-  }
-
-  function handleAddLabel() {
-    setLabelError(null);
-    const key = newLabelKey.trim();
-    const val = newLabelValue.trim();
-    if (!key) {
-      setLabelError("Label key cannot be empty.");
-      return;
-    }
-    setLabels((prev) => ({ ...prev, [key]: val }));
-    setLabelsModified(true);
-    setNewLabelKey("");
-    setNewLabelValue("");
-  }
-
-  function handleRemoveLabel(key: string) {
-    setLabels((prev) => {
-      const next = { ...prev };
-      delete next[key];
-      return next;
-    });
-    setLabelsModified(true);
   }
 
   async function handleSaveLabels() {
@@ -1876,55 +2019,14 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="space-y-3 max-w-md">
-            {/* Existing labels */}
-            {Object.keys(labels).length > 0 ? (
-              <div className="rounded-md border border-zinc-800 divide-y divide-zinc-800">
-                {Object.entries(labels).map(([key, val]) => (
-                  <div key={key} className="flex items-center gap-2 px-3 py-2">
-                    <span className="text-xs font-mono text-zinc-300 flex-1">
-                      <span className="text-zinc-400">{key}</span>
-                      <span className="text-zinc-600 mx-1">=</span>
-                      <span className="text-zinc-200">{val}</span>
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveLabel(key)}
-                      className="rounded p-0.5 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                      title={`Remove label "${key}"`}
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-xs text-zinc-600">No labels set.</p>
-            )}
-
-            {/* Add new label row */}
-            <div className="flex items-center gap-2">
-              <Input
-                placeholder="key"
-                value={newLabelKey}
-                onChange={(e) => setNewLabelKey(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleAddLabel(); } }}
-                className="flex-1 font-mono text-xs"
-              />
-              <Input
-                placeholder="value"
-                value={newLabelValue}
-                onChange={(e) => setNewLabelValue(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleAddLabel(); } }}
-                className="flex-1 font-mono text-xs"
-              />
-              <Button type="button" size="sm" variant="secondary" onClick={handleAddLabel}>
-                <Plus className="h-3.5 w-3.5" />
-                Add
-              </Button>
-            </div>
-            {labelError && <p className="text-xs text-red-400">{labelError}</p>}
-          </div>
+          <LabelEditor
+            labels={labels}
+            onChange={(newLabels) => {
+              setLabels(newLabels);
+              setLabelsModified(true);
+            }}
+          />
+          {labelError && <p className="text-xs text-red-400 mt-2">{labelError}</p>}
         </CardContent>
       </Card>
 

@@ -13,10 +13,24 @@ from typing import Optional
 import sqlalchemy as sa
 from monctl_central.dependencies import apply_tenant_filter, check_tenant_access, get_db, require_auth
 from sqlalchemy.orm import selectinload
-from monctl_central.storage.models import Credential, CollectorGroup, Device, InterfaceMetadata, Tenant
+from monctl_central.storage.models import Credential, CollectorGroup, Device, InterfaceMetadata, LabelKey, Tenant
 from monctl_common.utils import utc_now
 
 router = APIRouter()
+
+
+async def _auto_register_label_keys(labels: dict[str, str], db: AsyncSession) -> None:
+    """Auto-register any unknown label keys from a device's labels dict."""
+    if not labels:
+        return
+    keys = list(labels.keys())
+    existing = (await db.execute(
+        select(LabelKey.key).where(LabelKey.key.in_(keys))
+    )).scalars().all()
+    existing_set = set(existing)
+    for key in keys:
+        if key not in existing_set:
+            db.add(LabelKey(key=key))
 
 
 class CreateDeviceRequest(BaseModel):
@@ -188,6 +202,7 @@ async def create_device(
         metadata_=request.metadata,
     )
     db.add(device)
+    await _auto_register_label_keys(request.labels, db)
     await db.flush()
     await db.refresh(device, ["tenant", "collector_group", "default_credential"])
     return {
@@ -256,6 +271,7 @@ async def update_device(
         device.default_credential_id = uuid.UUID(request.default_credential_id) if request.default_credential_id != "" else None
     if request.labels is not None:
         device.labels = request.labels
+        await _auto_register_label_keys(request.labels, db)
     if request.metadata is not None:
         device.metadata_ = request.metadata
     device.updated_at = utc_now()
@@ -505,7 +521,13 @@ async def get_interface_metadata(
     return {"status": "success", "data": [_fmt_iface_meta(m) for m in rows]}
 
 
-_VALID_POLL_METRICS = {"all", "traffic", "errors", "status"}
+_VALID_POLL_METRICS_PARTS = {"all", "traffic", "errors", "discards", "status"}
+
+
+def _validate_poll_metrics(value: str) -> bool:
+    """Validate poll_metrics: 'all' or comma-separated subset of traffic,errors,discards,status."""
+    parts = [p.strip() for p in value.split(",") if p.strip()]
+    return all(p in _VALID_POLL_METRICS_PARTS for p in parts) and len(parts) > 0
 
 
 class UpdateInterfaceSettingsRequest(BaseModel):
@@ -538,8 +560,8 @@ async def update_interface_settings(
     if req.alerting_enabled is not None:
         meta.alerting_enabled = req.alerting_enabled
     if req.poll_metrics is not None:
-        if req.poll_metrics not in _VALID_POLL_METRICS:
-            raise HTTPException(status_code=400, detail=f"Invalid poll_metrics: must be one of {_VALID_POLL_METRICS}")
+        if not _validate_poll_metrics(req.poll_metrics):
+            raise HTTPException(status_code=400, detail=f"Invalid poll_metrics: must be 'all' or comma-separated list of {_VALID_POLL_METRICS_PARTS - {'all'}}")
         meta.poll_metrics = req.poll_metrics
     meta.updated_at = utc_now()
     await db.flush()

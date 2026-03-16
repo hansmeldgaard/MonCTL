@@ -511,6 +511,21 @@ class InterfaceMetadata(Base):
     )
 
 
+class LabelKey(Base):
+    """Registry of allowed label keys for consistency across entities."""
+    __tablename__ = "label_keys"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    color: Mapped[str | None] = mapped_column(String(7))
+    show_description: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    predefined_values: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+
 class Template(Base):
     """Reusable monitoring template for bulk device configuration."""
     __tablename__ = "templates"

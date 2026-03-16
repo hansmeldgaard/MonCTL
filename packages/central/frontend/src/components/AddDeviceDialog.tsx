@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { Select } from "@/components/ui/select.tsx";
 import { useCreateDevice, useCollectorGroups, useCredentials, useDeviceTypes, useTenants } from "@/api/hooks.ts";
+import { LabelEditor } from "@/components/LabelEditor.tsx";
 
 interface AddDeviceDialogProps {
   open: boolean;
@@ -25,6 +26,7 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
   const [tenantId, setTenantId] = useState("");
   const [collectorGroupId, setCollectorGroupId] = useState("");
   const [credentialId, setCredentialId] = useState("");
+  const [labels, setLabels] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
 
   function reset() {
@@ -34,6 +36,7 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
     setTenantId("");
     setCollectorGroupId("");
     setCredentialId("");
+    setLabels({});
     setError(null);
   }
 
@@ -69,6 +72,7 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
         tenant_id: tenantId || undefined,
         collector_group_id: collectorGroupId || undefined,
         default_credential_id: credentialId || undefined,
+        labels: Object.keys(labels).length > 0 ? labels : undefined,
       });
       reset();
       onClose();
@@ -184,6 +188,12 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
             </Select>
           </div>
         )}
+
+        {/* Labels */}
+        <div className="space-y-1.5">
+          <Label>Labels <span className="text-zinc-500 font-normal">(optional)</span></Label>
+          <LabelEditor labels={labels} onChange={setLabels} />
+        </div>
 
         {/* Error */}
         {error && (

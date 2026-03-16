@@ -456,8 +456,20 @@ export interface InterfaceMetadataRecord {
   if_speed_mbps: number;
   polling_enabled: boolean;
   alerting_enabled: boolean;
-  poll_metrics: "all" | "traffic" | "errors" | "status";
+  poll_metrics: string;
   updated_at: string | null;
+}
+
+// ── Label Keys ───────────────────────────────────────────
+
+export interface LabelKey {
+  id: string;
+  key: string;
+  description: string | null;
+  color: string | null;
+  show_description: boolean;
+  predefined_values: string[];
+  created_at: string;
 }
 
 // ── System Settings ──────────────────────────────────────

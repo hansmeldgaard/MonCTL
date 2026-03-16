@@ -11,6 +11,7 @@ import {
   Server,
   Settings,
   Shield,
+  Tag,
   User,
   Users,
 } from "lucide-react";
@@ -40,11 +41,13 @@ import { CredentialsPage } from "@/pages/CredentialsPage.tsx";
 import { SnmpOidsPage } from "@/pages/SnmpOidsPage.tsx";
 import { UsersPage } from "@/pages/UsersPage.tsx";
 import { TenantsPage } from "@/pages/TenantsPage.tsx";
+import { LabelKeysPage } from "@/pages/LabelKeysPage.tsx";
 
 const TABS = [
   { key: "profile", label: "Profile", icon: User },
   { key: "system", label: "System", icon: Settings },
   { key: "device-types", label: "Device Types", icon: Server },
+  { key: "labels", label: "Labels", icon: Tag },
   { key: "collectors", label: "Collectors", icon: Cpu },
   { key: "credentials", label: "Credentials", icon: KeyRound },
   { key: "snmp-oids", label: "SNMP OIDs", icon: Network },
@@ -437,6 +440,7 @@ export function SettingsPage() {
       case "profile": return <ProfileTab />;
       case "system": return <SystemTab />;
       case "device-types": return <DeviceTypesPage />;
+      case "labels": return <LabelKeysPage />;
       case "collectors": return <CollectorsPage />;
       case "credentials": return <CredentialsPage />;
       case "snmp-oids": return <SnmpOidsPage />;
