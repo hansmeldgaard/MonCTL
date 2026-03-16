@@ -34,6 +34,7 @@ class PeerState(str):
 # API key prefixes
 COLLECTOR_KEY_PREFIX = "monctl_c_"
 MANAGEMENT_KEY_PREFIX = "monctl_m_"
+USER_KEY_PREFIX = "monctl_u_"
 
 # Default intervals (seconds)
 DEFAULT_HEARTBEAT_INTERVAL = 30

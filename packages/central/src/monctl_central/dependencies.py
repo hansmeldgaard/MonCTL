@@ -131,13 +131,52 @@ async def _validate_api_key(token: str) -> dict:
         )
         await session.commit()
 
-        result_dict = {
-            "key_type": api_key.key_type,
-            "collector_id": str(api_key.collector_id) if api_key.collector_id else None,
-            "scopes": api_key.scopes,
-            "auth_type": "api_key",
-            "tenant_ids": None,  # Management API keys see everything
-        }
+        if api_key.key_type == "user":
+            # User-bound API key — load user, permissions, tenants
+            from monctl_central.storage.models import User, UserTenant, RolePermission
+
+            user = await session.get(User, api_key.user_id)
+            if user is None or not user.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="User account disabled or deleted",
+                )
+
+            if user.role == "admin" or user.all_tenants:
+                tenant_ids = None
+            else:
+                rows = (await session.execute(
+                    select(UserTenant.tenant_id).where(UserTenant.user_id == user.id)
+                )).scalars().all()
+                tenant_ids = [str(tid) for tid in rows]
+
+            perms: list[str] = []
+            if user.role_id:
+                perm_rows = (await session.execute(
+                    select(RolePermission.resource, RolePermission.action).where(
+                        RolePermission.role_id == user.role_id
+                    )
+                )).all()
+                perms = [f"{r.resource}:{r.action}" for r in perm_rows]
+
+            result_dict = {
+                "key_type": "user",
+                "user_id": str(user.id),
+                "username": user.username,
+                "role": user.role,
+                "role_id": str(user.role_id) if user.role_id else None,
+                "auth_type": "api_key",
+                "tenant_ids": tenant_ids,
+                "permissions": perms,
+            }
+        else:
+            result_dict = {
+                "key_type": api_key.key_type,
+                "collector_id": str(api_key.collector_id) if api_key.collector_id else None,
+                "scopes": api_key.scopes,
+                "auth_type": "api_key",
+                "tenant_ids": None,  # Management API keys see everything
+            }
 
         # Cache the result
         await set_cached_api_key(token_hash, result_dict)
@@ -245,7 +284,7 @@ async def require_auth(
     if credentials:
         try:
             api_key = await _validate_api_key(credentials.credentials)
-            if api_key["key_type"] == "management":
+            if api_key["key_type"] in ("management", "user"):
                 return api_key
         except HTTPException:
             pass  # Fall through to the 401 below
@@ -311,11 +350,20 @@ def require_permission(resource: str, action: str):
     ) -> dict:
         auth = await require_auth(request, credentials, db)
 
-        # Admins and API keys bypass permission checks
-        if auth.get("role") == "admin" or auth.get("auth_type") == "api_key":
+        # Admins always pass
+        if auth.get("role") == "admin":
             return auth
 
-        perms = await _load_user_permissions(db, auth["user_id"])
+        # Management API keys bypass permission checks (full access)
+        if auth.get("auth_type") == "api_key" and auth.get("key_type") == "management":
+            return auth
+
+        # User API keys have permissions pre-loaded
+        if auth.get("auth_type") == "api_key" and auth.get("key_type") == "user":
+            perms = set(auth.get("permissions", []))
+        else:
+            # JWT cookie user — load from DB/cache
+            perms = await _load_user_permissions(db, auth["user_id"])
         if f"{resource}:{action}" not in perms:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

@@ -386,6 +386,22 @@ export interface UserWithTenants extends User {
   tenants: { id: string; name: string }[];
 }
 
+// ── User API Keys ────────────────────────────────────────
+
+export interface UserApiKey {
+  id: string;
+  name: string;
+  key_prefix: string;
+  scopes: string[];
+  expires_at: string | null;
+  created_at: string;
+  last_used_at: string | null;
+}
+
+export interface UserApiKeyWithRaw extends UserApiKey {
+  raw_key: string;
+}
+
 // ── SNMP OIDs ─────────────────────────────────────────────
 
 export interface SnmpOid {

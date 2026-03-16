@@ -329,8 +329,12 @@ class ApiKey(Base):
         DateTime(timezone=True), nullable=False, server_default="now()"
     )
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=True
+    )
 
     collector: Mapped[Collector | None] = relationship(back_populates="api_keys")
+    user: Mapped["User | None"] = relationship(back_populates="api_keys", foreign_keys=[user_id])
 
 
 # CheckResultRecord and EventRecord have been moved to ClickHouse.
@@ -436,6 +440,9 @@ class User(Base):
     )
 
     assigned_role: Mapped["Role | None"] = relationship()
+    api_keys: Mapped[list["ApiKey"]] = relationship(
+        back_populates="user", foreign_keys="ApiKey.user_id", cascade="all, delete-orphan"
+    )
     tenant_assignments: Mapped[list["UserTenant"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )

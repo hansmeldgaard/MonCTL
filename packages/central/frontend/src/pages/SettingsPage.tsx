@@ -3,16 +3,19 @@ import { useParams, useNavigate } from "react-router-dom";
 import {
   Activity,
   Building2,
+  Copy,
   Cpu,
   Database,
   KeyRound,
   Loader2,
   Network,
+  Plus,
   Server,
   Settings,
   Shield,
   ShieldCheck,
   Tag,
+  Trash2,
   User,
   Users,
 } from "lucide-react";
@@ -32,8 +35,12 @@ import {
   useGenerateTlsCert,
   useDeployTlsCert,
   useUpdateMyTimezone,
+  useUserApiKeys,
+  useCreateUserApiKey,
+  useDeleteUserApiKey,
 } from "@/api/hooks.ts";
-import { cn } from "@/lib/utils.ts";
+import { cn, formatDate, timeAgo } from "@/lib/utils.ts";
+import { useTimezone } from "@/hooks/useTimezone.ts";
 
 // Lazy-import existing page components to render inside tabs
 import { DeviceTypesPage } from "@/pages/DeviceTypesPage.tsx";
@@ -47,6 +54,7 @@ import { RolesPage } from "@/pages/RolesPage.tsx";
 
 const TABS = [
   { key: "profile", label: "Profile", icon: User },
+  { key: "api-keys", label: "API Keys", icon: KeyRound },
   { key: "system", label: "System", icon: Settings },
   { key: "device-types", label: "Device Types", icon: Server },
   { key: "labels", label: "Labels", icon: Tag },
@@ -142,6 +150,213 @@ function ProfileTab() {
           )}
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+function ApiKeysTab() {
+  const tz = useTimezone();
+  const { data: keys, isLoading } = useUserApiKeys();
+  const createKey = useCreateUserApiKey();
+  const deleteKey = useDeleteUserApiKey();
+
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newExpiry, setNewExpiry] = useState("");
+  const [rawKey, setRawKey] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  async function handleCreate() {
+    const result = await createKey.mutateAsync({
+      name: newName.trim(),
+      expires_at: newExpiry || undefined,
+    });
+    setRawKey(result.data.raw_key);
+    setNewName("");
+    setNewExpiry("");
+  }
+
+  function handleCloseCreate() {
+    setCreateOpen(false);
+    setRawKey(null);
+    setNewName("");
+    setNewExpiry("");
+    setCopied(false);
+  }
+
+  async function handleCopy() {
+    if (rawKey) {
+      await navigator.clipboard.writeText(rawKey);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  }
+
+  async function handleDelete() {
+    if (!deleteTarget) return;
+    await deleteKey.mutateAsync(deleteTarget);
+    setDeleteTarget(null);
+  }
+
+  const now = new Date();
+
+  if (isLoading) {
+    return (
+      <div className="flex justify-center py-12">
+        <Loader2 className="h-6 w-6 animate-spin text-zinc-500" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <KeyRound className="h-4 w-4" />
+            API Keys
+            <Badge variant="default" className="text-[10px] ml-1">{keys?.length ?? 0}/10</Badge>
+            <Button size="sm" className="ml-auto gap-1.5" onClick={() => setCreateOpen(true)}>
+              <Plus className="h-3.5 w-3.5" />
+              Create API Key
+            </Button>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-xs text-zinc-500 mb-4">
+            API keys inherit your role permissions and tenant access. Use them for external integrations.
+          </p>
+          {!keys || keys.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-8 text-zinc-500">
+              <KeyRound className="mb-2 h-6 w-6 text-zinc-600" />
+              <p className="text-sm">No API keys yet. Create one to integrate with external systems.</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-zinc-800 text-left text-xs text-zinc-500">
+                    <th className="pb-2 pr-4 font-medium">Name</th>
+                    <th className="pb-2 pr-4 font-medium">Key Prefix</th>
+                    <th className="pb-2 pr-4 font-medium">Expires</th>
+                    <th className="pb-2 pr-4 font-medium">Created</th>
+                    <th className="pb-2 pr-4 font-medium">Last Used</th>
+                    <th className="pb-2 font-medium text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-800/50">
+                  {keys.map((k) => {
+                    const expired = k.expires_at && new Date(k.expires_at) < now;
+                    return (
+                      <tr key={k.id} className="text-zinc-300">
+                        <td className="py-2.5 pr-4 text-xs font-medium">{k.name}</td>
+                        <td className="py-2.5 pr-4 text-xs font-mono text-zinc-400">{k.key_prefix}...</td>
+                        <td className="py-2.5 pr-4 text-xs">
+                          {k.expires_at ? (
+                            expired ? (
+                              <Badge variant="destructive" className="text-[10px]">Expired</Badge>
+                            ) : (
+                              <span className="text-zinc-400">{formatDate(k.expires_at, tz)}</span>
+                            )
+                          ) : (
+                            <span className="text-zinc-600">Never</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 pr-4 text-xs text-zinc-500">{formatDate(k.created_at, tz)}</td>
+                        <td className="py-2.5 pr-4 text-xs text-zinc-500">
+                          {k.last_used_at ? timeAgo(k.last_used_at) : <span className="text-zinc-600">Never</span>}
+                        </td>
+                        <td className="py-2.5 text-right">
+                          <Button size="sm" variant="ghost" onClick={() => setDeleteTarget(k.id)}>
+                            <Trash2 className="h-3.5 w-3.5 text-red-400" />
+                          </Button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Create Dialog */}
+      <Dialog open={createOpen} onClose={handleCloseCreate} title="Create API Key">
+        <div className="space-y-4">
+          {rawKey ? (
+            <>
+              <div className="rounded-md border border-emerald-800 bg-emerald-950/30 p-4 space-y-3">
+                <p className="text-sm font-medium text-emerald-400">API key created successfully</p>
+                <p className="text-xs text-zinc-400">Copy this key now — it will not be shown again.</p>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 rounded bg-zinc-900 px-3 py-2 font-mono text-xs text-zinc-200 break-all select-all">
+                    {rawKey}
+                  </code>
+                  <Button size="sm" variant="secondary" onClick={handleCopy} className="shrink-0 gap-1.5">
+                    <Copy className="h-3.5 w-3.5" />
+                    {copied ? "Copied" : "Copy"}
+                  </Button>
+                </div>
+              </div>
+              <div className="rounded-md bg-zinc-900 p-3">
+                <p className="text-[10px] text-zinc-500 mb-1">Example usage:</p>
+                <code className="text-xs text-zinc-400 font-mono break-all">
+                  curl -H "Authorization: Bearer {rawKey.slice(0, 20)}..." https://your-central/v1/devices
+                </code>
+              </div>
+              <DialogFooter>
+                <Button onClick={handleCloseCreate}>Done</Button>
+              </DialogFooter>
+            </>
+          ) : (
+            <>
+              <div className="space-y-1.5">
+                <Label>Name</Label>
+                <Input
+                  placeholder="e.g. Grafana integration"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  className="text-xs"
+                  autoFocus
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Expires (optional)</Label>
+                <Input
+                  type="date"
+                  value={newExpiry}
+                  onChange={(e) => setNewExpiry(e.target.value)}
+                  className="text-xs"
+                />
+                <p className="text-[10px] text-zinc-500">Leave empty for a key that never expires.</p>
+              </div>
+              <DialogFooter>
+                <Button variant="secondary" onClick={handleCloseCreate}>Cancel</Button>
+                <Button onClick={handleCreate} disabled={createKey.isPending || !newName.trim()}>
+                  {createKey.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+                  Create
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </div>
+      </Dialog>
+
+      {/* Delete Dialog */}
+      <Dialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)} title="Revoke API Key">
+        <p className="text-sm text-zinc-400">
+          Are you sure you want to revoke this API key? Any integrations using it will stop working immediately.
+        </p>
+        <DialogFooter>
+          <Button variant="secondary" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+          <Button variant="destructive" onClick={handleDelete} disabled={deleteKey.isPending}>
+            {deleteKey.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+            Revoke
+          </Button>
+        </DialogFooter>
+      </Dialog>
     </div>
   );
 }
@@ -441,6 +656,7 @@ export function SettingsPage() {
   function renderTab() {
     switch (activeTab) {
       case "profile": return <ProfileTab />;
+      case "api-keys": return <ApiKeysTab />;
       case "system": return <SystemTab />;
       case "device-types": return <DeviceTypesPage />;
       case "labels": return <LabelKeysPage />;

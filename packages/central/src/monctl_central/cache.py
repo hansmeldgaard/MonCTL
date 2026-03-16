@@ -63,6 +63,16 @@ async def set_cached_api_key(key_hash: str, data: dict) -> None:
         logger.debug("redis_cache_set_failed", exc_info=True)
 
 
+async def delete_cached_api_key(key_hash: str) -> None:
+    """Remove a cached API key entry (called on revocation)."""
+    if _redis is None:
+        return
+    try:
+        await _redis.delete(f"{_API_KEY_PREFIX}{key_hash}")
+    except Exception:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Credential cache
 # ---------------------------------------------------------------------------

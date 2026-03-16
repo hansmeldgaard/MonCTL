@@ -27,6 +27,8 @@ import type {
   ResourceActions,
   ResultRecord,
   Role,
+  UserApiKey,
+  UserApiKeyWithRaw,
   SnmpOid,
   SystemHealthReport,
   SystemSettings,
@@ -786,6 +788,38 @@ export function useDeleteRole() {
     mutationFn: (id: string) => apiDelete(`/roles/${id}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["roles"] });
+    },
+  });
+}
+
+// ── User API Keys ────────────────────────────────────────
+
+export function useUserApiKeys() {
+  return useQuery({
+    queryKey: ["user-api-keys"],
+    queryFn: () => apiGet<UserApiKey[]>("/user-api-keys"),
+    select: (res) => res.data,
+    refetchInterval: POLL_LIST,
+  });
+}
+
+export function useCreateUserApiKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { name: string; expires_at?: string | null }) =>
+      apiPost<UserApiKeyWithRaw>("/user-api-keys", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["user-api-keys"] });
+    },
+  });
+}
+
+export function useDeleteUserApiKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/user-api-keys/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["user-api-keys"] });
     },
   });
 }
