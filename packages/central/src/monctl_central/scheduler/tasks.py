@@ -187,7 +187,8 @@ class SchedulerRunner:
             max(if_speed_mbps) AS if_speed_mbps,
             any(device_name) AS device_name,
             any(if_name) AS if_name,
-            any(tenant_id) AS tenant_id
+            any(tenant_id) AS tenant_id,
+            any(tenant_name) AS tenant_name
         FROM interface
         WHERE executed_at >= toStartOfHour(now() - INTERVAL 1 HOUR)
           AND executed_at < toStartOfHour(now())
@@ -226,7 +227,8 @@ class SchedulerRunner:
             max(if_speed_mbps) AS if_speed_mbps,
             any(device_name) AS device_name,
             any(if_name) AS if_name,
-            any(tenant_id) AS tenant_id
+            any(tenant_id) AS tenant_id,
+            any(tenant_name) AS tenant_name
         FROM interface_hourly
         WHERE hour >= toStartOfDay(now() - INTERVAL 1 DAY)
           AND hour < toStartOfDay(now())

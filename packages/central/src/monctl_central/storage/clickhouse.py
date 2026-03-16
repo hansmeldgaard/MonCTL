@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS availability_latency ON CLUSTER '{cluster}'
     app_name           String        DEFAULT '',
     role               String        DEFAULT '',
     tenant_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    tenant_name        String        DEFAULT '',
 
 )
 ENGINE = ReplicatedMergeTree(
@@ -96,6 +97,7 @@ CREATE TABLE IF NOT EXISTS performance ON CLUSTER '{cluster}'
     device_name        String        DEFAULT '',
     app_name           String        DEFAULT '',
     tenant_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    tenant_name        String        DEFAULT '',
 
 )
 ENGINE = ReplicatedMergeTree(
@@ -156,6 +158,7 @@ CREATE TABLE IF NOT EXISTS interface ON CLUSTER '{cluster}'
     device_name        String        DEFAULT '',
     app_name           String        DEFAULT '',
     tenant_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    tenant_name        String        DEFAULT '',
 
 )
 ENGINE = ReplicatedMergeTree(
@@ -200,6 +203,7 @@ CREATE TABLE IF NOT EXISTS config ON CLUSTER '{cluster}'
     device_name        String        DEFAULT '',
     app_name           String        DEFAULT '',
     tenant_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    tenant_name        String        DEFAULT '',
 
 )
 ENGINE = ReplicatedMergeTree(
@@ -251,6 +255,7 @@ CREATE TABLE IF NOT EXISTS availability_latency
     app_name           String        DEFAULT '',
     role               String        DEFAULT '',
     tenant_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    tenant_name        String        DEFAULT '',
 
 )
 ENGINE = MergeTree()
@@ -293,6 +298,7 @@ CREATE TABLE IF NOT EXISTS performance
     device_name        String        DEFAULT '',
     app_name           String        DEFAULT '',
     tenant_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    tenant_name        String        DEFAULT '',
 
 )
 ENGINE = MergeTree()
@@ -348,6 +354,7 @@ CREATE TABLE IF NOT EXISTS interface
     device_name        String        DEFAULT '',
     app_name           String        DEFAULT '',
     tenant_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    tenant_name        String        DEFAULT '',
 
 )
 ENGINE = MergeTree()
@@ -387,6 +394,7 @@ CREATE TABLE IF NOT EXISTS config
     device_name        String        DEFAULT '',
     app_name           String        DEFAULT '',
     tenant_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    tenant_name        String        DEFAULT '',
 
 )
 ENGINE = MergeTree()
@@ -411,7 +419,7 @@ _AVAIL_INSERT_COLUMNS = [
     "state", "output", "error_message",
     "rtt_ms", "response_time_ms", "reachable", "status_code",
     "executed_at", "execution_time", "started_at",
-    "collector_name", "device_name", "app_name", "role", "tenant_id",
+    "collector_name", "device_name", "app_name", "role", "tenant_id", "tenant_name",
 ]
 
 _PERF_INSERT_COLUMNS = [
@@ -420,7 +428,7 @@ _PERF_INSERT_COLUMNS = [
     "state", "output", "error_message",
     "metric_names", "metric_values",
     "executed_at", "execution_time", "started_at",
-    "collector_name", "device_name", "app_name", "tenant_id",
+    "collector_name", "device_name", "app_name", "tenant_id", "tenant_name",
 ]
 
 _IFACE_INSERT_COLUMNS = [
@@ -432,7 +440,7 @@ _IFACE_INSERT_COLUMNS = [
     "in_rate_bps", "out_rate_bps", "in_utilization_pct", "out_utilization_pct",
     "poll_interval_sec", "state",
     "executed_at",
-    "collector_name", "device_name", "app_name", "tenant_id",
+    "collector_name", "device_name", "app_name", "tenant_id", "tenant_name",
 ]
 
 _CONFIG_INSERT_COLUMNS = [
@@ -440,7 +448,7 @@ _CONFIG_INSERT_COLUMNS = [
     "component", "component_type",
     "config_key", "config_value", "config_hash",
     "state", "executed_at",
-    "collector_name", "device_name", "app_name", "tenant_id",
+    "collector_name", "device_name", "app_name", "tenant_id", "tenant_name",
 ]
 
 # Old tables to drop
@@ -487,7 +495,8 @@ _ROLLUP_COLUMNS = """
     if_speed_mbps      UInt32        DEFAULT 0,
     device_name        String        DEFAULT '',
     if_name            String        DEFAULT '',
-    tenant_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000')
+    tenant_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    tenant_name        String        DEFAULT ''
 """
 
 _INTERFACE_HOURLY_DDL = """
@@ -710,6 +719,21 @@ class ClickHouseClient:
                 _CONFIG_LATEST_DDL_LOCAL,
             ]:
                 client.command(mv_ddl)
+
+        # Add tenant_name column to existing tables (safe to run if column already exists)
+        _TENANT_NAME_ALTERS = [
+            "ALTER TABLE availability_latency ADD COLUMN IF NOT EXISTS tenant_name String DEFAULT ''",
+            "ALTER TABLE performance ADD COLUMN IF NOT EXISTS tenant_name String DEFAULT ''",
+            "ALTER TABLE interface ADD COLUMN IF NOT EXISTS tenant_name String DEFAULT ''",
+            "ALTER TABLE config ADD COLUMN IF NOT EXISTS tenant_name String DEFAULT ''",
+            "ALTER TABLE interface_hourly ADD COLUMN IF NOT EXISTS tenant_name String DEFAULT ''",
+            "ALTER TABLE interface_daily ADD COLUMN IF NOT EXISTS tenant_name String DEFAULT ''",
+        ]
+        for alter_sql in _TENANT_NAME_ALTERS:
+            try:
+                client.command(alter_sql)
+            except Exception:
+                pass
 
         # Add bloom filter indexes via ALTER TABLE (ClickHouse 24.x compat)
         _INDEXES = [

@@ -875,6 +875,7 @@ async def submit_results(
                     "device_name": enrichment.get("device_name", ""),
                     "app_name": enrichment.get("app_name", ""),
                     "tenant_id": enrichment.get("tenant_id", "00000000-0000-0000-0000-000000000000"),
+                    "tenant_name": enrichment.get("tenant_name", ""),
                 })
         else:
             ch_rows.append({
@@ -900,6 +901,7 @@ async def submit_results(
                 "app_name": enrichment.get("app_name", ""),
                 "role": enrichment.get("role", ""),
                 "tenant_id": enrichment.get("tenant_id", "00000000-0000-0000-0000-000000000000"),
+                "tenant_name": enrichment.get("tenant_name", ""),
             })
 
     # Route results to the correct ClickHouse table based on target_table
@@ -928,16 +930,19 @@ async def _enrich_assignment(db: AsyncSession, assignment_id: str) -> dict:
 
     async def _load(aid: str) -> dict:
         try:
+            from monctl_central.storage.models import Tenant
+
             stmt = (
-                select(AppAssignment, App, Device)
+                select(AppAssignment, App, Device, Tenant)
                 .join(App, AppAssignment.app_id == App.id)
                 .outerjoin(Device, AppAssignment.device_id == Device.id)
+                .outerjoin(Tenant, Device.tenant_id == Tenant.id)
                 .where(AppAssignment.id == uuid.UUID(aid))
             )
             row = (await db.execute(stmt)).first()
             if row is None:
                 return {}
-            assignment, app, device = row.AppAssignment, row.App, row.Device
+            assignment, app, device, tenant = row.AppAssignment, row.App, row.Device, row.Tenant
             return {
                 "app_id": str(app.id),
                 "app_name": app.name,
@@ -946,6 +951,7 @@ async def _enrich_assignment(db: AsyncSession, assignment_id: str) -> dict:
                 "device_name": device.name if device else "",
                 "role": assignment.role or "",
                 "tenant_id": str(device.tenant_id) if device and device.tenant_id else "00000000-0000-0000-0000-000000000000",
+                "tenant_name": tenant.name if tenant else "",
             }
         except Exception:
             return {}
