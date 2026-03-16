@@ -440,32 +440,58 @@ class Poller(BasePoller):
         try:
             from pysnmp.hlapi.asyncio import (
                 CommunityData, ContextData, ObjectIdentity, ObjectType,
-                SnmpEngine, UdpTransportTarget, UsmUserData, bulkWalkCmd,
+                SnmpEngine, UdpTransportTarget, UsmUserData, bulkCmd,
             )
+            from pysnmp.smi.rfc1902 import ObjectIdentity as ObjId
 
             engine = SnmpEngine()
             auth_data = self._build_auth(context.credential)
             port = int(context.credential.get("port", 161))
             transport = UdpTransportTarget((host, port), timeout=timeout, retries=1)
 
-            # Walk all needed OIDs
+            async def _manual_bulk_walk(base_oid_str, max_rows=500):
+                """Walk an OID tree using repeated bulkCmd (avoids buggy bulkWalkCmd)."""
+                results = {}
+                current_oid = base_oid_str
+                base_tuple = tuple(int(x) for x in base_oid_str.split("."))
+                base_len = len(base_tuple)
+                while len(results) < max_rows:
+                    err_ind, err_st, err_idx, var_binds = await bulkCmd(
+                        engine, auth_data, transport, ContextData(),
+                        0, 25,
+                        ObjectType(ObjectIdentity(current_oid)),
+                    )
+                    if err_ind or err_st:
+                        break
+                    if not var_binds:
+                        break
+                    out_of_tree = False
+                    last_oid = None
+                    for row in var_binds:
+                        for oid, val in row:
+                            oid_tuple = tuple(oid)
+                            if oid_tuple[:base_len] != base_tuple:
+                                out_of_tree = True
+                                break
+                            if_index = oid_tuple[-1]
+                            results[if_index] = val.prettyPrint() if hasattr(val, "prettyPrint") else str(val)
+                            last_oid = ".".join(str(x) for x in oid_tuple)
+                        if out_of_tree:
+                            break
+                    if out_of_tree or last_oid is None or last_oid == current_oid:
+                        break
+                    current_oid = last_oid
+                return results
+
+            # Walk all needed OIDs sequentially
             raw: dict[str, dict[int, str | int]] = {}
             all_oids = list(_IF_OIDS.items()) + list(_IFX_OIDS.items())
 
             for oid_name, oid_str in all_oids:
-                raw[oid_name] = {}
-                objects = []
-                async for err_indication, err_status, err_index, var_binds in bulkWalkCmd(
-                    engine, auth_data, transport, ContextData(),
-                    0, 25,
-                    ObjectType(ObjectIdentity(oid_str)),
-                ):
-                    if err_indication or err_status:
-                        break
-                    for oid, val in var_binds:
-                        oid_parts = str(oid).split(".")
-                        if_index = int(oid_parts[-1])
-                        raw[oid_name][if_index] = val.prettyPrint() if hasattr(val, "prettyPrint") else str(val)
+                try:
+                    raw[oid_name] = await _manual_bulk_walk(oid_str)
+                except Exception:
+                    raw[oid_name] = {}  # Skip this OID tree on error
 
             # Build per-interface rows
             if_indices = sorted(raw.get("ifIndex", {}).keys())
@@ -683,8 +709,8 @@ async def lifespan(app: FastAPI):
                         requirements=requirements,
                     ))
                 else:
-                    # Update existing app: backfill config_schema if missing
-                    if existing_app.config_schema is None and config_schema:
+                    # Always sync config_schema from seed definition
+                    if config_schema and existing_app.config_schema != config_schema:
                         existing_app.config_schema = config_schema
                     # Always sync target_table from seed definition
                     if existing_app.target_table != target_table:
