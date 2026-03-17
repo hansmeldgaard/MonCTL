@@ -147,7 +147,7 @@ async def lifespan(app: FastAPI):
             "connector_type": "snmp",
             "version": "1.0.0",
             "entry_class": "SnmpConnector",
-            "requirements": ["pysnmp-lextudio>=6.0"],
+            "requirements": ["pysnmp>=7.1"],
             "source_code": '''\
 """Built-in SNMP connector for MonCTL."""
 

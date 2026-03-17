@@ -19,7 +19,7 @@ dependencies = [
     # Logging
     "structlog>=24.1",
     # SNMP polling (interface poller)
-    "pysnmp-lextudio>=6.0",
+    "pysnmp>=7.1",
 ]
 
 [project.scripts]
