@@ -51,6 +51,17 @@ class CollectorPeerServicer(pb_grpc.CollectorPeerServicer):
 
         pb_jobs = []
         for job_def, profile in jobs:
+            pb_bindings = [
+                pb.ConnectorBindingProto(
+                    alias=b.alias,
+                    connector_id=b.connector_id,
+                    connector_version_id=b.connector_version_id,
+                    credential_name=b.credential_name or "",
+                    use_latest=b.use_latest,
+                    settings_json=json.dumps(b.settings) if b.settings else "{}",
+                )
+                for b in job_def.connector_bindings
+            ]
             pb_jobs.append(pb.JobWithProfile(
                 job_id=job_def.job_id,
                 device_id=job_def.device_id or "",
@@ -64,6 +75,7 @@ class CollectorPeerServicer(pb_grpc.CollectorPeerServicer):
                 avg_execution_time=profile.avg_execution_time,
                 is_heavy=profile.is_heavy,
                 role=job_def.role or "",
+                connector_bindings=pb_bindings,
             ))
         return pb.GetJobsResponse(jobs=pb_jobs)
 

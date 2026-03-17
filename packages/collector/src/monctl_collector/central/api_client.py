@@ -14,7 +14,7 @@ from typing import Any
 import aiohttp
 import structlog
 
-from monctl_collector.jobs.models import JobDefinition
+from monctl_collector.jobs.models import ConnectorBinding, JobDefinition
 
 logger = structlog.get_logger()
 
@@ -80,6 +80,17 @@ class CentralAPIClient:
 
         jobs: list[JobDefinition] = []
         for j in data.get("jobs", []):
+            bindings = [
+                ConnectorBinding(
+                    alias=b["alias"],
+                    connector_id=b["connector_id"],
+                    connector_version_id=b["connector_version_id"],
+                    credential_name=b.get("credential_name"),
+                    use_latest=b.get("use_latest", False),
+                    settings=b.get("settings", {}),
+                )
+                for b in j.get("connector_bindings", [])
+            ]
             jobs.append(JobDefinition(
                 job_id=j["job_id"],
                 device_id=j.get("device_id"),
@@ -93,6 +104,7 @@ class CentralAPIClient:
                 max_execution_time=j.get("max_execution_time", 120),
                 enabled=j.get("enabled", True),
                 updated_at=j.get("updated_at", ""),
+                connector_bindings=bindings,
             ))
 
         deleted_ids: list[str] = data.get("deleted_ids", [])

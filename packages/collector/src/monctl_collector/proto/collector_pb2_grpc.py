@@ -3,7 +3,7 @@
 import grpc
 import warnings
 
-from monctl_collector.proto import collector_pb2 as monctl__collector_dot_proto_dot_collector__pb2
+from monctl_collector.proto import collector_pb2 as collector__pb2
 
 GRPC_GENERATED_VERSION = '1.78.0'
 GRPC_VERSION = grpc.__version__
@@ -18,7 +18,7 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + ' but the generated code in monctl_collector/proto/collector_pb2_grpc.py depends on'
+        + ' but the generated code in collector_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
@@ -37,33 +37,33 @@ class CollectorPeerStub(object):
         """
         self.GetMyJobs = channel.unary_unary(
                 '/collector.CollectorPeer/GetMyJobs',
-                request_serializer=monctl__collector_dot_proto_dot_collector__pb2.GetJobsRequest.SerializeToString,
-                response_deserializer=monctl__collector_dot_proto_dot_collector__pb2.GetJobsResponse.FromString,
+                request_serializer=collector__pb2.GetJobsRequest.SerializeToString,
+                response_deserializer=collector__pb2.GetJobsResponse.FromString,
                 _registered_method=True)
         self.ReportExecution = channel.unary_unary(
                 '/collector.CollectorPeer/ReportExecution',
-                request_serializer=monctl__collector_dot_proto_dot_collector__pb2.ReportExecutionReq.SerializeToString,
-                response_deserializer=monctl__collector_dot_proto_dot_collector__pb2.ReportExecutionResp.FromString,
+                request_serializer=collector__pb2.ReportExecutionReq.SerializeToString,
+                response_deserializer=collector__pb2.ReportExecutionResp.FromString,
                 _registered_method=True)
         self.RegisterWorker = channel.unary_unary(
                 '/collector.CollectorPeer/RegisterWorker',
-                request_serializer=monctl__collector_dot_proto_dot_collector__pb2.RegisterWorkerReq.SerializeToString,
-                response_deserializer=monctl__collector_dot_proto_dot_collector__pb2.RegisterWorkerResp.FromString,
+                request_serializer=collector__pb2.RegisterWorkerReq.SerializeToString,
+                response_deserializer=collector__pb2.RegisterWorkerResp.FromString,
                 _registered_method=True)
         self.GetCredential = channel.unary_unary(
                 '/collector.CollectorPeer/GetCredential',
-                request_serializer=monctl__collector_dot_proto_dot_collector__pb2.CredentialRequest.SerializeToString,
-                response_deserializer=monctl__collector_dot_proto_dot_collector__pb2.CredentialResponse.FromString,
+                request_serializer=collector__pb2.CredentialRequest.SerializeToString,
+                response_deserializer=collector__pb2.CredentialResponse.FromString,
                 _registered_method=True)
         self.SubmitResult = channel.unary_unary(
                 '/collector.CollectorPeer/SubmitResult',
-                request_serializer=monctl__collector_dot_proto_dot_collector__pb2.SubmitResultRequest.SerializeToString,
-                response_deserializer=monctl__collector_dot_proto_dot_collector__pb2.SubmitResultResponse.FromString,
+                request_serializer=collector__pb2.SubmitResultRequest.SerializeToString,
+                response_deserializer=collector__pb2.SubmitResultResponse.FromString,
                 _registered_method=True)
         self.GetAppCode = channel.unary_unary(
                 '/collector.CollectorPeer/GetAppCode',
-                request_serializer=monctl__collector_dot_proto_dot_collector__pb2.AppCodeRequest.SerializeToString,
-                response_deserializer=monctl__collector_dot_proto_dot_collector__pb2.AppCodeResponse.FromString,
+                request_serializer=collector__pb2.AppCodeRequest.SerializeToString,
+                response_deserializer=collector__pb2.AppCodeResponse.FromString,
                 _registered_method=True)
 
 
@@ -116,33 +116,33 @@ def add_CollectorPeerServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'GetMyJobs': grpc.unary_unary_rpc_method_handler(
                     servicer.GetMyJobs,
-                    request_deserializer=monctl__collector_dot_proto_dot_collector__pb2.GetJobsRequest.FromString,
-                    response_serializer=monctl__collector_dot_proto_dot_collector__pb2.GetJobsResponse.SerializeToString,
+                    request_deserializer=collector__pb2.GetJobsRequest.FromString,
+                    response_serializer=collector__pb2.GetJobsResponse.SerializeToString,
             ),
             'ReportExecution': grpc.unary_unary_rpc_method_handler(
                     servicer.ReportExecution,
-                    request_deserializer=monctl__collector_dot_proto_dot_collector__pb2.ReportExecutionReq.FromString,
-                    response_serializer=monctl__collector_dot_proto_dot_collector__pb2.ReportExecutionResp.SerializeToString,
+                    request_deserializer=collector__pb2.ReportExecutionReq.FromString,
+                    response_serializer=collector__pb2.ReportExecutionResp.SerializeToString,
             ),
             'RegisterWorker': grpc.unary_unary_rpc_method_handler(
                     servicer.RegisterWorker,
-                    request_deserializer=monctl__collector_dot_proto_dot_collector__pb2.RegisterWorkerReq.FromString,
-                    response_serializer=monctl__collector_dot_proto_dot_collector__pb2.RegisterWorkerResp.SerializeToString,
+                    request_deserializer=collector__pb2.RegisterWorkerReq.FromString,
+                    response_serializer=collector__pb2.RegisterWorkerResp.SerializeToString,
             ),
             'GetCredential': grpc.unary_unary_rpc_method_handler(
                     servicer.GetCredential,
-                    request_deserializer=monctl__collector_dot_proto_dot_collector__pb2.CredentialRequest.FromString,
-                    response_serializer=monctl__collector_dot_proto_dot_collector__pb2.CredentialResponse.SerializeToString,
+                    request_deserializer=collector__pb2.CredentialRequest.FromString,
+                    response_serializer=collector__pb2.CredentialResponse.SerializeToString,
             ),
             'SubmitResult': grpc.unary_unary_rpc_method_handler(
                     servicer.SubmitResult,
-                    request_deserializer=monctl__collector_dot_proto_dot_collector__pb2.SubmitResultRequest.FromString,
-                    response_serializer=monctl__collector_dot_proto_dot_collector__pb2.SubmitResultResponse.SerializeToString,
+                    request_deserializer=collector__pb2.SubmitResultRequest.FromString,
+                    response_serializer=collector__pb2.SubmitResultResponse.SerializeToString,
             ),
             'GetAppCode': grpc.unary_unary_rpc_method_handler(
                     servicer.GetAppCode,
-                    request_deserializer=monctl__collector_dot_proto_dot_collector__pb2.AppCodeRequest.FromString,
-                    response_serializer=monctl__collector_dot_proto_dot_collector__pb2.AppCodeResponse.SerializeToString,
+                    request_deserializer=collector__pb2.AppCodeRequest.FromString,
+                    response_serializer=collector__pb2.AppCodeResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -171,8 +171,8 @@ class CollectorPeer(object):
             request,
             target,
             '/collector.CollectorPeer/GetMyJobs',
-            monctl__collector_dot_proto_dot_collector__pb2.GetJobsRequest.SerializeToString,
-            monctl__collector_dot_proto_dot_collector__pb2.GetJobsResponse.FromString,
+            collector__pb2.GetJobsRequest.SerializeToString,
+            collector__pb2.GetJobsResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -198,8 +198,8 @@ class CollectorPeer(object):
             request,
             target,
             '/collector.CollectorPeer/ReportExecution',
-            monctl__collector_dot_proto_dot_collector__pb2.ReportExecutionReq.SerializeToString,
-            monctl__collector_dot_proto_dot_collector__pb2.ReportExecutionResp.FromString,
+            collector__pb2.ReportExecutionReq.SerializeToString,
+            collector__pb2.ReportExecutionResp.FromString,
             options,
             channel_credentials,
             insecure,
@@ -225,8 +225,8 @@ class CollectorPeer(object):
             request,
             target,
             '/collector.CollectorPeer/RegisterWorker',
-            monctl__collector_dot_proto_dot_collector__pb2.RegisterWorkerReq.SerializeToString,
-            monctl__collector_dot_proto_dot_collector__pb2.RegisterWorkerResp.FromString,
+            collector__pb2.RegisterWorkerReq.SerializeToString,
+            collector__pb2.RegisterWorkerResp.FromString,
             options,
             channel_credentials,
             insecure,
@@ -252,8 +252,8 @@ class CollectorPeer(object):
             request,
             target,
             '/collector.CollectorPeer/GetCredential',
-            monctl__collector_dot_proto_dot_collector__pb2.CredentialRequest.SerializeToString,
-            monctl__collector_dot_proto_dot_collector__pb2.CredentialResponse.FromString,
+            collector__pb2.CredentialRequest.SerializeToString,
+            collector__pb2.CredentialResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -279,8 +279,8 @@ class CollectorPeer(object):
             request,
             target,
             '/collector.CollectorPeer/SubmitResult',
-            monctl__collector_dot_proto_dot_collector__pb2.SubmitResultRequest.SerializeToString,
-            monctl__collector_dot_proto_dot_collector__pb2.SubmitResultResponse.FromString,
+            collector__pb2.SubmitResultRequest.SerializeToString,
+            collector__pb2.SubmitResultResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -306,8 +306,8 @@ class CollectorPeer(object):
             request,
             target,
             '/collector.CollectorPeer/GetAppCode',
-            monctl__collector_dot_proto_dot_collector__pb2.AppCodeRequest.SerializeToString,
-            monctl__collector_dot_proto_dot_collector__pb2.AppCodeResponse.FromString,
+            collector__pb2.AppCodeRequest.SerializeToString,
+            collector__pb2.AppCodeResponse.FromString,
             options,
             channel_credentials,
             insecure,

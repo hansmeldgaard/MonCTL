@@ -320,7 +320,7 @@ class AppManager:
         version_str: str = meta.get("version", version_id)
 
         code_resp = await self._central.get_connector_code(connector_id, version_id)
-        code = code_resp.get("code", "")
+        code = code_resp.get("source_code") or code_resp.get("code", "")
         if not code:
             raise RuntimeError(f"No source code for connector {connector_id!r}")
 

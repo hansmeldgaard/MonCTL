@@ -176,6 +176,17 @@ class PeerChannelPool:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _job_to_dict(j: pb.JobWithProfile) -> dict:
+    bindings = [
+        {
+            "alias": b.alias,
+            "connector_id": b.connector_id,
+            "connector_version_id": b.connector_version_id,
+            "credential_name": b.credential_name or None,
+            "use_latest": b.use_latest,
+            "settings": json.loads(b.settings_json) if b.settings_json else {},
+        }
+        for b in j.connector_bindings
+    ]
     return {
         "job_id": j.job_id,
         "device_id": j.device_id,
@@ -189,4 +200,5 @@ def _job_to_dict(j: pb.JobWithProfile) -> dict:
         "avg_execution_time": j.avg_execution_time,
         "is_heavy": j.is_heavy,
         "role": j.role,
+        "connector_bindings": bindings,
     }
