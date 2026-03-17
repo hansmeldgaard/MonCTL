@@ -217,14 +217,14 @@ class SnmpConnector:
         return self._build_v1v2c_auth()
 
     def _build_v1v2c_auth(self):
-        from pysnmp.hlapi.v3arch.asyncio import CommunityData
+        from pysnmp.hlapi.asyncio import CommunityData
         community = self.credential.get("community", "public")
         mp_model = 0 if self.version == "1" else 1
         return CommunityData(community, mpModel=mp_model)
 
     def _build_v3_auth(self):
-        from pysnmp.hlapi.v3arch.asyncio import UsmUserData
-        import pysnmp.hlapi.v3arch.asyncio as hlapi
+        from pysnmp.hlapi.asyncio import UsmUserData
+        import pysnmp.hlapi.asyncio as hlapi
 
         username = self.credential.get("username", "")
         auth_proto_name = (self.credential.get("auth_protocol") or "").upper()
@@ -266,17 +266,17 @@ class SnmpConnector:
 
         Returns a dict mapping each OID to its value.
         """
-        from pysnmp.hlapi.v3arch.asyncio import (
+        from pysnmp.hlapi.asyncio import (
             ContextData,
             ObjectIdentity,
             ObjectType,
             SnmpEngine,
             UdpTransportTarget,
-            get_cmd,
+            getCmd,
         )
 
         engine = SnmpEngine()
-        transport = await UdpTransportTarget.create(
+        transport = UdpTransportTarget(
             (self._host, self.port), timeout=self.timeout, retries=self.retries,
         )
         auth = self._build_auth()
@@ -284,7 +284,7 @@ class SnmpConnector:
         result: dict[str, Any] = {}
         obj_types = [ObjectType(ObjectIdentity(oid)) for oid in oids]
 
-        error_indication, error_status, error_index, var_binds = await get_cmd(
+        error_indication, error_status, error_index, var_binds = await getCmd(
             engine, auth, transport, ContextData(), *obj_types,
         )
         if error_indication:
@@ -298,17 +298,17 @@ class SnmpConnector:
 
     async def walk(self, oid: str) -> list[tuple[str, Any]]:
         """Perform SNMP WALK (GETBULK) starting at the given OID."""
-        from pysnmp.hlapi.v3arch.asyncio import (
+        from pysnmp.hlapi.asyncio import (
             ContextData,
             ObjectIdentity,
             ObjectType,
             SnmpEngine,
             UdpTransportTarget,
-            bulk_cmd,
+            bulkCmd,
         )
 
         engine = SnmpEngine()
-        transport = await UdpTransportTarget.create(
+        transport = UdpTransportTarget(
             (self._host, self.port), timeout=self.timeout, retries=self.retries,
         )
         auth = self._build_auth()
@@ -317,7 +317,7 @@ class SnmpConnector:
         marker = ObjectType(ObjectIdentity(oid))
 
         while True:
-            error_indication, error_status, error_index, var_binds = await bulk_cmd(
+            error_indication, error_status, error_index, var_binds = await bulkCmd(
                 engine, auth, transport, ContextData(), 0, 25, marker,
             )
             if error_indication or error_status:
