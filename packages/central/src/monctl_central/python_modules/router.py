@@ -196,6 +196,65 @@ async def list_modules(
 
 
 # ---------------------------------------------------------------------------
+# GET /python-modules/network-status — current network mode
+# (must be before /{module_id} to avoid path conflict)
+# ---------------------------------------------------------------------------
+
+@router.get("/network-status")
+async def get_network_status(
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Return the current PyPI network mode configuration."""
+    mode, proxy_url = await _get_network_mode(db)
+    return {
+        "status": "success",
+        "data": {
+            "mode": mode,
+            "proxy_configured": bool(proxy_url),
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# GET /python-modules/search-pypi — search PyPI
+# (must be before /{module_id} to avoid path conflict)
+# ---------------------------------------------------------------------------
+
+@router.get("/search-pypi")
+async def search_pypi_endpoint(
+    q: str = Query(..., min_length=1, description="Package name to search"),
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Search PyPI for a package."""
+    from .pypi_client import search_pypi
+
+    network_mode, proxy_url = await _get_network_mode(db)
+    if network_mode == "offline":
+        raise HTTPException(status_code=400, detail="Network mode is 'offline'")
+
+    proxy = proxy_url if network_mode == "proxy" else None
+
+    try:
+        results = await search_pypi(q, proxy_url=proxy)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"PyPI search failed: {exc}") from exc
+
+    # Check which packages are already registered locally
+    if results:
+        names = [normalize_package_name(r["name"]) for r in results]
+        existing = (await db.execute(
+            select(PythonModule.name).where(PythonModule.name.in_(names))
+        )).scalars().all()
+        existing_set = {normalize_package_name(n) for n in existing}
+        for r in results:
+            r["registered"] = normalize_package_name(r["name"]) in existing_set
+
+    return {"status": "success", "data": results}
+
+
+# ---------------------------------------------------------------------------
 # GET /python-modules/{module_id} — module detail
 # ---------------------------------------------------------------------------
 
@@ -517,53 +576,6 @@ async def resolve_dependencies(
             "resolved": result.resolved,
         },
     }
-
-
-# ---------------------------------------------------------------------------
-# GET /python-modules/network-status — current network mode
-# ---------------------------------------------------------------------------
-
-@router.get("/network-status")
-async def get_network_status(
-    db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
-):
-    """Return the current PyPI network mode configuration."""
-    mode, proxy_url = await _get_network_mode(db)
-    return {
-        "status": "success",
-        "data": {
-            "network_mode": mode,
-            "proxy_url": proxy_url,
-        },
-    }
-
-
-# ---------------------------------------------------------------------------
-# GET /python-modules/search-pypi — search PyPI
-# ---------------------------------------------------------------------------
-
-@router.get("/search-pypi")
-async def search_pypi_endpoint(
-    q: str = Query(..., min_length=1, description="Package name to search"),
-    db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
-):
-    """Search PyPI for a package."""
-    from .pypi_client import search_pypi
-
-    network_mode, proxy_url = await _get_network_mode(db)
-    if network_mode == "offline":
-        raise HTTPException(status_code=400, detail="Network mode is 'offline'")
-
-    proxy = proxy_url if network_mode == "proxy" else None
-
-    try:
-        results = await search_pypi(q, proxy_url=proxy)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"PyPI search failed: {exc}") from exc
-
-    return {"status": "success", "data": results}
 
 
 # ---------------------------------------------------------------------------

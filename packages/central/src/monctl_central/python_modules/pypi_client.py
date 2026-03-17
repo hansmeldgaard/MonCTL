@@ -76,9 +76,9 @@ async def search_pypi(
         pkg_info = info.get("info", {})
         return [{
             "name": pkg_info.get("name", query),
-            "version": pkg_info.get("version", ""),
+            "latest_version": pkg_info.get("version", ""),
             "summary": pkg_info.get("summary", ""),
-            "homepage": pkg_info.get("home_page", "") or pkg_info.get("project_url", ""),
+            "registered": False,
         }]
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 404:
