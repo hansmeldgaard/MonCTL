@@ -149,7 +149,29 @@ async def lifespan(app: FastAPI):
             "entry_class": "SnmpConnector",
             "requirements": ["pysnmp>=7.1"],
             "source_code": '''\
-"""Built-in SNMP connector for MonCTL."""
+"""Built-in SNMP connector for MonCTL.
+
+Supports SNMP v1, v2c, and v3. Authentication is driven by the credential
+dict passed at construction time.
+
+Credential keys (v1/v2c):
+    snmp_version   "1" or "2c" (default "2c")
+    community      Community string (default "public")
+
+Credential keys (v3):
+    snmp_version    "3"
+    username        USM username
+    auth_protocol   "MD5", "SHA", "SHA224", "SHA256", "SHA384", "SHA512", or ""
+    auth_password   Auth passphrase
+    priv_protocol   "DES", "3DES", "AES", "AES192", "AES256", or ""
+    priv_password   Privacy passphrase
+    security_level  "noauthnopriv", "authnopriv", or "authpriv" (default "authpriv")
+
+Settings keys:
+    port      SNMP port (default 161)
+    timeout   Timeout in seconds (default 5)
+    retries   Retry count (default 2)
+"""
 
 from __future__ import annotations
 
@@ -158,23 +180,86 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+_AUTH_PROTOCOLS = {
+    "MD5": "usmHMACMD5AuthProtocol",
+    "SHA": "usmHMACSHAAuthProtocol",
+    "SHA224": "usmHMAC128SHA224AuthProtocol",
+    "SHA256": "usmHMAC192SHA256AuthProtocol",
+    "SHA384": "usmHMAC256SHA384AuthProtocol",
+    "SHA512": "usmHMAC384SHA512AuthProtocol",
+}
+
+_PRIV_PROTOCOLS = {
+    "DES": "usmDESPrivProtocol",
+    "3DES": "usm3DESEDEPrivProtocol",
+    "AES": "usmAesCfb128Protocol",
+    "AES192": "usmAesCfb192Protocol",
+    "AES256": "usmAesCfb256Protocol",
+}
+
 
 class SnmpConnector:
-    """SNMP v2c/v3 connector that polls OIDs from a target device."""
+    """SNMP v1/v2c/v3 connector that polls OIDs from a target device."""
 
     def __init__(self, settings: dict[str, Any], credential: dict[str, Any] | None = None):
         self.settings = settings
         self.credential = credential or {}
-        self.community = self.credential.get("community", "public")
-        self.version = self.credential.get("snmp_version", "2c")
+        self.version = str(self.credential.get("snmp_version", "2c")).lower()
         self.port = int(self.settings.get("port", 161))
         self.timeout = int(self.settings.get("timeout", 5))
         self.retries = int(self.settings.get("retries", 2))
+        self._host: str = ""
+
+    def _build_auth(self):
+        """Build the appropriate pysnmp auth object for the configured version."""
+        if self.version == "3":
+            return self._build_v3_auth()
+        return self._build_v1v2c_auth()
+
+    def _build_v1v2c_auth(self):
+        from pysnmp.hlapi.v3arch.asyncio import CommunityData
+        community = self.credential.get("community", "public")
+        mp_model = 0 if self.version == "1" else 1
+        return CommunityData(community, mpModel=mp_model)
+
+    def _build_v3_auth(self):
+        from pysnmp.hlapi.v3arch.asyncio import UsmUserData
+        import pysnmp.hlapi.v3arch.asyncio as hlapi
+
+        username = self.credential.get("username", "")
+        auth_proto_name = (self.credential.get("auth_protocol") or "").upper()
+        auth_key = self.credential.get("auth_password", "")
+        priv_proto_name = (self.credential.get("priv_protocol") or "").upper()
+        priv_key = self.credential.get("priv_password", "")
+        security_level = (self.credential.get("security_level") or "authpriv").lower()
+
+        auth_proto = None
+        if auth_proto_name in _AUTH_PROTOCOLS:
+            auth_proto = getattr(hlapi, _AUTH_PROTOCOLS[auth_proto_name], None)
+
+        priv_proto = None
+        if priv_proto_name in _PRIV_PROTOCOLS:
+            priv_proto = getattr(hlapi, _PRIV_PROTOCOLS[priv_proto_name], None)
+
+        kwargs: dict[str, Any] = {"userName": username}
+
+        if security_level == "noauthnopriv":
+            return UsmUserData(**kwargs)
+
+        if auth_proto and auth_key:
+            kwargs["authKey"] = auth_key
+            kwargs["authProtocol"] = auth_proto
+
+        if security_level == "authpriv" and priv_proto and priv_key and auth_proto:
+            kwargs["privKey"] = priv_key
+            kwargs["privProtocol"] = priv_proto
+
+        return UsmUserData(**kwargs)
 
     async def connect(self, host: str) -> None:
         """Prepare SNMP transport for the given host."""
         self._host = host
-        logger.debug("snmp_connect", host=host, port=self.port, version=self.version)
+        logger.debug("snmp_connect host=%s port=%s version=%s", host, self.port, self.version)
 
     async def get(self, oids: list[str]) -> dict[str, Any]:
         """Perform SNMP GET for a list of OID strings.
@@ -182,7 +267,6 @@ class SnmpConnector:
         Returns a dict mapping each OID to its value.
         """
         from pysnmp.hlapi.v3arch.asyncio import (
-            CommunityData,
             ContextData,
             ObjectIdentity,
             ObjectType,
@@ -192,8 +276,10 @@ class SnmpConnector:
         )
 
         engine = SnmpEngine()
-        transport = await UdpTransportTarget.create((self._host, self.port), timeout=self.timeout, retries=self.retries)
-        auth = CommunityData(self.community, mpModel=1 if self.version == "2c" else 0)
+        transport = await UdpTransportTarget.create(
+            (self._host, self.port), timeout=self.timeout, retries=self.retries,
+        )
+        auth = self._build_auth()
 
         result: dict[str, Any] = {}
         obj_types = [ObjectType(ObjectIdentity(oid)) for oid in oids]
@@ -213,7 +299,6 @@ class SnmpConnector:
     async def walk(self, oid: str) -> list[tuple[str, Any]]:
         """Perform SNMP WALK (GETBULK) starting at the given OID."""
         from pysnmp.hlapi.v3arch.asyncio import (
-            CommunityData,
             ContextData,
             ObjectIdentity,
             ObjectType,
@@ -223,8 +308,10 @@ class SnmpConnector:
         )
 
         engine = SnmpEngine()
-        transport = await UdpTransportTarget.create((self._host, self.port), timeout=self.timeout, retries=self.retries)
-        auth = CommunityData(self.community, mpModel=1 if self.version == "2c" else 0)
+        transport = await UdpTransportTarget.create(
+            (self._host, self.port), timeout=self.timeout, retries=self.retries,
+        )
+        auth = self._build_auth()
 
         rows: list[tuple[str, Any]] = []
         marker = ObjectType(ObjectIdentity(oid))

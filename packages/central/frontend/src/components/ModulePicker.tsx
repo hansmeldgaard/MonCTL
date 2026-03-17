@@ -1,6 +1,5 @@
 import { useState, useMemo } from "react";
 import { Plus, X, Package } from "lucide-react";
-import { Tabs, TabsList, TabTrigger, TabsContent } from "@/components/ui/tabs.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Select } from "@/components/ui/select.tsx";
@@ -11,7 +10,7 @@ interface ModulePickerProps {
   onChange: (reqs: string[]) => void;
 }
 
-function RegistryTab({ value, onChange }: ModulePickerProps) {
+export function ModulePicker({ value, onChange }: ModulePickerProps) {
   const { data: modules } = usePythonModules();
   const [selectedModuleId, setSelectedModuleId] = useState("");
   const { data: moduleDetail } = usePythonModuleDetail(selectedModuleId || undefined);
@@ -120,46 +119,5 @@ function RegistryTab({ value, onChange }: ModulePickerProps) {
         </div>
       )}
     </div>
-  );
-}
-
-function ManualTab({ value, onChange }: ModulePickerProps) {
-  const textValue = value.join("\n");
-
-  function handleChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
-    const lines = e.target.value
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean);
-    onChange(lines);
-  }
-
-  return (
-    <textarea
-      value={textValue}
-      onChange={handleChange}
-      placeholder="requests>=2.28&#10;pyyaml"
-      rows={4}
-      className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 font-mono focus:outline-none focus:ring-2 focus:ring-brand-500 placeholder:text-zinc-600"
-    />
-  );
-}
-
-export function ModulePicker({ value, onChange }: ModulePickerProps) {
-  const [tab, setTab] = useState("registry");
-
-  return (
-    <Tabs value={tab} onChange={setTab}>
-      <TabsList>
-        <TabTrigger value="registry">Registry</TabTrigger>
-        <TabTrigger value="manual">Manual</TabTrigger>
-      </TabsList>
-      <TabsContent value="registry">
-        <RegistryTab value={value} onChange={onChange} />
-      </TabsContent>
-      <TabsContent value="manual">
-        <ManualTab value={value} onChange={onChange} />
-      </TabsContent>
-    </Tabs>
   );
 }

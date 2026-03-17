@@ -7,6 +7,17 @@ from dataclasses import dataclass, field
 
 
 @dataclass
+class ConnectorBinding:
+    """A connector bound to a job via its assignment."""
+    alias: str                         # named reference (e.g. "snmp")
+    connector_id: str                  # connector UUID
+    connector_version_id: str          # connector version UUID
+    credential_name: str | None = None # credential name (resolved by CredentialManager)
+    use_latest: bool = False
+    settings: dict = field(default_factory=dict)
+
+
+@dataclass
 class JobDefinition:
     """A monitoring job fetched from the central DB.
 
@@ -25,6 +36,7 @@ class JobDefinition:
     max_execution_time: int = 120
     enabled: bool = True
     updated_at: str = ""
+    connector_bindings: list[ConnectorBinding] = field(default_factory=list)
 
 
 @dataclass
@@ -160,3 +172,4 @@ class PollContext:
     node_id: str              # collector node hostname
     device_host: str          # resolved device address
     parameters: dict          # resolved parameters (credentials substituted)
+    connectors: dict = field(default_factory=dict)  # alias → connector instance

@@ -31,6 +31,7 @@ from monctl_central.storage.models import (
     App,
     AppAssignment,
     AppVersion,
+    AssignmentConnectorBinding,
     Collector,
     Connector,
     ConnectorVersion,
@@ -195,11 +196,14 @@ async def get_jobs(
             group_id = coll.group_id
 
     # Fetch enabled assignments with their app, app_version, and device
+    from sqlalchemy.orm import selectinload
+
     stmt = (
         select(AppAssignment, App, AppVersion, Device)
         .join(App, AppAssignment.app_id == App.id)
         .join(AppVersion, AppAssignment.app_version_id == AppVersion.id)
         .outerjoin(Device, AppAssignment.device_id == Device.id)
+        .options(selectinload(AppAssignment.connector_bindings))
         .where(AppAssignment.enabled == True)  # noqa: E712
     )
 
@@ -283,6 +287,18 @@ async def get_jobs(
                 "poll_metrics": meta.poll_metrics,
             })
 
+    # Pre-load credential names for connector bindings (batch query)
+    all_cred_ids = set()
+    for row in rows:
+        for b in (row.AppAssignment.connector_bindings or []):
+            if b.credential_id:
+                all_cred_ids.add(b.credential_id)
+    cred_name_map: dict[uuid.UUID, str] = {}
+    if all_cred_ids:
+        cred_stmt = select(Credential.id, Credential.name).where(Credential.id.in_(all_cred_ids))
+        cred_rows = (await db.execute(cred_stmt)).all()
+        cred_name_map = {r.id: r.name for r in cred_rows}
+
     jobs = []
     for row in rows:
         assignment: AppAssignment = row.AppAssignment
@@ -325,6 +341,18 @@ async def get_jobs(
                 params["monitored_interfaces"] = monitored_map[dev_key]
             # If not in monitored_map, no interfaces known yet → walk mode (no key injected)
 
+        # Build connector bindings for this assignment
+        bindings = []
+        for b in (assignment.connector_bindings or []):
+            bindings.append({
+                "alias": b.alias,
+                "connector_id": str(b.connector_id),
+                "connector_version_id": str(b.connector_version_id),
+                "credential_name": cred_name_map.get(b.credential_id) if b.credential_id else None,
+                "use_latest": b.use_latest,
+                "settings": b.settings or {},
+            })
+
         jobs.append({
             "job_id": str(assignment.id),
             "device_id": str(assignment.device_id) if assignment.device_id else None,
@@ -338,6 +366,7 @@ async def get_jobs(
             "max_execution_time": max_exec,
             "enabled": assignment.enabled,
             "updated_at": assignment.updated_at.isoformat() if assignment.updated_at else None,
+            "connector_bindings": bindings,
         })
 
     return {

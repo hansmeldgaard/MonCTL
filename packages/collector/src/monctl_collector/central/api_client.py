@@ -122,6 +122,30 @@ class CentralAPIClient:
             resp.raise_for_status()
             return (await resp.json())
 
+    # ── Connectors ─────────────────────────────────────────────────────────────
+
+    async def get_connector_metadata(self, connector_id: str, version_id: str | None = None) -> dict:
+        """Return connector metadata: name, version, requirements, entry_class, checksum."""
+        params: dict[str, str] = {}
+        if version_id:
+            params["version_id"] = version_id
+        async with self._session.get(
+            self._url(f"/connectors/{connector_id}/metadata"), params=params
+        ) as resp:
+            resp.raise_for_status()
+            return await resp.json()
+
+    async def get_connector_code(self, connector_id: str, version_id: str | None = None) -> dict:
+        """Return connector source code."""
+        params: dict[str, str] = {}
+        if version_id:
+            params["version_id"] = version_id
+        async with self._session.get(
+            self._url(f"/connectors/{connector_id}/code"), params=params
+        ) as resp:
+            resp.raise_for_status()
+            return await resp.json()
+
     # ── Credentials ───────────────────────────────────────────────────────────
 
     async def get_credential(self, credential_name: str) -> dict:

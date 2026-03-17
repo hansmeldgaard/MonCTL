@@ -26,6 +26,7 @@ from monctl_collector.apps.manager import AppManager
 from monctl_collector.central.credentials import CredentialManager
 from monctl_collector.config import SchedulingConfig
 from monctl_collector.jobs.models import (
+    ConnectorBinding,
     JobDefinition,
     JobProfile,
     PollContext,
@@ -145,6 +146,17 @@ class PollEngine:
         # Convert flat dicts from gRPC to (JobDefinition, JobProfile) pairs
         job_pairs: list[tuple[JobDefinition, JobProfile]] = []
         for j in raw_jobs:
+            bindings = [
+                ConnectorBinding(
+                    alias=b["alias"],
+                    connector_id=b["connector_id"],
+                    connector_version_id=b["connector_version_id"],
+                    credential_name=b.get("credential_name"),
+                    use_latest=b.get("use_latest", False),
+                    settings=b.get("settings", {}),
+                )
+                for b in j.get("connector_bindings", [])
+            ]
             job_def = JobDefinition(
                 job_id=j["job_id"],
                 device_id=j.get("device_id") or None,
@@ -156,6 +168,7 @@ class PollEngine:
                 parameters=j.get("parameters", {}),
                 role=j.get("role") or None,
                 max_execution_time=j.get("max_execution_time", 120),
+                connector_bindings=bindings,
             )
             profile = JobProfile(
                 job_id=j["job_id"],
@@ -226,6 +239,7 @@ class PollEngine:
         result: PollResult | None = None
 
         async with sem:
+            connectors: dict = {}
             try:
                 # Ensure app is loaded (may trigger download + venv create)
                 cls = await self._apps.ensure_app(job.app_id, job.app_version)
@@ -238,12 +252,28 @@ class PollEngine:
                         if data:
                             cred_data.update(data)
 
+                # Load and instantiate connectors
+                for binding in job.connector_bindings:
+                    conn_cls = await self._apps.ensure_connector(
+                        binding.connector_id, binding.connector_version_id,
+                    )
+                    conn_cred: dict = {}
+                    if binding.credential_name:
+                        conn_cred = await self._creds.get_credential(binding.credential_name)
+                    connector = conn_cls(
+                        settings=binding.settings,
+                        credential=conn_cred,
+                    )
+                    await connector.connect(job.device_host or "")
+                    connectors[binding.alias] = connector
+
                 ctx = PollContext(
                     job=job,
                     credential=cred_data,
                     node_id=self._worker_id,
                     device_host=job.device_host or "",
                     parameters=job.parameters,
+                    connectors=connectors,
                 )
 
                 # Instantiate (or reuse) poller
@@ -271,6 +301,13 @@ class PollEngine:
                     error=str(exc),
                     tb=traceback.format_exc(),
                 )
+            finally:
+                # Close all connectors
+                for conn in connectors.values():
+                    try:
+                        await conn.close()
+                    except Exception:
+                        pass
 
         execution_time = time.time() - start
         self._running.discard(job.job_id)

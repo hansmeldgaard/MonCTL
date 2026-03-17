@@ -77,6 +77,9 @@ class AppManager:
         # In-memory cache: (app_id, version) → loaded class
         self._loaded: dict[tuple[str, str], type["BasePoller"]] = {}
 
+        # In-memory cache: (connector_id, version_id) → loaded class
+        self._loaded_connectors: dict[tuple[str, str], type] = {}
+
         # Lock per venv hash to prevent concurrent venv creation
         self._venv_locks: dict[str, asyncio.Lock] = {}
 
@@ -281,6 +284,107 @@ class AppManager:
         if cls is None:
             raise AttributeError(
                 f"Class {entry_class!r} not found in {app_id}:{version} module. "
+                f"Available names: {[n for n in dir(mod) if not n.startswith('_')]}"
+            )
+        return cls
+
+    # ── Connector loading ──────────────────────────────────────────────────────
+
+    async def ensure_connector(self, connector_id: str, version_id: str) -> type:
+        """Return the loaded connector class, fetching/installing if needed.
+
+        Works like ensure_app but for connectors. Uses the same venv sharing
+        mechanism so connectors with identical requirements share a venv.
+        """
+        key = (connector_id, version_id)
+        if key in self._loaded_connectors:
+            return self._loaded_connectors[key]
+
+        conn_dir = self._apps_dir / "_connectors" / connector_id / version_id
+        meta_path = conn_dir / "metadata.json"
+
+        if not meta_path.exists():
+            logger.info("fetching_connector", connector_id=connector_id, version_id=version_id)
+            await self._fetch_and_install_connector(connector_id, version_id)
+
+        cls = await asyncio.to_thread(self._load_connector_class, connector_id, version_id)
+        self._loaded_connectors[key] = cls
+        return cls
+
+    async def _fetch_and_install_connector(self, connector_id: str, version_id: str) -> None:
+        """Download connector code from central, verify checksum, install venv."""
+        meta = await self._central.get_connector_metadata(connector_id, version_id)
+        requirements: list[str] = meta.get("requirements", [])
+        entry_class: str = meta.get("entry_class", "Connector")
+        expected_checksum: str = meta.get("checksum", "")
+        version_str: str = meta.get("version", version_id)
+
+        code_resp = await self._central.get_connector_code(connector_id, version_id)
+        code = code_resp.get("code", "")
+        if not code:
+            raise RuntimeError(f"No source code for connector {connector_id!r}")
+
+        actual_checksum = hashlib.sha256(code.encode()).hexdigest()
+        if expected_checksum and actual_checksum != expected_checksum:
+            raise RuntimeError(
+                f"Checksum mismatch for connector {connector_id}:{version_id}"
+            )
+
+        vh = _venv_hash(self._python_version, requirements)
+        await self._ensure_venv(vh, requirements)
+
+        conn_dir = self._apps_dir / "_connectors" / connector_id / version_id
+        await asyncio.to_thread(self._write_app_files, conn_dir, code, {
+            "connector_id": connector_id,
+            "version_id": version_id,
+            "version": version_str,
+            "entry_class": entry_class,
+            "venv_hash": vh,
+            "checksum": actual_checksum,
+        })
+
+        logger.info(
+            "connector_installed",
+            connector_id=connector_id, version_id=version_id, venv_hash=vh,
+        )
+
+    def _load_connector_class(self, connector_id: str, version_id: str) -> type:
+        """Dynamically load a connector class from disk."""
+        conn_dir = self._apps_dir / "_connectors" / connector_id / version_id
+        meta = json.loads((conn_dir / "metadata.json").read_text())
+        entry_class: str = meta.get("entry_class", "Connector")
+        venv_hash: str = meta["venv_hash"]
+
+        venv_site = self._venvs_dir / venv_hash / "venv" / "lib"
+        site_packages: list[str] = []
+        if venv_site.exists():
+            for pydir in venv_site.iterdir():
+                sp = pydir / "site-packages"
+                if sp.exists():
+                    site_packages.append(str(sp))
+
+        orig_path = list(sys.path)
+        for sp in site_packages:
+            if sp not in sys.path:
+                sys.path.insert(0, sp)
+
+        try:
+            module_path = conn_dir / "module.py"
+            spec = importlib.util.spec_from_file_location(
+                f"monctl_connector_{connector_id}_{version_id}",
+                str(module_path),
+            )
+            if spec is None or spec.loader is None:
+                raise ImportError(f"Cannot load spec for {module_path}")
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+        finally:
+            sys.path[:] = orig_path
+
+        cls = getattr(mod, entry_class, None)
+        if cls is None:
+            raise AttributeError(
+                f"Class {entry_class!r} not found in connector {connector_id}. "
                 f"Available names: {[n for n in dir(mod) if not n.startswith('_')]}"
             )
         return cls
