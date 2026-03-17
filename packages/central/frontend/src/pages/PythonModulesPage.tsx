@@ -372,7 +372,11 @@ export function PythonModulesPage() {
                 Upload .whl files or import from PyPI to get started.
               </p>
             </div>
-          ) : (
+          ) : (() => {
+            const topLevel = modules.filter((m) => m.is_dependency_of.length === 0);
+            const depModules = modules.filter((m) => m.is_dependency_of.length > 0);
+
+            return (
             <Table>
               <TableHeader>
                 <TableRow>
@@ -387,7 +391,12 @@ export function PythonModulesPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {modules.map((m) => (
+                {topLevel.map((m) => {
+                  // Find dep modules that belong to this top-level module
+                  const childDeps = depModules.filter((d) =>
+                    d.is_dependency_of.some((parent) => parent.toLowerCase().replace(/[-_.]+/g, "-") === m.name.toLowerCase().replace(/[-_.]+/g, "-"))
+                  );
+                  return (
                   <>
                     <TableRow key={m.id}>
                       <TableCell>
@@ -474,11 +483,34 @@ export function PythonModulesPage() {
                     {expandedId === m.id && (
                       <ModuleVersionsRow moduleId={m.id} />
                     )}
+                    {/* Show child dependencies under this module when expanded */}
+                    {expandedId === m.id && childDeps.length > 0 && (
+                      <TableRow className="bg-zinc-900/40">
+                        <TableCell colSpan={8} className="pl-10 py-3">
+                          <div className="space-y-1.5">
+                            <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                              Installed Dependencies ({childDeps.length})
+                            </span>
+                            <div className="flex flex-wrap gap-1.5">
+                              {childDeps.map((d) => (
+                                <Badge key={d.id} variant="default" className="font-mono text-[10px] gap-1">
+                                  <CheckCircle2 className="h-2.5 w-2.5 text-green-500" />
+                                  {d.name}
+                                  <span className="text-zinc-600">{d.version_count}v</span>
+                                </Badge>
+                              ))}
+                            </div>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )}
                   </>
-                ))}
+                  );
+                })}
               </TableBody>
             </Table>
-          )}
+            );
+          })()}
         </CardContent>
       </Card>
 

@@ -579,6 +579,7 @@ export interface PythonModuleSummary {
   dep_total: number;
   dep_missing: number;
   dep_missing_names: string[];
+  is_dependency_of: string[];
   created_at: string;
 }
 

@@ -203,6 +203,34 @@ async def list_modules(
         if deps:
             all_deps_by_module[mid_str].extend(deps)
 
+    # Build name→id map and figure out which modules are deps of others
+    name_to_id: dict[str, str] = {}
+    id_to_name: dict[str, str] = {}
+    for row in rows:
+        norm = normalize_package_name(row.PythonModule.name)
+        name_to_id[norm] = str(row.PythonModule.id)
+        id_to_name[str(row.PythonModule.id)] = row.PythonModule.name
+
+    # For each module, parse its dep names (normalized)
+    dep_names_by_module: dict[str, set[str]] = {}
+    for mid_str, deps_list in all_deps_by_module.items():
+        parsed: set[str] = set()
+        for d in deps_list:
+            from .resolver import _parse_dep
+            name, _ = _parse_dep(d)
+            if name:
+                parsed.add(name)
+        dep_names_by_module[mid_str] = parsed
+
+    # Compute is_dependency_of: which parent modules depend on this one
+    is_dep_of: dict[str, list[str]] = {}  # module_id -> list of parent module names
+    for parent_id, dep_set in dep_names_by_module.items():
+        parent_name = id_to_name.get(parent_id, "")
+        for dep_norm in dep_set:
+            child_id = name_to_id.get(dep_norm)
+            if child_id and child_id != parent_id:
+                is_dep_of.setdefault(child_id, []).append(parent_name)
+
     data = []
     for row in rows:
         d = _fmt_module(row.PythonModule, version_count=row.version_count, wheel_count=row.wheel_count)
@@ -217,6 +245,7 @@ async def list_modules(
             d["dep_total"] = 0
             d["dep_missing"] = 0
             d["dep_missing_names"] = []
+        d["is_dependency_of"] = is_dep_of.get(mid_str, [])
         data.append(d)
 
     return {"status": "success", "data": data}
