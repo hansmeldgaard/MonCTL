@@ -434,7 +434,7 @@ CREATE TABLE IF NOT EXISTS events ON CLUSTER '{cluster}'
     source             String        DEFAULT '',
     severity           String        DEFAULT 'info',
     message            String        DEFAULT '',
-    data               String        DEFAULT '{}',
+    data               String        DEFAULT '{{}}',
 
     state              String        DEFAULT 'active',
     acknowledged_at    DateTime64(3, 'UTC') DEFAULT toDateTime64(0, 3),
