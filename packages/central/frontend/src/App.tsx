@@ -9,6 +9,7 @@ import { AppDetailPage } from "@/pages/AppDetailPage.tsx";
 import { AssignmentsPage } from "@/pages/AssignmentsPage.tsx";
 import { AlertsPage } from "@/pages/AlertsPage.tsx";
 import { TemplatesPage } from "@/pages/TemplatesPage.tsx";
+import { PythonModulesPage } from "@/pages/PythonModulesPage.tsx";
 import { SettingsPage } from "@/pages/SettingsPage.tsx";
 import { SystemHealthPage } from "@/pages/SystemHealthPage.tsx";
 
@@ -23,6 +24,7 @@ export function App() {
         <Route path="devices/:id" element={<DeviceDetailPage />} />
         <Route path="apps" element={<AppsPage />} />
         <Route path="apps/:id" element={<AppDetailPage />} />
+        <Route path="python-modules" element={<PythonModulesPage />} />
         <Route path="assignments" element={<AssignmentsPage />} />
         <Route path="templates" element={<TemplatesPage />} />
         <Route path="alerts" element={<AlertsPage />} />

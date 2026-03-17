@@ -564,3 +564,87 @@ export interface Template {
 export interface CredentialDetail extends Credential {
   values: { key_name: string; is_secret: boolean; value: string | null }[];
 }
+
+// ── Python Modules ──────────────────────────────────────
+
+export interface PythonModuleSummary {
+  id: string;
+  name: string;
+  description: string | null;
+  homepage_url: string | null;
+  is_approved: boolean;
+  version_count: number;
+  wheel_count: number;
+  created_at: string;
+}
+
+export interface WheelFileInfo {
+  id: string;
+  filename: string;
+  sha256_hash: string;
+  file_size: number;
+  python_tag: string;
+  abi_tag: string;
+  platform_tag: string;
+}
+
+export interface PythonModuleVersionDetail {
+  id: string;
+  version: string;
+  dependencies: string[];
+  python_requires: string | null;
+  is_verified: boolean;
+  wheel_files: WheelFileInfo[];
+  created_at: string;
+}
+
+export interface PythonModuleDetail {
+  id: string;
+  name: string;
+  description: string | null;
+  homepage_url: string | null;
+  is_approved: boolean;
+  created_at: string;
+  versions: PythonModuleVersionDetail[];
+}
+
+export interface MissingDependency {
+  name: string;
+  version_spec: string;
+  registered: boolean;
+}
+
+export interface DependencyWarning {
+  package: string;
+  message: string;
+  severity: "error" | "warning" | "info";
+}
+
+export interface ResolveResult {
+  requirements: string[];
+  all_dependencies: string[];
+  missing_dependencies: MissingDependency[];
+  warnings: DependencyWarning[];
+}
+
+export interface WheelUploadResult {
+  module_id: string;
+  module_name: string;
+  version: string;
+  wheel_filename: string;
+  file_size: number;
+  sha256: string;
+  missing_dependencies: MissingDependency[];
+}
+
+export interface NetworkStatus {
+  mode: "offline" | "proxy" | "direct";
+  proxy_configured: boolean;
+}
+
+export interface PyPISearchResult {
+  name: string;
+  summary: string | null;
+  latest_version: string;
+  registered: boolean;
+}

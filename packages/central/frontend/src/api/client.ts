@@ -95,3 +95,36 @@ export function apiDelete(endpoint: string): Promise<void> {
 export function apiGetRaw<T>(endpoint: string): Promise<T> {
   return request<T>(endpoint);
 }
+
+export async function apiPostFormData<T>(
+  endpoint: string,
+  formData: FormData,
+): Promise<ApiResponse<T>> {
+  const url = `${BASE_URL}${endpoint}`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    credentials: "include",
+    body: formData,
+  });
+
+  if (res.status === 401) {
+    if (!window.location.pathname.startsWith("/login")) {
+      window.location.href = "/login";
+    }
+    throw new ApiError(401, "Unauthorized");
+  }
+
+  if (!res.ok) {
+    let message = "Unknown error";
+    try {
+      const body = await res.json();
+      message = body.detail ?? JSON.stringify(body);
+    } catch {
+      message = await res.text().catch(() => "Unknown error");
+    }
+    throw new ApiError(res.status, message);
+  }
+
+  return res.json() as Promise<ApiResponse<T>>;
+}

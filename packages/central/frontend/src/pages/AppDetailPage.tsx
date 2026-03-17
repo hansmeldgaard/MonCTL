@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useParams, Link } from "react-router-dom";
 import { ArrowLeft, AppWindow, Code2, Layout, Loader2, Pencil, Plus, Star, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
@@ -18,6 +18,7 @@ import {
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import { CodeEditor } from "@/components/CodeEditor.tsx";
 import { DisplayTemplateEditor } from "@/components/DisplayTemplateEditor.tsx";
+import { ModulePicker } from "@/components/ModulePicker.tsx";
 import {
   useAppDetail,
   useUpdateApp,
@@ -633,6 +634,11 @@ function EditVersionCodeForm({
   onCancel: () => void;
   isPending: boolean;
 }) {
+  const reqsList = useMemo(
+    () => editVersionReqs.trim() ? editVersionReqs.trim().split("\n").filter(Boolean) : [],
+    [editVersionReqs],
+  );
+
   return (
     <form onSubmit={onSubmit} className="space-y-4">
       <div className="space-y-1.5">
@@ -644,14 +650,10 @@ function EditVersionCodeForm({
         <CodeEditor value={editVersionCode} onChange={setEditVersionCode} height="calc(100vh - 300px)" />
       </div>
       <div className="space-y-1.5">
-        <Label htmlFor="edit-ver-reqs">Requirements <span className="font-normal text-zinc-500">(one per line)</span></Label>
-        <textarea
-          id="edit-ver-reqs"
-          value={editVersionReqs}
-          onChange={(e) => setEditVersionReqs(e.target.value)}
-          placeholder="requests>=2.28&#10;pyyaml"
-          rows={3}
-          className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 font-mono focus:outline-none focus:ring-2 focus:ring-brand-500 placeholder:text-zinc-600"
+        <Label>Requirements</Label>
+        <ModulePicker
+          value={reqsList}
+          onChange={(reqs) => setEditVersionReqs(reqs.join("\n"))}
         />
       </div>
       {editVersionError && <p className="text-sm text-red-400">{editVersionError}</p>}
@@ -684,6 +686,11 @@ function NewVersionCodeForm({
   onCancel: () => void;
   isPending: boolean;
 }) {
+  const reqsList = useMemo(
+    () => versionReqs.trim() ? versionReqs.trim().split("\n").filter(Boolean) : [],
+    [versionReqs],
+  );
+
   return (
     <form onSubmit={onSubmit} className="space-y-4">
       <div className="grid grid-cols-2 gap-3">
@@ -701,14 +708,10 @@ function NewVersionCodeForm({
         <CodeEditor value={versionCode} onChange={setVersionCode} height="calc(100vh - 300px)" />
       </div>
       <div className="space-y-1.5">
-        <Label htmlFor="ver-reqs">Requirements <span className="font-normal text-zinc-500">(one per line)</span></Label>
-        <textarea
-          id="ver-reqs"
-          value={versionReqs}
-          onChange={(e) => setVersionReqs(e.target.value)}
-          placeholder="requests>=2.28&#10;pyyaml"
-          rows={3}
-          className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 font-mono focus:outline-none focus:ring-2 focus:ring-brand-500 placeholder:text-zinc-600"
+        <Label>Requirements</Label>
+        <ModulePicker
+          value={reqsList}
+          onChange={(reqs) => setVersionReqs(reqs.join("\n"))}
         />
       </div>
       {versionError && <p className="text-sm text-red-400">{versionError}</p>}

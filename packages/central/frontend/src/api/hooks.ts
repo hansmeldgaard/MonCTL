@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiDelete, apiGet, apiGetRaw, apiPatch, apiPost, apiPut } from "@/api/client.ts";
+import { apiDelete, apiGet, apiGetRaw, apiPatch, apiPost, apiPostFormData, apiPut } from "@/api/client.ts";
 import type {
   ActiveAlert,
   AlertRule,
@@ -25,12 +25,18 @@ import type {
   InterfaceRecord,
   LabelKey,
   MonitoringConfig,
+  NetworkStatus,
+  PyPISearchResult,
+  PythonModuleDetail,
+  PythonModuleSummary,
   RegistrationToken,
+  ResolveResult,
   ResourceActions,
   ResultRecord,
   Role,
   UserApiKey,
   UserApiKeyWithRaw,
+  WheelUploadResult,
   SnmpOid,
   SystemHealthReport,
   SystemSettings,
@@ -1177,6 +1183,136 @@ export function useAppConfigKeys(appId: string | undefined, versionId?: string) 
     },
     select: (res) => res.data,
     enabled: !!appId,
+  });
+}
+
+// ── Python Modules ──────────────────────────────────────
+
+export function usePythonModules() {
+  return useQuery({
+    queryKey: ["python-modules"],
+    queryFn: () => apiGet<PythonModuleSummary[]>("/python-modules"),
+    select: (res) => res.data,
+    refetchInterval: POLL_LIST,
+  });
+}
+
+export function usePythonModuleDetail(id: string | undefined) {
+  return useQuery({
+    queryKey: ["python-module", id],
+    queryFn: () => apiGet<PythonModuleDetail>(`/python-modules/${id}`),
+    select: (res) => res.data,
+    enabled: !!id,
+    refetchInterval: POLL_DETAIL,
+  });
+}
+
+export function useNetworkStatus() {
+  return useQuery({
+    queryKey: ["python-modules-network"],
+    queryFn: () => apiGet<NetworkStatus>("/python-modules/network-status"),
+    select: (res) => res.data,
+  });
+}
+
+export function useUploadWheel() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (file: File) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      return apiPostFormData<WheelUploadResult>("/python-modules/upload-wheel", fd);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["python-modules"] });
+    },
+  });
+}
+
+export function useUploadWheelsBatch() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (files: File[]) => {
+      const fd = new FormData();
+      files.forEach((f) => fd.append("files", f));
+      return apiPostFormData<WheelUploadResult[]>("/python-modules/upload-wheels-batch", fd);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["python-modules"] });
+    },
+  });
+}
+
+export function useImportFromPyPI() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { package_name: string; version?: string }) =>
+      apiPost<WheelUploadResult>("/python-modules/import-pypi", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["python-modules"] });
+    },
+  });
+}
+
+export function useResolveDependencies() {
+  return useMutation({
+    mutationFn: (data: { requirements: string[] }) =>
+      apiPost<ResolveResult>("/python-modules/resolve", data),
+  });
+}
+
+export function useToggleModuleApproval() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, is_approved }: { id: string; is_approved: boolean }) =>
+      apiPut<PythonModuleSummary>(`/python-modules/${id}/approve`, { is_approved }),
+    onSuccess: (_res, { id }) => {
+      qc.invalidateQueries({ queryKey: ["python-modules"] });
+      qc.invalidateQueries({ queryKey: ["python-module", id] });
+    },
+  });
+}
+
+export function useToggleModuleVerify() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ moduleId, versionId, is_verified }: { moduleId: string; versionId: string; is_verified: boolean }) =>
+      apiPut<{ id: string }>(`/python-modules/${moduleId}/versions/${versionId}/verify`, { is_verified }),
+    onSuccess: (_res, { moduleId }) => {
+      qc.invalidateQueries({ queryKey: ["python-modules"] });
+      qc.invalidateQueries({ queryKey: ["python-module", moduleId] });
+    },
+  });
+}
+
+export function useDeletePythonModule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/python-modules/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["python-modules"] });
+    },
+  });
+}
+
+export function useDeleteModuleVersion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ moduleId, versionId }: { moduleId: string; versionId: string }) =>
+      apiDelete(`/python-modules/${moduleId}/versions/${versionId}`),
+    onSuccess: (_res, { moduleId }) => {
+      qc.invalidateQueries({ queryKey: ["python-modules"] });
+      qc.invalidateQueries({ queryKey: ["python-module", moduleId] });
+    },
+  });
+}
+
+export function useSearchPyPI(query: string) {
+  return useQuery({
+    queryKey: ["pypi-search", query],
+    queryFn: () => apiGet<PyPISearchResult[]>(`/python-modules/search-pypi?q=${encodeURIComponent(query)}`),
+    select: (res) => res.data,
+    enabled: query.length >= 2,
   });
 }
 

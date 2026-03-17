@@ -584,3 +584,71 @@ class Template(Base):
     config: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
+
+
+class PythonModule(Base):
+    """Registry of approved Python packages."""
+    __tablename__ = "python_modules"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    homepage_url: Mapped[str | None] = mapped_column(String(500))
+    is_approved: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default="now()"
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default="now()"
+    )
+
+    versions: Mapped[list["PythonModuleVersion"]] = relationship(
+        back_populates="module", cascade="all, delete-orphan"
+    )
+
+
+class PythonModuleVersion(Base):
+    """A specific version of a registered Python module."""
+    __tablename__ = "python_module_versions"
+    __table_args__ = (UniqueConstraint("module_id", "version"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    module_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("python_modules.id", ondelete="CASCADE"), nullable=False
+    )
+    version: Mapped[str] = mapped_column(String(50), nullable=False)
+    dependencies: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    python_requires: Mapped[str | None] = mapped_column(String(100))
+    is_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default="now()"
+    )
+
+    module: Mapped["PythonModule"] = relationship(back_populates="versions")
+    wheel_files: Mapped[list["WheelFile"]] = relationship(
+        back_populates="module_version", cascade="all, delete-orphan"
+    )
+
+
+class WheelFile(Base):
+    """Stored .whl file for distribution to collectors via PEP 503."""
+    __tablename__ = "wheel_files"
+    __table_args__ = (UniqueConstraint("filename"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    module_version_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("python_module_versions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    filename: Mapped[str] = mapped_column(String(500), nullable=False)
+    sha256_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    file_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    python_tag: Mapped[str] = mapped_column(String(50), nullable=False)
+    abi_tag: Mapped[str] = mapped_column(String(50), nullable=False)
+    platform_tag: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default="now()"
+    )
+
+    module_version: Mapped["PythonModuleVersion"] = relationship(back_populates="wheel_files")

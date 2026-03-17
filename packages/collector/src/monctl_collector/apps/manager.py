@@ -175,7 +175,16 @@ class AppManager:
     # ── Private: sync operations (run in thread pool) ─────────────────────────
 
     def _create_venv(self, venv_dir: Path, requirements: list[str]) -> None:
-        """Create a new virtualenv and pip-install requirements."""
+        """Create a new virtualenv and pip-install requirements.
+
+        When pip_index_url is set (e.g. pointing at central's PEP 503 endpoint),
+        the URL is passed via PIP_INDEX_URL env var with embedded auth credentials
+        so that pip can authenticate against central's collector API.
+        PIP_TRUSTED_HOST is set for self-signed TLS certificates.
+        """
+        import os
+        from urllib.parse import urlparse
+
         venv_dir.parent.mkdir(parents=True, exist_ok=True)
         venv.create(str(venv_dir), with_pip=True, clear=True)
 
@@ -185,16 +194,38 @@ class AppManager:
         python_exe = venv_dir / "bin" / "python"
         cmd = [str(python_exe), "-m", "pip", "install", "--quiet"]
 
-        if self._cfg.pip_index_url:
-            cmd += ["--index-url", self._cfg.pip_index_url]
+        # Build environment with pip index configuration
+        env = dict(os.environ)
 
-        if self._pip_cache.exists() or not self._pip_cache.exists():
-            self._pip_cache.mkdir(parents=True, exist_ok=True)
-            cmd += ["--cache-dir", str(self._pip_cache)]
+        if self._cfg.pip_index_url:
+            index_url = self._cfg.pip_index_url
+            # Inject auth credentials into the URL if we have a central API key
+            # Format: https://__token__:<api_key>@host/api/v1/pypi/simple/
+            central_api_key = os.environ.get("MONCTL_COLLECTOR_API_KEY") or os.environ.get("CENTRAL_API_KEY")
+            if central_api_key and "://" in index_url:
+                parsed = urlparse(index_url)
+                if not parsed.username:
+                    authed_url = index_url.replace(
+                        f"{parsed.scheme}://",
+                        f"{parsed.scheme}://__token__:{central_api_key}@",
+                    )
+                    index_url = authed_url
+
+            env["PIP_INDEX_URL"] = index_url
+            cmd += ["--index-url", index_url]
+
+            # Trust the host for self-signed TLS
+            parsed = urlparse(index_url)
+            if parsed.hostname:
+                env["PIP_TRUSTED_HOST"] = parsed.hostname
+                cmd += ["--trusted-host", parsed.hostname]
+
+        self._pip_cache.mkdir(parents=True, exist_ok=True)
+        cmd += ["--cache-dir", str(self._pip_cache)]
 
         cmd += requirements
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, env=env)
         if result.returncode != 0:
             raise RuntimeError(
                 f"pip install failed for venv {venv_dir.parent.name}:\n{result.stderr}"

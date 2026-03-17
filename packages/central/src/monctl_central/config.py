@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     # Rate limiting
     rate_limit_per_key: int = 100
 
+    # Wheel storage
+    wheel_storage_dir: str = "/data/wheels"
+
     # Credential encryption (AES-256-GCM)
     # Must be a 64-character hex string (32 bytes).
     # Generate: python3 -c "import secrets; print(secrets.token_hex(32))"

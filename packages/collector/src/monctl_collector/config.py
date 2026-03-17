@@ -176,4 +176,10 @@ def load_config(yaml_path: str = "/etc/collector/config.yaml") -> CollectorConfi
     if v := _env("MONCTL_COLLECTOR_API_KEY"):
         cfg.collector_api_key = v
 
+    # Auto-detect pip_index_url from central URL if not explicitly set.
+    # This points pip at central's PEP 503 endpoint for air-gapped deploys.
+    if not cfg.apps.pip_index_url and cfg.central.url:
+        central_base = cfg.central.url.rstrip("/")
+        cfg.apps.pip_index_url = f"{central_base}/api/v1/pypi/simple/"
+
     return cfg

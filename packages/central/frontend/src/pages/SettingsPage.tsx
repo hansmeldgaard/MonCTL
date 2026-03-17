@@ -6,6 +6,7 @@ import {
   Copy,
   Cpu,
   Database,
+  Globe,
   KeyRound,
   Loader2,
   Network,
@@ -62,6 +63,7 @@ const TABS = [
   { key: "credentials", label: "Credentials", icon: KeyRound },
   { key: "snmp-oids", label: "SNMP OIDs", icon: Network },
   { key: "data-retention", label: "Data Retention", icon: Database },
+  { key: "network", label: "Network", icon: Globe },
   { key: "tls", label: "TLS / HTTPS", icon: Shield },
   { key: "roles", label: "Roles", icon: ShieldCheck },
   { key: "users", label: "Users", icon: Users },
@@ -564,6 +566,90 @@ function DataRetentionTab() {
   );
 }
 
+function NetworkTab() {
+  const { data: settings, isLoading } = useSystemSettings();
+  const updateSettings = useUpdateSystemSettings();
+  const [networkMode, setNetworkMode] = useState("");
+  const [proxyUrl, setProxyUrl] = useState("");
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    if (settings) {
+      setNetworkMode(settings.pypi_network_mode ?? "direct");
+      setProxyUrl(settings.pypi_proxy_url ?? "");
+    }
+  }, [settings]);
+
+  const modified = settings && (
+    networkMode !== (settings.pypi_network_mode ?? "direct") ||
+    proxyUrl !== (settings.pypi_proxy_url ?? "")
+  );
+
+  async function handleSave() {
+    const newSettings: Record<string, string> = {
+      pypi_network_mode: networkMode,
+    };
+    if (networkMode === "proxy") {
+      newSettings.pypi_proxy_url = proxyUrl;
+    }
+    await updateSettings.mutateAsync({ settings: newSettings });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  }
+
+  if (isLoading) {
+    return <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-zinc-500" /></div>;
+  }
+
+  return (
+    <div className="max-w-lg space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Globe className="h-4 w-4" />
+            PyPI Network Mode
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-1.5">
+            <label className="text-sm text-zinc-400">Network Mode</label>
+            <Select value={networkMode} onChange={(e) => setNetworkMode(e.target.value)} className="max-w-48">
+              <option value="direct">Direct</option>
+              <option value="proxy">Proxy</option>
+              <option value="offline">Offline</option>
+            </Select>
+            <div className="text-xs text-zinc-600 mt-1">
+              {networkMode === "direct" && "Collectors and central server can access PyPI directly."}
+              {networkMode === "proxy" && "All PyPI traffic is routed through a configured HTTP proxy."}
+              {networkMode === "offline" && "No internet access. Modules must be uploaded manually as .whl files."}
+            </div>
+          </div>
+
+          {networkMode === "proxy" && (
+            <div className="space-y-1.5">
+              <label className="text-sm text-zinc-400">Proxy URL</label>
+              <Input
+                value={proxyUrl}
+                onChange={(e) => setProxyUrl(e.target.value)}
+                placeholder="http://proxy.example.com:8080"
+              />
+              <p className="text-xs text-zinc-600">HTTP(S) proxy URL for PyPI access.</p>
+            </div>
+          )}
+
+          <div className="flex items-center gap-3 pt-2">
+            <Button size="sm" onClick={handleSave} disabled={!modified || updateSettings.isPending}>
+              {updateSettings.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              Save
+            </Button>
+            {saved && <span className="text-sm text-emerald-400">Saved!</span>}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 function TlsTab() {
   const { data: cert, isLoading } = useTlsCertificate();
   const generateCert = useGenerateTlsCert();
@@ -664,6 +750,7 @@ export function SettingsPage() {
       case "credentials": return <CredentialsPage />;
       case "snmp-oids": return <SnmpOidsPage />;
       case "data-retention": return <DataRetentionTab />;
+      case "network": return <NetworkTab />;
       case "tls": return <TlsTab />;
       case "roles": return <RolesPage />;
       case "users": return <UsersPage />;

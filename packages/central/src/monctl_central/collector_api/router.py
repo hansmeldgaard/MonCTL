@@ -17,6 +17,7 @@ import re
 import time
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -1017,3 +1018,111 @@ async def collector_heartbeat(
         "node_id": request.node_id,
         "known": collector is not None,
     }
+
+
+# ---------------------------------------------------------------------------
+# PEP 503 Simple Repository API — serves wheels to collectors
+# ---------------------------------------------------------------------------
+
+@router.get("/pypi/simple/", tags=["collector-api"])
+async def pypi_simple_index(
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """PEP 503 simple index — list all approved packages as HTML links."""
+    from fastapi.responses import HTMLResponse
+    from monctl_central.storage.models import PythonModule
+
+    stmt = (
+        select(PythonModule)
+        .where(PythonModule.is_approved == True)  # noqa: E712
+        .order_by(PythonModule.name)
+    )
+    result = await db.execute(stmt)
+    modules = result.scalars().all()
+
+    links = []
+    for m in modules:
+        links.append(f'<a href="/api/v1/pypi/simple/{m.name}/">{m.name}</a>')
+
+    html = (
+        "<!DOCTYPE html>\n<html><head><title>Simple Index</title></head>\n"
+        "<body>\n" + "\n".join(links) + "\n</body></html>"
+    )
+    return HTMLResponse(content=html, media_type="text/html")
+
+
+@router.get("/pypi/simple/{package_name}/", tags=["collector-api"])
+async def pypi_simple_package(
+    package_name: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """PEP 503 package page — list wheel files with sha256 hashes."""
+    from fastapi.responses import HTMLResponse
+    from monctl_central.storage.models import PythonModule, PythonModuleVersion, WheelFile
+    from monctl_central.python_modules.wheel_parser import normalize_package_name
+
+    normalized = normalize_package_name(package_name)
+    stmt = select(PythonModule).where(PythonModule.name == normalized)
+    result = await db.execute(stmt)
+    module = result.scalar_one_or_none()
+    if not module:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Package not found")
+
+    # Fetch all wheel files for this module
+    wheel_stmt = (
+        select(WheelFile)
+        .join(PythonModuleVersion, WheelFile.module_version_id == PythonModuleVersion.id)
+        .where(PythonModuleVersion.module_id == module.id)
+        .order_by(WheelFile.filename)
+    )
+    wheel_result = await db.execute(wheel_stmt)
+    wheels = wheel_result.scalars().all()
+
+    links = []
+    for w in wheels:
+        links.append(
+            f'<a href="/api/v1/pypi/wheels/{w.filename}#sha256={w.sha256_hash}">'
+            f'{w.filename}</a>'
+        )
+
+    html = (
+        f"<!DOCTYPE html>\n<html><head><title>Links for {normalized}</title></head>\n"
+        f"<body>\n<h1>Links for {normalized}</h1>\n"
+        + "\n".join(links)
+        + "\n</body></html>"
+    )
+    return HTMLResponse(content=html, media_type="text/html")
+
+
+@router.get("/pypi/wheels/{filename}", tags=["collector-api"])
+async def pypi_serve_wheel(
+    filename: str,
+    auth: dict = Depends(require_auth),
+):
+    """Serve a wheel file from disk."""
+    from fastapi.responses import FileResponse
+    from monctl_central.config import settings
+    from monctl_central.python_modules.wheel_parser import normalize_package_name, parse_wheel_filename
+
+    try:
+        parts = parse_wheel_filename(filename)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid wheel filename",
+        )
+
+    normalized = normalize_package_name(parts["name"])
+    wheel_path = Path(settings.wheel_storage_dir) / normalized / filename
+
+    if not wheel_path.exists():
+        raise HTTPException(status_code=404, detail="Wheel file not found")
+
+    return FileResponse(
+        path=str(wheel_path),
+        media_type="application/octet-stream",
+        filename=filename,
+    )
