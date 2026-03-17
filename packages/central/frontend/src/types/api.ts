@@ -359,6 +359,30 @@ export interface SystemHealthReport {
   subsystems: Record<string, SubsystemHealth>;
 }
 
+export interface CollectorHealthDetail {
+  id: string;
+  name: string;
+  hostname: string | null;
+  status: string;
+  last_seen_at: string | null;
+  total_jobs: number;
+  worker_count: number;
+  load_score: number;
+  effective_load: number;
+  deadline_miss_rate: number;
+  group_name: string | null;
+  ip_addresses: Record<string, string[]> | null;
+  labels: Record<string, string> | null;
+  container_states: Record<string, string> | null;
+  queue_stats: {
+    pending_results: number;
+    jobs_overdue: number;
+    jobs_errored_last_hour: number;
+    avg_execution_ms: number;
+    max_execution_ms: number;
+  } | null;
+}
+
 // ── Users ─────────────────────────────────────────────────
 
 export interface User {

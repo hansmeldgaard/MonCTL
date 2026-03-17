@@ -111,6 +111,14 @@ class SchedulerRunner:
                 await session.commit()
                 logger.info("collector_health_check", marked_down=len(stale))
 
+        from monctl_central.cache import _redis
+        from monctl_common.utils import utc_now
+
+        if _redis:
+            await _redis.set(
+                "monctl:scheduler:last_health_check", utc_now().isoformat()
+            )
+
     async def _evaluate_alerts(self) -> None:
         """Run alert engine evaluation if ClickHouse is available."""
         if self._ch is None:
@@ -126,6 +134,15 @@ class SchedulerRunner:
             await engine.evaluate_all()
         except Exception:
             logger.exception("alert_evaluation_error")
+            return
+
+        from monctl_central.cache import _redis
+        from monctl_common.utils import utc_now
+
+        if _redis:
+            await _redis.set(
+                "monctl:scheduler:last_evaluate_alerts", utc_now().isoformat()
+            )
 
     async def _run_rollups(self) -> None:
         """Run hourly/daily rollups and retention cleanup when due."""
@@ -197,6 +214,14 @@ class SchedulerRunner:
         self._ch.execute_rollup(sql)
         logger.info("hourly_rollup_complete")
 
+        from monctl_central.cache import _redis
+        from monctl_common.utils import utc_now
+
+        if _redis:
+            await _redis.set(
+                "monctl:scheduler:last_hourly_rollup", utc_now().isoformat()
+            )
+
     async def _daily_rollup(self) -> None:
         """Aggregate hourly data into interface_daily."""
         sql = """
@@ -236,6 +261,14 @@ class SchedulerRunner:
         """
         self._ch.execute_rollup(sql)
         logger.info("daily_rollup_complete")
+
+        from monctl_central.cache import _redis
+        from monctl_common.utils import utc_now
+
+        if _redis:
+            await _redis.set(
+                "monctl:scheduler:last_daily_rollup", utc_now().isoformat()
+            )
 
     async def _retention_cleanup(self) -> None:
         """Delete data older than configured retention periods."""
@@ -283,3 +316,12 @@ class SchedulerRunner:
             hourly_days=hourly_days,
             daily_days=daily_days,
         )
+
+        from monctl_central.cache import _redis
+        from monctl_common.utils import utc_now
+
+        if _redis:
+            await _redis.set(
+                "monctl:scheduler:last_retention_cleanup",
+                utc_now().isoformat(),
+            )

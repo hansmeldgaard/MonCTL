@@ -1005,6 +1005,8 @@ class HeartbeatRequest(BaseModel):
     stolen_job_count: int = 0
     peer_address: str | None = None  # gRPC address for peer discovery (e.g. 192.168.1.31:50051)
     peer_states: dict[str, str] | None = None  # {node_id: "ALIVE"|"SUSPECTED"|"DEAD"}
+    container_states: dict[str, str] | None = None
+    queue_stats: dict | None = None
 
 
 @router.post("/heartbeat", tags=["collector-api"])
@@ -1033,8 +1035,14 @@ async def collector_heartbeat(
         if request.peer_address:
             collector.peer_address = request.peer_address
         # Store gossip peer states reported by this collector
+        states = dict(collector.reported_peer_states or {})
         if request.peer_states:
-            collector.reported_peer_states = request.peer_states
+            states.update(request.peer_states)
+        if request.container_states:
+            states["_container_states"] = request.container_states
+        if request.queue_stats:
+            states["_queue_stats"] = request.queue_stats
+        collector.reported_peer_states = states
         # Persist load metrics for weighted job partitioning
         collector.load_score = request.load_score
         collector.effective_load = request.effective_load
