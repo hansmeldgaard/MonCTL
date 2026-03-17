@@ -147,7 +147,7 @@ async def lifespan(app: FastAPI):
             "connector_type": "snmp",
             "version": "1.0.0",
             "entry_class": "SnmpConnector",
-            "requirements": ["pysnmp>=7.1"],
+            "requirements": [],
             "source_code": '''\
 """Built-in SNMP connector for MonCTL.
 
@@ -272,7 +272,7 @@ class SnmpConnector:
             ObjectType,
             SnmpEngine,
             UdpTransportTarget,
-            getCmd,
+            get_cmd,
         )
 
         engine = SnmpEngine()
@@ -284,7 +284,7 @@ class SnmpConnector:
         result: dict[str, Any] = {}
         obj_types = [ObjectType(ObjectIdentity(oid)) for oid in oids]
 
-        error_indication, error_status, error_index, var_binds = await getCmd(
+        error_indication, error_status, error_index, var_binds = await get_cmd(
             engine, auth, transport, ContextData(), *obj_types,
         )
         if error_indication:
@@ -304,7 +304,7 @@ class SnmpConnector:
             ObjectType,
             SnmpEngine,
             UdpTransportTarget,
-            bulkCmd,
+            bulk_cmd,
         )
 
         engine = SnmpEngine()
@@ -317,7 +317,7 @@ class SnmpConnector:
         marker = ObjectType(ObjectIdentity(oid))
 
         while True:
-            error_indication, error_status, error_index, var_binds = await bulkCmd(
+            error_indication, error_status, error_index, var_binds = await bulk_cmd(
                 engine, auth, transport, ContextData(), 0, 25, marker,
             )
             if error_indication or error_status:

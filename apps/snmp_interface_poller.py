@@ -118,15 +118,15 @@ class _InlineSnmpClient:
 
     async def get(self, oids: list[str]) -> dict:
         from pysnmp.hlapi.asyncio import (
-            ContextData, ObjectIdentity, ObjectType, SnmpEngine, UdpTransportTarget, getCmd,
+            ContextData, ObjectIdentity, ObjectType, SnmpEngine, UdpTransportTarget, get_cmd,
         )
         port = int(self._cred.get("port", 161))
         timeout = int(self._cred.get("timeout", 10))
         engine = SnmpEngine()
-        transport = UdpTransportTarget((self._host, port), timeout=timeout, retries=1)
+        transport = await UdpTransportTarget.create((self._host, port), timeout=timeout, retries=1)
         auth = self._build_auth()
         obj_types = [ObjectType(ObjectIdentity(oid)) for oid in oids]
-        err_ind, err_st, err_idx, var_binds = await getCmd(
+        err_ind, err_st, err_idx, var_binds = await get_cmd(
             engine, auth, transport, ContextData(), *obj_types,
         )
         if err_ind:
@@ -140,19 +140,19 @@ class _InlineSnmpClient:
 
     async def walk(self, oid: str) -> list[tuple[str, str]]:
         from pysnmp.hlapi.asyncio import (
-            ContextData, ObjectIdentity, ObjectType, SnmpEngine, UdpTransportTarget, bulkCmd,
+            ContextData, ObjectIdentity, ObjectType, SnmpEngine, UdpTransportTarget, bulk_cmd,
         )
         port = int(self._cred.get("port", 161))
         timeout = int(self._cred.get("timeout", 10))
         engine = SnmpEngine()
-        transport = UdpTransportTarget((self._host, port), timeout=timeout, retries=1)
+        transport = await UdpTransportTarget.create((self._host, port), timeout=timeout, retries=1)
         auth = self._build_auth()
         rows = []
         current_oid = oid
         base_tuple = tuple(int(x) for x in oid.split("."))
         base_len = len(base_tuple)
         while len(rows) < 500:
-            err_ind, err_st, err_idx, var_binds = await bulkCmd(
+            err_ind, err_st, err_idx, var_binds = await bulk_cmd(
                 engine, auth, transport, ContextData(), 0, 25,
                 ObjectType(ObjectIdentity(current_oid)),
             )
