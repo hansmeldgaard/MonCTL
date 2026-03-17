@@ -657,3 +657,103 @@ async def bulk_delete_devices(
             await db.delete(device)
             deleted += 1
     return {"status": "success", "data": {"deleted": deleted}}
+
+
+# ── Device Thresholds ────────────────────────────────────
+
+@router.get("/{device_id}/thresholds")
+async def get_device_thresholds(
+    device_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Get all alert definitions applicable to this device with their override status."""
+    from monctl_central.alerting.dsl import validate_expression
+    from monctl_central.storage.models import (
+        AlertInstance,
+        App,
+        AppAlertDefinition,
+        AppAssignment,
+        AppVersion,
+        ThresholdOverride,
+    )
+
+    device_uuid = uuid.UUID(device_id)
+
+    # Find all assignments for this device
+    assignments = (
+        await db.execute(
+            select(AppAssignment)
+            .where(AppAssignment.device_id == device_uuid)
+            .options(selectinload(AppAssignment.app))
+        )
+    ).scalars().all()
+
+    results = []
+    for assignment in assignments:
+        # Determine version
+        version_id = assignment.app_version_id
+        if assignment.use_latest:
+            latest = (
+                await db.execute(
+                    select(AppVersion)
+                    .where(
+                        AppVersion.app_id == assignment.app_id,
+                        AppVersion.is_latest == True,  # noqa: E712
+                    )
+                )
+            ).scalar_one_or_none()
+            if latest:
+                version_id = latest.id
+
+        definitions = (
+            await db.execute(
+                select(AppAlertDefinition)
+                .where(AppAlertDefinition.app_version_id == version_id)
+            )
+        ).scalars().all()
+
+        for defn in definitions:
+            target_table = assignment.app.target_table if assignment.app else "availability_latency"
+            validation = validate_expression(defn.expression, target_table)
+
+            override = (
+                await db.execute(
+                    select(ThresholdOverride)
+                    .where(
+                        ThresholdOverride.definition_id == defn.id,
+                        ThresholdOverride.device_id == device_uuid,
+                    )
+                )
+            ).scalar_one_or_none()
+
+            instance = (
+                await db.execute(
+                    select(AlertInstance)
+                    .where(
+                        AlertInstance.definition_id == defn.id,
+                        AlertInstance.assignment_id == assignment.id,
+                    )
+                )
+            ).scalar_one_or_none()
+
+            results.append({
+                "definition_id": str(defn.id),
+                "name": defn.name,
+                "app_name": assignment.app.name if assignment.app else "",
+                "expression": defn.expression,
+                "severity": defn.severity,
+                "default_thresholds": [
+                    {"name": tp.name, "default": tp.default_value}
+                    for tp in validation.threshold_params
+                ],
+                "override": {
+                    "id": str(override.id),
+                    "overrides": override.overrides,
+                } if override else None,
+                "instance_id": str(instance.id) if instance else None,
+                "instance_enabled": instance.enabled if instance else None,
+                "instance_state": instance.state if instance else None,
+            })
+
+    return {"status": "success", "data": results}

@@ -411,6 +411,105 @@ AS SELECT * FROM config
 """
 
 # ---------------------------------------------------------------------------
+# Events table
+# ---------------------------------------------------------------------------
+
+_EVENTS_DDL = """
+CREATE TABLE IF NOT EXISTS events ON CLUSTER '{cluster}'
+(
+    id                 UUID          DEFAULT generateUUIDv4(),
+    event_type         String        DEFAULT 'alert',
+
+    definition_id      UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    definition_name    String        DEFAULT '',
+    policy_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    policy_name        String        DEFAULT '',
+
+    collector_id       UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    device_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    app_id             UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    assignment_id      UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    tenant_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+
+    source             String        DEFAULT '',
+    severity           String        DEFAULT 'info',
+    message            String        DEFAULT '',
+    data               String        DEFAULT '{}',
+
+    state              String        DEFAULT 'active',
+    acknowledged_at    DateTime64(3, 'UTC') DEFAULT toDateTime64(0, 3),
+    acknowledged_by    String        DEFAULT '',
+    cleared_at         DateTime64(3, 'UTC') DEFAULT toDateTime64(0, 3),
+    cleared_by         String        DEFAULT '',
+
+    occurred_at        DateTime64(3, 'UTC'),
+    resolved_at        DateTime64(3, 'UTC') DEFAULT toDateTime64(0, 3),
+    received_at        DateTime64(3, 'UTC') DEFAULT now64(3),
+
+    collector_name     String        DEFAULT '',
+    device_name        String        DEFAULT '',
+    app_name           String        DEFAULT ''
+)
+ENGINE = ReplicatedMergeTree(
+    '/clickhouse/tables/{{shard}}/events', '{{replica}}'
+)
+PARTITION BY toYYYYMM(occurred_at)
+ORDER BY (tenant_id, severity, occurred_at, id)
+SETTINGS index_granularity = 8192
+"""
+
+_EVENTS_DDL_LOCAL = """
+CREATE TABLE IF NOT EXISTS events
+(
+    id                 UUID          DEFAULT generateUUIDv4(),
+    event_type         String        DEFAULT 'alert',
+
+    definition_id      UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    definition_name    String        DEFAULT '',
+    policy_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    policy_name        String        DEFAULT '',
+
+    collector_id       UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    device_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    app_id             UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    assignment_id      UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    tenant_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+
+    source             String        DEFAULT '',
+    severity           String        DEFAULT 'info',
+    message            String        DEFAULT '',
+    data               String        DEFAULT '{}',
+
+    state              String        DEFAULT 'active',
+    acknowledged_at    DateTime64(3, 'UTC') DEFAULT toDateTime64(0, 3),
+    acknowledged_by    String        DEFAULT '',
+    cleared_at         DateTime64(3, 'UTC') DEFAULT toDateTime64(0, 3),
+    cleared_by         String        DEFAULT '',
+
+    occurred_at        DateTime64(3, 'UTC'),
+    resolved_at        DateTime64(3, 'UTC') DEFAULT toDateTime64(0, 3),
+    received_at        DateTime64(3, 'UTC') DEFAULT now64(3),
+
+    collector_name     String        DEFAULT '',
+    device_name        String        DEFAULT '',
+    app_name           String        DEFAULT ''
+)
+ENGINE = MergeTree()
+PARTITION BY toYYYYMM(occurred_at)
+ORDER BY (tenant_id, severity, occurred_at, id)
+SETTINGS index_granularity = 8192
+"""
+
+_EVENTS_INSERT_COLUMNS = [
+    "event_type", "definition_id", "definition_name",
+    "policy_id", "policy_name",
+    "collector_id", "device_id", "app_id", "assignment_id", "tenant_id",
+    "source", "severity", "message", "data",
+    "state", "occurred_at",
+    "collector_name", "device_name", "app_name",
+]
+
+# ---------------------------------------------------------------------------
 # Insert column definitions per table
 # ---------------------------------------------------------------------------
 
@@ -455,7 +554,6 @@ _CONFIG_INSERT_COLUMNS = [
 _OLD_TABLES = [
     "check_results_latest",  # MV must be dropped before base table
     "check_results",
-    "events",
 ]
 
 # Interface tables to recreate (ORDER BY changed to use interface_id)
@@ -690,6 +788,7 @@ class ClickHouseClient:
                 _PERFORMANCE_DDL,
                 _INTERFACE_DDL,
                 _CONFIG_DDL,
+                _EVENTS_DDL,
                 _INTERFACE_HOURLY_DDL,
                 _INTERFACE_DAILY_DDL,
             ]:
@@ -708,6 +807,7 @@ class ClickHouseClient:
                 _PERFORMANCE_DDL_LOCAL,
                 _INTERFACE_DDL_LOCAL,
                 _CONFIG_DDL_LOCAL,
+                _EVENTS_DDL_LOCAL,
                 _INTERFACE_HOURLY_DDL_LOCAL,
                 _INTERFACE_DAILY_DDL_LOCAL,
             ]:
@@ -756,6 +856,12 @@ class ClickHouseClient:
             "ALTER TABLE config ADD INDEX IF NOT EXISTS idx_device bloom_filter(device_id) GRANULARITY 4",
             "ALTER TABLE config ADD INDEX IF NOT EXISTS idx_collector bloom_filter(collector_id) GRANULARITY 4",
             "ALTER TABLE config ADD INDEX IF NOT EXISTS idx_tenant bloom_filter(tenant_id) GRANULARITY 4",
+            # events
+            "ALTER TABLE events ADD INDEX IF NOT EXISTS idx_device bloom_filter(device_id) GRANULARITY 4",
+            "ALTER TABLE events ADD INDEX IF NOT EXISTS idx_tenant bloom_filter(tenant_id) GRANULARITY 4",
+            "ALTER TABLE events ADD INDEX IF NOT EXISTS idx_policy bloom_filter(policy_id) GRANULARITY 4",
+            "ALTER TABLE events ADD INDEX IF NOT EXISTS idx_state set(state) GRANULARITY 4",
+            "ALTER TABLE events ADD INDEX IF NOT EXISTS idx_severity set(severity) GRANULARITY 4",
         ]
         for idx_sql in _INDEXES:
             try:
@@ -763,7 +869,7 @@ class ClickHouseClient:
             except Exception:
                 pass
 
-        logger.info("ClickHouse tables ensured (4 domain tables + materialized views)")
+        logger.info("ClickHouse tables ensured (4 domain tables + events + materialized views)")
 
     # ------------------------------------------------------------------
     # Insert methods
@@ -1003,3 +1109,97 @@ class ClickHouseClient:
                 result = client.query(sql, parameters=params or {})
                 return list(result.named_results())
             raise
+
+    # ------------------------------------------------------------------
+    # Events methods
+    # ------------------------------------------------------------------
+
+    def insert_events(self, events: list[dict]) -> None:
+        """Batch insert events into the events table."""
+        if not events:
+            return
+        client = self._get_client()
+        data = [[e.get(col) for col in _EVENTS_INSERT_COLUMNS] for e in events]
+        client.insert("events", data, column_names=_EVENTS_INSERT_COLUMNS)
+
+    def query_events(
+        self,
+        *,
+        state: str | None = None,
+        severity: str | None = None,
+        device_id: str | None = None,
+        tenant_id: str | None = None,
+        from_ts: datetime | None = None,
+        to_ts: datetime | None = None,
+        limit: int = 200,
+    ) -> list[dict]:
+        """Query events with optional filters."""
+        sql = "SELECT * FROM events"
+        wheres: list[str] = []
+        params: dict[str, Any] = {}
+
+        if state:
+            wheres.append("state = {state:String}")
+            params["state"] = state
+        if severity:
+            wheres.append("severity = {severity:String}")
+            params["severity"] = severity
+        if device_id:
+            wheres.append("device_id = {device_id:UUID}")
+            params["device_id"] = device_id
+        if tenant_id:
+            wheres.append("tenant_id = {tenant_id:UUID}")
+            params["tenant_id"] = tenant_id
+        if from_ts:
+            wheres.append("occurred_at >= {from_ts:DateTime64(3)}")
+            params["from_ts"] = from_ts.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        if to_ts:
+            wheres.append("occurred_at <= {to_ts:DateTime64(3)}")
+            params["to_ts"] = to_ts.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+        if wheres:
+            sql += " WHERE " + " AND ".join(wheres)
+        sql += " ORDER BY occurred_at DESC"
+        sql += f" LIMIT {limit}"
+
+        try:
+            client = self._get_client()
+            result = client.query(sql, parameters=params)
+            return list(result.named_results())
+        except Exception as exc:
+            if self._is_connection_error(exc):
+                client = self._reconnect()
+                result = client.query(sql, parameters=params)
+                return list(result.named_results())
+            raise
+
+    def update_event_state(
+        self, event_ids: list[str], new_state: str, actor: str
+    ) -> None:
+        """Update state of events (acknowledge or clear) via ALTER UPDATE."""
+        if not event_ids:
+            return
+        client = self._get_client()
+        id_list = ", ".join(f"'{eid}'" for eid in event_ids)
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+        if new_state == "acknowledged":
+            sql = (
+                f"ALTER TABLE events UPDATE "
+                f"state = 'acknowledged', "
+                f"acknowledged_at = '{now_str}', "
+                f"acknowledged_by = '{actor}' "
+                f"WHERE id IN ({id_list}) AND state = 'active'"
+            )
+        elif new_state == "cleared":
+            sql = (
+                f"ALTER TABLE events UPDATE "
+                f"state = 'cleared', "
+                f"cleared_at = '{now_str}', "
+                f"cleared_by = '{actor}' "
+                f"WHERE id IN ({id_list}) AND state IN ('active', 'acknowledged')"
+            )
+        else:
+            return
+
+        client.command(sql)

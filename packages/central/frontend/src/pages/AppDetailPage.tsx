@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from "react";
 import { useParams, Link } from "react-router-dom";
-import { ArrowLeft, AppWindow, Code2, Layout, Loader2, Pencil, Plus, Star, Trash2 } from "lucide-react";
+import { ArrowLeft, AppWindow, Bell, Code2, Layout, Loader2, Pencil, Plus, RefreshCw, Star, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
@@ -26,9 +26,15 @@ import {
   useSetLatestVersion,
   useUpdateAppVersion,
   useDeleteAppVersion,
+  useAlertDefinitions,
+  useAlertMetrics,
+  useCreateAlertDefinition,
+  useDeleteAlertDefinition,
+  useUpdateAlertDefinition,
+  useInvertAlertDefinition,
 } from "@/api/hooks.ts";
 import { apiGet } from "@/api/client.ts";
-import type { DisplayTemplate } from "@/types/api.ts";
+import type { AppAlertDefinition, DisplayTemplate } from "@/types/api.ts";
 
 interface VersionDetail {
   id: string;
@@ -264,6 +270,7 @@ export function AppDetailPage() {
         <TabsList>
           <TabTrigger value="overview">Overview</TabTrigger>
           <TabTrigger value="versions">Versions ({app.versions.length})</TabTrigger>
+          <TabTrigger value="alerts">Alerts</TabTrigger>
         </TabsList>
 
         <TabsContent value="overview">
@@ -390,6 +397,10 @@ export function AppDetailPage() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="alerts">
+          <AlertsTab appId={id!} app={app} />
         </TabsContent>
       </Tabs>
 
@@ -722,5 +733,333 @@ function NewVersionCodeForm({
         </Button>
       </DialogFooter>
     </form>
+  );
+}
+
+
+// ── Alerts Tab ──────────────────────────────────────────
+
+function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string; versions: Array<{ id: string; version: string; is_latest: boolean }> } }) {
+  const { data: definitions, isLoading } = useAlertDefinitions(appId);
+  const { data: metrics } = useAlertMetrics(appId);
+  const createDef = useCreateAlertDefinition();
+  const updateDef = useUpdateAlertDefinition();
+  const deleteDef = useDeleteAlertDefinition();
+  const invertDef = useInvertAlertDefinition();
+
+  // Form state — used for both create and edit
+  const [formMode, setFormMode] = useState<"closed" | "create" | "edit">("closed");
+  const [editId, setEditId] = useState<string | null>(null);
+  const [formName, setFormName] = useState("");
+  const [formExpression, setFormExpression] = useState("");
+  const [formWindow, setFormWindow] = useState("5m");
+  const [formSeverity, setFormSeverity] = useState("warning");
+  const [formEnabled, setFormEnabled] = useState(true);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const latestVersion = app.versions.find((v) => v.is_latest) ?? app.versions[0];
+
+  const openCreate = (prefill?: { name?: string; expression?: string; window?: string; severity?: string }) => {
+    setFormMode("create");
+    setEditId(null);
+    setFormName(prefill?.name ?? "");
+    setFormExpression(prefill?.expression ?? "");
+    setFormWindow(prefill?.window ?? "5m");
+    setFormSeverity(prefill?.severity ?? "warning");
+    setFormEnabled(true);
+    setFormError(null);
+  };
+
+  const openEdit = (defn: AppAlertDefinition) => {
+    setFormMode("edit");
+    setEditId(defn.id);
+    setFormName(defn.name);
+    setFormExpression(defn.expression);
+    setFormWindow(defn.window);
+    setFormSeverity(defn.severity);
+    setFormEnabled(defn.enabled);
+    setFormError(null);
+  };
+
+  const closeForm = () => {
+    setFormMode("closed");
+    setEditId(null);
+    setFormError(null);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFormError(null);
+    try {
+      if (formMode === "edit" && editId) {
+        await updateDef.mutateAsync({
+          id: editId,
+          name: formName,
+          expression: formExpression,
+          window: formWindow,
+          severity: formSeverity,
+          enabled: formEnabled,
+        });
+      } else {
+        if (!latestVersion) {
+          setFormError("No versions found. Create a version first.");
+          return;
+        }
+        await createDef.mutateAsync({
+          app_id: appId,
+          app_version_id: latestVersion.id,
+          name: formName,
+          expression: formExpression,
+          window: formWindow,
+          severity: formSeverity,
+          enabled: formEnabled,
+        });
+      }
+      closeForm();
+    } catch (err: unknown) {
+      setFormError(err instanceof Error ? err.message : "Operation failed");
+    }
+  };
+
+  const handleRecovery = async (defnId: string) => {
+    try {
+      const res = await invertDef.mutateAsync(defnId);
+      const d = res.data;
+      openCreate({
+        name: d.suggested_name,
+        expression: d.inverted_expression,
+        window: d.window,
+        severity: d.severity,
+      });
+    } catch { /* noop */ }
+  };
+
+  const severityVariant = (severity: string) => {
+    switch (severity?.toLowerCase()) {
+      case "critical":
+      case "emergency":
+        return "destructive" as const;
+      case "warning":
+        return "warning" as const;
+      case "recovery":
+        return "success" as const;
+      case "info":
+        return "info" as const;
+      default:
+        return "default" as const;
+    }
+  };
+
+  const isPending = createDef.isPending || updateDef.isPending;
+
+  if (isLoading) {
+    return (
+      <div className="flex h-32 items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-brand-500" />
+      </div>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Bell className="h-4 w-4" /> Alert Definitions
+          <Button size="sm" variant="secondary" className="ml-auto" onClick={() => openCreate()}>
+            <Plus className="h-3.5 w-3.5" /> New Alert
+          </Button>
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {formMode !== "closed" && (
+          <form onSubmit={handleSubmit} className="mb-6 space-y-3 rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-xs font-medium text-zinc-500 uppercase tracking-wide">
+                {formMode === "edit" ? "Edit Alert" : "New Alert"}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="alert-name">Name</Label>
+                <Input id="alert-name" value={formName} onChange={(e) => setFormName(e.target.value)} required />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="alert-severity">Severity</Label>
+                <select
+                  id="alert-severity"
+                  value={formSeverity}
+                  onChange={(e) => setFormSeverity(e.target.value)}
+                  className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100"
+                >
+                  <option value="info">Info</option>
+                  <option value="recovery">Recovery</option>
+                  <option value="warning">Warning</option>
+                  <option value="critical">Critical</option>
+                  <option value="emergency">Emergency</option>
+                </select>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="alert-expr">Expression</Label>
+              <Input
+                id="alert-expr"
+                value={formExpression}
+                onChange={(e) => setFormExpression(e.target.value)}
+                placeholder='e.g. avg(rtt_ms) > 100'
+                className="font-mono text-sm"
+                required
+              />
+              {metrics && metrics.length > 0 && (
+                <div className="rounded-md border border-zinc-800 bg-zinc-900 p-3 space-y-2">
+                  <p className="text-xs text-zinc-500 font-medium">
+                    Available metrics — click to insert
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {metrics.map((m) => (
+                      <button
+                        key={m.name}
+                        type="button"
+                        className="inline-flex items-center gap-1 rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs font-mono text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100 cursor-pointer transition-colors"
+                        onClick={() => {
+                          const fn = m.type === "string" ? "" : "avg";
+                          const snippet = m.type === "string"
+                            ? `${m.name} != ''`
+                            : `${fn}(${m.name}) > `;
+                          setFormExpression((prev) =>
+                            prev ? `${prev} AND ${snippet}` : snippet
+                          );
+                        }}
+                        title={m.description}
+                      >
+                        <span className={m.type === "string" ? "text-amber-400" : "text-brand-400"}>
+                          {m.type === "string" ? "Aa" : "#"}
+                        </span>
+                        {m.name}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-zinc-600 leading-tight">
+                    Functions: <span className="font-mono text-zinc-500">avg</span>, <span className="font-mono text-zinc-500">max</span>, <span className="font-mono text-zinc-500">min</span>, <span className="font-mono text-zinc-500">sum</span>, <span className="font-mono text-zinc-500">count</span>, <span className="font-mono text-zinc-500">last</span>
+                    {" · "}Operators: <span className="font-mono text-zinc-500">{">"}</span>, <span className="font-mono text-zinc-500">{"<"}</span>, <span className="font-mono text-zinc-500">{">="}</span>, <span className="font-mono text-zinc-500">{"<="}</span>, <span className="font-mono text-zinc-500">==</span>, <span className="font-mono text-zinc-500">!=</span>
+                    {" · "}Combine: <span className="font-mono text-zinc-500">AND</span>, <span className="font-mono text-zinc-500">OR</span>
+                    {app.target_table === "config" && (
+                      <> · String: <span className="font-mono text-zinc-500">CHANGED</span>, <span className="font-mono text-zinc-500">IN ('a', 'b')</span></>
+                    )}
+                  </p>
+                </div>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="alert-window">Window</Label>
+                <select
+                  id="alert-window"
+                  value={formWindow}
+                  onChange={(e) => setFormWindow(e.target.value)}
+                  className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100"
+                >
+                  <option value="30s">30s</option>
+                  <option value="1m">1m</option>
+                  <option value="5m">5m</option>
+                  <option value="15m">15m</option>
+                  <option value="1h">1h</option>
+                  <option value="6h">6h</option>
+                  <option value="1d">1d</option>
+                </select>
+              </div>
+              {formMode === "edit" && (
+                <div className="space-y-1.5">
+                  <Label>Enabled</Label>
+                  <button
+                    type="button"
+                    onClick={() => setFormEnabled(!formEnabled)}
+                    className={`w-full rounded-md border px-3 py-2 text-sm text-left cursor-pointer ${
+                      formEnabled
+                        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+                        : "border-zinc-700 bg-zinc-800 text-zinc-500"
+                    }`}
+                  >
+                    {formEnabled ? "Enabled" : "Disabled"}
+                  </button>
+                </div>
+              )}
+            </div>
+            {formError && <p className="text-sm text-red-400">{formError}</p>}
+            <div className="flex gap-2">
+              <Button type="button" variant="secondary" size="sm" onClick={closeForm}>Cancel</Button>
+              <Button type="submit" size="sm" disabled={isPending}>
+                {isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                {formMode === "edit" ? "Save" : "Create"}
+              </Button>
+            </div>
+          </form>
+        )}
+
+        {!definitions || definitions.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
+            <Bell className="mb-2 h-8 w-8 text-zinc-600" />
+            <p className="text-sm">No alert definitions for this app</p>
+          </div>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Expression</TableHead>
+                <TableHead>Window</TableHead>
+                <TableHead>Severity</TableHead>
+                <TableHead>Enabled</TableHead>
+                <TableHead className="w-24"></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {definitions.map((defn: AppAlertDefinition) => (
+                <TableRow
+                  key={defn.id}
+                  className={`cursor-pointer ${editId === defn.id ? "bg-zinc-800/50" : "hover:bg-zinc-800/30"}`}
+                  onClick={() => openEdit(defn)}
+                >
+                  <TableCell className="font-medium text-zinc-100">{defn.name}</TableCell>
+                  <TableCell className="text-zinc-400 font-mono text-xs max-w-xs truncate">{defn.expression}</TableCell>
+                  <TableCell className="text-zinc-400">{defn.window}</TableCell>
+                  <TableCell>
+                    <Badge variant={severityVariant(defn.severity)}>{defn.severity}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={defn.enabled ? "success" : "default"}>
+                      {defn.enabled ? "On" : "Off"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <div className="flex gap-0.5">
+                      {(!/\bCHANGED\b/.test(defn.expression) || /[><=!]/.test(defn.expression)) && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-zinc-500 hover:text-brand-400"
+                          title="Create Recovery Alert"
+                          disabled={invertDef.isPending}
+                          onClick={() => handleRecovery(defn.id)}
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-zinc-500 hover:text-red-400"
+                        onClick={() => deleteDef.mutate(defn.id)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </CardContent>
+    </Card>
   );
 }

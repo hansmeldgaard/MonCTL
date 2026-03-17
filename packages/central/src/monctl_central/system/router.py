@@ -21,8 +21,8 @@ from monctl_central.dependencies import (
     require_admin,
 )
 from monctl_central.storage.models import (
-    AlertRule,
-    AlertState,
+    AlertInstance,
+    AppAlertDefinition,
     Collector,
     CollectorGroup,
 )
@@ -93,7 +93,7 @@ async def _check_postgresql(db: AsyncSession) -> dict:
     # Table counts for key tables
     key_tables = [
         "devices", "collectors", "apps", "app_assignments",
-        "alert_rules", "credentials", "tenants", "users",
+        "app_alert_definitions", "alert_instances", "credentials", "tenants", "users",
     ]
     table_counts = {}
     for tbl in key_tables:
@@ -713,23 +713,23 @@ async def _check_scheduler() -> dict:
 
 async def _check_alerts(db: AsyncSession) -> dict:
     """Count firing alerts by severity and rule stats."""
-    # Total / enabled rules
+    # Total / enabled definitions
     total_rules = (
-        await db.execute(select(func.count(AlertRule.id)))
+        await db.execute(select(func.count(AppAlertDefinition.id)))
     ).scalar() or 0
     enabled_rules = (
         await db.execute(
-            select(func.count(AlertRule.id)).where(AlertRule.enabled.is_(True))
+            select(func.count(AppAlertDefinition.id)).where(AppAlertDefinition.enabled.is_(True))
         )
     ).scalar() or 0
 
-    # Firing alerts grouped by severity
+    # Firing instances grouped by severity
     firing_rows = (
         await db.execute(
-            select(AlertRule.severity, func.count(AlertState.id))
-            .join(AlertState, AlertState.rule_id == AlertRule.id)
-            .where(AlertState.state == "firing")
-            .group_by(AlertRule.severity)
+            select(AppAlertDefinition.severity, func.count(AlertInstance.id))
+            .join(AlertInstance, AlertInstance.definition_id == AppAlertDefinition.id)
+            .where(AlertInstance.state == "firing")
+            .group_by(AppAlertDefinition.severity)
         )
     ).all()
     firing_by_severity = {row[0]: row[1] for row in firing_rows}

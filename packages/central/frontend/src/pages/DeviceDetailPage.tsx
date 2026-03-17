@@ -7,6 +7,7 @@ import {
   ArrowUp,
   ArrowUpDown,
   BarChart2,
+  Bell,
   Clock,
   Layout,
   Loader2,
@@ -69,8 +70,13 @@ import {
   useTenants,
   useUpdateDevice,
   useUpdateDeviceMonitoring,
+  useDeviceThresholds,
+  useUpdateAlertInstance,
+  useCreateThresholdOverride,
+  useUpdateThresholdOverride,
+  useDeleteThresholdOverride,
 } from "@/api/hooks.ts";
-import type { Device as DeviceType, DeviceAssignment } from "@/types/api.ts";
+import type { Device as DeviceType, DeviceAssignment, DeviceThresholdRow } from "@/types/api.ts";
 import { ConfigDataRenderer } from "@/components/ConfigDataRenderer.tsx";
 import { InterfaceTrafficChart } from "@/components/InterfaceTrafficChart.tsx";
 import { timeAgo, formatDate } from "@/lib/utils.ts";
@@ -2555,6 +2561,235 @@ function HistoryTab({ deviceId }: { deviceId: string }) {
   );
 }
 
+// ── Thresholds Tab ───────────────────────────────────────
+
+function ThresholdsTab({ deviceId }: { deviceId: string }) {
+  const { data: thresholds, isLoading } = useDeviceThresholds(deviceId);
+  const updateInstance = useUpdateAlertInstance();
+  const createOverride = useCreateThresholdOverride();
+  const updateOverride = useUpdateThresholdOverride();
+  const deleteOverride = useDeleteThresholdOverride();
+
+  const severityVariant = (severity: string) => {
+    switch (severity?.toLowerCase()) {
+      case "critical":
+      case "emergency":
+        return "destructive" as const;
+      case "warning":
+        return "warning" as const;
+      case "recovery":
+        return "success" as const;
+      case "info":
+        return "info" as const;
+      default:
+        return "default" as const;
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex h-32 items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-brand-500" />
+      </div>
+    );
+  }
+
+  if (!thresholds || thresholds.length === 0) {
+    return (
+      <Card>
+        <CardContent>
+          <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
+            <Bell className="mb-2 h-8 w-8 text-zinc-600" />
+            <p className="text-sm">No alert definitions for this device</p>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // Group by app_name
+  const grouped = thresholds.reduce<Record<string, DeviceThresholdRow[]>>((acc, row) => {
+    const key = row.app_name || "Unknown";
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(row);
+    return acc;
+  }, {});
+
+  return (
+    <div className="space-y-4">
+      {Object.entries(grouped).map(([appName, rows]) => (
+        <Card key={appName}>
+          <CardHeader>
+            <CardTitle className="text-sm">{appName}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Alert Name</TableHead>
+                  <TableHead>Expression</TableHead>
+                  <TableHead>Severity</TableHead>
+                  <TableHead>Default</TableHead>
+                  <TableHead>Override</TableHead>
+                  <TableHead>Enabled</TableHead>
+                  <TableHead>State</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {rows.map((row) => (
+                  <ThresholdRow
+                    key={row.definition_id}
+                    row={row}
+                    severityVariant={severityVariant}
+                    onToggleEnabled={(id, enabled) =>
+                      updateInstance.mutate({ id, enabled })
+                    }
+                    onSaveOverride={(defId, overrides, existingId) => {
+                      if (existingId) {
+                        updateOverride.mutate({ id: existingId, overrides });
+                      } else {
+                        createOverride.mutate({
+                          definition_id: defId,
+                          device_id: deviceId,
+                          overrides,
+                        });
+                      }
+                    }}
+                    onDeleteOverride={(id) => deleteOverride.mutate(id)}
+                  />
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+function ThresholdRow({
+  row,
+  severityVariant,
+  onToggleEnabled,
+  onSaveOverride,
+  onDeleteOverride,
+}: {
+  row: DeviceThresholdRow;
+  severityVariant: (s: string) => "destructive" | "warning" | "success" | "info" | "default";
+  onToggleEnabled: (id: string, enabled: boolean) => void;
+  onSaveOverride: (defId: string, overrides: Record<string, number | string>, existingId?: string) => void;
+  onDeleteOverride: (id: string) => void;
+}) {
+  const [editValue, setEditValue] = useState<string>("");
+  const [editing, setEditing] = useState(false);
+
+  const firstThreshold = row.default_thresholds[0];
+  const overrideValue = row.override?.overrides?.[firstThreshold?.name];
+
+  const handleSave = () => {
+    if (!firstThreshold) return;
+    const val = parseFloat(editValue);
+    if (isNaN(val)) return;
+    onSaveOverride(
+      row.definition_id,
+      { [firstThreshold.name]: val },
+      row.override?.id
+    );
+    setEditing(false);
+  };
+
+  return (
+    <TableRow>
+      <TableCell className="font-medium text-zinc-100">{row.name}</TableCell>
+      <TableCell className="text-zinc-400 font-mono text-xs max-w-xs truncate">
+        {row.expression}
+      </TableCell>
+      <TableCell>
+        <Badge variant={severityVariant(row.severity)}>{row.severity}</Badge>
+      </TableCell>
+      <TableCell className="text-zinc-400">
+        {firstThreshold ? `${firstThreshold.default}` : "—"}
+      </TableCell>
+      <TableCell>
+        {editing ? (
+          <div className="flex items-center gap-1">
+            <Input
+              className="w-20 h-7 text-xs"
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleSave();
+                if (e.key === "Escape") setEditing(false);
+              }}
+              autoFocus
+            />
+            <Button size="sm" variant="ghost" className="h-7 px-1" onClick={handleSave}>
+              <Save className="h-3 w-3" />
+            </Button>
+            <Button size="sm" variant="ghost" className="h-7 px-1" onClick={() => setEditing(false)}>
+              <X className="h-3 w-3" />
+            </Button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1">
+            <span
+              className={`text-sm cursor-pointer ${overrideValue != null ? "text-brand-400 font-medium" : "text-zinc-500"}`}
+              onClick={() => {
+                setEditValue(
+                  overrideValue != null
+                    ? String(overrideValue)
+                    : firstThreshold
+                      ? String(firstThreshold.default)
+                      : ""
+                );
+                setEditing(true);
+              }}
+            >
+              {overrideValue != null ? String(overrideValue) : "—"}
+            </span>
+            {row.override && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-6 px-1 text-zinc-500 hover:text-red-400"
+                onClick={() => onDeleteOverride(row.override!.id)}
+              >
+                <X className="h-3 w-3" />
+              </Button>
+            )}
+          </div>
+        )}
+      </TableCell>
+      <TableCell>
+        {row.instance_id && (
+          <button
+            className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium cursor-pointer ${
+              row.instance_enabled
+                ? "bg-emerald-500/20 text-emerald-400"
+                : "bg-zinc-700/50 text-zinc-500"
+            }`}
+            onClick={() =>
+              onToggleEnabled(row.instance_id!, !row.instance_enabled)
+            }
+          >
+            {row.instance_enabled ? "On" : "Off"}
+          </button>
+        )}
+      </TableCell>
+      <TableCell>
+        {row.instance_state && (
+          <Badge
+            variant={row.instance_state === "firing" ? "destructive" : "success"}
+          >
+            {row.instance_state}
+          </Badge>
+        )}
+      </TableCell>
+    </TableRow>
+  );
+}
+
+
 // ── Main Page ────────────────────────────────────────────
 
 export function DeviceDetailPage() {
@@ -2672,6 +2907,12 @@ export function DeviceDetailPage() {
               Settings
             </span>
           </TabTrigger>
+          <TabTrigger value="thresholds">
+            <span className="flex items-center gap-1.5">
+              <Bell className="h-3.5 w-3.5" />
+              Thresholds
+            </span>
+          </TabTrigger>
           <TabTrigger value="history">
             <span className="flex items-center gap-1.5">
               <Clock className="h-3.5 w-3.5" />
@@ -2694,6 +2935,9 @@ export function DeviceDetailPage() {
         </TabsContent>
         <TabsContent value="settings">
           <SettingsTab deviceId={deviceId} />
+        </TabsContent>
+        <TabsContent value="thresholds">
+          <ThresholdsTab deviceId={deviceId} />
         </TabsContent>
         <TabsContent value="history">
           <HistoryTab deviceId={deviceId} />

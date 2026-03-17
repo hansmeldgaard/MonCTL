@@ -6,31 +6,31 @@ import logging
 
 import httpx
 
-from monctl_central.storage.models import AlertRule
+from monctl_central.storage.models import AppAlertDefinition
 
 logger = logging.getLogger(__name__)
 
 
 async def send_notifications(
-    rule: AlertRule, assignment_id: str, state: str
+    defn: AppAlertDefinition, assignment_id: str, state: str
 ) -> None:
     """Send notifications for a firing or resolved alert.
 
-    Iterates over rule.notification_channels and dispatches accordingly.
+    Iterates over defn.notification_channels and dispatches accordingly.
     Each channel is a dict like:
         {"type": "webhook", "url": "https://...", "secret": "..."}
         {"type": "email", "to": "ops@example.com"}
     """
-    for channel in (rule.notification_channels or []):
+    for channel in (defn.notification_channels or []):
         try:
             channel_type = channel.get("type", "")
             if channel_type == "webhook":
-                await _send_webhook(channel, rule, assignment_id, state)
+                await _send_webhook(channel, defn, assignment_id, state)
             elif channel_type == "email":
                 logger.info(
                     "email_notification_skipped",
                     reason="email not implemented yet",
-                    rule=rule.name,
+                    definition=defn.name,
                     assignment_id=assignment_id,
                 )
             else:
@@ -39,12 +39,12 @@ async def send_notifications(
             logger.exception(
                 "notification_send_error",
                 channel_type=channel.get("type"),
-                rule_id=str(rule.id),
+                definition_id=str(defn.id),
             )
 
 
 async def _send_webhook(
-    channel: dict, rule: AlertRule, assignment_id: str, state: str
+    channel: dict, defn: AppAlertDefinition, assignment_id: str, state: str
 ) -> None:
     """POST alert payload to a webhook URL."""
     url = channel.get("url")
@@ -53,13 +53,13 @@ async def _send_webhook(
 
     payload = {
         "alert": {
-            "rule_id": str(rule.id),
-            "rule_name": rule.name,
-            "rule_type": rule.rule_type,
-            "severity": rule.severity,
+            "definition_id": str(defn.id),
+            "definition_name": defn.name,
+            "app_id": str(defn.app_id),
+            "severity": defn.severity,
             "state": state,
             "assignment_id": assignment_id,
-            "condition": rule.condition,
+            "expression": defn.expression,
         }
     }
 
@@ -74,6 +74,6 @@ async def _send_webhook(
             "webhook_sent",
             url=url,
             status=resp.status_code,
-            rule=rule.name,
+            definition=defn.name,
             state=state,
         )

@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiDelete, apiGet, apiGetRaw, apiPatch, apiPost, apiPostFormData, apiPut } from "@/api/client.ts";
 import type {
-  ActiveAlert,
-  AlertRule,
+  AlertInstance,
+  AlertMetric,
+  AppAlertDefinition,
   AppDetail,
   AppSummary,
   Assignment,
@@ -17,9 +18,11 @@ import type {
   Device,
   DeviceAssignment,
   DeviceListParams,
+  DeviceThresholdRow,
   DisplayTemplate,
   DeviceResults,
   DeviceType,
+  ExpressionValidation,
   HealthStatus,
   InterfaceMetadataRecord,
   InterfaceRecord,
@@ -47,6 +50,8 @@ import type {
   UserWithTenants,
   ConnectorSummary,
   ConnectorDetail,
+  MonitoringEvent,
+  EventPolicy,
 } from "@/types/api.ts";
 
 // ── Polling intervals ────────────────────────────────────
@@ -176,19 +181,207 @@ export function useCredentials() {
 
 export function useActiveAlerts() {
   return useQuery({
-    queryKey: ["alerts-active"],
-    queryFn: () => apiGet<ActiveAlert[]>("/alerts/active"),
+    queryKey: ["alert-instances-active"],
+    queryFn: () => apiGet<AlertInstance[]>("/alerts/instances/active"),
     select: (res) => res.data,
-    refetchInterval: POLL_LIST,
+    refetchInterval: POLL_DETAIL,
   });
 }
 
 export function useAlertRules() {
   return useQuery({
-    queryKey: ["alert-rules"],
-    queryFn: () => apiGet<AlertRule[]>("/alerts/rules"),
+    queryKey: ["alert-definitions"],
+    queryFn: () => apiGet<AppAlertDefinition[]>("/alerts/definitions"),
     select: (res) => res.data,
     refetchInterval: POLL_LIST,
+  });
+}
+
+export function useAlertDefinitions(appId?: string) {
+  const params = appId ? `?app_id=${appId}` : "";
+  return useQuery({
+    queryKey: ["alert-definitions", appId ?? "all"],
+    queryFn: () => apiGet<AppAlertDefinition[]>(`/alerts/definitions${params}`),
+    select: (res) => res.data,
+    refetchInterval: POLL_LIST,
+  });
+}
+
+export function useAlertDefinition(id: string) {
+  return useQuery({
+    queryKey: ["alert-definition", id],
+    queryFn: () => apiGet<AppAlertDefinition & { instances: AlertInstance[] }>(`/alerts/definitions/${id}`),
+    select: (res) => res.data,
+    enabled: !!id,
+  });
+}
+
+export function useCreateAlertDefinition() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: {
+      app_id: string;
+      app_version_id: string;
+      name: string;
+      expression: string;
+      window?: string;
+      severity?: string;
+      enabled?: boolean;
+      description?: string;
+      message_template?: string;
+    }) => apiPost("/alerts/definitions", data),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["alert-definitions"] });
+      await qc.invalidateQueries({ queryKey: ["alert-instances-active"] });
+    },
+  });
+}
+
+export function useUpdateAlertDefinition() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...data }: { id: string } & Record<string, unknown>) =>
+      apiPut(`/alerts/definitions/${id}`, data),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["alert-definitions"] });
+    },
+  });
+}
+
+export function useDeleteAlertDefinition() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/alerts/definitions/${id}`),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["alert-definitions"] });
+      await qc.invalidateQueries({ queryKey: ["alert-instances-active"] });
+    },
+  });
+}
+
+export function useInvertAlertDefinition() {
+  return useMutation({
+    mutationFn: (definitionId: string) =>
+      apiPost<{
+        suggested_name: string;
+        inverted_expression: string;
+        original_expression: string;
+        window: string;
+        severity: string;
+        app_id: string;
+        app_version_id: string;
+      }>(`/alerts/definitions/${definitionId}/invert`, {}),
+  });
+}
+
+export function useResolvedAlertInstances(params?: {
+  severity?: string;
+  device_id?: string;
+  limit?: number;
+}) {
+  const search = new URLSearchParams();
+  if (params?.severity) search.set("severity", params.severity);
+  if (params?.device_id) search.set("device_id", params.device_id);
+  if (params?.limit) search.set("limit", String(params.limit));
+  const qs = search.toString();
+  return useQuery({
+    queryKey: ["alert-instances-resolved", params ?? {}],
+    queryFn: () => apiGet<AlertInstance[]>(`/alerts/instances/resolved${qs ? `?${qs}` : ""}`),
+    select: (res) => ({ data: res.data, meta: (res as unknown as { meta?: { retention_days: number } }).meta }),
+    refetchInterval: POLL_LIST,
+  });
+}
+
+export function useAlertInstances(params?: {
+  state?: string;
+  device_id?: string;
+  definition_id?: string;
+}) {
+  const search = new URLSearchParams();
+  if (params?.state) search.set("state", params.state);
+  if (params?.device_id) search.set("device_id", params.device_id);
+  if (params?.definition_id) search.set("definition_id", params.definition_id);
+  const qs = search.toString();
+  return useQuery({
+    queryKey: ["alert-instances", params ?? {}],
+    queryFn: () => apiGet<AlertInstance[]>(`/alerts/instances${qs ? `?${qs}` : ""}`),
+    select: (res) => res.data,
+    refetchInterval: POLL_LIST,
+  });
+}
+
+export function useUpdateAlertInstance() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+      apiPut(`/alerts/instances/${id}`, { enabled }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["alert-instances"] });
+      await qc.invalidateQueries({ queryKey: ["alert-instances-active"] });
+      await qc.invalidateQueries({ queryKey: ["device-thresholds"] });
+    },
+  });
+}
+
+export function useValidateExpression() {
+  return useMutation({
+    mutationFn: (data: { expression: string; target_table: string }) =>
+      apiPost<ExpressionValidation>("/alerts/validate-expression", data),
+  });
+}
+
+export function useAlertMetrics(appId: string) {
+  return useQuery({
+    queryKey: ["alert-metrics", appId],
+    queryFn: () => apiGet<AlertMetric[]>(`/apps/${appId}/alert-metrics`),
+    select: (res) => res.data,
+    enabled: !!appId,
+  });
+}
+
+export function useDeviceThresholds(deviceId: string) {
+  return useQuery({
+    queryKey: ["device-thresholds", deviceId],
+    queryFn: () => apiGet<DeviceThresholdRow[]>(`/devices/${deviceId}/thresholds`),
+    select: (res) => res.data,
+    enabled: !!deviceId,
+    refetchInterval: POLL_LIST,
+  });
+}
+
+export function useCreateThresholdOverride() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: {
+      definition_id: string;
+      device_id: string;
+      entity_key?: string;
+      overrides: Record<string, number | string>;
+    }) => apiPost("/alerts/overrides", data),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["device-thresholds"] });
+    },
+  });
+}
+
+export function useUpdateThresholdOverride() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, overrides }: { id: string; overrides: Record<string, number | string> }) =>
+      apiPut(`/alerts/overrides/${id}`, { overrides }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["device-thresholds"] });
+    },
+  });
+}
+
+export function useDeleteThresholdOverride() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/alerts/overrides/${id}`),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["device-thresholds"] });
+    },
   });
 }
 
@@ -1644,6 +1837,101 @@ export function useSetConnectorLatest() {
       apiPut(`/connectors/${connectorId}/versions/${versionId}/set-latest`, {}),
     onSuccess: (_res, vars) => {
       qc.invalidateQueries({ queryKey: ["connector-detail", vars.connectorId] });
+    },
+  });
+}
+
+// ── Events ───────────────────────────────────────────────
+
+export function useActiveEvents() {
+  return useQuery({
+    queryKey: ["events-active"],
+    queryFn: () => apiGet<MonitoringEvent[]>("/events/active"),
+    select: (res) => res.data,
+    refetchInterval: POLL_LIST,
+  });
+}
+
+export function useClearedEvents() {
+  return useQuery({
+    queryKey: ["events-cleared"],
+    queryFn: () => apiGet<MonitoringEvent[]>("/events/cleared"),
+    select: (res) => res.data,
+    refetchInterval: POLL_LIST,
+  });
+}
+
+export function useAcknowledgeEvents() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (eventIds: string[]) =>
+      apiPost("/events/acknowledge", { event_ids: eventIds }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["events-active"] });
+      qc.invalidateQueries({ queryKey: ["events-cleared"] });
+    },
+  });
+}
+
+export function useClearEvents() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (eventIds: string[]) =>
+      apiPost("/events/clear", { event_ids: eventIds }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["events-active"] });
+      qc.invalidateQueries({ queryKey: ["events-cleared"] });
+    },
+  });
+}
+
+// ── Event Policies ───────────────────────────────────────
+
+export function useEventPolicies() {
+  return useQuery({
+    queryKey: ["event-policies"],
+    queryFn: () => apiGet<EventPolicy[]>("/events/policies"),
+    select: (res) => res.data,
+    refetchInterval: POLL_LIST,
+  });
+}
+
+export function useCreateEventPolicy() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: {
+      name: string;
+      definition_id: string;
+      mode?: string;
+      fire_count_threshold?: number;
+      window_size?: number;
+      event_severity?: string;
+      message_template?: string;
+      auto_clear_on_resolve?: boolean;
+    }) => apiPost("/events/policies", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["event-policies"] });
+    },
+  });
+}
+
+export function useUpdateEventPolicy() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...data }: { id: string } & Record<string, unknown>) =>
+      apiPut(`/events/policies/${id}`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["event-policies"] });
+    },
+  });
+}
+
+export function useDeleteEventPolicy() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/events/policies/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["event-policies"] });
     },
   });
 }

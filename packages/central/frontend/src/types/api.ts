@@ -317,21 +317,134 @@ export interface CredentialTemplate {
 
 // ── Alerts ────────────────────────────────────────────────
 
-export interface ActiveAlert {
+export interface AppAlertDefinition {
   id: string;
-  rule_id: string;
-  state: string;
-  labels: Record<string, string>;
-  started_at: string;
+  app_id: string;
+  app_version_id: string;
+  name: string;
+  description: string | null;
+  expression: string;
+  window: string;
+  severity: "info" | "warning" | "critical" | "emergency" | "recovery";
+  enabled: boolean;
+  message_template: string | null;
+  notification_channels: Record<string, unknown>[];
+  pack_origin: string | null;
+  created_at: string;
+  updated_at: string;
+  instance_count?: number;
+  firing_count?: number;
 }
 
-export interface AlertRule {
+export interface AlertInstance {
+  id: string;
+  definition_id: string;
+  assignment_id: string;
+  device_id: string | null;
+  enabled: boolean;
+  state: "ok" | "firing" | "resolved";
+  current_value: number | null;
+  fire_count: number;
+  fire_history: boolean[];
+  last_evaluated_at: string | null;
+  started_at: string | null;
+  resolved_at: string | null;
+  event_created: boolean;
+  entity_key: string;
+  entity_labels: Record<string, string>;
+  created_at: string;
+  definition_name?: string;
+  definition_severity?: string;
+  definition_expression?: string;
+  app_name?: string;
+  device_name?: string;
+}
+
+export interface ThresholdOverride {
+  id: string;
+  definition_id: string;
+  device_id: string;
+  entity_key: string;
+  overrides: Record<string, number | string>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AlertMetric {
+  name: string;
+  type: "numeric" | "string";
+  description: string;
+}
+
+export interface ExpressionValidation {
+  valid: boolean;
+  error: string | null;
+  referenced_metrics: string[];
+  threshold_params: { name: string; default_value: number | string }[];
+  has_aggregation: boolean;
+}
+
+export interface DeviceThresholdRow {
+  definition_id: string;
+  name: string;
+  app_name: string;
+  expression: string;
+  severity: string;
+  default_thresholds: { name: string; default: number | string }[];
+  override: { id: string; overrides: Record<string, number | string> } | null;
+  instance_id: string | null;
+  instance_enabled: boolean | null;
+  instance_state: string | null;
+}
+
+// ── Events ────────────────────────────────────────────────
+
+export interface MonitoringEvent {
+  id: string;
+  event_type: string;
+  definition_id: string;
+  definition_name: string;
+  policy_id: string;
+  policy_name: string;
+  collector_id: string;
+  device_id: string;
+  app_id: string;
+  source: string;
+  severity: string;
+  message: string;
+  data: Record<string, unknown>;
+  state: string;
+  occurred_at: string;
+  received_at: string;
+  acknowledged_at: string | null;
+  acknowledged_by: string | null;
+  cleared_at: string | null;
+  cleared_by: string | null;
+  collector_name: string;
+  device_name: string;
+  app_name: string;
+}
+
+export interface EventPolicy {
   id: string;
   name: string;
-  rule_type: string;
-  severity: string;
+  description: string | null;
+  definition_id: string;
+  definition_name: string;
+  mode: "consecutive" | "cumulative";
+  fire_count_threshold: number;
+  window_size: number;
+  event_severity: string;
+  message_template: string | null;
+  auto_clear_on_resolve: boolean;
   enabled: boolean;
+  created_at: string;
+  updated_at: string;
 }
+
+// Legacy aliases for backward compat with DashboardPage
+export type ActiveAlert = AlertInstance;
+export type AlertRule = AppAlertDefinition;
 
 // ── Health ────────────────────────────────────────────────
 

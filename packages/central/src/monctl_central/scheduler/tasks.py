@@ -59,6 +59,8 @@ class SchedulerRunner:
                     await self._health_check()
                 # Alert evaluation runs every 30s
                 await self._evaluate_alerts()
+                # Event policy evaluation (runs after alerts)
+                await self._evaluate_event_policies()
                 # Rollup + cleanup (checked every cycle, runs based on time)
                 await self._run_rollups()
             except asyncio.CancelledError:
@@ -144,6 +146,22 @@ class SchedulerRunner:
                 "monctl:scheduler:last_evaluate_alerts", utc_now().isoformat()
             )
 
+    async def _evaluate_event_policies(self) -> None:
+        """Run event engine evaluation if ClickHouse is available."""
+        if self._ch is None:
+            return
+
+        try:
+            from monctl_central.events.engine import EventEngine
+
+            engine = EventEngine(
+                session_factory=self._session_factory,
+                ch_client=self._ch,
+            )
+            await engine.evaluate_all()
+        except Exception:
+            logger.exception("event_policy_evaluation_error")
+
     async def _run_rollups(self) -> None:
         """Run hourly/daily rollups and retention cleanup when due."""
         if self._ch is None:
@@ -170,6 +188,11 @@ class SchedulerRunner:
             try:
                 await self._daily_rollup()
                 await self._retention_cleanup()
+                # Alert history cleanup — reset old resolved instances to ok
+                from monctl_central.alerting.cleanup import cleanup_resolved_instances
+                async with self._session_factory() as session:
+                    await cleanup_resolved_instances(session)
+                    await session.commit()
                 self._last_daily_rollup = now
             except Exception:
                 logger.exception("daily_rollup_error")

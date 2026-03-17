@@ -401,6 +401,11 @@ async def create_assignment(
     db.add(assignment)
     await db.flush()
 
+    # Auto-create alert instances for this new assignment
+    from monctl_central.alerting.instance_sync import sync_instances_for_assignment
+    await sync_instances_for_assignment(db, assignment)
+    await db.flush()
+
     # Create connector bindings if provided
     for binding in request.connector_bindings:
         acb = AssignmentConnectorBinding(
@@ -897,3 +902,92 @@ def _extract_config_keys_from_source(source_code: str) -> list[str]:
                 keys.add(candidate)
 
     return sorted(keys)
+
+
+# ── Alert Metrics Discovery ──────────────────────────────
+
+@router.get("/{app_id}/alert-metrics")
+async def get_alert_metrics(
+    app_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Discover available metrics for alert expressions based on app's target_table."""
+    import asyncio
+    from monctl_central.dependencies import get_clickhouse
+
+    app = await db.get(App, uuid.UUID(app_id))
+    if app is None:
+        raise HTTPException(status_code=404, detail="App not found")
+
+    target_table = app.target_table
+
+    if target_table == "availability_latency":
+        metrics = [
+            {"name": "rtt_ms", "type": "numeric", "description": "Round-trip time in ms"},
+            {"name": "response_time_ms", "type": "numeric", "description": "Response time in ms"},
+            {"name": "reachable", "type": "numeric", "description": "1 if reachable, 0 if not"},
+            {"name": "state", "type": "numeric", "description": "Check state (0=OK, 1=WARN, 2=CRIT)"},
+            {"name": "status_code", "type": "numeric", "description": "HTTP status code"},
+        ]
+
+    elif target_table == "interface":
+        metrics = [
+            {"name": "in_rate_bps", "type": "numeric", "description": "Inbound rate (bits/sec)"},
+            {"name": "out_rate_bps", "type": "numeric", "description": "Outbound rate (bits/sec)"},
+            {"name": "in_utilization_pct", "type": "numeric", "description": "Inbound utilization %"},
+            {"name": "out_utilization_pct", "type": "numeric", "description": "Outbound utilization %"},
+            {"name": "in_errors", "type": "numeric", "description": "Inbound errors"},
+            {"name": "out_errors", "type": "numeric", "description": "Outbound errors"},
+            {"name": "in_discards", "type": "numeric", "description": "Inbound discards"},
+            {"name": "out_discards", "type": "numeric", "description": "Outbound discards"},
+            {"name": "if_oper_status", "type": "numeric", "description": "Interface operational status"},
+        ]
+
+    elif target_table == "performance":
+        ch = get_clickhouse()
+        if ch:
+            try:
+                rows = await asyncio.to_thread(
+                    ch._get_client().query,
+                    "SELECT DISTINCT arrayJoin(metric_names) AS metric_name "
+                    "FROM performance "
+                    "WHERE app_id = {app_id:String} "
+                    "ORDER BY metric_name",
+                    parameters={"app_id": str(app_id)},
+                )
+                metrics = [
+                    {"name": row[0], "type": "numeric", "description": f"Discovered metric: {row[0]}"}
+                    for row in rows.result_rows
+                    if row[0]
+                ]
+            except Exception:
+                metrics = []
+        else:
+            metrics = []
+
+    elif target_table == "config":
+        ch = get_clickhouse()
+        if ch:
+            try:
+                rows = await asyncio.to_thread(
+                    ch._get_client().query,
+                    "SELECT DISTINCT config_key "
+                    "FROM config "
+                    "WHERE app_id = {app_id:String} "
+                    "ORDER BY config_key",
+                    parameters={"app_id": str(app_id)},
+                )
+                metrics = [
+                    {"name": row[0], "type": "string", "description": f"Config key: {row[0]}"}
+                    for row in rows.result_rows
+                    if row[0]
+                ]
+            except Exception:
+                metrics = []
+        else:
+            metrics = []
+    else:
+        metrics = []
+
+    return {"status": "success", "data": metrics}

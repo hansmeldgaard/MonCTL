@@ -8,6 +8,7 @@ import { AppsPage } from "@/pages/AppsPage.tsx";
 import { AppDetailPage } from "@/pages/AppDetailPage.tsx";
 import { AssignmentsPage } from "@/pages/AssignmentsPage.tsx";
 import { AlertsPage } from "@/pages/AlertsPage.tsx";
+import { EventsPage } from "@/pages/EventsPage.tsx";
 import { TemplatesPage } from "@/pages/TemplatesPage.tsx";
 import { PythonModulesPage } from "@/pages/PythonModulesPage.tsx";
 import { ConnectorsPage } from "@/pages/ConnectorsPage.tsx";
@@ -32,6 +33,7 @@ export function App() {
         <Route path="assignments" element={<AssignmentsPage />} />
         <Route path="templates" element={<TemplatesPage />} />
         <Route path="alerts" element={<AlertsPage />} />
+        <Route path="events" element={<EventsPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="settings/:tab" element={<SettingsPage />} />
       </Route>

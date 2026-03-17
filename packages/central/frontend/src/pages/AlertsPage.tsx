@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Bell, Loader2, ShieldCheck } from "lucide-react";
+import { Bell, Clock, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
@@ -11,18 +11,45 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table.tsx";
-import { StatusBadge } from "@/components/StatusBadge.tsx";
-import { useActiveAlerts, useAlertRules } from "@/api/hooks.ts";
-import { timeAgo } from "@/lib/utils.ts";
+import {
+  useActiveAlerts,
+  useAlertRules,
+  useResolvedAlertInstances,
+  useInvertAlertDefinition,
+  useCreateAlertDefinition,
+} from "@/api/hooks.ts";
+import { timeAgo, formatDate } from "@/lib/utils.ts";
+import { useTimezone } from "@/hooks/useTimezone.ts";
+import type { AlertInstance, AppAlertDefinition } from "@/types/api.ts";
 
-type Tab = "active" | "rules";
+type Tab = "active" | "history" | "definitions";
+
+const severityVariant = (severity: string) => {
+  switch (severity?.toLowerCase()) {
+    case "critical":
+    case "emergency":
+      return "destructive" as const;
+    case "warning":
+      return "warning" as const;
+    case "recovery":
+      return "success" as const;
+    case "info":
+      return "info" as const;
+    default:
+      return "default" as const;
+  }
+};
 
 export function AlertsPage() {
   const [tab, setTab] = useState<Tab>("active");
   const { data: alerts, isLoading: alertsLoading } = useActiveAlerts();
-  const { data: rules, isLoading: rulesLoading } = useAlertRules();
+  const { data: definitions, isLoading: defsLoading } = useAlertRules();
+  const { data: resolvedData, isLoading: resolvedLoading } = useResolvedAlertInstances();
 
-  const isLoading = tab === "active" ? alertsLoading : rulesLoading;
+  const isLoading =
+    tab === "active" ? alertsLoading :
+    tab === "history" ? resolvedLoading :
+    defsLoading;
 
   return (
     <div className="space-y-4">
@@ -42,12 +69,20 @@ export function AlertsPage() {
           )}
         </Button>
         <Button
-          variant={tab === "rules" ? "secondary" : "ghost"}
+          variant={tab === "history" ? "secondary" : "ghost"}
           size="sm"
-          onClick={() => setTab("rules")}
+          onClick={() => setTab("history")}
+        >
+          <Clock className="h-3.5 w-3.5" />
+          History
+        </Button>
+        <Button
+          variant={tab === "definitions" ? "secondary" : "ghost"}
+          size="sm"
+          onClick={() => setTab("definitions")}
         >
           <ShieldCheck className="h-3.5 w-3.5" />
-          Alert Rules
+          Alert Definitions
         </Button>
       </div>
 
@@ -57,24 +92,19 @@ export function AlertsPage() {
         </div>
       ) : tab === "active" ? (
         <ActiveAlertsTab alerts={alerts ?? []} />
+      ) : tab === "history" ? (
+        <HistoryTab
+          instances={resolvedData?.data ?? []}
+          retentionDays={resolvedData?.meta?.retention_days ?? 7}
+        />
       ) : (
-        <AlertRulesTab rules={rules ?? []} />
+        <DefinitionsTab definitions={definitions ?? []} />
       )}
     </div>
   );
 }
 
-function ActiveAlertsTab({
-  alerts,
-}: {
-  alerts: Array<{
-    id: string;
-    rule_id: string;
-    state: string;
-    labels: Record<string, string>;
-    started_at: string;
-  }>;
-}) {
+function ActiveAlertsTab({ alerts }: { alerts: AlertInstance[] }) {
   return (
     <Card>
       <CardHeader>
@@ -93,38 +123,49 @@ function ActiveAlertsTab({
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>State</TableHead>
-                <TableHead>Rule ID</TableHead>
-                <TableHead>Labels</TableHead>
-                <TableHead>Started</TableHead>
+                <TableHead>Severity</TableHead>
+                <TableHead>Alert Name</TableHead>
+                <TableHead>App</TableHead>
+                <TableHead>Device</TableHead>
+                <TableHead>Entity</TableHead>
+                <TableHead>Value</TableHead>
+                <TableHead>Fire Count</TableHead>
+                <TableHead>Firing Since</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {alerts.map((alert) => (
                 <TableRow key={alert.id}>
                   <TableCell>
-                    <StatusBadge state={alert.state} />
+                    <Badge variant={severityVariant(alert.definition_severity ?? "")}>
+                      {alert.definition_severity ?? "unknown"}
+                    </Badge>
                   </TableCell>
-                  <TableCell className="font-mono text-xs text-zinc-300">
-                    {alert.labels?.rule_name ?? alert.rule_id}
+                  <TableCell className="font-medium text-zinc-100">
+                    {alert.definition_name ?? alert.definition_id}
                   </TableCell>
-                  <TableCell>
-                    <div className="flex flex-wrap gap-1">
-                      {Object.entries(alert.labels ?? {}).map(
-                        ([key, value]) => (
-                          <Badge
-                            key={key}
-                            variant="default"
-                            className="text-xs"
-                          >
-                            {key}: {value}
-                          </Badge>
-                        ),
-                      )}
-                    </div>
+                  <TableCell className="text-zinc-400">
+                    {alert.app_name ?? ""}
+                  </TableCell>
+                  <TableCell className="text-zinc-300">
+                    {alert.device_name ?? ""}
+                  </TableCell>
+                  <TableCell className="text-zinc-400 text-xs font-mono">
+                    {alert.entity_labels?.if_name ||
+                      alert.entity_labels?.component ||
+                      alert.entity_key ||
+                      "—"}
+                  </TableCell>
+                  <TableCell className="text-zinc-300">
+                    {alert.current_value != null
+                      ? Number(alert.current_value).toFixed(1)
+                      : "—"}
+                  </TableCell>
+                  <TableCell className="text-zinc-400">
+                    {alert.fire_count}
                   </TableCell>
                   <TableCell className="text-zinc-500">
-                    {timeAgo(alert.started_at)}
+                    {alert.started_at ? timeAgo(alert.started_at) : "—"}
                   </TableCell>
                 </TableRow>
               ))}
@@ -136,74 +177,213 @@ function ActiveAlertsTab({
   );
 }
 
-function AlertRulesTab({
-  rules,
+function HistoryTab({
+  instances,
+  retentionDays,
 }: {
-  rules: Array<{
-    id: string;
-    name: string;
-    rule_type: string;
-    severity: string;
-    enabled: boolean;
-  }>;
+  instances: AlertInstance[];
+  retentionDays: number;
 }) {
-  const severityVariant = (severity: string) => {
-    switch (severity.toLowerCase()) {
-      case "critical":
-        return "destructive" as const;
-      case "warning":
-        return "warning" as const;
-      case "info":
-        return "info" as const;
-      default:
-        return "default" as const;
-    }
+  const tz = useTimezone();
+
+  const duration = (start: string | null, end: string | null) => {
+    if (!start || !end) return "—";
+    const ms = new Date(end).getTime() - new Date(start).getTime();
+    if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
+    if (ms < 3_600_000) return `${Math.round(ms / 60_000)} min`;
+    return `${(ms / 3_600_000).toFixed(1)}h`;
   };
 
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <ShieldCheck className="h-4 w-4" />
-          Alert Rules ({rules.length})
+          <Clock className="h-4 w-4" />
+          Resolved Alerts ({instances.length})
         </CardTitle>
       </CardHeader>
       <CardContent>
-        {rules.length === 0 ? (
+        {instances.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
+            <Clock className="mb-2 h-8 w-8 text-zinc-600" />
+            <p className="text-sm">No resolved alerts in the last {retentionDays} days</p>
+          </div>
+        ) : (
+          <>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Severity</TableHead>
+                  <TableHead>Alert Name</TableHead>
+                  <TableHead>App</TableHead>
+                  <TableHead>Device</TableHead>
+                  <TableHead>Entity</TableHead>
+                  <TableHead>Peak Value</TableHead>
+                  <TableHead>Fired At</TableHead>
+                  <TableHead>Resolved At</TableHead>
+                  <TableHead>Duration</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {instances.map((inst) => (
+                  <TableRow key={inst.id}>
+                    <TableCell>
+                      <Badge variant={severityVariant(inst.definition_severity ?? "")}>
+                        {inst.definition_severity ?? "unknown"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="font-medium text-zinc-100">
+                      {inst.definition_name ?? inst.definition_id}
+                    </TableCell>
+                    <TableCell className="text-zinc-400">
+                      {inst.app_name ?? ""}
+                    </TableCell>
+                    <TableCell className="text-zinc-300">
+                      {inst.device_name ?? ""}
+                    </TableCell>
+                    <TableCell className="text-zinc-400 text-xs font-mono">
+                      {inst.entity_labels?.if_name ||
+                        inst.entity_labels?.component ||
+                        inst.entity_key ||
+                        "—"}
+                    </TableCell>
+                    <TableCell className="text-zinc-300">
+                      {inst.current_value != null
+                        ? Number(inst.current_value).toFixed(1)
+                        : "—"}
+                    </TableCell>
+                    <TableCell className="text-zinc-500 text-xs">
+                      {inst.started_at ? formatDate(inst.started_at, tz) : "—"}
+                    </TableCell>
+                    <TableCell className="text-zinc-500 text-xs">
+                      {inst.resolved_at ? formatDate(inst.resolved_at, tz) : "—"}
+                    </TableCell>
+                    <TableCell className="text-zinc-400">
+                      {duration(inst.started_at, inst.resolved_at)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            <p className="mt-3 text-xs text-zinc-600">
+              Showing resolved alerts from the last {retentionDays} days
+            </p>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function DefinitionsTab({
+  definitions,
+}: {
+  definitions: AppAlertDefinition[];
+}) {
+  const invertDef = useInvertAlertDefinition();
+  const createDef = useCreateAlertDefinition();
+  const [invertingId, setInvertingId] = useState<string | null>(null);
+
+  const handleCreateRecovery = async (defnId: string) => {
+    setInvertingId(defnId);
+    try {
+      const res = await invertDef.mutateAsync(defnId);
+      const data = res.data;
+      await createDef.mutateAsync({
+        app_id: data.app_id,
+        app_version_id: data.app_version_id,
+        name: data.suggested_name,
+        expression: data.inverted_expression,
+        window: data.window,
+        severity: data.severity,
+      });
+    } catch {
+      // silently fail — user sees the button stop spinning
+    } finally {
+      setInvertingId(null);
+    }
+  };
+
+  const hasChanged = (expr: string) =>
+    /\bCHANGED\b/.test(expr) && !/[><=!]/.test(expr);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <ShieldCheck className="h-4 w-4" />
+          Alert Definitions ({definitions.length})
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {definitions.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
             <ShieldCheck className="mb-2 h-8 w-8 text-zinc-600" />
-            <p className="text-sm">No alert rules configured</p>
+            <p className="text-sm">No alert definitions configured</p>
           </div>
         ) : (
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Name</TableHead>
-                <TableHead>Type</TableHead>
+                <TableHead>Expression</TableHead>
+                <TableHead>Window</TableHead>
                 <TableHead>Severity</TableHead>
                 <TableHead>Enabled</TableHead>
+                <TableHead>Instances</TableHead>
+                <TableHead>Firing</TableHead>
+                <TableHead className="w-12"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rules.map((rule) => (
-                <TableRow key={rule.id}>
+              {definitions.map((defn) => (
+                <TableRow key={defn.id}>
                   <TableCell className="font-medium text-zinc-100">
-                    {rule.name}
+                    {defn.name}
+                  </TableCell>
+                  <TableCell className="text-zinc-400 font-mono text-xs max-w-xs truncate">
+                    {defn.expression}
                   </TableCell>
                   <TableCell className="text-zinc-400">
-                    {rule.rule_type}
+                    {defn.window}
                   </TableCell>
                   <TableCell>
-                    <Badge variant={severityVariant(rule.severity)}>
-                      {rule.severity}
+                    <Badge variant={severityVariant(defn.severity)}>
+                      {defn.severity}
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    <Badge
-                      variant={rule.enabled ? "success" : "default"}
-                    >
-                      {rule.enabled ? "Enabled" : "Disabled"}
+                    <Badge variant={defn.enabled ? "success" : "default"}>
+                      {defn.enabled ? "Enabled" : "Disabled"}
                     </Badge>
+                  </TableCell>
+                  <TableCell className="text-zinc-400">
+                    {defn.instance_count ?? 0}
+                  </TableCell>
+                  <TableCell>
+                    {(defn.firing_count ?? 0) > 0 ? (
+                      <Badge variant="destructive">{defn.firing_count}</Badge>
+                    ) : (
+                      <span className="text-zinc-500">0</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {!hasChanged(defn.expression) && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-zinc-500 hover:text-brand-400"
+                        title="Create Recovery Alert"
+                        disabled={invertingId === defn.id}
+                        onClick={() => handleCreateRecovery(defn.id)}
+                      >
+                        {invertingId === defn.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-3.5 w-3.5" />
+                        )}
+                      </Button>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}

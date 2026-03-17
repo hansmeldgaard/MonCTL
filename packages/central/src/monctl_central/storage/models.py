@@ -345,42 +345,106 @@ class ApiKey(Base):
 # See storage/clickhouse.py for the ClickHouse schema.
 
 
-class AlertRule(Base):
-    __tablename__ = "alert_rules"
+class AppAlertDefinition(Base):
+    """Alert definition attached to an app version."""
+    __tablename__ = "app_alert_definitions"
+    __table_args__ = (
+        UniqueConstraint("app_version_id", "name", name="uq_alert_def_version_name"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    app_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("apps.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    app_version_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app_versions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
-    rule_type: Mapped[str] = mapped_column(String(20), nullable=False)
-    condition: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    severity: Mapped[str] = mapped_column(String(20), nullable=False)
-    notification_channels: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="[]")
-    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    expression: Mapped[str] = mapped_column(Text, nullable=False)
+    window: Mapped[str] = mapped_column(String(20), nullable=False, server_default="5m")
+    severity: Mapped[str] = mapped_column(String(20), nullable=False, server_default="warning")
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    message_template: Mapped[str | None] = mapped_column(Text)
+    notification_channels: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    pack_origin: Mapped[str | None] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default="now()"
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default="now()"
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
 
-    states: Mapped[list["AlertState"]] = relationship(back_populates="rule")
+    app: Mapped["App"] = relationship()
+    app_version: Mapped["AppVersion"] = relationship()
+    instances: Mapped[list["AlertInstance"]] = relationship(
+        back_populates="definition", cascade="all, delete-orphan"
+    )
 
 
-class AlertState(Base):
-    __tablename__ = "alert_states"
+class AlertInstance(Base):
+    """Per-assignment instance of an alert definition. Tracks firing state."""
+    __tablename__ = "alert_instances"
+    __table_args__ = (
+        UniqueConstraint("definition_id", "assignment_id", name="uq_instance_def_assignment"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    rule_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("alert_rules.id"), nullable=False
+    definition_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app_alert_definitions.id", ondelete="CASCADE"),
+        nullable=False, index=True
     )
-    state: Mapped[str] = mapped_column(String(20), nullable=False)
-    labels: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    assignment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app_assignments.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    device_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("devices.id", ondelete="CASCADE"),
+        nullable=True, index=True
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    state: Mapped[str] = mapped_column(String(20), nullable=False, server_default="ok")
+    current_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fire_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    fire_history: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    last_evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    last_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    annotations: Mapped[dict | None] = mapped_column(JSONB)
+    event_created: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    entity_key: Mapped[str] = mapped_column(String(500), nullable=False, server_default="")
+    entity_labels: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
 
-    rule: Mapped[AlertRule] = relationship(back_populates="states")
+    definition: Mapped["AppAlertDefinition"] = relationship(back_populates="instances")
+    assignment: Mapped["AppAssignment"] = relationship()
+
+
+class ThresholdOverride(Base):
+    """Per-device override for an alert definition's expression thresholds."""
+    __tablename__ = "threshold_overrides"
+    __table_args__ = (
+        UniqueConstraint("definition_id", "device_id", "entity_key", name="uq_override_def_device_entity"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    definition_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app_alert_definitions.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    device_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("devices.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    entity_key: Mapped[str] = mapped_column(String(500), nullable=False, server_default="")
+    overrides: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
 
 
 class RegistrationToken(Base):
@@ -699,6 +763,33 @@ class ConnectorVersion(Base):
     )
 
     connector: Mapped["Connector"] = relationship(back_populates="versions")
+
+
+class EventPolicy(Base):
+    """Defines when an alert should be promoted to an event."""
+    __tablename__ = "event_policies"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    definition_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app_alert_definitions.id", ondelete="CASCADE"), nullable=False
+    )
+    mode: Mapped[str] = mapped_column(String(20), nullable=False, server_default="consecutive")
+    fire_count_threshold: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    window_size: Mapped[int] = mapped_column(Integer, nullable=False, server_default="5")
+    event_severity: Mapped[str] = mapped_column(String(20), nullable=False, server_default="warning")
+    message_template: Mapped[str | None] = mapped_column(Text, nullable=True)
+    auto_clear_on_resolve: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default="now()"
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default="now()"
+    )
+
+    definition: Mapped["AppAlertDefinition"] = relationship()
 
 
 class AssignmentConnectorBinding(Base):

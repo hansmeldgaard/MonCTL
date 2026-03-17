@@ -558,7 +558,8 @@ _TAGS = [
     {"name": "apps",        "description": "Monitoring apps, versions, and assignments (which app runs on which collector/device)."},
     {"name": "credentials", "description": "Encrypted credential storage. Secrets are AES-256-GCM encrypted at rest and never returned by the API."},
     {"name": "results",     "description": "Query check results. Use `/v1/results/by-device/{id}` for a per-device status dashboard."},
-    {"name": "alerting",    "description": "Alert rules and active alerts."},
+    {"name": "alerting",    "description": "App-level alert definitions, instances, and threshold overrides."},
+    {"name": "events",      "description": "Events and event policies. Events are promoted from alerts via configurable policies."},
 ]
 
 app = FastAPI(

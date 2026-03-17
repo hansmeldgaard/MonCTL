@@ -13,6 +13,7 @@ import {
   Package,
   Plug,
   Settings,
+  Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils.ts";
 
@@ -31,6 +32,7 @@ const navItems = [
   { to: "/assignments", icon: ListChecks, label: "Assignments", end: false },
   { to: "/templates", icon: FileText, label: "Templates", end: false },
   { to: "/alerts", icon: Bell, label: "Alerts", end: false },
+  { to: "/events", icon: Zap, label: "Events", end: false },
   { to: "/settings", icon: Settings, label: "Settings", end: false },
 ];
 

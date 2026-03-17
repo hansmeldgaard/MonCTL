@@ -155,7 +155,7 @@ export function DashboardPage() {
                         <StatusBadge state={alert.state} />
                       </TableCell>
                       <TableCell className="font-medium text-zinc-200">
-                        {alert.labels?.rule_name ?? alert.rule_id}
+                        {alert.definition_name ?? alert.definition_id}
                       </TableCell>
                       <TableCell className="text-zinc-500">
                         {timeAgo(alert.started_at)}
