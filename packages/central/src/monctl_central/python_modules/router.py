@@ -349,10 +349,16 @@ async def upload_wheel(
     return {
         "status": "success",
         "data": {
-            "module": _fmt_module(module),
-            "version": _fmt_version(version),
-            "wheel": _fmt_wheel(wheel),
-            "missing_deps": resolver_result.missing,
+            "module_id": str(module.id),
+            "module_name": module.name,
+            "version": version.version,
+            "wheel_filename": wheel.filename,
+            "file_size": wheel.file_size,
+            "sha256": wheel.sha256_hash,
+            "missing_dependencies": [
+                {"name": m, "version_spec": "", "registered": False}
+                for m in resolver_result.missing
+            ],
         },
     }
 
@@ -543,10 +549,16 @@ async def import_from_pypi(
     return {
         "status": "success",
         "data": {
-            "module": _fmt_module(module),
-            "version": _fmt_version(version),
-            "wheel": _fmt_wheel(wheel),
-            "missing_deps": resolver_result.missing,
+            "module_id": str(module.id),
+            "module_name": module.name,
+            "version": version.version,
+            "wheel_filename": wheel.filename,
+            "file_size": wheel.file_size,
+            "sha256": wheel.sha256_hash,
+            "missing_dependencies": [
+                {"name": m, "version_spec": "", "registered": False}
+                for m in resolver_result.missing
+            ],
         },
     }
 
