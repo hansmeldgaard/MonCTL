@@ -210,6 +210,10 @@ class PollEngine:
             sj = heapq.heappop(self._heap)
             if sj.job_id in self._running:
                 # Still running from previous cycle — reschedule without counting as miss
+                logger.debug(
+                    "job_still_running", job_id=sj.job_id,
+                    app=sj.job.app_id, running=list(self._running),
+                )
                 heapq.heappush(
                     self._heap,
                     ScheduledJob(
@@ -221,6 +225,7 @@ class PollEngine:
                 )
                 continue
 
+            logger.info("job_dispatching", job_id=sj.job_id, app=sj.job.app_id)
             asyncio.create_task(
                 self._run_job(sj),
                 name=f"poll_{sj.job_id}",
