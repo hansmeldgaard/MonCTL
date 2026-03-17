@@ -1,6 +1,5 @@
 import { useState } from "react";
 import {
-  Bell,
   Check,
   CheckCheck,
   Clock,
@@ -21,22 +20,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table.tsx";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog.tsx";
+import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select.tsx";
+import { Select } from "@/components/ui/select.tsx";
 import {
   useActiveEvents,
   useAcknowledgeEvents,
@@ -455,117 +442,98 @@ function CreatePolicyDialog({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Create Event Policy</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-4">
-          <div className="space-y-1.5">
-            <Label>Name</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Interface Util Sustained" />
-          </div>
+    <Dialog open onClose={onClose} title="Create Event Policy">
+      <div className="space-y-4">
+        <div className="space-y-1.5">
+          <Label>Name</Label>
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Interface Util Sustained" />
+        </div>
 
+        <div className="space-y-1.5">
+          <Label>Alert Definition</Label>
+          <Select value={definitionId} onChange={(e) => setDefinitionId(e.target.value)}>
+            <option value="">Select alert definition</option>
+            {(definitions ?? []).map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}
+              </option>
+            ))}
+          </Select>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
           <div className="space-y-1.5">
-            <Label>Alert Definition</Label>
-            <Select value={definitionId} onValueChange={setDefinitionId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select alert definition" />
-              </SelectTrigger>
-              <SelectContent>
-                {(definitions ?? []).map((d) => (
-                  <SelectItem key={d.id} value={d.id}>
-                    {d.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
+            <Label>Mode</Label>
+            <Select value={mode} onChange={(e) => setMode(e.target.value)}>
+              <option value="consecutive">Consecutive</option>
+              <option value="cumulative">Cumulative</option>
             </Select>
           </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <Label>Mode</Label>
-              <Select value={mode} onValueChange={setMode}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="consecutive">Consecutive</SelectItem>
-                  <SelectItem value="cumulative">Cumulative</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Severity</Label>
-              <Select value={severity} onValueChange={setSeverity}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="info">Info</SelectItem>
-                  <SelectItem value="warning">Warning</SelectItem>
-                  <SelectItem value="critical">Critical</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+          <div className="space-y-1.5">
+            <Label>Severity</Label>
+            <Select value={severity} onChange={(e) => setSeverity(e.target.value)}>
+              <option value="info">Info</option>
+              <option value="warning">Warning</option>
+              <option value="critical">Critical</option>
+            </Select>
           </div>
+        </div>
 
-          <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <Label>Fire Count Threshold</Label>
+            <Input
+              type="number"
+              min={1}
+              value={threshold}
+              onChange={(e) => setThreshold(Number(e.target.value))}
+            />
+          </div>
+          {mode === "cumulative" && (
             <div className="space-y-1.5">
-              <Label>Fire Count Threshold</Label>
+              <Label>Window Size</Label>
               <Input
                 type="number"
                 min={1}
-                value={threshold}
-                onChange={(e) => setThreshold(Number(e.target.value))}
+                value={windowSize}
+                onChange={(e) => setWindowSize(Number(e.target.value))}
               />
             </div>
-            {mode === "cumulative" && (
-              <div className="space-y-1.5">
-                <Label>Window Size</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  value={windowSize}
-                  onChange={(e) => setWindowSize(Number(e.target.value))}
-                />
-              </div>
-            )}
-          </div>
-
-          <div className="space-y-1.5">
-            <Label>Message Template (optional)</Label>
-            <Input
-              value={messageTemplate}
-              onChange={(e) => setMessageTemplate(e.target.value)}
-              placeholder="{rule_name}: {value} on {device_name} [{fire_count}x]"
-            />
-          </div>
-
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="auto-clear"
-              checked={autoClear}
-              onChange={(e) => setAutoClear(e.target.checked)}
-              className="rounded border-zinc-700"
-            />
-            <Label htmlFor="auto-clear">Auto-clear on resolve</Label>
-          </div>
+          )}
         </div>
-        <DialogFooter>
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            onClick={() => void handleSubmit()}
-            disabled={!name || !definitionId || createMut.isPending}
-          >
-            {createMut.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-            Create
-          </Button>
-        </DialogFooter>
-      </DialogContent>
+
+        <div className="space-y-1.5">
+          <Label>Message Template (optional)</Label>
+          <Input
+            value={messageTemplate}
+            onChange={(e) => setMessageTemplate(e.target.value)}
+            placeholder="{rule_name}: {value} on {device_name} [{fire_count}x]"
+          />
+        </div>
+
+        <div className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            id="auto-clear"
+            checked={autoClear}
+            onChange={(e) => setAutoClear(e.target.checked)}
+            className="rounded border-zinc-700"
+          />
+          <Label htmlFor="auto-clear">Auto-clear on resolve</Label>
+        </div>
+      </div>
+      <DialogFooter>
+        <Button variant="ghost" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button
+          onClick={() => void handleSubmit()}
+          disabled={!name || !definitionId || createMut.isPending}
+        >
+          {createMut.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+          Create
+        </Button>
+      </DialogFooter>
     </Dialog>
   );
 }

@@ -17,7 +17,18 @@ branch_labels = None
 depends_on = None
 
 
+def _table_exists(name: str) -> bool:
+    conn = op.get_bind()
+    result = conn.execute(sa.text(
+        "SELECT EXISTS(SELECT 1 FROM information_schema.tables "
+        "WHERE table_schema = 'public' AND table_name = :name)"
+    ), {"name": name})
+    return result.scalar()
+
+
 def upgrade() -> None:
+    if _table_exists("event_policies"):
+        return
     op.create_table(
         "event_policies",
         sa.Column("id", UUID(as_uuid=True), primary_key=True,
