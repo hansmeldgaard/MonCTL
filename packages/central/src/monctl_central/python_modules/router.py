@@ -174,7 +174,7 @@ async def list_modules(
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
-    """List all registered Python modules with version and wheel counts."""
+    """List all registered Python modules with version/wheel counts and dep status."""
     stmt = (
         select(
             PythonModule,
@@ -188,10 +188,37 @@ async def list_modules(
     )
     result = await db.execute(stmt)
     rows = result.all()
-    data = [
-        _fmt_module(row.PythonModule, version_count=row.version_count, wheel_count=row.wheel_count)
-        for row in rows
-    ]
+
+    # Build dep status: collect all deps from all versions, check against registry
+    available = await _get_available_packages(db)
+    all_deps_by_module: dict[str, list[str]] = {}
+    dep_stmt = (
+        select(PythonModuleVersion.module_id, PythonModuleVersion.dependencies)
+        .where(PythonModuleVersion.dependencies != None)  # noqa: E711
+    )
+    dep_rows = (await db.execute(dep_stmt)).all()
+    for mid, deps in dep_rows:
+        mid_str = str(mid)
+        all_deps_by_module.setdefault(mid_str, [])
+        if deps:
+            all_deps_by_module[mid_str].extend(deps)
+
+    data = []
+    for row in rows:
+        d = _fmt_module(row.PythonModule, version_count=row.version_count, wheel_count=row.wheel_count)
+        mid_str = str(row.PythonModule.id)
+        deps = all_deps_by_module.get(mid_str, [])
+        if deps:
+            res = check_conflicts(deps, available)
+            d["dep_total"] = len(deps)
+            d["dep_missing"] = len(res.missing)
+            d["dep_missing_names"] = res.missing
+        else:
+            d["dep_total"] = 0
+            d["dep_missing"] = 0
+            d["dep_missing_names"] = []
+        data.append(d)
+
     return {"status": "success", "data": data}
 
 
@@ -279,6 +306,32 @@ async def get_module(
 
     data = _fmt_module(module)
     data["versions"] = [_fmt_version(v) for v in module.versions]
+
+    # Add dependency status per version
+    available = await _get_available_packages(db)
+    all_deps: list[str] = []
+    for v in data["versions"]:
+        deps = v.get("dependencies") or []
+        if deps:
+            res = check_conflicts(deps, available)
+            v["dep_missing"] = res.missing
+            v["dep_resolved"] = res.resolved
+            all_deps.extend(deps)
+        else:
+            v["dep_missing"] = []
+            v["dep_resolved"] = []
+
+    # Aggregate dep status for the module
+    if all_deps:
+        agg = check_conflicts(all_deps, available)
+        data["dep_total"] = len(all_deps)
+        data["dep_missing"] = len(agg.missing)
+        data["dep_missing_names"] = agg.missing
+    else:
+        data["dep_total"] = 0
+        data["dep_missing"] = 0
+        data["dep_missing_names"] = []
+
     return {"status": "success", "data": data}
 
 

@@ -576,6 +576,9 @@ export interface PythonModuleSummary {
   is_approved: boolean;
   version_count: number;
   wheel_count: number;
+  dep_total: number;
+  dep_missing: number;
+  dep_missing_names: string[];
   created_at: string;
 }
 
@@ -596,6 +599,8 @@ export interface PythonModuleVersionDetail {
   python_requires: string | null;
   is_verified: boolean;
   wheel_files: WheelFileInfo[];
+  dep_missing: string[];
+  dep_resolved: string[];
   created_at: string;
 }
 

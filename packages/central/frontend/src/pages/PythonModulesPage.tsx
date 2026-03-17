@@ -1,5 +1,7 @@
 import { useState } from "react";
 import {
+  AlertTriangle,
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
   Download,
@@ -78,7 +80,7 @@ function ModuleVersionsRow({ moduleId }: { moduleId: string }) {
   if (isLoading) {
     return (
       <TableRow>
-        <TableCell colSpan={6} className="py-4">
+        <TableCell colSpan={8} className="py-4">
           <div className="flex items-center justify-center">
             <Loader2 className="h-4 w-4 animate-spin text-zinc-500" />
           </div>
@@ -90,7 +92,7 @@ function ModuleVersionsRow({ moduleId }: { moduleId: string }) {
   if (!detail || detail.versions.length === 0) {
     return (
       <TableRow>
-        <TableCell colSpan={6} className="py-3 text-center text-sm text-zinc-500">
+        <TableCell colSpan={8} className="py-3 text-center text-sm text-zinc-500">
           No versions
         </TableCell>
       </TableRow>
@@ -100,14 +102,22 @@ function ModuleVersionsRow({ moduleId }: { moduleId: string }) {
   return (
     <>
       {detail.versions.map((v) => (
-        <TableRow key={v.id} className="bg-zinc-800/20">
+        <><TableRow key={v.id} className="bg-zinc-800/20">
           <TableCell className="pl-10">
             <span className="font-mono text-xs text-zinc-300">{v.version}</span>
           </TableCell>
           <TableCell>
-            <span className="text-xs text-zinc-400">
-              {v.dependencies.length > 0 ? `${v.dependencies.length} deps` : "--"}
-            </span>
+            {v.dependencies.length === 0 ? (
+              <span className="text-xs text-zinc-600">--</span>
+            ) : (v.dep_missing ?? []).length === 0 ? (
+              <Badge variant="success" className="gap-1 text-[10px]">
+                <CheckCircle2 className="h-3 w-3" /> {v.dependencies.length} deps OK
+              </Badge>
+            ) : (
+              <Badge variant="destructive" className="gap-1 text-[10px]">
+                <AlertTriangle className="h-3 w-3" /> {(v.dep_missing ?? []).length}/{v.dependencies.length} missing
+              </Badge>
+            )}
           </TableCell>
           <TableCell>
             {v.is_verified ? (
@@ -163,6 +173,28 @@ function ModuleVersionsRow({ moduleId }: { moduleId: string }) {
             </div>
           </TableCell>
         </TableRow>
+        {v.dependencies.length > 0 && (
+          <TableRow key={`${v.id}-deps`} className="bg-zinc-800/10">
+            <TableCell colSpan={8} className="pl-14 py-2">
+              <div className="text-xs space-y-1">
+                <span className="font-semibold text-zinc-500 uppercase tracking-wider text-[10px]">Dependencies</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {(v.dep_resolved ?? []).map((d: string) => (
+                    <Badge key={d} variant="default" className="font-mono text-[10px] gap-1">
+                      <CheckCircle2 className="h-2.5 w-2.5 text-green-500" /> {d}
+                    </Badge>
+                  ))}
+                  {(v.dep_missing ?? []).map((d: string) => (
+                    <Badge key={d} variant="destructive" className="font-mono text-[10px] gap-1">
+                      <AlertTriangle className="h-2.5 w-2.5" /> {d}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            </TableCell>
+          </TableRow>
+        )}
+        </>
       ))}
 
       {/* Delete Version Dialog */}
@@ -293,6 +325,7 @@ export function PythonModulesPage() {
                   <TableHead>Description</TableHead>
                   <TableHead>Versions</TableHead>
                   <TableHead>Wheels</TableHead>
+                  <TableHead>Dependencies</TableHead>
                   <TableHead>Approved</TableHead>
                   <TableHead>Created</TableHead>
                   <TableHead className="w-24"></TableHead>
@@ -327,6 +360,19 @@ export function PythonModulesPage() {
                       </TableCell>
                       <TableCell>
                         <Badge variant="default">{m.wheel_count}</Badge>
+                      </TableCell>
+                      <TableCell>
+                        {m.dep_total === 0 ? (
+                          <span className="text-xs text-zinc-600">None</span>
+                        ) : m.dep_missing === 0 ? (
+                          <Badge variant="success" className="gap-1 text-[10px]">
+                            <CheckCircle2 className="h-3 w-3" /> Ready
+                          </Badge>
+                        ) : (
+                          <Badge variant="destructive" className="gap-1 text-[10px]">
+                            <AlertTriangle className="h-3 w-3" /> {m.dep_missing} missing
+                          </Badge>
+                        )}
                       </TableCell>
                       <TableCell>
                         {m.is_approved ? (
