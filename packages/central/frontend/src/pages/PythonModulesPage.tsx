@@ -14,6 +14,7 @@ import {
   Verified,
   Wifi,
   WifiOff,
+  X,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
@@ -35,6 +36,7 @@ import {
   useDeletePythonModule,
   useDeleteModuleVersion,
   usePythonModuleDetail,
+  useAutoResolve,
 } from "@/api/hooks.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 import { formatDate } from "@/lib/utils.ts";
@@ -240,11 +242,13 @@ export function PythonModulesPage() {
   const toggleApproval = useToggleModuleApproval();
   const deleteModule = useDeletePythonModule();
 
+  const autoResolve = useAutoResolve();
   const [uploadOpen, setUploadOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<PythonModuleSummary | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [resolveResult, setResolveResult] = useState<{ imported: number; failed: number; still_missing: number } | null>(null);
 
   async function handleDelete() {
     if (!deleteTarget) return;
@@ -280,15 +284,43 @@ export function PythonModulesPage() {
         </div>
         <div className="flex items-center gap-2">
           {network?.mode !== "offline" && (
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => setImportOpen(true)}
-              className="gap-1.5"
-            >
-              <Download className="h-4 w-4" />
-              Import from PyPI
-            </Button>
+            <>
+              {modules && modules.some((m) => m.dep_missing > 0) && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={async () => {
+                    setResolveResult(null);
+                    try {
+                      const res = await autoResolve.mutateAsync({});
+                      setResolveResult({
+                        imported: res.data.imported.length,
+                        failed: res.data.failed.length,
+                        still_missing: res.data.still_missing.length,
+                      });
+                    } catch { /* handled by mutation */ }
+                  }}
+                  disabled={autoResolve.isPending}
+                  className="gap-1.5"
+                >
+                  {autoResolve.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="h-4 w-4" />
+                  )}
+                  Auto-resolve All
+                </Button>
+              )}
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => setImportOpen(true)}
+                className="gap-1.5"
+              >
+                <Download className="h-4 w-4" />
+                Import from PyPI
+              </Button>
+            </>
           )}
           <Button size="sm" onClick={() => setUploadOpen(true)} className="gap-1.5">
             <Upload className="h-4 w-4" />
@@ -296,6 +328,29 @@ export function PythonModulesPage() {
           </Button>
         </div>
       </div>
+
+      {/* Auto-resolve result banner */}
+      {resolveResult && (
+        <div className="flex items-center gap-3 rounded-md border border-zinc-700 bg-zinc-800/50 px-4 py-3">
+          <CheckCircle2 className="h-5 w-5 text-green-500 shrink-0" />
+          <div className="text-sm">
+            <span className="text-zinc-200">Auto-resolve complete:</span>{" "}
+            <span className="text-green-400">{resolveResult.imported} imported</span>
+            {resolveResult.failed > 0 && (
+              <>, <span className="text-red-400">{resolveResult.failed} failed</span></>
+            )}
+            {resolveResult.still_missing > 0 && (
+              <>, <span className="text-amber-400">{resolveResult.still_missing} still missing</span></>
+            )}
+          </div>
+          <button
+            onClick={() => setResolveResult(null)}
+            className="ml-auto text-zinc-500 hover:text-zinc-300"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
 
       {/* Modules Table */}
       <Card>

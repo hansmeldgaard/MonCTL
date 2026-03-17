@@ -1264,6 +1264,18 @@ export function useResolveDependencies() {
   });
 }
 
+export function useAutoResolve() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { module_id?: string; max_depth?: number }) =>
+      apiPost<{ imported: { name: string; version: string; filename: string }[]; failed: { name: string; error: string }[]; still_missing: string[] }>("/python-modules/auto-resolve", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["python-modules"] });
+      qc.invalidateQueries({ queryKey: ["python-module"] });
+    },
+  });
+}
+
 export function useToggleModuleApproval() {
   const qc = useQueryClient();
   return useMutation({

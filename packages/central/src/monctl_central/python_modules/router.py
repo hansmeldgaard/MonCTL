@@ -23,7 +23,7 @@ from monctl_central.storage.models import (
 )
 from monctl_common.utils import utc_now
 
-from .resolver import check_conflicts
+from .resolver import ResolverResult, check_conflicts
 from .wheel_parser import WheelMetadata, normalize_package_name, parse_wheel, parse_wheel_filename
 
 router = APIRouter()
@@ -641,6 +641,182 @@ async def resolve_dependencies(
             "resolved": result.resolved,
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# POST /python-modules/auto-resolve — import all missing deps from PyPI
+# ---------------------------------------------------------------------------
+
+class AutoResolveRequest(BaseModel):
+    module_id: str | None = None  # resolve for a specific module, or all if None
+    max_depth: int = 5  # max recursion depth to prevent infinite loops
+
+
+@router.post("/auto-resolve")
+async def auto_resolve(
+    req: AutoResolveRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_admin),
+):
+    """Automatically import all missing dependencies from PyPI (recursive).
+
+    Walks the dependency tree up to max_depth levels, importing each missing
+    package and its transitive dependencies.
+    """
+    from .pypi_client import download_wheel, fetch_package_info
+
+    network_mode, proxy_url = await _get_network_mode(db)
+    if network_mode == "offline":
+        raise HTTPException(status_code=400, detail="Cannot auto-resolve in offline mode")
+
+    proxy = proxy_url if network_mode == "proxy" else None
+
+    # Collect all dependencies to resolve
+    if req.module_id:
+        stmt = (
+            select(PythonModuleVersion.dependencies)
+            .join(PythonModule, PythonModule.id == PythonModuleVersion.module_id)
+            .where(PythonModule.id == uuid.UUID(req.module_id))
+        )
+    else:
+        stmt = select(PythonModuleVersion.dependencies)
+
+    dep_rows = (await db.execute(stmt)).scalars().all()
+    all_deps: list[str] = []
+    for deps in dep_rows:
+        if deps:
+            all_deps.extend(deps)
+
+    imported: list[dict] = []
+    failed: list[dict] = []
+    already_available: set[str] = set()
+
+    for depth in range(req.max_depth):
+        available = await _get_available_packages(db)
+        already_available = set(available.keys())
+        result = check_conflicts(all_deps, available)
+
+        if not result.missing:
+            break
+
+        # Parse missing dep names
+        new_deps: list[str] = []
+        for dep_str in result.missing:
+            dep_name = _parse_dep_name(dep_str)
+            if not dep_name or dep_name in already_available:
+                continue
+
+            try:
+                info = await fetch_package_info(dep_name, proxy_url=proxy)
+                pkg_info = info.get("info", {})
+                version_str = pkg_info.get("version", "")
+                if not version_str:
+                    failed.append({"name": dep_name, "error": "No version found"})
+                    continue
+
+                # Find a wheel
+                urls = info.get("urls", [])
+                wheel_url = None
+                wheel_filename = None
+                for u in urls:
+                    if u.get("packagetype") == "bdist_wheel":
+                        wheel_url = u["url"]
+                        wheel_filename = u["filename"]
+                        break
+
+                if not wheel_url:
+                    # Try the specific version's releases
+                    releases = info.get("releases", {})
+                    ver_files = releases.get(version_str, [])
+                    for u in ver_files:
+                        if u.get("packagetype") == "bdist_wheel":
+                            wheel_url = u["url"]
+                            wheel_filename = u["filename"]
+                            break
+
+                if not wheel_url:
+                    failed.append({"name": dep_name, "error": "No wheel available"})
+                    continue
+
+                # Check if wheel already exists
+                existing_wheel = (await db.execute(
+                    select(WheelFile).where(WheelFile.filename == wheel_filename)
+                )).scalar_one_or_none()
+                if existing_wheel:
+                    already_available.add(normalize_package_name(dep_name))
+                    continue
+
+                wheel_data = await download_wheel(wheel_url, proxy_url=proxy)
+                meta = parse_wheel(wheel_data)
+                try:
+                    fn_parts = parse_wheel_filename(wheel_filename)
+                    meta.python_tag = meta.python_tag or fn_parts["python_tag"]
+                    meta.abi_tag = meta.abi_tag or fn_parts["abi_tag"]
+                    meta.platform_tag = meta.platform_tag or fn_parts["platform_tag"]
+                except ValueError:
+                    pass
+
+                module = await _find_or_create_module(db, meta)
+                version = await _find_or_create_version(db, module, meta)
+
+                wheel = WheelFile(
+                    module_version_id=version.id,
+                    filename=wheel_filename,
+                    sha256_hash=meta.sha256_hash,
+                    file_size=meta.file_size,
+                    python_tag=meta.python_tag,
+                    abi_tag=meta.abi_tag,
+                    platform_tag=meta.platform_tag,
+                )
+                normalized = normalize_package_name(meta.name)
+                _store_wheel_file(normalized, wheel_filename, wheel_data)
+                db.add(wheel)
+                await db.flush()
+
+                imported.append({
+                    "name": meta.name,
+                    "version": meta.version,
+                    "filename": wheel_filename,
+                })
+
+                # Add this package's deps for next iteration
+                if meta.dependencies:
+                    new_deps.extend(meta.dependencies)
+
+            except Exception as exc:
+                failed.append({"name": dep_name, "error": str(exc)})
+
+        if not new_deps:
+            break
+        all_deps = new_deps
+
+    # Final check
+    available = await _get_available_packages(db)
+    final_deps: list[str] = []
+    if req.module_id:
+        for deps in dep_rows:
+            if deps:
+                final_deps.extend(deps)
+    else:
+        final_deps = all_deps
+    final_result = check_conflicts(final_deps, available) if final_deps else ResolverResult()
+
+    return {
+        "status": "success",
+        "data": {
+            "imported": imported,
+            "failed": failed,
+            "still_missing": final_result.missing,
+        },
+    }
+
+
+def _parse_dep_name(dep_str: str) -> str:
+    """Extract just the package name from a dependency string."""
+    import re as _re
+    cleaned = _re.sub(r"\[.*?\]", "", dep_str).strip().split(";")[0].strip()
+    m = _re.match(r"^([A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?)", cleaned)
+    return _re.sub(r"[-_.]+", "-", m.group(1)).lower() if m else ""
 
 
 # ---------------------------------------------------------------------------
