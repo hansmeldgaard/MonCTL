@@ -248,6 +248,7 @@ export interface DeviceAssignment {
   config: Record<string, unknown>;
   enabled: boolean;
   use_latest: boolean;
+  connector_bindings?: ConnectorBindingInfo[];
   created_at: string;
 }
 
@@ -647,4 +648,50 @@ export interface PyPISearchResult {
   summary: string | null;
   latest_version: string;
   registered: boolean;
+}
+
+// ── Connectors ────────────────────────────────────────────
+
+export interface ConnectorSummary {
+  id: string;
+  name: string;
+  description: string | null;
+  connector_type: string;
+  is_builtin: boolean;
+  version_count: number;
+  latest_version: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConnectorVersionDetail {
+  id: string;
+  version: string;
+  source_code: string | null;
+  requirements: string[] | null;
+  entry_class: string;
+  is_latest: boolean;
+  checksum: string | null;
+  created_at: string;
+}
+
+export interface ConnectorDetail {
+  id: string;
+  name: string;
+  description: string | null;
+  connector_type: string;
+  is_builtin: boolean;
+  versions: { id: string; version: string; is_latest: boolean }[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConnectorBindingInfo {
+  id: string;
+  alias: string;
+  connector: { id: string; name: string };
+  connector_version: { id: string; version: string };
+  credential: { id: string; name: string } | null;
+  use_latest: boolean;
+  settings: Record<string, unknown>;
 }

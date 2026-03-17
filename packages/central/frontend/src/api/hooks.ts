@@ -45,6 +45,8 @@ import type {
   TlsCertificateInfo,
   User,
   UserWithTenants,
+  ConnectorSummary,
+  ConnectorDetail,
 } from "@/types/api.ts";
 
 // ── Polling intervals ────────────────────────────────────
@@ -625,6 +627,7 @@ export function useCreateAssignment() {
       config: Record<string, unknown>;
       resource_limits?: Record<string, unknown>;
       use_latest?: boolean;
+      connector_bindings?: { alias: string; connector_id: string; connector_version_id?: string | null; credential_id?: string | null; use_latest?: boolean; settings?: Record<string, unknown> }[];
     }) => apiPost<{ id: string }>("/apps/assignments", data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["device-assignments"] });
@@ -1528,5 +1531,107 @@ export function useCredentialDetail(id: string | undefined) {
     queryFn: () => apiGet<CredentialDetail>(`/credentials/${id}`),
     select: (res) => res.data,
     enabled: !!id,
+  });
+}
+
+// ── Connectors ──────────────────────────────────────────
+
+export function useConnectors() {
+  return useQuery({
+    queryKey: ["connectors"],
+    queryFn: () => apiGet<ConnectorSummary[]>("/connectors"),
+    select: (res) => res.data,
+    refetchInterval: POLL_LIST,
+  });
+}
+
+export function useConnectorDetail(id: string | undefined) {
+  return useQuery({
+    queryKey: ["connector-detail", id],
+    queryFn: () => apiGet<ConnectorDetail>(`/connectors/${id}`),
+    select: (res) => res.data,
+    enabled: !!id,
+  });
+}
+
+export function useCreateConnector() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { name: string; description?: string; connector_type: string }) =>
+      apiPost<ConnectorSummary>("/connectors", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["connectors"] });
+    },
+  });
+}
+
+export function useUpdateConnector() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: { name?: string; description?: string } }) =>
+      apiPut<ConnectorDetail>(`/connectors/${id}`, data),
+    onSuccess: (_res, vars) => {
+      qc.invalidateQueries({ queryKey: ["connectors"] });
+      qc.invalidateQueries({ queryKey: ["connector-detail", vars.id] });
+    },
+  });
+}
+
+export function useDeleteConnector() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/connectors/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["connectors"] });
+    },
+  });
+}
+
+export function useCreateConnectorVersion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ connectorId, data }: {
+      connectorId: string;
+      data: { version: string; source_code?: string; requirements?: string[]; entry_class?: string };
+    }) => apiPost(`/connectors/${connectorId}/versions`, data),
+    onSuccess: (_res, vars) => {
+      qc.invalidateQueries({ queryKey: ["connector-detail", vars.connectorId] });
+    },
+  });
+}
+
+export function useUpdateConnectorVersion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ connectorId, versionId, data }: {
+      connectorId: string;
+      versionId: string;
+      data: { source_code?: string; requirements?: string[]; entry_class?: string };
+    }) => apiPut(`/connectors/${connectorId}/versions/${versionId}`, data),
+    onSuccess: (_res, vars) => {
+      qc.invalidateQueries({ queryKey: ["connector-detail", vars.connectorId] });
+    },
+  });
+}
+
+export function useDeleteConnectorVersion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ connectorId, versionId }: { connectorId: string; versionId: string }) =>
+      apiDelete(`/connectors/${connectorId}/versions/${versionId}`),
+    onSuccess: (_res, vars) => {
+      qc.invalidateQueries({ queryKey: ["connector-detail", vars.connectorId] });
+    },
+  });
+}
+
+export function useSetConnectorLatest() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ connectorId, versionId }: { connectorId: string; versionId: string }) =>
+      apiPut(`/connectors/${connectorId}/versions/${versionId}/set-latest`, {}),
+    onSuccess: (_res, vars) => {
+      qc.invalidateQueries({ queryKey: ["connector-detail", vars.connectorId] });
+    },
   });
 }

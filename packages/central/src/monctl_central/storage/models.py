@@ -311,6 +311,9 @@ class AppAssignment(Base):
     device: Mapped["Device | None"] = relationship(back_populates="assignments")
     app: Mapped[App] = relationship()
     app_version: Mapped[AppVersion] = relationship()
+    connector_bindings: Mapped[list["AssignmentConnectorBinding"]] = relationship(
+        back_populates="assignment", cascade="all, delete-orphan"
+    )
 
 
 class ApiKey(Base):
@@ -652,3 +655,75 @@ class WheelFile(Base):
     )
 
     module_version: Mapped["PythonModuleVersion"] = relationship(back_populates="wheel_files")
+
+
+class Connector(Base):
+    """A reusable connector (SNMP, SSH, HTTP, etc.) that can be bound to assignments."""
+    __tablename__ = "connectors"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    connector_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    requirements: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    is_builtin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default="now()"
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default="now()"
+    )
+
+    versions: Mapped[list["ConnectorVersion"]] = relationship(
+        back_populates="connector", cascade="all, delete-orphan"
+    )
+
+
+class ConnectorVersion(Base):
+    """A specific version of a connector with source code."""
+    __tablename__ = "connector_versions"
+    __table_args__ = (UniqueConstraint("connector_id", "version"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    connector_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("connectors.id", ondelete="CASCADE"), nullable=False
+    )
+    version: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_code: Mapped[str] = mapped_column(Text, nullable=False)
+    requirements: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    entry_class: Mapped[str] = mapped_column(String(64), nullable=False, default="Connector")
+    is_latest: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    checksum: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default="now()"
+    )
+
+    connector: Mapped["Connector"] = relationship(back_populates="versions")
+
+
+class AssignmentConnectorBinding(Base):
+    """Binds a connector (with optional credential) to an app assignment."""
+    __tablename__ = "assignment_connector_bindings"
+    __table_args__ = (UniqueConstraint("assignment_id", "alias"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    assignment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app_assignments.id", ondelete="CASCADE"), nullable=False
+    )
+    connector_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("connectors.id", ondelete="RESTRICT"), nullable=False
+    )
+    connector_version_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("connector_versions.id", ondelete="RESTRICT"), nullable=False
+    )
+    credential_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("credentials.id", ondelete="SET NULL"), nullable=True
+    )
+    alias: Mapped[str] = mapped_column(String(64), nullable=False)
+    use_latest: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    settings: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default="now()"
+    )
+
+    assignment: Mapped["AppAssignment"] = relationship(back_populates="connector_bindings")

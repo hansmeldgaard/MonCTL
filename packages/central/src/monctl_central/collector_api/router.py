@@ -32,6 +32,8 @@ from monctl_central.storage.models import (
     AppAssignment,
     AppVersion,
     Collector,
+    Connector,
+    ConnectorVersion,
     Credential,
     Device,
     InterfaceMetadata,
@@ -1126,3 +1128,90 @@ async def pypi_serve_wheel(
         media_type="application/octet-stream",
         filename=filename,
     )
+
+
+# ---------------------------------------------------------------------------
+# Connector endpoints for collectors
+# ---------------------------------------------------------------------------
+
+@router.get("/connectors/{connector_id}/metadata", tags=["collector-api"])
+async def get_connector_metadata(
+    connector_id: str,
+    version_id: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Return connector metadata (name, version, requirements, entry_class, checksum).
+
+    By default returns the latest version. If version_id is provided, returns that
+    specific version.
+    """
+    connector = await db.get(Connector, uuid.UUID(connector_id))
+    if connector is None:
+        raise HTTPException(status_code=404, detail="Connector not found")
+
+    if version_id:
+        stmt = select(ConnectorVersion).where(
+            ConnectorVersion.id == uuid.UUID(version_id),
+            ConnectorVersion.connector_id == connector.id,
+        )
+    else:
+        stmt = select(ConnectorVersion).where(
+            ConnectorVersion.connector_id == connector.id,
+            ConnectorVersion.is_latest == True,  # noqa: E712
+        )
+
+    version = (await db.execute(stmt)).scalar_one_or_none()
+    if version is None:
+        raise HTTPException(status_code=404, detail="Connector version not found")
+
+    return {
+        "name": connector.name,
+        "connector_type": connector.connector_type,
+        "version": version.version,
+        "version_id": str(version.id),
+        "requirements": version.requirements,
+        "entry_class": version.entry_class,
+        "checksum": version.checksum,
+    }
+
+
+@router.get("/connectors/{connector_id}/code", tags=["collector-api"])
+async def get_connector_code(
+    connector_id: str,
+    version_id: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Return the source code for a connector version.
+
+    If version_id is provided, returns that specific version's code.
+    Otherwise returns the latest version's code.
+    """
+    connector = await db.get(Connector, uuid.UUID(connector_id))
+    if connector is None:
+        raise HTTPException(status_code=404, detail="Connector not found")
+
+    if version_id:
+        stmt = select(ConnectorVersion).where(
+            ConnectorVersion.id == uuid.UUID(version_id),
+            ConnectorVersion.connector_id == connector.id,
+        )
+    else:
+        stmt = select(ConnectorVersion).where(
+            ConnectorVersion.connector_id == connector.id,
+            ConnectorVersion.is_latest == True,  # noqa: E712
+        )
+
+    version = (await db.execute(stmt)).scalar_one_or_none()
+    if version is None:
+        raise HTTPException(status_code=404, detail="Connector version not found")
+
+    return {
+        "connector_id": str(connector.id),
+        "version_id": str(version.id),
+        "version": version.version,
+        "entry_class": version.entry_class,
+        "checksum": version.checksum,
+        "source_code": version.source_code,
+    }

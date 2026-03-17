@@ -12,6 +12,7 @@ import {
   Loader2,
   Monitor,
   Network,
+  Plug,
   Plus,
   Save,
   Settings2,
@@ -45,6 +46,7 @@ import type { TimeRangeValue } from "@/components/TimeRangePicker.tsx";
 import {
   useCollectorGroups,
   useCollectors,
+  useConnectors,
   useCreateAssignment,
   useCredentials,
   useDeleteAssignment,
@@ -97,6 +99,8 @@ function AddAssignmentDialog({
 }: AddAssignmentDialogProps) {
   const { data: apps } = useApps();
   const { data: collectors } = useCollectors();
+  const { data: connectors } = useConnectors();
+  const { data: credentials } = useCredentials();
   const [selectedAppId, setSelectedAppId] = useState("");
   const { data: appDetail } = useAppDetail(selectedAppId || undefined);
   const createAssignment = useCreateAssignment();
@@ -114,6 +118,17 @@ function AddAssignmentDialog({
   const [parsedConfig, setParsedConfig] = useState<Record<string, unknown>>({});
   const [configError, setConfigError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+
+  // Connector bindings
+  interface BindingRow {
+    alias: string;
+    connector_id: string;
+    version_mode: "latest" | "pinned";
+    connector_version_id: string;
+    credential_id: string;
+    settings: string;
+  }
+  const [bindings, setBindings] = useState<BindingRow[]>([]);
 
   useEffect(() => {
     if (apps?.length && !selectedAppId) setSelectedAppId(apps[0].id);
@@ -148,6 +163,7 @@ function AddAssignmentDialog({
     setParsedConfig({});
     setConfigError(null);
     setFormError(null);
+    setBindings([]);
   }
 
   function handleClose() {
@@ -198,6 +214,20 @@ function AddAssignmentDialog({
     }
 
     try {
+      // Build connector bindings payload
+      const connectorBindings = bindings.length > 0 ? bindings.map((b) => {
+        let settings: Record<string, unknown> = {};
+        try { settings = JSON.parse(b.settings || "{}"); } catch { /* ignore */ }
+        return {
+          alias: b.alias,
+          connector_id: b.connector_id,
+          connector_version_id: b.version_mode === "latest" ? undefined : b.connector_version_id,
+          use_latest: b.version_mode === "latest",
+          credential_id: b.credential_id || undefined,
+          settings,
+        };
+      }) : undefined;
+
       await createAssignment.mutateAsync({
         app_id: selectedAppId,
         app_version_id: versionId,
@@ -207,6 +237,7 @@ function AddAssignmentDialog({
         schedule_value: scheduleValue,
         config,
         use_latest: versionMode === "latest",
+        connector_bindings: connectorBindings,
       });
       reset();
       onClose();
@@ -397,6 +428,126 @@ function AddAssignmentDialog({
             />
           )}
           {configError && <p className="text-xs text-red-400">{configError}</p>}
+        </div>
+
+        {/* Connector Bindings */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <Label className="flex items-center gap-1.5">
+              <Plug className="h-3.5 w-3.5" /> Connector Bindings
+            </Label>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              className="gap-1"
+              onClick={() => setBindings([...bindings, {
+                alias: "",
+                connector_id: connectors?.[0]?.id ?? "",
+                version_mode: "latest",
+                connector_version_id: "",
+                credential_id: "",
+                settings: "{}",
+              }])}
+            >
+              <Plus className="h-3 w-3" /> Add Connector
+            </Button>
+          </div>
+          {bindings.map((b, idx) => (
+            <div key={idx} className="rounded-md border border-zinc-700 p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-zinc-400">Binding #{idx + 1}</span>
+                <button
+                  type="button"
+                  onClick={() => setBindings(bindings.filter((_, i) => i !== idx))}
+                  className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                  title="Remove"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">Alias</Label>
+                  <Input
+                    value={b.alias}
+                    onChange={(e) => {
+                      const next = [...bindings];
+                      next[idx] = { ...next[idx], alias: e.target.value };
+                      setBindings(next);
+                    }}
+                    placeholder="e.g. snmp_main"
+                    className="text-xs"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Connector</Label>
+                  <Select
+                    value={b.connector_id}
+                    onChange={(e) => {
+                      const next = [...bindings];
+                      next[idx] = { ...next[idx], connector_id: e.target.value, connector_version_id: "" };
+                      setBindings(next);
+                    }}
+                    className="text-xs"
+                  >
+                    <option value="">-- Select --</option>
+                    {(connectors ?? []).map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </Select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">Version</Label>
+                  <Select
+                    value={b.version_mode}
+                    onChange={(e) => {
+                      const next = [...bindings];
+                      next[idx] = { ...next[idx], version_mode: e.target.value as "latest" | "pinned" };
+                      setBindings(next);
+                    }}
+                    className="text-xs"
+                  >
+                    <option value="latest">Use Latest</option>
+                    <option value="pinned">Pin Version</option>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Credential <span className="font-normal text-zinc-500">(opt.)</span></Label>
+                  <Select
+                    value={b.credential_id}
+                    onChange={(e) => {
+                      const next = [...bindings];
+                      next[idx] = { ...next[idx], credential_id: e.target.value };
+                      setBindings(next);
+                    }}
+                    className="text-xs"
+                  >
+                    <option value="">-- None --</option>
+                    {(credentials ?? []).map((cr) => (
+                      <option key={cr.id} value={cr.id}>{cr.name}</option>
+                    ))}
+                  </Select>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Settings (JSON)</Label>
+                <textarea
+                  rows={2}
+                  value={b.settings}
+                  onChange={(e) => {
+                    const next = [...bindings];
+                    next[idx] = { ...next[idx], settings: e.target.value };
+                    setBindings(next);
+                  }}
+                  className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 font-mono text-xs text-zinc-100 focus:outline-none focus:ring-2 focus:ring-brand-500/50 resize-none"
+                  placeholder="{}"
+                />
+              </div>
+            </div>
+          ))}
         </div>
 
         {formError && <p className="text-sm text-red-400">{formError}</p>}
@@ -2118,6 +2269,7 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
                   <TableHead>App</TableHead>
                   <TableHead>Version</TableHead>
                   <TableHead>Schedule</TableHead>
+                  <TableHead>Connectors</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="w-20"></TableHead>
                 </TableRow>
@@ -2133,6 +2285,20 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
                       )}
                     </TableCell>
                     <TableCell className="text-zinc-400 text-sm">{a.schedule_human}</TableCell>
+                    <TableCell>
+                      {a.connector_bindings && a.connector_bindings.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {a.connector_bindings.map((cb) => (
+                            <Badge key={cb.id} variant="info" className="text-[10px] gap-1">
+                              <Plug className="h-2.5 w-2.5" />
+                              {cb.alias || cb.connector.name}
+                            </Badge>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-zinc-600 text-xs">—</span>
+                      )}
+                    </TableCell>
                     <TableCell>
                       <Badge variant={a.enabled ? "success" : "default"}>
                         {a.enabled ? "enabled" : "disabled"}

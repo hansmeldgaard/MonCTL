@@ -11,6 +11,7 @@ import {
   ListChecks,
   Monitor,
   Package,
+  Plug,
   Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils.ts";
@@ -25,6 +26,7 @@ const navItems = [
   { to: "/system-health", icon: HeartPulse, label: "System Health", end: true },
   { to: "/devices", icon: Monitor, label: "Devices", end: false },
   { to: "/apps", icon: AppWindow, label: "Apps", end: false },
+  { to: "/connectors", icon: Plug, label: "Connectors", end: false },
   { to: "/python-modules", icon: Package, label: "Modules", end: false },
   { to: "/assignments", icon: ListChecks, label: "Assignments", end: false },
   { to: "/templates", icon: FileText, label: "Templates", end: false },

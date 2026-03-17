@@ -136,6 +136,234 @@ async def lifespan(app: FastAPI):
             await session.commit()
             logger.info("default_roles_seeded")
 
+    # ── Seed built-in connectors ────────────────────────────────────────────
+    import hashlib
+    from monctl_central.storage.models import Connector, ConnectorVersion
+
+    _BUILTIN_CONNECTORS = [
+        {
+            "name": "snmp",
+            "description": "SNMP v2c/v3 connector — polls OIDs via PySNMP",
+            "connector_type": "snmp",
+            "version": "1.0.0",
+            "entry_class": "SnmpConnector",
+            "requirements": ["pysnmp-lextudio>=6.0"],
+            "source_code": '''\
+"""Built-in SNMP connector for MonCTL."""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+class SnmpConnector:
+    """SNMP v2c/v3 connector that polls OIDs from a target device."""
+
+    def __init__(self, settings: dict[str, Any], credential: dict[str, Any] | None = None):
+        self.settings = settings
+        self.credential = credential or {}
+        self.community = self.credential.get("community", "public")
+        self.version = self.credential.get("snmp_version", "2c")
+        self.port = int(self.settings.get("port", 161))
+        self.timeout = int(self.settings.get("timeout", 5))
+        self.retries = int(self.settings.get("retries", 2))
+
+    async def connect(self, host: str) -> None:
+        """Prepare SNMP transport for the given host."""
+        self._host = host
+        logger.debug("snmp_connect", host=host, port=self.port, version=self.version)
+
+    async def get(self, oids: list[str]) -> dict[str, Any]:
+        """Perform SNMP GET for a list of OID strings.
+
+        Returns a dict mapping each OID to its value.
+        """
+        from pysnmp.hlapi.v3arch.asyncio import (
+            CommunityData,
+            ContextData,
+            ObjectIdentity,
+            ObjectType,
+            SnmpEngine,
+            UdpTransportTarget,
+            get_cmd,
+        )
+
+        engine = SnmpEngine()
+        transport = await UdpTransportTarget.create((self._host, self.port), timeout=self.timeout, retries=self.retries)
+        auth = CommunityData(self.community, mpModel=1 if self.version == "2c" else 0)
+
+        result: dict[str, Any] = {}
+        obj_types = [ObjectType(ObjectIdentity(oid)) for oid in oids]
+
+        error_indication, error_status, error_index, var_binds = await get_cmd(
+            engine, auth, transport, ContextData(), *obj_types,
+        )
+        if error_indication:
+            raise RuntimeError(f"SNMP error: {error_indication}")
+        if error_status:
+            raise RuntimeError(f"SNMP error at {error_index}: {error_status.prettyPrint()}")
+
+        for oid, val in var_binds:
+            result[str(oid)] = val.prettyPrint()
+        return result
+
+    async def walk(self, oid: str) -> list[tuple[str, Any]]:
+        """Perform SNMP WALK (GETBULK) starting at the given OID."""
+        from pysnmp.hlapi.v3arch.asyncio import (
+            CommunityData,
+            ContextData,
+            ObjectIdentity,
+            ObjectType,
+            SnmpEngine,
+            UdpTransportTarget,
+            bulk_cmd,
+        )
+
+        engine = SnmpEngine()
+        transport = await UdpTransportTarget.create((self._host, self.port), timeout=self.timeout, retries=self.retries)
+        auth = CommunityData(self.community, mpModel=1 if self.version == "2c" else 0)
+
+        rows: list[tuple[str, Any]] = []
+        marker = ObjectType(ObjectIdentity(oid))
+
+        while True:
+            error_indication, error_status, error_index, var_binds = await bulk_cmd(
+                engine, auth, transport, ContextData(), 0, 25, marker,
+            )
+            if error_indication or error_status:
+                break
+            for row in var_binds:
+                for name, val in row:
+                    name_str = str(name)
+                    if not name_str.startswith(oid):
+                        return rows
+                    rows.append((name_str, val.prettyPrint()))
+                    marker = ObjectType(ObjectIdentity(name_str))
+        return rows
+
+    async def close(self) -> None:
+        """Clean up resources."""
+        pass
+''',
+        },
+        {
+            "name": "ssh",
+            "description": "SSH connector — executes commands via asyncssh",
+            "connector_type": "ssh",
+            "version": "1.0.0",
+            "entry_class": "SshConnector",
+            "requirements": ["asyncssh>=2.14"],
+            "source_code": '''\
+"""Built-in SSH connector for MonCTL."""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+class SshConnector:
+    """SSH connector that executes commands on a remote host."""
+
+    def __init__(self, settings: dict[str, Any], credential: dict[str, Any] | None = None):
+        self.settings = settings
+        self.credential = credential or {}
+        self.username = self.credential.get("username", "root")
+        self.password = self.credential.get("password")
+        self.private_key = self.credential.get("private_key")
+        self.port = int(self.settings.get("port", 22))
+        self.timeout = int(self.settings.get("timeout", 10))
+        self._conn = None
+
+    async def connect(self, host: str) -> None:
+        """Open an SSH connection to the given host."""
+        import asyncssh
+
+        kwargs: dict[str, Any] = {
+            "host": host,
+            "port": self.port,
+            "username": self.username,
+            "known_hosts": None,
+            "login_timeout": self.timeout,
+        }
+        if self.private_key:
+            kwargs["client_keys"] = [asyncssh.import_private_key(self.private_key)]
+        elif self.password:
+            kwargs["password"] = self.password
+
+        self._conn = await asyncssh.connect(**kwargs)
+        logger.debug("ssh_connected", host=host, port=self.port, user=self.username)
+
+    async def run(self, command: str) -> dict[str, Any]:
+        """Execute a command and return stdout, stderr, and exit_status."""
+        if self._conn is None:
+            raise RuntimeError("Not connected — call connect() first")
+        result = await self._conn.run(command, timeout=self.timeout)
+        return {
+            "stdout": result.stdout or "",
+            "stderr": result.stderr or "",
+            "exit_status": result.exit_status,
+        }
+
+    async def close(self) -> None:
+        """Close the SSH connection."""
+        if self._conn is not None:
+            self._conn.close()
+            await self._conn.wait_closed()
+            self._conn = None
+''',
+        },
+    ]
+
+    async with factory() as session:
+        for spec in _BUILTIN_CONNECTORS:
+            existing = (await session.execute(
+                select(Connector).where(Connector.name == spec["name"])
+            )).scalar_one_or_none()
+
+            src_checksum = hashlib.sha256(spec["source_code"].encode()).hexdigest()
+
+            if existing is None:
+                connector = Connector(
+                    name=spec["name"],
+                    description=spec["description"],
+                    connector_type=spec["connector_type"],
+                    is_builtin=True,
+                )
+                session.add(connector)
+                await session.flush()
+                version = ConnectorVersion(
+                    connector_id=connector.id,
+                    version=spec["version"],
+                    source_code=spec["source_code"],
+                    requirements=spec.get("requirements"),
+                    entry_class=spec["entry_class"],
+                    is_latest=True,
+                    checksum=src_checksum,
+                )
+                session.add(version)
+                logger.info("connector_seeded", name=spec["name"])
+            else:
+                # Sync source_code if checksum differs on the latest version
+                latest_stmt = select(ConnectorVersion).where(
+                    ConnectorVersion.connector_id == existing.id,
+                    ConnectorVersion.is_latest == True,  # noqa: E712
+                )
+                latest_ver = (await session.execute(latest_stmt)).scalar_one_or_none()
+                if latest_ver and latest_ver.checksum != src_checksum:
+                    latest_ver.source_code = spec["source_code"]
+                    latest_ver.checksum = src_checksum
+                    latest_ver.requirements = spec.get("requirements")
+                    latest_ver.entry_class = spec["entry_class"]
+                    logger.info("connector_updated", name=spec["name"])
+
+        await session.commit()
+
     # ── ClickHouse schema init ─────────────────────────────────────────────
     from monctl_central.dependencies import get_clickhouse
 

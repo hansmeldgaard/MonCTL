@@ -11,7 +11,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from monctl_central.dependencies import apply_tenant_filter, get_db, require_auth
-from monctl_central.storage.models import App, AppAssignment, AppVersion
+from monctl_central.storage.models import (
+    App,
+    AppAssignment,
+    AppVersion,
+    AssignmentConnectorBinding,
+    Connector,
+    ConnectorVersion,
+)
 
 router = APIRouter()
 
@@ -50,6 +57,15 @@ class CreateAppRequest(BaseModel):
     app_type: str = Field(description="'script' or 'sdk'")
     config_schema: dict | None = None
     target_table: str = Field(default="availability_latency", description="ClickHouse target table")
+
+
+class ConnectorBindingInput(BaseModel):
+    connector_id: str
+    connector_version_id: str
+    credential_id: str | None = None
+    alias: str
+    use_latest: bool = False
+    settings: dict = Field(default_factory=dict)
 
 
 class CreateAssignmentRequest(BaseModel):
@@ -143,6 +159,10 @@ class CreateAssignmentRequest(BaseModel):
     resource_limits: dict = Field(default_factory=lambda: {"timeout_seconds": 30, "memory_mb": 256})
     role: str | None = Field(default=None, description="Optional role: 'availability' or 'latency'")
     use_latest: bool = Field(default=False, description="Follow latest app version dynamically")
+    connector_bindings: list[ConnectorBindingInput] = Field(
+        default_factory=list,
+        description="Optional connector bindings to attach to this assignment",
+    )
 
 
 @router.get("")
@@ -224,6 +244,7 @@ async def list_assignments(
     app_id_filter: str | None = None,
 ):
     """List all app assignments with app, device, and schedule details."""
+    from sqlalchemy.orm import selectinload
     from monctl_central.storage.models import App, AppVersion, Device
 
     from monctl_central.storage.models import Device as DeviceModel
@@ -233,6 +254,7 @@ async def list_assignments(
         .join(App, AppAssignment.app_id == App.id)
         .join(AppVersion, AppAssignment.app_version_id == AppVersion.id)
         .outerjoin(DeviceModel, AppAssignment.device_id == DeviceModel.id)
+        .options(selectinload(AppAssignment.connector_bindings))
     )
     if collector_id:
         stmt = stmt.where(AppAssignment.collector_id == uuid.UUID(collector_id))
@@ -285,6 +307,18 @@ async def list_assignments(
                 "enabled": row.AppAssignment.enabled,
                 "use_latest": row.AppAssignment.use_latest,
                 "role": row.AppAssignment.role,
+                "connector_bindings": [
+                    {
+                        "id": str(b.id),
+                        "connector_id": str(b.connector_id),
+                        "connector_version_id": str(b.connector_version_id),
+                        "credential_id": str(b.credential_id) if b.credential_id else None,
+                        "alias": b.alias,
+                        "use_latest": b.use_latest,
+                        "settings": b.settings,
+                    }
+                    for b in row.AppAssignment.connector_bindings
+                ],
                 "created_at": row.AppAssignment.created_at.isoformat() if row.AppAssignment.created_at else None,
             }
             for row in rows
@@ -366,6 +400,21 @@ async def create_assignment(
     )
     db.add(assignment)
     await db.flush()
+
+    # Create connector bindings if provided
+    for binding in request.connector_bindings:
+        acb = AssignmentConnectorBinding(
+            assignment_id=assignment.id,
+            connector_id=uuid.UUID(binding.connector_id),
+            connector_version_id=uuid.UUID(binding.connector_version_id),
+            credential_id=uuid.UUID(binding.credential_id) if binding.credential_id else None,
+            alias=binding.alias,
+            use_latest=binding.use_latest,
+            settings=binding.settings,
+        )
+        db.add(acb)
+    if request.connector_bindings:
+        await db.flush()
 
     # Bump config_version so collectors re-fetch on next heartbeat
     if request.collector_id:
