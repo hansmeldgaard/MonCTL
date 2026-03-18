@@ -123,14 +123,9 @@ class _InlineSnmpClient:
 
         return UsmUserData(**kwargs)
 
-    def _run_in_thread(self, coro_fn):
-        """Run an async function in a NEW event loop in a thread.
-
-        This isolates pysnmp's transport from the main event loop so that
-        timeouts and cancellation work reliably.
-        """
+    async def _run_in_thread(self, coro_fn):
+        """Run an async function in a NEW event loop inside a thread."""
         import asyncio
-        import concurrent.futures
 
         def _thread_target():
             loop = asyncio.new_event_loop()
@@ -139,7 +134,15 @@ class _InlineSnmpClient:
             finally:
                 loop.close()
 
-        return _thread_target
+        return await asyncio.to_thread(_thread_target)
+
+    async def connect(self):
+        """Pre-connect: run SNMPv3 auth discovery once in a thread.
+
+        Returns (engine, transport, auth) that can be reused for multiple
+        get/walk calls within the SAME thread event loop.
+        """
+        pass  # Connection is per-call in threaded mode
 
     async def get(self, oids: list[str]) -> dict:
         import asyncio
@@ -164,13 +167,47 @@ class _InlineSnmpClient:
             if err_st:
                 raise RuntimeError(f"SNMP error at {err_idx}: {err_st.prettyPrint()}")
             result = {}
-            for oid, val in var_binds:
-                result[str(oid)] = val.prettyPrint()
+            for vb in var_binds:
+                result[str(vb[0])] = vb[1].prettyPrint()
             return result
 
         return await asyncio.wait_for(
-            asyncio.to_thread(self._run_in_thread(_do_get)),
+            self._run_in_thread(_do_get),
             timeout=self._timeout + 10,
+        )
+
+    async def get_many(self, oid_batches: list[list[str]]) -> dict:
+        """Execute multiple SNMP GET batches in a single thread session."""
+        import asyncio
+
+        async def _do_gets():
+            from pysnmp.hlapi.asyncio import (
+                ContextData, ObjectIdentity, ObjectType, SnmpEngine,
+                UdpTransportTarget, get_cmd,
+            )
+            engine = SnmpEngine()
+            transport = await UdpTransportTarget.create(
+                (self._host, self._port), timeout=self._timeout, retries=1,
+            )
+            auth = self._build_auth()
+            result = {}
+            for batch in oid_batches:
+                try:
+                    obj_types = [ObjectType(ObjectIdentity(oid)) for oid in batch]
+                    err_ind, err_st, err_idx, var_binds = await get_cmd(
+                        engine, auth, transport, ContextData(), *obj_types,
+                    )
+                    if not err_ind and not err_st:
+                        for vb in var_binds:
+                            result[str(vb[0])] = vb[1].prettyPrint()
+                except Exception:
+                    continue
+            engine.close_dispatcher()
+            return result
+
+        return await asyncio.wait_for(
+            self._run_in_thread(_do_gets),
+            timeout=self._timeout * len(oid_batches) + 15,
         )
 
     async def walk(self, oid: str) -> list[tuple[str, str]]:
@@ -201,17 +238,16 @@ class _InlineSnmpClient:
                     break
                 out_of_tree = False
                 last_oid = None
-                for row in var_binds:
-                    for name, val in row:
-                        oid_tuple = tuple(name)
-                        if oid_tuple[:base_len] != base_tuple:
-                            out_of_tree = True
-                            break
-                        name_str = str(name)
-                        rows.append((name_str, val.prettyPrint()))
-                        last_oid = name_str
-                    if out_of_tree:
+                for vb in var_binds:
+                    name = vb[0]
+                    val = vb[1]
+                    oid_tuple = tuple(name)
+                    if oid_tuple[:base_len] != base_tuple:
+                        out_of_tree = True
                         break
+                    name_str = str(name)
+                    rows.append((name_str, val.prettyPrint()))
+                    last_oid = name_str
                 if out_of_tree or last_oid is None or last_oid == current_oid:
                     break
                 current_oid = last_oid
@@ -219,7 +255,7 @@ class _InlineSnmpClient:
             return rows
 
         return await asyncio.wait_for(
-            asyncio.to_thread(self._run_in_thread(_do_walk)),
+            self._run_in_thread(_do_walk),
             timeout=self._timeout * 3 + 10,
         )
 
@@ -261,16 +297,34 @@ class Poller(BasePoller):
 
                 # Batch into chunks of 20 OIDs per SNMP GET
                 batch_size = 20
+                oid_batches = []
+                batch_meta = []  # list of lists of (oid_name, if_index, full_oid)
                 for i in range(0, len(oid_requests), batch_size):
                     batch = oid_requests[i:i + batch_size]
+                    oid_batches.append([oid for _, _, oid in batch])
+                    batch_meta.append(batch)
+
+                # Use get_many if available (single session), else fallback
+                if hasattr(snmp, "get_many"):
                     try:
-                        result = await snmp.get([oid for _, _, oid in batch])
-                        for oid_name, if_index, full_oid in batch:
-                            val = result.get(full_oid)
-                            if val is not None:
-                                raw.setdefault(oid_name, {})[if_index] = val
+                        all_results = await snmp.get_many(oid_batches)
+                        for batch in batch_meta:
+                            for oid_name, if_index, full_oid in batch:
+                                val = all_results.get(full_oid)
+                                if val is not None:
+                                    raw.setdefault(oid_name, {})[if_index] = val
                     except Exception:
-                        continue
+                        pass
+                else:
+                    for i, batch in enumerate(batch_meta):
+                        try:
+                            result = await snmp.get(oid_batches[i])
+                            for oid_name, if_index, full_oid in batch:
+                                val = result.get(full_oid)
+                                if val is not None:
+                                    raw.setdefault(oid_name, {})[if_index] = val
+                        except Exception:
+                            continue
 
                 if_indices = [int(iface["if_index"]) for iface in monitored]
                 metrics_lookup = {
