@@ -4,18 +4,22 @@
 # ── Stage 1: Build ────────────────────────────────────────────────────────────
 FROM python:3.12-slim AS builder
 
-WORKDIR /build
+WORKDIR /app
 
 # System deps needed for gRPC build
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml .
-COPY src ./src
+COPY packages/common/ /app/packages/common/
+COPY packages/sdk/ /app/packages/sdk/
+COPY packages/collector/ /app/packages/collector/
 
 # Install into a prefix that we can copy cleanly
-RUN pip install --no-cache-dir --prefix=/install .
+RUN pip install --no-cache-dir \
+    /app/packages/common/ \
+    /app/packages/sdk/ \
+    /app/packages/collector/
 
 # ── Stage 2: Runtime ──────────────────────────────────────────────────────────
 FROM python:3.12-slim AS runtime
@@ -28,7 +32,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed packages from builder
-COPY --from=builder /install /usr/local
+COPY --from=builder /usr/local/lib/python3.12/site-packages/ /usr/local/lib/python3.12/site-packages/
+COPY --from=builder /usr/local/bin/ /usr/local/bin/
 
 # Data directories (override via volume mounts)
 RUN mkdir -p /data/apps /data/venvs /data/pip-cache

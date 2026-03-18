@@ -1274,20 +1274,37 @@ class AppCachePushRequest(BaseModel):
     entries: list[AppCachePushEntry]
 
 
+async def _resolve_collector_group(
+    db: AsyncSession, auth: dict, collector_id_param: str | None, node_id_param: str | None,
+) -> uuid.UUID:
+    """Resolve the collector's group_id from auth, collector_id param, or node_id param."""
+    # Try auth dict first (individual API key)
+    cid = auth.get("collector_id")
+    if not cid and collector_id_param:
+        cid = collector_id_param
+    if cid:
+        collector = await db.get(Collector, uuid.UUID(cid))
+        if collector and collector.group_id:
+            return collector.group_id
+    # Fallback: look up by hostname
+    if node_id_param:
+        stmt = select(Collector).where(Collector.hostname == node_id_param)
+        collector = (await db.execute(stmt)).scalar_one_or_none()
+        if collector and collector.group_id:
+            return collector.group_id
+    raise HTTPException(status_code=400, detail="Cannot resolve collector group")
+
+
 @router.post("/app-cache/push", tags=["collector-api"])
 async def push_app_cache(
     req: AppCachePushRequest,
+    collector_id: str | None = Query(None),
+    node_id: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
     """Collectors push dirty cache entries to central."""
-    collector_id = auth.get("collector_id")
-    if not collector_id:
-        raise HTTPException(status_code=400, detail="Collector identity required")
-
-    collector = await db.get(Collector, uuid.UUID(collector_id))
-    if not collector or not collector.group_id:
-        raise HTTPException(status_code=400, detail="Collector must belong to a group")
+    group_id = await _resolve_collector_group(db, auth, collector_id, node_id)
 
     group_id = collector.group_id
     accepted = 0
@@ -1332,19 +1349,13 @@ async def push_app_cache(
 async def pull_app_cache(
     since: str | None = Query(None),
     limit: int = Query(1000, le=5000),
+    collector_id: str | None = Query(None),
+    node_id: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
     """Collectors pull cache entries updated since their last sync."""
-    collector_id = auth.get("collector_id")
-    if not collector_id:
-        raise HTTPException(status_code=400, detail="Collector identity required")
-
-    collector = await db.get(Collector, uuid.UUID(collector_id))
-    if not collector or not collector.group_id:
-        raise HTTPException(status_code=400, detail="Collector must belong to a group")
-
-    group_id = collector.group_id
+    group_id = await _resolve_collector_group(db, auth, collector_id, node_id)
 
     stmt = (
         select(AppCache)

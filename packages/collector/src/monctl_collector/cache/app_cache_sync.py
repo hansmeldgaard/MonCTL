@@ -25,9 +25,11 @@ class AppCacheSyncLoop:
         self,
         local_cache: LocalCache,
         central_client: CentralAPIClient,
+        node_id: str = "",
     ) -> None:
         self._cache = local_cache
         self._central = central_client
+        self._node_id = node_id
         self._last_pull_at: float = 0.0
         self._running = False
         self._task: asyncio.Task | None = None
@@ -80,7 +82,7 @@ class AppCacheSyncLoop:
                 ).isoformat(),
             })
 
-        resp = await self._central.push_app_cache(entries)
+        resp = await self._central.push_app_cache(entries, node_id=self._node_id)
         if resp:
             keys = [(e["app_id"], e["device_id"], e["cache_key"]) for e in entries]
             await self._cache.app_cache_mark_clean(keys)
@@ -96,7 +98,7 @@ class AppCacheSyncLoop:
 
         has_more = True
         while has_more:
-            resp = await self._central.pull_app_cache(since=since)
+            resp = await self._central.pull_app_cache(since=since, node_id=self._node_id)
             if not resp or not resp.get("entries"):
                 break
 

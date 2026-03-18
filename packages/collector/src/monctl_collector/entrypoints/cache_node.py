@@ -115,6 +115,7 @@ async def run(cfg: CollectorConfig) -> None:
     app_cache_sync = AppCacheSyncLoop(
         local_cache=local_cache,
         central_client=central_client,
+        node_id=node_id,
     )
     await app_cache_sync.start()
 

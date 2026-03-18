@@ -3,7 +3,7 @@
 import grpc
 import warnings
 
-import collector_pb2 as collector__pb2
+from monctl_collector.proto import collector_pb2 as collector__pb2
 
 GRPC_GENERATED_VERSION = '1.78.0'
 GRPC_VERSION = grpc.__version__

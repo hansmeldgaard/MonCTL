@@ -250,11 +250,16 @@ class CentralAPIClient:
 
     # ── App Cache ─────────────────────────────────────────────────────────────
 
-    async def push_app_cache(self, entries: list[dict]) -> dict | None:
+    async def push_app_cache(
+        self, entries: list[dict], node_id: str | None = None,
+    ) -> dict | None:
         """Push dirty app cache entries to central."""
         try:
+            params: dict[str, str] = {}
+            if node_id:
+                params["node_id"] = node_id
             async with self._session.post(
-                self._url("/app-cache/push"), json={"entries": entries}
+                self._url("/app-cache/push"), json={"entries": entries}, params=params,
             ) as resp:
                 if resp.status in (200, 201):
                     data = await resp.json()
@@ -267,12 +272,14 @@ class CentralAPIClient:
             return None
 
     async def pull_app_cache(
-        self, since: str | None = None, limit: int = 1000,
+        self, since: str | None = None, limit: int = 1000, node_id: str | None = None,
     ) -> dict | None:
         """Pull updated app cache entries from central."""
         params: dict[str, str | int] = {"limit": limit}
         if since:
             params["since"] = since
+        if node_id:
+            params["node_id"] = node_id
         try:
             async with self._session.get(
                 self._url("/app-cache/pull"), params=params
