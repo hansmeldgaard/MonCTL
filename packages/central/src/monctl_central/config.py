@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     clickhouse_password: str = ""
     clickhouse_async_insert: bool = True
 
+    # Docker stats sidecars (central tier only): "label:ip:port,label:ip:port,..."
+    docker_stats_hosts: str = ""
+
     # Instance role: "api" (serve requests only), "scheduler" (run background tasks only), "all" (both)
     role: str = "all"
 

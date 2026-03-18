@@ -1,0 +1,22 @@
+services:
+  docker-stats:
+    image: monctl-docker-stats:latest
+    container_name: monctl-docker-stats
+    ports:
+      - "9100:9100"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /:/host_root:ro
+    environment:
+      MONCTL_HOST_LABEL: ${MONCTL_HOST_LABEL:-unknown}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9100/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.25"

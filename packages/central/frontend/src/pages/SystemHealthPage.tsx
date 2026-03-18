@@ -5,6 +5,7 @@ import {
   ArrowUp,
   ArrowUpDown,
   Bell,
+  Box,
   ChevronDown,
   ChevronRight,
   Clock,
@@ -465,6 +466,159 @@ function SchedulerCard({ sub }: { sub: { status: SubsystemStatus; details: Recor
   );
 }
 
+// ── Docker infrastructure card ───────────────────────────────────────────────
+
+interface DockerHost {
+  label: string;
+  status: string;
+  source: string;
+  data: {
+    hostname: string;
+    container_count: number;
+    total_containers: number;
+    host: { disk_total_bytes: number | null; disk_used_bytes: number | null; disk_free_bytes: number | null } | null;
+    containers: {
+      name: string;
+      image?: string;
+      status: string;
+      health: string | null;
+      cpu_pct: number | null;
+      mem_usage_bytes: number | null;
+      mem_limit_bytes: number | null;
+      mem_pct: number | null;
+      net_rx_bytes: number | null;
+      net_tx_bytes: number | null;
+      restart_count: number;
+      started_at?: string;
+    }[];
+  } | null;
+  error?: string;
+}
+
+function ContainerStatusDot({ status, health }: { status: string; health: string | null }) {
+  if (status !== "running") return <span className="h-2 w-2 rounded-full bg-zinc-600 inline-block" />;
+  if (health === "unhealthy") return <span className="h-2 w-2 rounded-full bg-red-400 inline-block" />;
+  if (health === "healthy") return <span className="h-2 w-2 rounded-full bg-emerald-400 inline-block" />;
+  return <span className="h-2 w-2 rounded-full bg-emerald-400 inline-block" />;
+}
+
+function DockerInfraCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: number | null; details: Record<string, unknown> } }) {
+  const d = sub.details;
+  if (d.configured === false) return null;
+
+  const hosts = (d.hosts ?? []) as DockerHost[];
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  function toggleHost(label: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(label)) next.delete(label); else next.add(label);
+      return next;
+    });
+  }
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between pb-2">
+        <div className="flex items-center gap-2"><Box className="h-4 w-4 text-zinc-400" /><CardTitle>Docker Infrastructure</CardTitle></div>
+        <div className="flex items-center gap-2">
+          {sub.latency_ms != null && <span className="text-xs text-zinc-500 font-mono">{sub.latency_ms}ms</span>}
+          <StatusBadge status={sub.status} />
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="flex items-center gap-4 text-sm text-zinc-400 mb-3">
+          <span className="font-mono">
+            <span className="text-emerald-400">{d.reachable_hosts as number}</span>/{d.total_hosts as number} hosts reachable
+          </span>
+        </div>
+
+        {hosts.map((host) => {
+          const isExp = expanded.has(host.label);
+          const containers = host.data?.containers ?? [];
+          const running = containers.filter((c) => c.status === "running").length;
+          const unhealthy = containers.filter((c) => c.health === "unhealthy").length;
+
+          return (
+            <div key={host.label} className="mb-2">
+              <button
+                onClick={() => toggleHost(host.label)}
+                className="flex items-center gap-2 w-full text-left py-1.5 px-2 rounded hover:bg-zinc-800/50 transition-colors cursor-pointer"
+              >
+                {isExp ? <ChevronDown className="h-3 w-3 text-zinc-500" /> : <ChevronRight className="h-3 w-3 text-zinc-500" />}
+                <span className="text-sm font-mono font-medium text-zinc-200">{host.label}</span>
+                {host.status === "ok" ? (
+                  <span className="text-xs text-zinc-500">
+                    {running}/{containers.length} running
+                    {unhealthy > 0 && <span className="text-red-400 ml-1">({unhealthy} unhealthy)</span>}
+                  </span>
+                ) : (
+                  <span className="text-xs text-red-400">unreachable</span>
+                )}
+              </button>
+
+              {isExp && host.data && (
+                <div className="ml-5 mt-1">
+                  {host.data.host && host.data.host.disk_total_bytes != null && (
+                    <div className="mb-2">
+                      <div className="flex items-center justify-between text-xs text-zinc-500 mb-0.5">
+                        <span>Disk</span>
+                        <span className="font-mono">
+                          {formatBytes(host.data.host.disk_used_bytes ?? 0)} / {formatBytes(host.data.host.disk_total_bytes)}
+                        </span>
+                      </div>
+                      <ProgressBar pct={host.data.host.disk_total_bytes > 0
+                        ? ((host.data.host.disk_used_bytes ?? 0) / host.data.host.disk_total_bytes) * 100
+                        : 0
+                      } />
+                    </div>
+                  )}
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="text-xs py-1">Container</TableHead>
+                        <TableHead className="text-xs py-1 w-16">Status</TableHead>
+                        <TableHead className="text-xs py-1 w-16 text-right">CPU</TableHead>
+                        <TableHead className="text-xs py-1 w-24 text-right">Memory</TableHead>
+                        <TableHead className="text-xs py-1 w-16 text-right">Restarts</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {containers.map((c) => (
+                        <TableRow key={c.name} className={c.health === "unhealthy" ? "bg-red-500/5" : c.status !== "running" ? "bg-zinc-800/30" : ""}>
+                          <TableCell className="py-1 text-xs font-mono">{c.name}</TableCell>
+                          <TableCell className="py-1 text-xs">
+                            <span className="flex items-center gap-1.5">
+                              <ContainerStatusDot status={c.status} health={c.health} />
+                              {c.status}
+                            </span>
+                          </TableCell>
+                          <TableCell className="py-1 text-xs font-mono text-right">
+                            {c.cpu_pct != null ? `${c.cpu_pct}%` : "\u2014"}
+                          </TableCell>
+                          <TableCell className="py-1 text-xs font-mono text-right">
+                            {c.mem_usage_bytes != null ? `${formatBytes(c.mem_usage_bytes)}` : "\u2014"}
+                            {c.mem_pct != null && <span className="text-zinc-600 ml-1">({c.mem_pct}%)</span>}
+                          </TableCell>
+                          <TableCell className="py-1 text-xs font-mono text-right">
+                            <span className={c.restart_count > 3 ? "text-red-400" : c.restart_count > 0 ? "text-amber-400" : "text-zinc-600"}>
+                              {c.restart_count}
+                            </span>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Collectors section ───────────────────────────────────────────────────────
 
 type CollectorSortField = "name" | "status" | "last_seen_at" | "total_jobs" | "effective_load" | "group_name";
@@ -772,6 +926,9 @@ export function SystemHealthPage() {
 
       {/* Collectors */}
       {subs.collectors && <CollectorsSection sub={subs.collectors as { status: SubsystemStatus; details: Record<string, unknown> }} />}
+
+      {/* Docker Infrastructure */}
+      {subs.docker && <DockerInfraCard sub={subs.docker as { status: SubsystemStatus; latency_ms: number | null; details: Record<string, unknown> }} />}
     </div>
   );
 }

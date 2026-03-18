@@ -772,6 +772,73 @@ async def _check_alerts(db: AsyncSession) -> dict:
     }
 
 
+async def _check_docker_infrastructure() -> dict:
+    """Query central-tier sidecars for Docker container stats."""
+    import httpx
+
+    raw = settings.docker_stats_hosts
+    if not raw:
+        return {
+            "status": "healthy",
+            "latency_ms": None,
+            "details": {"configured": False, "hosts": []},
+        }
+
+    hosts = []
+    for entry in raw.split(","):
+        parts = entry.strip().split(":")
+        if len(parts) == 3:
+            hosts.append({"label": parts[0], "url": f"http://{parts[1]}:{parts[2]}/stats"})
+
+    if not hosts:
+        return {
+            "status": "healthy",
+            "latency_ms": None,
+            "details": {"configured": False, "hosts": []},
+        }
+
+    t0 = time.monotonic()
+
+    async def _fetch(client: httpx.AsyncClient, host: dict) -> dict:
+        try:
+            resp = await client.get(host["url"], timeout=3.0)
+            resp.raise_for_status()
+            return {"label": host["label"], "status": "ok", "source": "sidecar", "data": resp.json()}
+        except Exception as exc:
+            return {"label": host["label"], "status": "unreachable", "source": "sidecar", "data": None, "error": str(exc)}
+
+    async with httpx.AsyncClient() as client:
+        results = list(await asyncio.gather(*[_fetch(client, h) for h in hosts]))
+
+    latency_ms = round((time.monotonic() - t0) * 1000, 2)
+
+    reachable = sum(1 for r in results if r["status"] == "ok")
+    total = len(results)
+
+    status = "healthy"
+    if reachable < total:
+        status = "degraded" if reachable > 0 else "critical"
+
+    for host in results:
+        if host.get("data"):
+            for c in host["data"].get("containers", []):
+                if c.get("health") == "unhealthy" and status == "healthy":
+                    status = "degraded"
+                if c.get("status") == "restarting" and status == "healthy":
+                    status = "degraded"
+
+    return {
+        "status": status,
+        "latency_ms": latency_ms,
+        "details": {
+            "configured": True,
+            "reachable_hosts": reachable,
+            "total_hosts": total,
+            "hosts": results,
+        },
+    }
+
+
 async def _run_check(name: str, coro) -> tuple[str, dict]:
     """Run a single subsystem check with timeout."""
     try:
@@ -827,6 +894,7 @@ async def system_health(
         _run_check("scheduler", _check_scheduler()),
         _run_check("ingestion", _check_ingestion()),
         _run_check("alerts", _check_alerts_standalone()),
+        _run_check("docker", _check_docker_infrastructure()),
         return_exceptions=True,
     )
 
