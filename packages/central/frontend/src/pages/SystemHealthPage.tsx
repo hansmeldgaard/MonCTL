@@ -65,7 +65,7 @@ function StatusBadge({ status }: { status: SubsystemStatus }) {
 
 function DetailGrid({ children }: { children: React.ReactNode }) {
   return (
-    <div className="grid grid-cols-[max-content_1fr] gap-x-8 gap-y-1 text-sm">
+    <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-2">
       {children}
     </div>
   );
@@ -73,15 +73,15 @@ function DetailGrid({ children }: { children: React.ReactNode }) {
 
 function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <>
-      <span className="text-zinc-500">{label}</span>
-      <span className="text-zinc-300 font-mono text-xs">{value ?? "\u2014"}</span>
-    </>
+    <div className="flex flex-col gap-0.5">
+      <span className="text-[11px] text-zinc-500 leading-none">{label}</span>
+      <span className="text-zinc-300 font-mono text-xs leading-snug">{value ?? "\u2014"}</span>
+    </div>
   );
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
-  return <div className="col-span-2 text-xs font-semibold uppercase tracking-wider text-zinc-500 mt-3 mb-1">{children}</div>;
+  return <div className="col-span-full text-xs font-semibold uppercase tracking-wider text-zinc-500 mt-3 mb-1">{children}</div>;
 }
 
 function ProgressBar({ pct, className }: { pct: number; className?: string }) {
@@ -153,7 +153,7 @@ function AlertsCard({ sub }: { sub: { status: SubsystemStatus; details: Record<s
       <CardContent>
         <DetailGrid>
           {totalFiring === 0 ? (
-            <span className="col-span-2 text-sm text-zinc-500">No alerts firing</span>
+            <span className="col-span-full text-sm text-zinc-500">No alerts firing</span>
           ) : (
             <>
               {firing && Object.entries(firing).map(([sev, count]) => (
