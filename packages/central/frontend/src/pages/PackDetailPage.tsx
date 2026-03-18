@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Boxes, ChevronDown, ChevronRight, Download, Loader2, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Download, Loader2, Trash2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
@@ -78,7 +78,7 @@ export function PackDetailPage() {
         <div>
           <div className="flex items-center gap-3">
             <h1 className="text-lg font-semibold text-zinc-100">{pack.name}</h1>
-            <Badge variant="secondary">{pack.pack_uid}</Badge>
+            <Badge variant="info">{pack.pack_uid}</Badge>
             <Badge variant="default">v{pack.current_version}</Badge>
           </div>
           {pack.description && <p className="mt-1 text-sm text-zinc-400">{pack.description}</p>}
@@ -127,7 +127,7 @@ export function PackDetailPage() {
                   >
                     {isOpen ? <ChevronDown className="h-4 w-4 text-zinc-500" /> : <ChevronRight className="h-4 w-4 text-zinc-500" />}
                     <span className="font-medium">{SECTION_LABELS[section]}</span>
-                    <Badge variant="secondary" className="ml-auto">{count}</Badge>
+                    <Badge variant="info" className="ml-auto">{count}</Badge>
                   </button>
                   {isOpen && count > 0 && (
                     <div className="ml-8 mb-2">

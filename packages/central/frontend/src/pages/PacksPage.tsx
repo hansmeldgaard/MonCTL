@@ -1,6 +1,6 @@
 import { useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { Boxes, Download, Loader2, Plus, Trash2, Upload } from "lucide-react";
+import { Boxes, Download, Loader2, Trash2, Upload } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
@@ -48,6 +48,7 @@ export function PacksPage() {
     name: string;
     version: string;
     is_upgrade: boolean;
+    current_version?: string;
   } | null>(null);
   const [resolutions, setResolutions] = useState<Record<string, string>>({});
   const [importResult, setImportResult] = useState<{ created: number; updated: number; skipped: number } | null>(null);
@@ -169,7 +170,7 @@ export function PacksPage() {
                 {packs.map((p) => (
                   <TableRow key={p.id} className="cursor-pointer" onClick={() => navigate(`/packs/${p.id}`)}>
                     <TableCell className="font-medium text-zinc-100">{p.name}</TableCell>
-                    <TableCell><Badge variant="secondary">{p.pack_uid}</Badge></TableCell>
+                    <TableCell><Badge variant="info">{p.pack_uid}</Badge></TableCell>
                     <TableCell><Badge variant="default">v{p.current_version}</Badge></TableCell>
                     <TableCell className="text-zinc-400">{p.author ?? "—"}</TableCell>
                     <TableCell className="text-zinc-400">{totalEntities(p)}</TableCell>
@@ -233,7 +234,7 @@ export function PacksPage() {
         {importPreview && !importResult && (
           <div className="space-y-4">
             <div className="flex items-center gap-2 text-sm text-zinc-400">
-              <Badge variant="secondary">{importPreview.pack_uid}</Badge>
+              <Badge variant="info">{importPreview.pack_uid}</Badge>
               <Badge variant="default">v{importPreview.version}</Badge>
               {importPreview.is_upgrade && <Badge variant="default" className="bg-amber-600">Upgrade from v{importPreview.current_version}</Badge>}
             </div>
@@ -258,7 +259,7 @@ export function PacksPage() {
                         <TableCell>
                           {entity.status === "new" && <Badge className="bg-green-600">New</Badge>}
                           {entity.status === "conflict" && <Badge className="bg-amber-600">Conflict</Badge>}
-                          {entity.status === "unchanged" && <Badge variant="secondary">Unchanged</Badge>}
+                          {entity.status === "unchanged" && <Badge variant="info">Unchanged</Badge>}
                         </TableCell>
                         <TableCell>
                           {entity.status === "conflict" ? (
