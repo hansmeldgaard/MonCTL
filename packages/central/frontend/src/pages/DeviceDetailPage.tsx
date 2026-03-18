@@ -1099,7 +1099,7 @@ function PerformanceTab({ deviceId }: { deviceId: string }) {
     if (summary?.length && !selectedAppId) {
       const first = summary[0];
       setSelectedAppId(first.app_id);
-      const ctKeys = Object.keys(first.component_types);
+      const ctKeys = Object.keys(first.component_types).sort();
       if (ctKeys.length) {
         setSelectedComponentType(ctKeys[0]);
         const ct = first.component_types[ctKeys[0]];
@@ -1177,7 +1177,7 @@ function PerformanceTab({ deviceId }: { deviceId: string }) {
                     key={app.app_id}
                     onClick={() => {
                       setSelectedAppId(app.app_id);
-                      const ctKeys = Object.keys(app.component_types);
+                      const ctKeys = Object.keys(app.component_types).sort();
                       if (ctKeys.length) {
                         setSelectedComponentType(ctKeys[0]);
                         const ct = app.component_types[ctKeys[0]];
@@ -1204,7 +1204,7 @@ function PerformanceTab({ deviceId }: { deviceId: string }) {
                   <CardTitle className="text-zinc-400 text-xs uppercase tracking-wide">Type</CardTitle>
                 </CardHeader>
                 <CardContent className="px-3 pb-3 space-y-1">
-                  {Object.keys(currentApp.component_types).map((ct) => (
+                  {Object.keys(currentApp.component_types).sort().map((ct) => (
                     <button
                       key={ct}
                       onClick={() => {
