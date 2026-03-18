@@ -12,7 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from monctl_central.dependencies import get_db, require_auth
-from monctl_central.storage.models import Pack, PackVersion
+from monctl_central.storage.models import (
+    Pack, PackVersion, App, AppAlertDefinition, CredentialTemplate,
+    SnmpOid, Template, DeviceType, LabelKey, Connector,
+)
 from monctl_central.packs.schema import validate_pack_schema
 from monctl_central.packs.service import (
     ENTITY_MAP,
@@ -50,6 +53,45 @@ def _fmt_version(v: PackVersion) -> dict:
         "changelog": v.changelog,
         "imported_at": v.imported_at.isoformat() if v.imported_at else None,
     }
+
+
+# ── Available entities (for Create Pack dialog) ─────────────
+
+
+@router.get("/available-entities")
+async def list_available_entities(
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """List all entities that can be added to a pack, grouped by type."""
+    result = {}
+
+    _SECTIONS = [
+        ("apps", App, "name"),
+        ("alert_rules", AppAlertDefinition, "name"),
+        ("credential_templates", CredentialTemplate, "name"),
+        ("snmp_oids", SnmpOid, "name"),
+        ("device_templates", Template, "name"),
+        ("device_types", DeviceType, "name"),
+        ("label_keys", LabelKey, "key"),
+        ("connectors", Connector, "name"),
+    ]
+
+    for section, model, name_field in _SECTIONS:
+        rows = (await db.execute(
+            select(model).order_by(getattr(model, name_field))
+        )).scalars().all()
+        result[section] = [
+            {
+                "id": str(r.id),
+                "name": getattr(r, name_field),
+                "description": getattr(r, "description", None),
+                "pack_id": str(r.pack_id) if r.pack_id else None,
+            }
+            for r in rows
+        ]
+
+    return {"status": "success", "data": result}
 
 
 # ── List packs ──────────────────────────────────────────────

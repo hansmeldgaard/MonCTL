@@ -881,6 +881,15 @@ export interface PackImportPreview {
   entities: PackImportPreviewEntity[];
 }
 
+export interface AvailableEntity {
+  id: string;
+  name: string;
+  description: string | null;
+  pack_id: string | null;
+}
+
+export type AvailableEntities = Record<string, AvailableEntity[]>;
+
 export interface PackImportResult {
   pack_id: string;
   version: string;

@@ -56,6 +56,7 @@ import type {
   PackDetail,
   PackImportPreview,
   PackImportResult,
+  AvailableEntities,
 } from "@/types/api.ts";
 
 // ── Polling intervals ────────────────────────────────────
@@ -1958,6 +1959,15 @@ export function usePackDetail(id: string | undefined) {
     select: (res) => res.data,
     enabled: !!id,
     refetchInterval: POLL_DETAIL,
+  });
+}
+
+export function useAvailableEntities(enabled = false) {
+  return useQuery({
+    queryKey: ["packs", "available-entities"],
+    queryFn: () => apiGet<AvailableEntities>("/packs/available-entities"),
+    select: (res) => res.data,
+    enabled,
   });
 }
 

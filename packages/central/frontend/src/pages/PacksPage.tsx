@@ -1,6 +1,6 @@
 import { useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { Boxes, Download, Loader2, Trash2, Upload } from "lucide-react";
+import { Boxes, Download, Loader2, Plus, Trash2, Upload } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
@@ -16,6 +16,7 @@ import {
   useImportPack,
 } from "@/api/hooks.ts";
 import type { Pack, PackImportPreviewEntity } from "@/types/api.ts";
+import { CreatePackDialog } from "@/components/CreatePackDialog.tsx";
 import { formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 
@@ -39,6 +40,7 @@ export function PacksPage() {
   const previewImport = usePreviewImport();
   const importPack = useImportPack();
 
+  const [createOpen, setCreateOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Pack | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [importData, setImportData] = useState<Record<string, unknown> | null>(null);
@@ -139,6 +141,9 @@ export function PacksPage() {
         </div>
         <div className="flex gap-2">
           <input ref={fileInputRef} type="file" accept=".json" className="hidden" onChange={handleFileUpload} />
+          <Button size="sm" variant="secondary" onClick={() => setCreateOpen(true)} className="gap-1.5">
+            <Plus className="h-4 w-4" /> Create Pack
+          </Button>
           <Button size="sm" variant="secondary" onClick={() => fileInputRef.current?.click()} className="gap-1.5">
             <Upload className="h-4 w-4" /> Import
           </Button>
@@ -303,6 +308,9 @@ export function PacksPage() {
           </div>
         )}
       </Dialog>
+
+      {/* Create Pack Dialog */}
+      <CreatePackDialog open={createOpen} onClose={() => setCreateOpen(false)} />
     </div>
   );
 }
