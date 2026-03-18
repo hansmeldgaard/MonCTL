@@ -171,7 +171,7 @@ async def apply_template(
 
         # Apply app assignments
         for app_config in config.get("apps", []):
-            app_name = app_config.get("app_id")
+            app_name = app_config.get("app_name") or app_config.get("app_id")
             if not app_name:
                 continue
 
