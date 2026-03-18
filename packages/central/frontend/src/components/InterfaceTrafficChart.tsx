@@ -34,41 +34,14 @@ function formatTimeLabel(ts: number, timezone: string): string {
 export function InterfaceTrafficChart({ data, timezone = "UTC" }: Props) {
   const reversed = [...data].reverse();
 
-  // Check if pre-calculated rates exist
-  const hasRates = reversed.some((r) => r.in_rate_bps > 0 || r.out_rate_bps > 0);
-
-  // Build chart data with numeric timestamps for proper time-based axis
-  let chartData: { ts: number; in_bps: number; out_bps: number }[];
-
-  if (hasRates) {
-    chartData = reversed.map((r) => ({
+  // Use pre-calculated rates from central — no client-side delta fallback
+  const chartData = reversed
+    .filter((r) => r.in_rate_bps > 0 || r.out_rate_bps > 0)
+    .map((r) => ({
       ts: new Date(r.executed_at).getTime(),
       in_bps: r.in_rate_bps,
       out_bps: r.out_rate_bps,
     }));
-  } else {
-    // Delta-based rate calculation from octet counters
-    chartData = [];
-    for (let i = 1; i < reversed.length; i++) {
-      const prev = reversed[i - 1];
-      const curr = reversed[i];
-      const dtSec =
-        (new Date(curr.executed_at).getTime() - new Date(prev.executed_at).getTime()) / 1000;
-      if (dtSec <= 0) continue;
-
-      // Handle 32-bit counter wrap (2^32)
-      let inDelta = curr.in_octets - prev.in_octets;
-      let outDelta = curr.out_octets - prev.out_octets;
-      if (inDelta < 0) inDelta += 2 ** 32;
-      if (outDelta < 0) outDelta += 2 ** 32;
-
-      chartData.push({
-        ts: new Date(curr.executed_at).getTime(),
-        in_bps: (inDelta * 8) / dtSec,
-        out_bps: (outDelta * 8) / dtSec,
-      });
-    }
-  }
 
   if (chartData.length === 0) {
     return (

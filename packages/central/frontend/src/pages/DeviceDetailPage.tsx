@@ -1545,12 +1545,12 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
                   <TableCell className="font-mono text-xs text-cyan-400">
                     {iface.in_rate_bps > 0
                       ? formatBps(iface.in_rate_bps)
-                      : formatBytes(iface.in_octets)}
+                      : "\u2014"}
                   </TableCell>
                   <TableCell className="font-mono text-xs text-indigo-400">
                     {iface.out_rate_bps > 0
                       ? formatBps(iface.out_rate_bps)
-                      : formatBytes(iface.out_octets)}
+                      : "\u2014"}
                   </TableCell>
                   <TableCell className="font-mono text-xs">
                     <span className={iface.in_errors > 0 ? "text-amber-400" : "text-zinc-600"}>

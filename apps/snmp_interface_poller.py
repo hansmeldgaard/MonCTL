@@ -80,199 +80,6 @@ def _safe_int(val, default: int = 0) -> int:
         return default
 
 
-class _InlineSnmpClient:
-    """Fallback SNMP client when no connector is bound.
-
-    Runs pysnmp in a dedicated asyncio event loop inside a thread to avoid
-    pysnmp 7.x transport hanging the main event loop. Each operation is
-    fully isolated and times out reliably.
-    """
-
-    def __init__(self, host: str, credential: dict):
-        self._host = host
-        self._cred = credential
-        self._timeout = int(credential.get("timeout", 10))
-        self._port = int(credential.get("port", 161))
-
-    def _build_auth(self):
-        from pysnmp.hlapi.asyncio import CommunityData, UsmUserData
-        import pysnmp.hlapi.asyncio as hlapi
-
-        version = str(self._cred.get("version", self._cred.get("snmp_version", "2c"))).lower()
-        if version != "3":
-            community = self._cred.get("community", "public")
-            return CommunityData(community, mpModel=0 if version == "1" else 1)
-
-        username = self._cred.get("username", "")
-        security_level = self._cred.get("security_level", "authPriv").lower()
-        _AUTH = {"MD5": "usmHMACMD5AuthProtocol", "SHA": "usmHMACSHAAuthProtocol",
-                 "SHA224": "usmHMAC128SHA224AuthProtocol", "SHA256": "usmHMAC192SHA256AuthProtocol",
-                 "SHA384": "usmHMAC256SHA384AuthProtocol", "SHA512": "usmHMAC384SHA512AuthProtocol"}
-        _PRIV = {"DES": "usmDESPrivProtocol", "3DES": "usm3DESEDEPrivProtocol",
-                 "AES": "usmAesCfb128Protocol", "AES128": "usmAesCfb128Protocol",
-                 "AES192": "usmAesCfb192Protocol", "AES256": "usmAesCfb256Protocol"}
-
-        kwargs = {"userName": username}
-        if security_level == "noauthnopriv":
-            return UsmUserData(**kwargs)
-
-        auth_name = (self._cred.get("auth_protocol") or "").upper()
-        auth_key = self._cred.get("auth_password") or self._cred.get("auth_key") or ""
-        auth_proto = getattr(hlapi, _AUTH.get(auth_name, ""), None) if auth_name else None
-        if auth_proto and auth_key:
-            kwargs["authKey"] = auth_key
-            kwargs["authProtocol"] = auth_proto
-
-        if security_level == "authpriv":
-            priv_name = (self._cred.get("priv_protocol") or "").upper()
-            priv_key = self._cred.get("priv_password") or self._cred.get("priv_key") or ""
-            priv_proto = getattr(hlapi, _PRIV.get(priv_name, ""), None) if priv_name else None
-            if priv_proto and priv_key:
-                kwargs["privKey"] = priv_key
-                kwargs["privProtocol"] = priv_proto
-
-        return UsmUserData(**kwargs)
-
-    async def _run_in_thread(self, coro_fn):
-        """Run an async function in a NEW event loop inside a thread."""
-        import asyncio
-
-        def _thread_target():
-            loop = asyncio.new_event_loop()
-            try:
-                return loop.run_until_complete(coro_fn())
-            finally:
-                loop.close()
-
-        return await asyncio.to_thread(_thread_target)
-
-    async def connect(self):
-        """Pre-connect: run SNMPv3 auth discovery once in a thread.
-
-        Returns (engine, transport, auth) that can be reused for multiple
-        get/walk calls within the SAME thread event loop.
-        """
-        pass  # Connection is per-call in threaded mode
-
-    async def get(self, oids: list[str]) -> dict:
-        import asyncio
-
-        async def _do_get():
-            from pysnmp.hlapi.asyncio import (
-                ContextData, ObjectIdentity, ObjectType, SnmpEngine,
-                UdpTransportTarget, get_cmd,
-            )
-            engine = SnmpEngine()
-            transport = await UdpTransportTarget.create(
-                (self._host, self._port), timeout=self._timeout, retries=1,
-            )
-            auth = self._build_auth()
-            obj_types = [ObjectType(ObjectIdentity(oid)) for oid in oids]
-            err_ind, err_st, err_idx, var_binds = await get_cmd(
-                engine, auth, transport, ContextData(), *obj_types,
-            )
-            engine.close_dispatcher()
-            if err_ind:
-                raise RuntimeError(f"SNMP error: {err_ind}")
-            if err_st:
-                raise RuntimeError(f"SNMP error at {err_idx}: {err_st.prettyPrint()}")
-            result = {}
-            for vb in var_binds:
-                result[str(vb[0])] = vb[1].prettyPrint()
-            return result
-
-        return await asyncio.wait_for(
-            self._run_in_thread(_do_get),
-            timeout=self._timeout + 10,
-        )
-
-    async def get_many(self, oid_batches: list[list[str]]) -> dict:
-        """Execute multiple SNMP GET batches in a single thread session."""
-        import asyncio
-
-        async def _do_gets():
-            from pysnmp.hlapi.asyncio import (
-                ContextData, ObjectIdentity, ObjectType, SnmpEngine,
-                UdpTransportTarget, get_cmd,
-            )
-            engine = SnmpEngine()
-            transport = await UdpTransportTarget.create(
-                (self._host, self._port), timeout=self._timeout, retries=1,
-            )
-            auth = self._build_auth()
-            result = {}
-            for batch in oid_batches:
-                try:
-                    obj_types = [ObjectType(ObjectIdentity(oid)) for oid in batch]
-                    err_ind, err_st, err_idx, var_binds = await get_cmd(
-                        engine, auth, transport, ContextData(), *obj_types,
-                    )
-                    if not err_ind and not err_st:
-                        for vb in var_binds:
-                            result[str(vb[0])] = vb[1].prettyPrint()
-                except Exception:
-                    continue
-            engine.close_dispatcher()
-            return result
-
-        return await asyncio.wait_for(
-            self._run_in_thread(_do_gets),
-            timeout=self._timeout * len(oid_batches) + 15,
-        )
-
-    async def walk(self, oid: str) -> list[tuple[str, str]]:
-        import asyncio
-
-        async def _do_walk():
-            from pysnmp.hlapi.asyncio import (
-                ContextData, ObjectIdentity, ObjectType, SnmpEngine,
-                UdpTransportTarget, bulk_cmd,
-            )
-            engine = SnmpEngine()
-            transport = await UdpTransportTarget.create(
-                (self._host, self._port), timeout=self._timeout, retries=1,
-            )
-            auth = self._build_auth()
-            rows = []
-            current_oid = oid
-            base_tuple = tuple(int(x) for x in oid.split("."))
-            base_len = len(base_tuple)
-            while len(rows) < 500:
-                err_ind, err_st, err_idx, var_binds = await bulk_cmd(
-                    engine, auth, transport, ContextData(), 0, 25,
-                    ObjectType(ObjectIdentity(current_oid)),
-                )
-                if err_ind or err_st:
-                    break
-                if not var_binds:
-                    break
-                out_of_tree = False
-                last_oid = None
-                for vb in var_binds:
-                    name = vb[0]
-                    val = vb[1]
-                    oid_tuple = tuple(name)
-                    if oid_tuple[:base_len] != base_tuple:
-                        out_of_tree = True
-                        break
-                    name_str = str(name)
-                    rows.append((name_str, val.prettyPrint()))
-                    last_oid = name_str
-                if out_of_tree or last_oid is None or last_oid == current_oid:
-                    break
-                current_oid = last_oid
-            engine.close_dispatcher()
-            return rows
-
-        return await asyncio.wait_for(
-            self._run_in_thread(_do_walk),
-            timeout=self._timeout * 3 + 10,
-        )
-
-    async def close(self):
-        pass
-
-
 class Poller(BasePoller):
     """SNMP interface poller — uses the SNMP connector for protocol operations."""
 
@@ -287,8 +94,19 @@ class Poller(BasePoller):
 
         snmp = context.connectors.get("snmp")
         if snmp is None:
-            # Fallback: create an inline SNMP client from credential
-            snmp = _InlineSnmpClient(host, context.credential)
+            return PollResult(
+                job_id=context.job.job_id,
+                device_id=context.job.device_id,
+                collector_node=context.node_id,
+                timestamp=time.time(),
+                metrics=[],
+                config_data=None,
+                status="error",
+                reachable=False,
+                error_message="No SNMP connector bound (expected alias 'snmp'). "
+                              "Assign an SNMP connector with alias 'snmp' to this app assignment.",
+                execution_time_ms=0,
+            )
 
         try:
             raw: dict[str, dict[int, str | int]] = {}

@@ -145,14 +145,13 @@ async def lifespan(app: FastAPI):
             "name": "snmp",
             "description": "SNMP v2c/v3 connector — polls OIDs via PySNMP",
             "connector_type": "snmp",
-            "version": "1.0.0",
+            "version": "1.1.0",
             "entry_class": "SnmpConnector",
             "requirements": [],
             "source_code": '''\
 """Built-in SNMP connector for MonCTL.
 
-Supports SNMP v1, v2c, and v3. Authentication is driven by the credential
-dict passed at construction time.
+Supports SNMP v1, v2c, and v3 via pysnmp 7.x async API.
 
 Credential keys (v1/v2c):
     snmp_version   "1" or "2c" (default "2c")
@@ -217,14 +216,14 @@ class SnmpConnector:
         return self._build_v1v2c_auth()
 
     def _build_v1v2c_auth(self):
-        from pysnmp.hlapi.asyncio import CommunityData
+        from pysnmp.hlapi.v3arch.asyncio import CommunityData
         community = self.credential.get("community", "public")
         mp_model = 0 if self.version == "1" else 1
         return CommunityData(community, mpModel=mp_model)
 
     def _build_v3_auth(self):
-        from pysnmp.hlapi.asyncio import UsmUserData
-        import pysnmp.hlapi.asyncio as hlapi
+        from pysnmp.hlapi.v3arch.asyncio import UsmUserData
+        import pysnmp.hlapi.v3arch.asyncio as hlapi
 
         username = self.credential.get("username", "")
         auth_proto_name = (self.credential.get("auth_protocol") or "").upper()
@@ -262,28 +261,17 @@ class SnmpConnector:
         logger.debug("snmp_connect host=%s port=%s version=%s", host, self.port, self.version)
 
     async def get(self, oids: list[str]) -> dict[str, Any]:
-        """Perform SNMP GET for a list of OID strings.
-
-        Returns a dict mapping each OID to its value.
-        """
-        from pysnmp.hlapi.asyncio import (
-            ContextData,
-            ObjectIdentity,
-            ObjectType,
-            SnmpEngine,
-            UdpTransportTarget,
-            get_cmd,
+        """Perform SNMP GET for a list of OID strings."""
+        from pysnmp.hlapi.v3arch.asyncio import (
+            ContextData, ObjectIdentity, ObjectType, SnmpEngine,
+            UdpTransportTarget, get_cmd,
         )
-
         engine = SnmpEngine()
-        transport = UdpTransportTarget(
+        transport = await UdpTransportTarget.create(
             (self._host, self.port), timeout=self.timeout, retries=self.retries,
         )
         auth = self._build_auth()
-
-        result: dict[str, Any] = {}
         obj_types = [ObjectType(ObjectIdentity(oid)) for oid in oids]
-
         error_indication, error_status, error_index, var_binds = await get_cmd(
             engine, auth, transport, ContextData(), *obj_types,
         )
@@ -291,44 +279,74 @@ class SnmpConnector:
             raise RuntimeError(f"SNMP error: {error_indication}")
         if error_status:
             raise RuntimeError(f"SNMP error at {error_index}: {error_status.prettyPrint()}")
-
-        for oid, val in var_binds:
-            result[str(oid)] = val.prettyPrint()
+        result: dict[str, Any] = {}
+        for oid_val, val in var_binds:
+            result[str(oid_val)] = val.prettyPrint()
         return result
 
-    async def walk(self, oid: str) -> list[tuple[str, Any]]:
-        """Perform SNMP WALK (GETBULK) starting at the given OID."""
-        from pysnmp.hlapi.asyncio import (
-            ContextData,
-            ObjectIdentity,
-            ObjectType,
-            SnmpEngine,
-            UdpTransportTarget,
-            bulk_cmd,
+    async def get_many(self, oid_batches: list[list[str]]) -> dict[str, Any]:
+        """Execute multiple SNMP GET batches reusing the same session."""
+        from pysnmp.hlapi.v3arch.asyncio import (
+            ContextData, ObjectIdentity, ObjectType, SnmpEngine,
+            UdpTransportTarget, get_cmd,
         )
-
         engine = SnmpEngine()
-        transport = UdpTransportTarget(
+        transport = await UdpTransportTarget.create(
             (self._host, self.port), timeout=self.timeout, retries=self.retries,
         )
         auth = self._build_auth()
+        result: dict[str, Any] = {}
+        for batch in oid_batches:
+            try:
+                obj_types = [ObjectType(ObjectIdentity(oid)) for oid in batch]
+                err_ind, err_st, err_idx, var_binds = await get_cmd(
+                    engine, auth, transport, ContextData(), *obj_types,
+                )
+                if not err_ind and not err_st:
+                    for oid_val, val in var_binds:
+                        result[str(oid_val)] = val.prettyPrint()
+            except Exception:
+                continue
+        return result
 
+    async def walk(self, oid: str) -> list[tuple[str, Any]]:
+        """Perform SNMP WALK (GETBULK) with numeric OID boundary checking."""
+        from pysnmp.hlapi.v3arch.asyncio import (
+            ContextData, ObjectIdentity, ObjectType, SnmpEngine,
+            UdpTransportTarget, bulk_cmd,
+        )
+        engine = SnmpEngine()
+        transport = await UdpTransportTarget.create(
+            (self._host, self.port), timeout=self.timeout, retries=self.retries,
+        )
+        auth = self._build_auth()
         rows: list[tuple[str, Any]] = []
-        marker = ObjectType(ObjectIdentity(oid))
+        current_oid = oid
+        base_tuple = tuple(int(x) for x in oid.split("."))
+        base_len = len(base_tuple)
 
-        while True:
-            error_indication, error_status, error_index, var_binds = await bulk_cmd(
-                engine, auth, transport, ContextData(), 0, 25, marker,
+        while len(rows) < 10000:
+            error_indication, error_status, error_index, var_bind_table = await bulk_cmd(
+                engine, auth, transport, ContextData(), 0, 25,
+                ObjectType(ObjectIdentity(current_oid)),
             )
             if error_indication or error_status:
                 break
-            for row in var_binds:
-                for name, val in row:
-                    name_str = str(name)
-                    if not name_str.startswith(oid):
-                        return rows
-                    rows.append((name_str, val.prettyPrint()))
-                    marker = ObjectType(ObjectIdentity(name_str))
+            if not var_bind_table:
+                break
+            out_of_tree = False
+            last_oid = None
+            for name, val in var_bind_table:
+                oid_tuple = tuple(name)
+                if oid_tuple[:base_len] != base_tuple:
+                    out_of_tree = True
+                    break
+                name_str = str(name)
+                rows.append((name_str, val.prettyPrint()))
+                last_oid = name_str
+            if out_of_tree or last_oid is None or last_oid == current_oid:
+                break
+            current_oid = last_oid
         return rows
 
     async def close(self) -> None:

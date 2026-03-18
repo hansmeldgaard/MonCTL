@@ -866,7 +866,15 @@ async def submit_results(
                 out_util = 0.0
                 prev = await get_previous_counters(interface_id)
                 if prev:
-                    prev_ts = datetime.fromisoformat(prev["executed_at"])
+                    prev_ts_str = prev["executed_at"]
+                    if isinstance(prev_ts_str, str):
+                        if prev_ts_str.endswith("Z"):
+                            prev_ts_str = prev_ts_str[:-1] + "+00:00"
+                        prev_ts = datetime.fromisoformat(prev_ts_str)
+                        if prev_ts.tzinfo is None:
+                            prev_ts = prev_ts.replace(tzinfo=timezone.utc)
+                    else:
+                        prev_ts = prev_ts_str
                     dt_sec = (executed_at - prev_ts).total_seconds()
                     in_rate, _ = _calculate_rate(in_octets, prev["in_octets"], dt_sec, iface_speed)
                     out_rate, _ = _calculate_rate(out_octets, prev["out_octets"], dt_sec, iface_speed)
