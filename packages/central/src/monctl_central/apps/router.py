@@ -171,10 +171,26 @@ async def list_apps(
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
-    """List all apps."""
-    stmt = select(App)
+    """List all apps with connector bindings."""
+    from sqlalchemy.orm import selectinload
+    from monctl_central.storage.models import AppConnectorBinding
+
+    stmt = select(App).options(selectinload(App.connector_bindings))
     result = await db.execute(stmt)
     apps = result.scalars().all()
+
+    # Batch-fetch connector names
+    all_connector_ids: set[uuid.UUID] = set()
+    for a in apps:
+        for b in a.connector_bindings:
+            all_connector_ids.add(b.connector_id)
+    connector_names: dict[uuid.UUID, str] = {}
+    if all_connector_ids:
+        cn_rows = (await db.execute(
+            select(Connector.id, Connector.name).where(Connector.id.in_(all_connector_ids))
+        )).all()
+        connector_names = {r.id: r.name for r in cn_rows}
+
     return {
         "status": "success",
         "data": [
@@ -184,6 +200,14 @@ async def list_apps(
                 "description": a.description,
                 "app_type": a.app_type,
                 "target_table": a.target_table,
+                "connector_bindings": [
+                    {
+                        "alias": b.alias,
+                        "connector_id": str(b.connector_id),
+                        "connector_name": connector_names.get(b.connector_id, ""),
+                    }
+                    for b in a.connector_bindings
+                ],
             }
             for a in apps
         ],

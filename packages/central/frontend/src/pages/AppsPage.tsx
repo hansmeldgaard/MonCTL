@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { AppWindow, Loader2, Plus, Trash2 } from "lucide-react";
+import { AppWindow, Loader2, Plug, Plus, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
@@ -118,6 +118,7 @@ export function AppsPage() {
                   <TableHead>Name</TableHead>
                   <TableHead>Type</TableHead>
                   <TableHead>Target Table</TableHead>
+                  <TableHead>Connectors</TableHead>
                   <TableHead>Description</TableHead>
                   <TableHead className="w-12"></TableHead>
                 </TableRow>
@@ -142,6 +143,20 @@ export function AppsPage() {
                       <Badge variant="default" className="font-mono text-xs">
                         {app.target_table}
                       </Badge>
+                    </TableCell>
+                    <TableCell>
+                      {app.connector_bindings && app.connector_bindings.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {app.connector_bindings.map((cb) => (
+                            <Badge key={cb.alias} variant="info" className="text-xs gap-1">
+                              <Plug className="h-2.5 w-2.5" />
+                              {cb.connector_name || cb.alias}
+                            </Badge>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-zinc-600 text-xs">{"\u2014"}</span>
+                      )}
                     </TableCell>
                     <TableCell className="text-zinc-400 text-sm max-w-[400px] truncate">
                       {app.description ?? <span className="text-zinc-600 italic">—</span>}

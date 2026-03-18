@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from "react";
 import { useParams, Link } from "react-router-dom";
-import { ArrowLeft, AppWindow, Bell, Code2, Layout, Loader2, Pencil, Plus, RefreshCw, Star, Trash2 } from "lucide-react";
+import { ArrowLeft, AppWindow, Bell, Code2, Layout, Loader2, Pencil, Plug, Plus, RefreshCw, Star, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
@@ -309,6 +309,41 @@ export function AppDetailPage() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Required Connectors */}
+          {app.connector_bindings && app.connector_bindings.length > 0 && (
+            <Card className="mt-4">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Plug className="h-4 w-4" /> Required Connectors
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {app.connector_bindings.map((cb) => (
+                    <div key={cb.alias} className="flex items-center justify-between rounded-md bg-zinc-800/50 px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <Badge variant="info" className="text-xs gap-1">
+                          <Plug className="h-2.5 w-2.5" />
+                          {cb.connector_name || cb.alias}
+                        </Badge>
+                        <code className="text-xs text-zinc-400 bg-zinc-900 px-1.5 py-0.5 rounded">
+                          alias: {cb.alias}
+                        </code>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {cb.use_latest ? (
+                          <Badge variant="success" className="text-xs">latest</Badge>
+                        ) : (
+                          <Badge variant="default" className="text-xs">pinned</Badge>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
 
         <TabsContent value="versions">

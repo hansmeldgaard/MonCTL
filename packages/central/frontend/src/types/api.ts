@@ -262,6 +262,7 @@ export interface AppSummary {
   description: string | null;
   app_type: string;
   target_table: string;
+  connector_bindings?: { alias: string; connector_id: string; connector_name: string }[];
 }
 
 export interface AppVersion {
