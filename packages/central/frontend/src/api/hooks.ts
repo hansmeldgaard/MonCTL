@@ -56,6 +56,8 @@ import type {
   PackDetail,
   PackImportPreview,
   PackImportResult,
+  PerformanceAppSummary,
+  PerformanceRecord,
   AvailableEntities,
 } from "@/types/api.ts";
 
@@ -387,6 +389,44 @@ export function useDeleteThresholdOverride() {
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["device-thresholds"] });
     },
+  });
+}
+
+// ── Performance Data ─────────────────────────────────────
+
+export function usePerformanceSummary(deviceId: string | undefined) {
+  return useQuery({
+    queryKey: ["performance-summary", deviceId],
+    queryFn: () => apiGet<PerformanceAppSummary[]>(`/results/performance/${deviceId}/summary`),
+    select: (res) => res.data,
+    enabled: !!deviceId,
+    refetchInterval: 60_000,
+  });
+}
+
+export function usePerformanceHistory(
+  deviceId: string | undefined,
+  fromTs: string | null,
+  toTs: string | null = null,
+  appId: string | null = null,
+  componentType: string | null = null,
+  components: string[] | null = null,
+  limit = 5000,
+) {
+  return useQuery({
+    queryKey: ["performance-history", deviceId, fromTs, toTs, appId, componentType, components, limit],
+    queryFn: () => {
+      const params = new URLSearchParams({ limit: String(limit) });
+      if (fromTs) params.set("from_ts", fromTs);
+      if (toTs) params.set("to_ts", toTs);
+      if (appId) params.set("app_id", appId);
+      if (componentType) params.set("component_type", componentType);
+      if (components?.length) params.set("component", components.join(","));
+      return apiGet<PerformanceRecord[]>(`/results/performance/${deviceId}?${params}`);
+    },
+    select: (res) => res.data,
+    enabled: !!deviceId && !!fromTs,
+    refetchInterval: POLL_DETAIL,
   });
 }
 

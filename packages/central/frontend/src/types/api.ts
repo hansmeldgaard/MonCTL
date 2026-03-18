@@ -410,6 +410,35 @@ export interface DeviceThresholdRow {
   instance_state: string | null;
 }
 
+// ── Performance Data ─────────────────────────────────────
+
+export interface PerformanceRecord {
+  assignment_id: string;
+  app_id: string;
+  app_name: string;
+  device_id: string;
+  component: string;
+  component_type: string;
+  state: number;
+  metrics: Record<string, number>;
+  metric_names: string[];
+  metric_values: number[];
+  executed_at: string;
+  collector_name: string | null;
+}
+
+export interface PerformanceComponentType {
+  components: string[];
+  metric_names: string[];
+}
+
+export interface PerformanceAppSummary {
+  app_id: string;
+  app_name: string;
+  assignment_id: string;
+  component_types: Record<string, PerformanceComponentType>;
+}
+
 // ── Events ────────────────────────────────────────────────
 
 export interface MonitoringEvent {

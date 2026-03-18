@@ -73,6 +73,8 @@ import {
   useTenants,
   useUpdateDevice,
   useUpdateDeviceMonitoring,
+  usePerformanceSummary,
+  usePerformanceHistory,
   useDeviceThresholds,
   useAlertInstances,
   useUpdateAlertInstance,
@@ -83,6 +85,7 @@ import {
 import type { Device as DeviceType, DeviceAssignment, DeviceThresholdRow } from "@/types/api.ts";
 import { ConfigDataRenderer } from "@/components/ConfigDataRenderer.tsx";
 import { ApplyTemplateDialog } from "@/components/ApplyTemplateDialog.tsx";
+import { PerformanceChart } from "@/components/PerformanceChart.tsx";
 import { InterfaceTrafficChart } from "@/components/InterfaceTrafficChart.tsx";
 import { timeAgo, formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
@@ -1082,145 +1085,243 @@ function PerformanceTab({ deviceId }: { deviceId: string }) {
   const tz = useTimezone();
   const [timeRange, setTimeRange] = useState<TimeRangeValue>(DEFAULT_RANGE);
   const { fromTs, toTs } = useMemo(() => rangeToTimestamps(timeRange), [timeRange]);
-  const { data: history, isLoading } = useDeviceHistory(deviceId, fromTs, toTs, 1000);
-  const tableHistory = history ?? [];
-  const { sortBy, sortDir, toggle: onSort } = useSort("executed_at");
-  const [filterCheck, setFilterCheck] = useState("");
-  const [filterState, setFilterState] = useState("");
-  const [filterAvail, setFilterAvail] = useState("");
 
-  const checkNames = useMemo(() => [...new Set(tableHistory.map((r) => r.app_name).filter(Boolean))].sort(), [tableHistory]);
-  const stateNames = useMemo(() => [...new Set(tableHistory.map((r) => r.state_name).filter(Boolean))].sort(), [tableHistory]);
+  const { data: summary, isLoading: summaryLoading } = usePerformanceSummary(deviceId);
 
-  const filtered = useMemo(() => {
-    let data = tableHistory;
-    if (filterCheck) data = data.filter((r) => r.app_name === filterCheck);
-    if (filterState) data = data.filter((r) => r.state_name === filterState);
-    if (filterAvail === "up") data = data.filter((r) => r.reachable);
-    if (filterAvail === "down") data = data.filter((r) => !r.reachable);
+  const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
+  const [selectedComponentType, setSelectedComponentType] = useState<string | null>(null);
+  const [selectedMetric, setSelectedMetric] = useState<string | null>(null);
+  const [selectedComponents, setSelectedComponents] = useState<string[]>([]);
+  const [componentFilter, setComponentFilter] = useState("");
 
-    return [...data].sort((a, b) => {
-      let cmp = 0;
-      switch (sortBy) {
-        case "state": cmp = (a.state_name ?? "").localeCompare(b.state_name ?? ""); break;
-        case "check": cmp = (a.app_name ?? "").localeCompare(b.app_name ?? ""); break;
-        case "availability": cmp = (a.reachable ? 1 : 0) - (b.reachable ? 1 : 0); break;
-        case "latency": {
-          const la = a.rtt_ms ?? a.response_time_ms ?? 0;
-          const lb = b.rtt_ms ?? b.response_time_ms ?? 0;
-          cmp = la - lb;
-          break;
-        }
-        case "executed_at": cmp = a.executed_at.localeCompare(b.executed_at); break;
+  // Auto-select first app
+  useEffect(() => {
+    if (summary?.length && !selectedAppId) {
+      const first = summary[0];
+      setSelectedAppId(first.app_id);
+      const ctKeys = Object.keys(first.component_types);
+      if (ctKeys.length) {
+        setSelectedComponentType(ctKeys[0]);
+        const ct = first.component_types[ctKeys[0]];
+        if (ct.metric_names.length) setSelectedMetric(ct.metric_names[0]);
+        setSelectedComponents(ct.components.slice(0, 10));
       }
-      return sortDir === "asc" ? cmp : -cmp;
+    }
+  }, [summary, selectedAppId]);
+
+  const currentApp = summary?.find((a) => a.app_id === selectedAppId);
+  const currentCT = currentApp && selectedComponentType
+    ? currentApp.component_types[selectedComponentType] : null;
+  const availableComponents = currentCT?.components ?? [];
+  const availableMetrics = currentCT?.metric_names ?? [];
+
+  const { data: perfData, isLoading: dataLoading } = usePerformanceHistory(
+    deviceId, fromTs, toTs, selectedAppId, selectedComponentType,
+    selectedComponents.length ? selectedComponents : null, 5000,
+  );
+
+  const filteredComponents = useMemo(() => {
+    if (!componentFilter) return availableComponents;
+    const q = componentFilter.toLowerCase();
+    return availableComponents.filter((c) => c.toLowerCase().includes(q));
+  }, [availableComponents, componentFilter]);
+
+  const toggleComponent = (comp: string) => {
+    setSelectedComponents((prev) =>
+      prev.includes(comp) ? prev.filter((c) => c !== comp) : [...prev, comp]
+    );
+  };
+  const selectAll = () => {
+    setSelectedComponents((prev) => {
+      const s = new Set(prev);
+      filteredComponents.forEach((c) => s.add(c));
+      return [...s];
     });
-  }, [tableHistory, filterCheck, filterState, filterAvail, sortBy, sortDir]);
+  };
+  const selectNone = () => {
+    setSelectedComponents((prev) => prev.filter((c) => !filteredComponents.includes(c)));
+  };
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-medium text-zinc-400">Check History</h3>
-        <TimeRangePicker value={timeRange} onChange={setTimeRange} timezone={tz} />
+        <h3 className="text-sm font-medium text-zinc-300">Performance Metrics</h3>
+        <TimeRangePicker value={timeRange} onChange={setTimeRange} />
       </div>
 
-      {isLoading ? (
-        <div className="flex h-32 items-center justify-center">
-          <Loader2 className="h-6 w-6 animate-spin text-brand-500" />
+      {summaryLoading ? (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="h-5 w-5 animate-spin text-zinc-500" />
         </div>
-      ) : tableHistory.length === 0 ? (
+      ) : !summary?.length ? (
         <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12 text-zinc-600">
-            <BarChart2 className="h-8 w-8 text-zinc-700 mb-2" />
-            <p className="text-sm text-zinc-500">No results in this time range.</p>
-            <p className="text-xs text-zinc-600 mt-1">Try "All time" or a wider range.</p>
+          <CardContent>
+            <div className="flex flex-col items-center justify-center py-12 text-zinc-600">
+              <BarChart2 className="h-8 w-8 text-zinc-700 mb-2" />
+              <p className="text-sm text-zinc-500">No performance data collected for this device yet.</p>
+              <p className="text-xs text-zinc-700 mt-1">Assign a performance monitoring app to start collecting metrics.</p>
+            </div>
           </CardContent>
         </Card>
       ) : (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">
-              Check History
-              <span className="ml-2 text-zinc-500 font-normal text-xs">
-                ({filtered.length}{filtered.length !== tableHistory.length ? ` of ${tableHistory.length}` : ""} results)
-              </span>
-            </CardTitle>
-            <div className="flex items-center gap-2 pt-2">
-              <Select value={filterCheck} onChange={(e) => setFilterCheck(e.target.value)} className="w-40 text-xs">
-                <option value="">All Checks</option>
-                {checkNames.map((n) => <option key={n} value={n!}>{n}</option>)}
-              </Select>
-              <Select value={filterState} onChange={(e) => setFilterState(e.target.value)} className="w-36 text-xs">
-                <option value="">All States</option>
-                {stateNames.map((s) => <option key={s} value={s!}>{s}</option>)}
-              </Select>
-              <Select value={filterAvail} onChange={(e) => setFilterAvail(e.target.value)} className="w-36 text-xs">
-                <option value="">All</option>
-                <option value="up">UP</option>
-                <option value="down">DOWN</option>
-              </Select>
-              {(filterCheck || filterState || filterAvail) && (
-                <Button variant="ghost" size="sm" onClick={() => { setFilterCheck(""); setFilterState(""); setFilterAvail(""); }}>
-                  <X className="h-3 w-3" /> Clear
-                </Button>
-              )}
-            </div>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <SortableHead label="State" field="state" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-                  <SortableHead label="Check" field="check" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-                  <SortableHead label="Availability" field="availability" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-                  <SortableHead label="Latency" field="latency" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-                  <TableHead>Output</TableHead>
-                  <SortableHead label="Executed" field="executed_at" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.slice(0, 500).map((r, idx) => (
-                  <TableRow key={`${r.assignment_id}-${idx}`}>
-                    <TableCell>
-                      <StatusBadge state={r.state_name} />
-                    </TableCell>
-                    <TableCell className="text-zinc-300 text-sm">{r.app_name ?? "—"}</TableCell>
-                    <TableCell>
-                      <span
-                        className={`inline-flex items-center gap-1.5 text-xs font-medium ${
-                          r.reachable ? "text-emerald-400" : "text-red-400"
-                        }`}
-                      >
-                        <span
-                          className={`inline-block h-2 w-2 rounded-full ${
-                            r.reachable ? "bg-emerald-500" : "bg-red-500"
-                          }`}
-                        />
-                        {r.reachable ? "UP" : "DOWN"}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-zinc-400 text-sm font-mono">
-                      {r.rtt_ms != null
-                        ? `${r.rtt_ms}ms`
-                        : r.response_time_ms != null
-                          ? `${r.response_time_ms}ms`
-                          : "—"}
-                    </TableCell>
-                    <TableCell
-                      className="max-w-[220px] truncate text-zinc-500 text-sm"
-                      title={r.output}
-                    >
-                      {r.output || "—"}
-                    </TableCell>
-                    <TableCell className="text-zinc-500 text-sm">
-                      {formatDate(r.executed_at, tz)}
-                    </TableCell>
-                  </TableRow>
+        <div className="flex gap-4">
+          {/* Sidebar */}
+          <div className="w-64 shrink-0 space-y-3">
+            <Card>
+              <CardHeader className="py-2 px-3">
+                <CardTitle className="text-zinc-400 text-xs uppercase tracking-wide">App</CardTitle>
+              </CardHeader>
+              <CardContent className="px-3 pb-3 space-y-1">
+                {summary.map((app) => (
+                  <button
+                    key={app.app_id}
+                    onClick={() => {
+                      setSelectedAppId(app.app_id);
+                      const ctKeys = Object.keys(app.component_types);
+                      if (ctKeys.length) {
+                        setSelectedComponentType(ctKeys[0]);
+                        const ct = app.component_types[ctKeys[0]];
+                        setSelectedMetric(ct.metric_names[0] ?? null);
+                        setSelectedComponents(ct.components.slice(0, 10));
+                        setComponentFilter("");
+                      }
+                    }}
+                    className={`w-full text-left px-2 py-1.5 rounded text-sm transition-colors cursor-pointer ${
+                      selectedAppId === app.app_id
+                        ? "bg-brand-500/20 text-brand-400"
+                        : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
+                    }`}
+                  >
+                    {app.app_name}
+                  </button>
                 ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
+
+            {currentApp && Object.keys(currentApp.component_types).length > 1 && (
+              <Card>
+                <CardHeader className="py-2 px-3">
+                  <CardTitle className="text-zinc-400 text-xs uppercase tracking-wide">Type</CardTitle>
+                </CardHeader>
+                <CardContent className="px-3 pb-3 space-y-1">
+                  {Object.keys(currentApp.component_types).map((ct) => (
+                    <button
+                      key={ct}
+                      onClick={() => {
+                        setSelectedComponentType(ct);
+                        const entry = currentApp.component_types[ct];
+                        setSelectedMetric(entry.metric_names[0] ?? null);
+                        setSelectedComponents(entry.components.slice(0, 10));
+                        setComponentFilter("");
+                      }}
+                      className={`w-full text-left px-2 py-1.5 rounded text-sm transition-colors cursor-pointer ${
+                        selectedComponentType === ct
+                          ? "bg-zinc-700 text-zinc-200"
+                          : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
+                      }`}
+                    >
+                      {ct}
+                    </button>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
+
+            {availableMetrics.length > 1 && (
+              <Card>
+                <CardHeader className="py-2 px-3">
+                  <CardTitle className="text-zinc-400 text-xs uppercase tracking-wide">Metric</CardTitle>
+                </CardHeader>
+                <CardContent className="px-3 pb-3 space-y-1">
+                  {availableMetrics.map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setSelectedMetric(m)}
+                      className={`w-full text-left px-2 py-1.5 rounded text-sm font-mono transition-colors cursor-pointer ${
+                        selectedMetric === m
+                          ? "bg-zinc-700 text-zinc-200"
+                          : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
+                      }`}
+                    >
+                      {m}
+                    </button>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
+
+            {availableComponents.length > 0 && (
+              <Card>
+                <CardHeader className="py-2 px-3">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-zinc-400 text-xs uppercase tracking-wide">
+                      Components ({selectedComponents.length}/{availableComponents.length})
+                    </CardTitle>
+                    <div className="flex gap-1">
+                      <button onClick={selectAll} className="text-[10px] text-zinc-500 hover:text-zinc-300 px-1 cursor-pointer">All</button>
+                      <button onClick={selectNone} className="text-[10px] text-zinc-500 hover:text-zinc-300 px-1 cursor-pointer">None</button>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="px-3 pb-3">
+                  {availableComponents.length > 15 && (
+                    <div className="mb-2">
+                      <Input
+                        placeholder="Filter components..."
+                        value={componentFilter}
+                        onChange={(e) => setComponentFilter(e.target.value)}
+                        className="h-7 text-xs bg-zinc-800 border-zinc-700"
+                      />
+                    </div>
+                  )}
+                  <div className="max-h-64 overflow-y-auto space-y-0.5">
+                    {filteredComponents.length === 0 ? (
+                      <p className="text-xs text-zinc-600 px-1 py-2">No match</p>
+                    ) : filteredComponents.map((comp) => (
+                      <label key={comp} className="flex items-center gap-2 px-1 py-0.5 rounded hover:bg-zinc-800 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={selectedComponents.includes(comp)}
+                          onChange={() => toggleComponent(comp)}
+                          className="accent-brand-500 h-3.5 w-3.5"
+                        />
+                        <span className="text-xs text-zinc-400 font-mono truncate">{comp}</span>
+                      </label>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+
+          {/* Chart area */}
+          <div className="flex-1 min-w-0">
+            <Card>
+              <CardContent className="pt-4">
+                {dataLoading ? (
+                  <div className="flex items-center justify-center h-72">
+                    <Loader2 className="h-5 w-5 animate-spin text-zinc-500" />
+                  </div>
+                ) : selectedMetric && perfData ? (
+                  <PerformanceChart
+                    data={perfData}
+                    selectedComponents={selectedComponents}
+                    metricName={selectedMetric}
+                    timezone={tz}
+                    unit={selectedMetric.includes("pct") ? "%" :
+                          selectedMetric.includes("_ms") ? "ms" :
+                          selectedMetric.includes("_bytes") ? "B" : ""}
+                    title={`${selectedComponentType ?? ""} — ${selectedMetric ?? ""}`}
+                  />
+                ) : (
+                  <div className="flex items-center justify-center h-72 text-zinc-600 text-sm">
+                    Select a metric and components to visualize.
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </div>
       )}
     </div>
   );

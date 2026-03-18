@@ -437,3 +437,148 @@ async def device_status(
             "checks": checks,
         },
     }
+
+
+# ── Performance data endpoints ────────────────────────────────────────────────
+
+
+def _format_performance_row(r: dict) -> dict:
+    """Format a ClickHouse performance table row."""
+    metric_names = r.get("metric_names", [])
+    metric_values = r.get("metric_values", [])
+    metrics = dict(zip(metric_names, metric_values)) if metric_names else {}
+    return {
+        "assignment_id": str(r.get("assignment_id", "")),
+        "app_id": str(r.get("app_id", "")),
+        "app_name": r.get("app_name", ""),
+        "device_id": str(r.get("device_id", "")),
+        "component": r.get("component", ""),
+        "component_type": r.get("component_type", ""),
+        "state": r.get("state", 0),
+        "metrics": metrics,
+        "metric_names": list(metric_names),
+        "metric_values": list(metric_values),
+        "executed_at": _ensure_utc_iso(r.get("executed_at")) or "",
+        "collector_name": r.get("collector_name", "") or None,
+    }
+
+
+@router.get("/performance/{device_id}/summary")
+async def device_performance_summary(
+    device_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Return available apps, component_types, and components for a device."""
+    device = await db.get(Device, uuid.UUID(device_id))
+    if device is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+    if not check_tenant_access(auth, device.tenant_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    ch = get_clickhouse()
+
+    sql = """
+        SELECT DISTINCT
+            app_name, app_id, assignment_id,
+            component_type, component, metric_names
+        FROM performance_latest FINAL
+        WHERE device_id = {device_id:UUID}
+        ORDER BY app_name, component_type, component
+    """
+    params = {"device_id": device_id}
+
+    try:
+        client = ch._get_client()
+        result = client.query(sql, parameters=params)
+        rows = list(result.named_results())
+    except Exception as exc:
+        if ch._is_table_missing_error(exc):
+            rows = []
+        else:
+            raise
+
+    apps: dict = {}
+    for r in rows:
+        app_key = str(r.get("app_id", ""))
+        if app_key not in apps:
+            apps[app_key] = {
+                "app_id": app_key,
+                "app_name": r.get("app_name", ""),
+                "assignment_id": str(r.get("assignment_id", "")),
+                "component_types": {},
+            }
+        ct = r.get("component_type", "")
+        if ct not in apps[app_key]["component_types"]:
+            apps[app_key]["component_types"][ct] = {
+                "components": [],
+                "metric_names": [],
+            }
+        component_name = r.get("component", "")
+        entry = apps[app_key]["component_types"][ct]
+        if component_name and component_name not in entry["components"]:
+            entry["components"].append(component_name)
+        for m in (r.get("metric_names", []) or []):
+            if m not in entry["metric_names"]:
+                entry["metric_names"].append(m)
+
+    return {"status": "success", "data": list(apps.values())}
+
+
+@router.get("/performance/{device_id}")
+async def device_performance(
+    device_id: str,
+    from_ts: Optional[str] = Query(default=None),
+    to_ts: Optional[str] = Query(default=None),
+    component_type: Optional[str] = Query(default=None),
+    component: Optional[str] = Query(default=None),
+    app_id: Optional[str] = Query(default=None),
+    limit: int = Query(default=5000, le=20000),
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Return performance metrics history for a device."""
+    device = await db.get(Device, uuid.UUID(device_id))
+    if device is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+    if not check_tenant_access(auth, device.tenant_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    ch = get_clickhouse()
+
+    sql = "SELECT * FROM performance WHERE device_id = {device_id:UUID}"
+    params: dict = {"device_id": device_id}
+
+    if from_ts:
+        sql += " AND executed_at >= {from_ts:DateTime64}"
+        params["from_ts"] = from_ts.replace("Z", "+00:00")
+    if to_ts:
+        sql += " AND executed_at <= {to_ts:DateTime64}"
+        params["to_ts"] = to_ts.replace("Z", "+00:00")
+    if component_type:
+        sql += " AND component_type = {component_type:String}"
+        params["component_type"] = component_type
+    if component:
+        components = [c.strip() for c in component.split(",")]
+        sql += " AND component IN ({components:Array(String)})"
+        params["components"] = components
+    if app_id:
+        sql += " AND app_id = {app_id:UUID}"
+        params["app_id"] = app_id
+
+    sql += " ORDER BY component_type, component, executed_at DESC"
+    sql += " LIMIT {limit:UInt32}"
+    params["limit"] = limit
+
+    try:
+        client = ch._get_client()
+        result = client.query(sql, parameters=params)
+        rows = list(result.named_results())
+    except Exception as exc:
+        if ch._is_table_missing_error(exc):
+            rows = []
+        else:
+            raise
+
+    data = [_format_performance_row(r) for r in rows]
+    return {"status": "success", "data": data, "meta": {"limit": limit, "count": len(data)}}
