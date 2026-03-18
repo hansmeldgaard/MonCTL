@@ -117,6 +117,9 @@ class App(Base):
     target_table: Mapped[str] = mapped_column(
         String(50), nullable=False, server_default="availability_latency"
     )
+    pack_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("packs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     versions: Mapped[list["AppVersion"]] = relationship(back_populates="app", cascade="all, delete-orphan")
 
@@ -154,6 +157,9 @@ class DeviceType(Base):
     name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     category: Mapped[str] = mapped_column(String(32), nullable=False, default="other")
+    pack_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("packs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default="now()"
     )
@@ -243,6 +249,9 @@ class CredentialTemplate(Base):
     name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     fields: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="[]")
+    pack_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("packs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default="now()"
     )
@@ -369,6 +378,9 @@ class AppAlertDefinition(Base):
     message_template: Mapped[str | None] = mapped_column(Text)
     notification_channels: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
     pack_origin: Mapped[str | None] = mapped_column(String(255))
+    pack_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("packs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
@@ -577,6 +589,9 @@ class SnmpOid(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     oid: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
+    pack_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("packs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default="now()"
     )
@@ -638,6 +653,9 @@ class LabelKey(Base):
     color: Mapped[str | None] = mapped_column(String(7))
     show_description: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     predefined_values: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    pack_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("packs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
@@ -650,6 +668,9 @@ class Template(Base):
     name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     config: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    pack_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("packs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
 
@@ -732,6 +753,9 @@ class Connector(Base):
     connector_type: Mapped[str] = mapped_column(String(32), nullable=False)
     requirements: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     is_builtin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    pack_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("packs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default="now()"
     )
@@ -819,6 +843,49 @@ class AssignmentConnectorBinding(Base):
     )
 
     assignment: Mapped["AppAssignment"] = relationship(back_populates="connector_bindings")
+
+
+class Pack(Base):
+    """A monitoring pack — a bundle of configuration entities."""
+    __tablename__ = "packs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    pack_uid: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    author: Mapped[str | None] = mapped_column(String(255))
+    current_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    installed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+    versions: Mapped[list["PackVersion"]] = relationship(
+        back_populates="pack", cascade="all, delete-orphan"
+    )
+
+
+class PackVersion(Base):
+    """A specific version of an installed pack."""
+    __tablename__ = "pack_versions"
+    __table_args__ = (
+        UniqueConstraint("pack_id", "version", name="uq_pack_version"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    pack_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("packs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    version: Mapped[str] = mapped_column(String(32), nullable=False)
+    manifest: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    changelog: Mapped[str | None] = mapped_column(Text)
+    imported_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+    pack: Mapped["Pack"] = relationship(back_populates="versions")
 
 
 class AppCache(Base):

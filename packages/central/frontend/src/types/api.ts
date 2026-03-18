@@ -838,3 +838,53 @@ export interface ConnectorBindingInfo {
   use_latest: boolean;
   settings: Record<string, unknown>;
 }
+
+// ── Packs ────────────────────────────────────────────────
+
+export interface Pack {
+  id: string;
+  pack_uid: string;
+  name: string;
+  description: string | null;
+  author: string | null;
+  current_version: string;
+  installed_at: string;
+  updated_at: string;
+  entity_counts: Record<string, number>;
+}
+
+export interface PackVersion {
+  id: string;
+  version: string;
+  manifest: Record<string, string[]>;
+  changelog: string | null;
+  imported_at: string;
+}
+
+export interface PackDetail extends Pack {
+  versions: PackVersion[];
+}
+
+export interface PackImportPreviewEntity {
+  section: string;
+  name: string;
+  status: "new" | "conflict" | "unchanged";
+  existing_pack: string | null;
+}
+
+export interface PackImportPreview {
+  pack_uid: string;
+  name: string;
+  version: string;
+  is_upgrade: boolean;
+  current_version?: string;
+  entities: PackImportPreviewEntity[];
+}
+
+export interface PackImportResult {
+  pack_id: string;
+  version: string;
+  created: number;
+  updated: number;
+  skipped: number;
+}

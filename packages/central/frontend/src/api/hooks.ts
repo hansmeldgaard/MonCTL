@@ -52,6 +52,10 @@ import type {
   ConnectorDetail,
   MonitoringEvent,
   EventPolicy,
+  Pack,
+  PackDetail,
+  PackImportPreview,
+  PackImportResult,
 } from "@/types/api.ts";
 
 // ── Polling intervals ────────────────────────────────────
@@ -1932,6 +1936,88 @@ export function useDeleteEventPolicy() {
     mutationFn: (id: string) => apiDelete(`/events/policies/${id}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["event-policies"] });
+    },
+  });
+}
+
+// ── Packs ─────────────────────────────────────────────────
+
+export function usePacks() {
+  return useQuery({
+    queryKey: ["packs"],
+    queryFn: () => apiGet<Pack[]>("/packs"),
+    select: (res) => res.data,
+    refetchInterval: POLL_LIST,
+  });
+}
+
+export function usePackDetail(id: string | undefined) {
+  return useQuery({
+    queryKey: ["packs", id],
+    queryFn: () => apiGet<PackDetail>(`/packs/${id}`),
+    select: (res) => res.data,
+    enabled: !!id,
+    refetchInterval: POLL_DETAIL,
+  });
+}
+
+export function useCreatePack() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: {
+      pack_uid: string;
+      name: string;
+      version: string;
+      description?: string;
+      author?: string;
+      entity_ids: Record<string, string[]>;
+    }) => apiPost<{ id: string; pack_uid: string }>("/packs", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["packs"] });
+    },
+  });
+}
+
+export function useExportPack() {
+  return useMutation({
+    mutationFn: (packId: string) =>
+      apiGet<Record<string, unknown>>(`/packs/${packId}/export`),
+  });
+}
+
+export function usePreviewImport() {
+  return useMutation({
+    mutationFn: (packData: Record<string, unknown>) =>
+      apiPost<PackImportPreview>("/packs/preview", { pack_data: packData }),
+  });
+}
+
+export function useImportPack() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: {
+      pack_data: Record<string, unknown>;
+      resolutions: Record<string, string>;
+    }) => apiPost<PackImportResult>("/packs/import", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["packs"] });
+      qc.invalidateQueries({ queryKey: ["apps"] });
+      qc.invalidateQueries({ queryKey: ["connectors"] });
+      qc.invalidateQueries({ queryKey: ["snmp-oids"] });
+      qc.invalidateQueries({ queryKey: ["templates"] });
+      qc.invalidateQueries({ queryKey: ["device-types"] });
+      qc.invalidateQueries({ queryKey: ["label-keys"] });
+      qc.invalidateQueries({ queryKey: ["credential-templates"] });
+    },
+  });
+}
+
+export function useDeletePack() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/packs/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["packs"] });
     },
   });
 }
