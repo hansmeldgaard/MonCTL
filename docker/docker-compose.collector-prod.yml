@@ -76,6 +76,22 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # ── Docker stats sidecar ────────────────────────────────────────────────────
+  docker-stats:
+    image: monctl-docker-stats:latest
+    container_name: monctl-docker-stats
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /:/host_root:ro
+    environment:
+      MONCTL_HOST_LABEL: ${NODE_ID:-unknown}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9100/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
 volumes:
   cache_data:
   app_data:

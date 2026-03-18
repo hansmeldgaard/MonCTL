@@ -4,6 +4,9 @@ services:
     container_name: monctl-docker-stats
     ports:
       - "9100:9100"
+    networks:
+      - default
+      - collector_default
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /:/host_root:ro
@@ -20,3 +23,7 @@ services:
         limits:
           memory: 128M
           cpus: "0.25"
+
+networks:
+  collector_default:
+    external: true

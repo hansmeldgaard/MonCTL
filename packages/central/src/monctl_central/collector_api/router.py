@@ -898,6 +898,53 @@ async def submit_results(
         device_id_resolved = r.device_id or enrichment.get("device_id", "00000000-0000-0000-0000-000000000000")
         started_at_dt = datetime.fromtimestamp(r.started_at, tz=timezone.utc) if r.started_at else executed_at
 
+        # Performance-table apps: metrics may have component/component_type grouping
+        # Each unique (component, component_type) becomes a separate ClickHouse row
+        if target_table == "performance" and r.metrics:
+            # Group metrics by (component, component_type)
+            component_groups: dict[tuple[str, str], tuple[list[str], list[float]]] = {}
+            for m in r.metrics:
+                if not isinstance(m, dict):
+                    continue
+                comp = m.get("component", "")
+                comp_type = m.get("component_type", "")
+                key = (comp, comp_type)
+                if key not in component_groups:
+                    component_groups[key] = ([], [])
+                for mn, mv in zip(m.get("metric_names", []), m.get("metric_values", [])):
+                    component_groups[key][0].append(str(mn))
+                    component_groups[key][1].append(float(mv))
+                # Also support flat name/value metrics (no metric_names array)
+                if "name" in m and "value" in m and "metric_names" not in m:
+                    component_groups[key][0].append(str(m["name"]))
+                    component_groups[key][1].append(float(m["value"]))
+
+            if component_groups:
+                for (comp, comp_type), (mnames, mvalues) in component_groups.items():
+                    ch_rows.append({
+                        "_target_table": "performance",
+                        "assignment_id": str(assignment_id),
+                        "collector_id": collector_uuid,
+                        "app_id": enrichment.get("app_id", str(assignment_id)),
+                        "device_id": device_id_resolved,
+                        "component": comp,
+                        "component_type": comp_type,
+                        "state": state,
+                        "output": "",
+                        "error_message": r.error_message or "",
+                        "metric_names": mnames,
+                        "metric_values": mvalues,
+                        "executed_at": executed_at,
+                        "execution_time": (r.execution_time_ms / 1000.0) if r.execution_time_ms else 0.0,
+                        "started_at": started_at_dt,
+                        "collector_name": request.collector_node,
+                        "device_name": enrichment.get("device_name", ""),
+                        "app_name": enrichment.get("app_name", ""),
+                        "tenant_id": enrichment.get("tenant_id", "00000000-0000-0000-0000-000000000000"),
+                        "tenant_name": enrichment.get("tenant_name", ""),
+                    })
+                continue  # Skip the default row builder below
+
         # Interface-table apps: unpack interface_rows into one CH row per interface
         # If interface_rows is empty/None (e.g. SNMP timeout), fall through to
         # availability_latency so the error/status is still recorded.
@@ -987,7 +1034,7 @@ async def submit_results(
                     "tenant_name": enrichment.get("tenant_name", ""),
                 })
         else:
-            ch_rows.append({
+            row = {
                 "_target_table": target_table,
                 "assignment_id": str(assignment_id),
                 "collector_id": collector_uuid,
@@ -1011,7 +1058,12 @@ async def submit_results(
                 "role": enrichment.get("role", ""),
                 "tenant_id": enrichment.get("tenant_id", "00000000-0000-0000-0000-000000000000"),
                 "tenant_name": enrichment.get("tenant_name", ""),
-            })
+            }
+            # Performance table requires component/component_type
+            if target_table == "performance":
+                row["component"] = ""
+                row["component_type"] = ""
+            ch_rows.append(row)
 
     # Route results to the correct ClickHouse table based on target_table
     if ch_rows:
