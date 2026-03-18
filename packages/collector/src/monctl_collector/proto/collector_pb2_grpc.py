@@ -3,7 +3,7 @@
 import grpc
 import warnings
 
-from monctl_collector.proto import collector_pb2 as collector__pb2
+import collector_pb2 as collector__pb2
 
 GRPC_GENERATED_VERSION = '1.78.0'
 GRPC_VERSION = grpc.__version__
@@ -65,6 +65,21 @@ class CollectorPeerStub(object):
                 request_serializer=collector__pb2.AppCodeRequest.SerializeToString,
                 response_deserializer=collector__pb2.AppCodeResponse.FromString,
                 _registered_method=True)
+        self.AppCacheGet = channel.unary_unary(
+                '/collector.CollectorPeer/AppCacheGet',
+                request_serializer=collector__pb2.AppCacheGetRequest.SerializeToString,
+                response_deserializer=collector__pb2.AppCacheGetResponse.FromString,
+                _registered_method=True)
+        self.AppCacheSet = channel.unary_unary(
+                '/collector.CollectorPeer/AppCacheSet',
+                request_serializer=collector__pb2.AppCacheSetRequest.SerializeToString,
+                response_deserializer=collector__pb2.AppCacheSetResponse.FromString,
+                _registered_method=True)
+        self.AppCacheDelete = channel.unary_unary(
+                '/collector.CollectorPeer/AppCacheDelete',
+                request_serializer=collector__pb2.AppCacheDeleteRequest.SerializeToString,
+                response_deserializer=collector__pb2.AppCacheDeleteResponse.FromString,
+                _registered_method=True)
 
 
 class CollectorPeerServicer(object):
@@ -111,6 +126,25 @@ class CollectorPeerServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def AppCacheGet(self, request, context):
+        """App cache (poll-worker → local cache-node)
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def AppCacheSet(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def AppCacheDelete(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_CollectorPeerServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -143,6 +177,21 @@ def add_CollectorPeerServicer_to_server(servicer, server):
                     servicer.GetAppCode,
                     request_deserializer=collector__pb2.AppCodeRequest.FromString,
                     response_serializer=collector__pb2.AppCodeResponse.SerializeToString,
+            ),
+            'AppCacheGet': grpc.unary_unary_rpc_method_handler(
+                    servicer.AppCacheGet,
+                    request_deserializer=collector__pb2.AppCacheGetRequest.FromString,
+                    response_serializer=collector__pb2.AppCacheGetResponse.SerializeToString,
+            ),
+            'AppCacheSet': grpc.unary_unary_rpc_method_handler(
+                    servicer.AppCacheSet,
+                    request_deserializer=collector__pb2.AppCacheSetRequest.FromString,
+                    response_serializer=collector__pb2.AppCacheSetResponse.SerializeToString,
+            ),
+            'AppCacheDelete': grpc.unary_unary_rpc_method_handler(
+                    servicer.AppCacheDelete,
+                    request_deserializer=collector__pb2.AppCacheDeleteRequest.FromString,
+                    response_serializer=collector__pb2.AppCacheDeleteResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -308,6 +357,87 @@ class CollectorPeer(object):
             '/collector.CollectorPeer/GetAppCode',
             collector__pb2.AppCodeRequest.SerializeToString,
             collector__pb2.AppCodeResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def AppCacheGet(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/collector.CollectorPeer/AppCacheGet',
+            collector__pb2.AppCacheGetRequest.SerializeToString,
+            collector__pb2.AppCacheGetResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def AppCacheSet(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/collector.CollectorPeer/AppCacheSet',
+            collector__pb2.AppCacheSetRequest.SerializeToString,
+            collector__pb2.AppCacheSetResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def AppCacheDelete(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/collector.CollectorPeer/AppCacheDelete',
+            collector__pb2.AppCacheDeleteRequest.SerializeToString,
+            collector__pb2.AppCacheDeleteResponse.FromString,
             options,
             channel_credentials,
             insecure,

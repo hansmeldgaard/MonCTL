@@ -10,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -818,3 +819,45 @@ class AssignmentConnectorBinding(Base):
     )
 
     assignment: Mapped["AppAssignment"] = relationship(back_populates="connector_bindings")
+
+
+class AppCache(Base):
+    """Shared cache for app data replicated across collector groups.
+
+    Scoped by collector_group_id + app_id + device_id + cache_key.
+    Collectors push/pull entries via the collector API.
+    """
+    __tablename__ = "app_cache"
+    __table_args__ = (
+        UniqueConstraint(
+            "collector_group_id", "app_id", "device_id", "cache_key",
+            name="uq_app_cache_entry",
+        ),
+        Index("ix_app_cache_group_updated", "collector_group_id", "updated_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    collector_group_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("collector_groups.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    app_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("apps.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    device_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("devices.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    cache_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    cache_value: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    ttl_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default="now()"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default="now()"
+    )

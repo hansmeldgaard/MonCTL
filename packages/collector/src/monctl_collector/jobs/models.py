@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from monctl_collector.cache.app_cache_accessor import AppCacheAccessor
 
 
 @dataclass
@@ -173,3 +177,4 @@ class PollContext:
     device_host: str          # resolved device address
     parameters: dict          # resolved parameters (credentials substituted)
     connectors: dict = field(default_factory=dict)  # alias → connector instance
+    cache: AppCacheAccessor | None = None  # shared cache accessor

@@ -33,6 +33,7 @@ from monctl_collector.jobs.models import (
     PollResult,
     ScheduledJob,
 )
+from monctl_collector.cache.app_cache_accessor import AppCacheAccessor
 from monctl_collector.peer.client import PeerChannelPool
 
 logger = structlog.get_logger()
@@ -272,6 +273,14 @@ class PollEngine:
                     await connector.connect(job.device_host or "")
                     connectors[binding.alias] = connector
 
+                # Build app cache accessor via gRPC to cache-node
+                cache_client = await self._pool.get(self._cache_address)
+                cache_accessor = AppCacheAccessor(
+                    peer_client=cache_client,
+                    app_id=job.app_id,
+                    device_id=job.device_id or "",
+                )
+
                 ctx = PollContext(
                     job=job,
                     credential=cred_data,
@@ -279,6 +288,7 @@ class PollEngine:
                     device_host=job.device_host or "",
                     parameters=job.parameters,
                     connectors=connectors,
+                    cache=cache_accessor,
                 )
 
                 # Instantiate (or reuse) poller

@@ -1,6 +1,6 @@
 """Local SQLite cache for the collector cache-node.
 
-Six tables:
+Seven tables:
   cache        — monitoring data with TTL (cleaned periodically)
   jobs         — job definitions, permanent (no TTL)
   job_profiles — execution profiles, permanent (EMA updated in-place)
@@ -87,6 +87,19 @@ CREATE TABLE IF NOT EXISTS results (
     sent        INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_results_unsent ON results(sent, created_at);
+
+-- 7. App cache — shared data between apps, synced to/from central
+CREATE TABLE IF NOT EXISTS app_cache (
+    app_id      TEXT NOT NULL,
+    device_id   TEXT NOT NULL,
+    cache_key   TEXT NOT NULL,
+    cache_value TEXT NOT NULL,
+    ttl_seconds INTEGER,
+    updated_at  REAL NOT NULL,
+    dirty       INTEGER DEFAULT 0,
+    PRIMARY KEY (app_id, device_id, cache_key)
+);
+CREATE INDEX IF NOT EXISTS idx_app_cache_dirty ON app_cache(dirty) WHERE dirty = 1;
 """
 
 
@@ -407,3 +420,99 @@ class LocalCache:
             count = cur.rowcount
         await self._db.commit()
         return count
+
+    # ── App cache (shared across collector group) ─────────────────────────────
+
+    async def app_cache_get(self, app_id: str, device_id: str, key: str) -> dict | None:
+        """Read a cache entry. Returns parsed JSON value or None if missing/expired."""
+        async with self._db.execute(
+            "SELECT cache_value, ttl_seconds, updated_at FROM app_cache "
+            "WHERE app_id = ? AND device_id = ? AND cache_key = ?",
+            (app_id, device_id, key),
+        ) as cur:
+            row = await cur.fetchone()
+        if row is None:
+            return None
+        if row["ttl_seconds"] is not None:
+            if time.time() > row["updated_at"] + row["ttl_seconds"]:
+                await self._db.execute(
+                    "DELETE FROM app_cache WHERE app_id = ? AND device_id = ? AND cache_key = ?",
+                    (app_id, device_id, key),
+                )
+                await self._db.commit()
+                return None
+        return json.loads(row["cache_value"])
+
+    async def app_cache_set(
+        self, app_id: str, device_id: str, key: str, value: dict,
+        ttl_seconds: int | None = None,
+    ) -> None:
+        """Write a cache entry. Marks it dirty for sync to central."""
+        now = time.time()
+        await self._db.execute(
+            """INSERT INTO app_cache (app_id, device_id, cache_key, cache_value, ttl_seconds, updated_at, dirty)
+               VALUES (?, ?, ?, ?, ?, ?, 1)
+               ON CONFLICT(app_id, device_id, cache_key) DO UPDATE SET
+                 cache_value=excluded.cache_value,
+                 ttl_seconds=excluded.ttl_seconds,
+                 updated_at=excluded.updated_at,
+                 dirty=1""",
+            (app_id, device_id, key, json.dumps(value), ttl_seconds, now),
+        )
+        await self._db.commit()
+
+    async def app_cache_delete(self, app_id: str, device_id: str, key: str) -> None:
+        """Delete a cache entry locally."""
+        await self._db.execute(
+            "DELETE FROM app_cache WHERE app_id = ? AND device_id = ? AND cache_key = ?",
+            (app_id, device_id, key),
+        )
+        await self._db.commit()
+
+    async def app_cache_get_dirty(self, limit: int = 500) -> list[dict]:
+        """Return dirty entries that need to be pushed to central."""
+        rows = []
+        async with self._db.execute(
+            "SELECT app_id, device_id, cache_key, cache_value, ttl_seconds, updated_at "
+            "FROM app_cache WHERE dirty = 1 LIMIT ?",
+            (limit,),
+        ) as cur:
+            async for row in cur:
+                rows.append(dict(row))
+        return rows
+
+    async def app_cache_mark_clean(self, keys: list[tuple[str, str, str]]) -> None:
+        """Mark entries as synced. keys = list of (app_id, device_id, cache_key)."""
+        if not keys:
+            return
+        for app_id, device_id, cache_key in keys:
+            await self._db.execute(
+                "UPDATE app_cache SET dirty = 0 "
+                "WHERE app_id = ? AND device_id = ? AND cache_key = ?",
+                (app_id, device_id, cache_key),
+            )
+        await self._db.commit()
+
+    async def app_cache_upsert_from_central(self, entries: list[dict]) -> None:
+        """Merge entries pulled from central into local cache."""
+        for e in entries:
+            cache_value = e["cache_value"] if isinstance(e["cache_value"], str) else json.dumps(e["cache_value"])
+            updated_at = e["updated_at"]
+            if isinstance(updated_at, str):
+                from datetime import datetime, timezone
+                updated_at = datetime.fromisoformat(updated_at).timestamp()
+            await self._db.execute(
+                """INSERT INTO app_cache (app_id, device_id, cache_key, cache_value, ttl_seconds, updated_at, dirty)
+                   VALUES (?, ?, ?, ?, ?, ?, 0)
+                   ON CONFLICT(app_id, device_id, cache_key) DO UPDATE SET
+                     cache_value = CASE WHEN excluded.updated_at > app_cache.updated_at
+                                        THEN excluded.cache_value ELSE app_cache.cache_value END,
+                     ttl_seconds = CASE WHEN excluded.updated_at > app_cache.updated_at
+                                        THEN excluded.ttl_seconds ELSE app_cache.ttl_seconds END,
+                     updated_at = CASE WHEN excluded.updated_at > app_cache.updated_at
+                                       THEN excluded.updated_at ELSE app_cache.updated_at END
+                """,
+                (e["app_id"], e["device_id"], e["cache_key"],
+                 cache_value, e.get("ttl_seconds"), updated_at),
+            )
+        await self._db.commit()

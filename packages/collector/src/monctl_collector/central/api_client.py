@@ -248,6 +248,45 @@ class CentralAPIClient:
             logger.warning("get_config_failed", error=str(exc))
             return {}
 
+    # ── App Cache ─────────────────────────────────────────────────────────────
+
+    async def push_app_cache(self, entries: list[dict]) -> dict | None:
+        """Push dirty app cache entries to central."""
+        try:
+            async with self._session.post(
+                self._url("/app-cache/push"), json={"entries": entries}
+            ) as resp:
+                if resp.status in (200, 201):
+                    data = await resp.json()
+                    return data.get("data", data)
+                body = await resp.text()
+                logger.warning("app_cache_push_error", status=resp.status, body=body[:200])
+                return None
+        except aiohttp.ClientError as exc:
+            logger.warning("app_cache_push_failed", error=str(exc))
+            return None
+
+    async def pull_app_cache(
+        self, since: str | None = None, limit: int = 1000,
+    ) -> dict | None:
+        """Pull updated app cache entries from central."""
+        params: dict[str, str | int] = {"limit": limit}
+        if since:
+            params["since"] = since
+        try:
+            async with self._session.get(
+                self._url("/app-cache/pull"), params=params
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data.get("data", data)
+                body = await resp.text()
+                logger.warning("app_cache_pull_error", status=resp.status, body=body[:200])
+                return None
+        except aiohttp.ClientError as exc:
+            logger.warning("app_cache_pull_failed", error=str(exc))
+            return None
+
     # ── Health ────────────────────────────────────────────────────────────────
 
     async def wait_for_central(self, max_wait: int = 120, check_interval: int = 5) -> bool:

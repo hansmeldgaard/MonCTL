@@ -40,6 +40,7 @@ from monctl_collector.central.api_client import CentralAPIClient
 from monctl_collector.central.credentials import CredentialManager
 from monctl_collector.config import CollectorConfig, load_config
 from monctl_collector.jobs.scheduler import JobScheduler
+from monctl_collector.cache.app_cache_sync import AppCacheSyncLoop
 from monctl_collector.peer.server import CollectorPeerServicer, start_server
 
 logger = structlog.get_logger()
@@ -110,6 +111,13 @@ async def run(cfg: CollectorConfig) -> None:
     asyncio.create_task(_cache_cleanup_loop(local_cache, cfg.cache.cleanup_interval))
     asyncio.create_task(_heartbeat_loop(central_client, node_id, scheduler))
 
+    # App cache sync loop (push dirty entries to central, pull updates)
+    app_cache_sync = AppCacheSyncLoop(
+        local_cache=local_cache,
+        central_client=central_client,
+    )
+    await app_cache_sync.start()
+
     logger.info("cache_node_ready", node_id=node_id)
 
     # ── Shutdown handler ──────────────────────────────────────────────────────
@@ -127,6 +135,7 @@ async def run(cfg: CollectorConfig) -> None:
 
     # Graceful shutdown
     logger.info("cache_node_shutting_down")
+    await app_cache_sync.stop()
     await scheduler.stop()
     if status_server:
         await status_server.cleanup()

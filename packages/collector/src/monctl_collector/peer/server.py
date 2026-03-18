@@ -180,6 +180,36 @@ class CollectorPeerServicer(pb_grpc.CollectorPeerServicer):
 
         return pb.AppCodeResponse(found=False)
 
+    # ── App Cache ─────────────────────────────────────────────────────────────
+
+    async def AppCacheGet(self, request, context):
+        if self._local_cache is None:
+            return pb.AppCacheGetResponse(found=False, cache_value="")
+        value = await self._local_cache.app_cache_get(
+            request.app_id, request.device_id, request.cache_key
+        )
+        if value is None:
+            return pb.AppCacheGetResponse(found=False, cache_value="")
+        return pb.AppCacheGetResponse(found=True, cache_value=json.dumps(value))
+
+    async def AppCacheSet(self, request, context):
+        if self._local_cache is None:
+            return pb.AppCacheSetResponse(ok=False)
+        ttl = request.ttl_seconds if request.ttl_seconds > 0 else None
+        await self._local_cache.app_cache_set(
+            request.app_id, request.device_id, request.cache_key,
+            json.loads(request.cache_value), ttl_seconds=ttl,
+        )
+        return pb.AppCacheSetResponse(ok=True)
+
+    async def AppCacheDelete(self, request, context):
+        if self._local_cache is None:
+            return pb.AppCacheDeleteResponse(ok=False)
+        await self._local_cache.app_cache_delete(
+            request.app_id, request.device_id, request.cache_key
+        )
+        return pb.AppCacheDeleteResponse(ok=True)
+
 
 async def start_server(
     servicer: CollectorPeerServicer,

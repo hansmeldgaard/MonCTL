@@ -17,6 +17,11 @@ service CollectorPeer {
 
   // App code distribution (poll-worker → local cache-node)
   rpc GetAppCode(AppCodeRequest)           returns (AppCodeResponse);
+
+  // App cache (poll-worker → local cache-node)
+  rpc AppCacheGet(AppCacheGetRequest)       returns (AppCacheGetResponse);
+  rpc AppCacheSet(AppCacheSetRequest)       returns (AppCacheSetResponse);
+  rpc AppCacheDelete(AppCacheDeleteRequest) returns (AppCacheDeleteResponse);
 }
 
 // ─── Job Distribution ─────────────────────────────────────────────────────────
@@ -128,4 +133,39 @@ message AppCodeResponse {
   string checksum          = 3;
   string requirements_json = 4;
   string entry_class       = 5;
+}
+
+// ─── App Cache ───────────────────────────────────────────────────────────────
+
+message AppCacheGetRequest {
+    string app_id    = 1;
+    string device_id = 2;
+    string cache_key = 3;
+}
+
+message AppCacheGetResponse {
+    bool   found       = 1;
+    string cache_value = 2;
+}
+
+message AppCacheSetRequest {
+    string app_id       = 1;
+    string device_id    = 2;
+    string cache_key    = 3;
+    string cache_value  = 4;
+    int32  ttl_seconds  = 5;
+}
+
+message AppCacheSetResponse {
+    bool ok = 1;
+}
+
+message AppCacheDeleteRequest {
+    string app_id    = 1;
+    string device_id = 2;
+    string cache_key = 3;
+}
+
+message AppCacheDeleteResponse {
+    bool ok = 1;
 }

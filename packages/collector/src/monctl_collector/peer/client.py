@@ -123,6 +123,46 @@ class PeerClient:
         except grpc.aio.AioRpcError:
             return None
 
+    # ── App Cache ──────────────────────────────────────────────────────────────
+
+    async def app_cache_get(self, app_id: str, device_id: str, key: str) -> dict | None:
+        try:
+            resp = await self._stub.AppCacheGet(
+                pb.AppCacheGetRequest(app_id=app_id, device_id=device_id, cache_key=key),
+                timeout=self._timeout,
+            )
+            if not resp.found:
+                return None
+            return json.loads(resp.cache_value)
+        except grpc.aio.AioRpcError:
+            return None
+
+    async def app_cache_set(
+        self, app_id: str, device_id: str, key: str, value: dict,
+        ttl_seconds: int = 0,
+    ) -> bool:
+        try:
+            resp = await self._stub.AppCacheSet(
+                pb.AppCacheSetRequest(
+                    app_id=app_id, device_id=device_id, cache_key=key,
+                    cache_value=json.dumps(value), ttl_seconds=ttl_seconds,
+                ),
+                timeout=self._timeout,
+            )
+            return resp.ok
+        except grpc.aio.AioRpcError:
+            return False
+
+    async def app_cache_delete(self, app_id: str, device_id: str, key: str) -> bool:
+        try:
+            resp = await self._stub.AppCacheDelete(
+                pb.AppCacheDeleteRequest(app_id=app_id, device_id=device_id, cache_key=key),
+                timeout=self._timeout,
+            )
+            return resp.ok
+        except grpc.aio.AioRpcError:
+            return False
+
     # ── Result Submission ─────────────────────────────────────────────────────
 
     async def submit_result(self, result: dict) -> bool:

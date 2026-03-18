@@ -27,9 +27,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from monctl_central.credentials.crypto import decrypt_dict
 from monctl_central.dependencies import get_clickhouse, get_db, require_collector_auth as require_auth
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+
 from monctl_central.storage.models import (
     App,
     AppAssignment,
+    AppCache,
     AppVersion,
     AssignmentConnectorBinding,
     Collector,
@@ -1252,3 +1255,128 @@ async def get_connector_code(
         "checksum": version.checksum,
         "source_code": version.source_code,
     }
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/app-cache/push
+# ---------------------------------------------------------------------------
+
+class AppCachePushEntry(BaseModel):
+    app_id: str
+    device_id: str
+    cache_key: str
+    cache_value: dict
+    ttl_seconds: int | None = None
+    updated_at: str
+
+
+class AppCachePushRequest(BaseModel):
+    entries: list[AppCachePushEntry]
+
+
+@router.post("/app-cache/push", tags=["collector-api"])
+async def push_app_cache(
+    req: AppCachePushRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Collectors push dirty cache entries to central."""
+    collector_id = auth.get("collector_id")
+    if not collector_id:
+        raise HTTPException(status_code=400, detail="Collector identity required")
+
+    collector = await db.get(Collector, uuid.UUID(collector_id))
+    if not collector or not collector.group_id:
+        raise HTTPException(status_code=400, detail="Collector must belong to a group")
+
+    group_id = collector.group_id
+    accepted = 0
+    rejected = 0
+
+    for entry in req.entries:
+        try:
+            entry_updated_at = datetime.fromisoformat(entry.updated_at)
+        except (ValueError, TypeError):
+            rejected += 1
+            continue
+
+        stmt = pg_insert(AppCache).values(
+            collector_group_id=group_id,
+            app_id=uuid.UUID(entry.app_id),
+            device_id=uuid.UUID(entry.device_id),
+            cache_key=entry.cache_key,
+            cache_value=entry.cache_value,
+            ttl_seconds=entry.ttl_seconds,
+            updated_at=entry_updated_at,
+        )
+        stmt = stmt.on_conflict_on_constraint("uq_app_cache_entry").do_update(
+            set_={
+                "cache_value": stmt.excluded.cache_value,
+                "ttl_seconds": stmt.excluded.ttl_seconds,
+                "updated_at": stmt.excluded.updated_at,
+            },
+            where=AppCache.updated_at < stmt.excluded.updated_at,
+        )
+        result = await db.execute(stmt)
+        accepted += 1
+
+    await db.flush()
+    return {"status": "success", "data": {"accepted": accepted, "rejected": rejected}}
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/app-cache/pull
+# ---------------------------------------------------------------------------
+
+@router.get("/app-cache/pull", tags=["collector-api"])
+async def pull_app_cache(
+    since: str | None = Query(None),
+    limit: int = Query(1000, le=5000),
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Collectors pull cache entries updated since their last sync."""
+    collector_id = auth.get("collector_id")
+    if not collector_id:
+        raise HTTPException(status_code=400, detail="Collector identity required")
+
+    collector = await db.get(Collector, uuid.UUID(collector_id))
+    if not collector or not collector.group_id:
+        raise HTTPException(status_code=400, detail="Collector must belong to a group")
+
+    group_id = collector.group_id
+
+    stmt = (
+        select(AppCache)
+        .where(AppCache.collector_group_id == group_id)
+        .order_by(AppCache.updated_at.asc())
+        .limit(limit + 1)
+    )
+
+    if since:
+        try:
+            since_dt = datetime.fromisoformat(since)
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="Invalid 'since' timestamp")
+        stmt = stmt.where(AppCache.updated_at > since_dt)
+
+    rows = (await db.execute(stmt)).scalars().all()
+
+    now = datetime.now(timezone.utc)
+    entries = []
+    for row in rows[:limit]:
+        # Skip expired entries
+        if row.ttl_seconds is not None:
+            if row.updated_at.timestamp() + row.ttl_seconds < now.timestamp():
+                continue
+        entries.append({
+            "app_id": str(row.app_id),
+            "device_id": str(row.device_id),
+            "cache_key": row.cache_key,
+            "cache_value": row.cache_value,
+            "ttl_seconds": row.ttl_seconds,
+            "updated_at": row.updated_at.isoformat(),
+        })
+
+    has_more = len(rows) > limit
+    return {"status": "success", "data": {"entries": entries, "has_more": has_more}}

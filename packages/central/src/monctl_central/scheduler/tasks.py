@@ -63,6 +63,9 @@ class SchedulerRunner:
                 await self._evaluate_event_policies()
                 # Rollup + cleanup (checked every cycle, runs based on time)
                 await self._run_rollups()
+                # App cache TTL cleanup every 5 min (every 10th cycle)
+                if cycle % 10 == 0:
+                    await self._cleanup_app_cache()
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -348,3 +351,22 @@ class SchedulerRunner:
                 "monctl:scheduler:last_retention_cleanup",
                 utc_now().isoformat(),
             )
+
+    async def _cleanup_app_cache(self) -> None:
+        """Delete expired app_cache entries based on TTL."""
+        from sqlalchemy import text as sa_text
+
+        try:
+            async with self._session_factory() as session:
+                result = await session.execute(
+                    sa_text(
+                        "DELETE FROM app_cache "
+                        "WHERE ttl_seconds IS NOT NULL "
+                        "AND updated_at + (ttl_seconds || ' seconds')::interval < now()"
+                    )
+                )
+                await session.commit()
+                if result.rowcount:
+                    logger.info("app_cache_cleanup", deleted=result.rowcount)
+        except Exception:
+            logger.exception("app_cache_cleanup_error")
