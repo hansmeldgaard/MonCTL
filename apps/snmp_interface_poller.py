@@ -71,11 +71,18 @@ def _has_metric(mode: str, metric: str) -> bool:
 
 
 class _InlineSnmpClient:
-    """Fallback SNMP client when no connector is bound. Uses pysnmp.hlapi.asyncio."""
+    """Fallback SNMP client when no connector is bound.
+
+    Runs pysnmp in a dedicated asyncio event loop inside a thread to avoid
+    pysnmp 7.x transport hanging the main event loop. Each operation is
+    fully isolated and times out reliably.
+    """
 
     def __init__(self, host: str, credential: dict):
         self._host = host
         self._cred = credential
+        self._timeout = int(credential.get("timeout", 10))
+        self._port = int(credential.get("port", 161))
 
     def _build_auth(self):
         from pysnmp.hlapi.asyncio import CommunityData, UsmUserData
@@ -116,67 +123,105 @@ class _InlineSnmpClient:
 
         return UsmUserData(**kwargs)
 
+    def _run_in_thread(self, coro_fn):
+        """Run an async function in a NEW event loop in a thread.
+
+        This isolates pysnmp's transport from the main event loop so that
+        timeouts and cancellation work reliably.
+        """
+        import asyncio
+        import concurrent.futures
+
+        def _thread_target():
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(coro_fn())
+            finally:
+                loop.close()
+
+        return _thread_target
+
     async def get(self, oids: list[str]) -> dict:
-        from pysnmp.hlapi.asyncio import (
-            ContextData, ObjectIdentity, ObjectType, SnmpEngine, UdpTransportTarget, get_cmd,
+        import asyncio
+
+        async def _do_get():
+            from pysnmp.hlapi.asyncio import (
+                ContextData, ObjectIdentity, ObjectType, SnmpEngine,
+                UdpTransportTarget, get_cmd,
+            )
+            engine = SnmpEngine()
+            transport = await UdpTransportTarget.create(
+                (self._host, self._port), timeout=self._timeout, retries=1,
+            )
+            auth = self._build_auth()
+            obj_types = [ObjectType(ObjectIdentity(oid)) for oid in oids]
+            err_ind, err_st, err_idx, var_binds = await get_cmd(
+                engine, auth, transport, ContextData(), *obj_types,
+            )
+            engine.close_dispatcher()
+            if err_ind:
+                raise RuntimeError(f"SNMP error: {err_ind}")
+            if err_st:
+                raise RuntimeError(f"SNMP error at {err_idx}: {err_st.prettyPrint()}")
+            result = {}
+            for oid, val in var_binds:
+                result[str(oid)] = val.prettyPrint()
+            return result
+
+        return await asyncio.wait_for(
+            asyncio.to_thread(self._run_in_thread(_do_get)),
+            timeout=self._timeout + 10,
         )
-        port = int(self._cred.get("port", 161))
-        timeout = int(self._cred.get("timeout", 10))
-        engine = SnmpEngine()
-        transport = await UdpTransportTarget.create((self._host, port), timeout=timeout, retries=1)
-        auth = self._build_auth()
-        obj_types = [ObjectType(ObjectIdentity(oid)) for oid in oids]
-        err_ind, err_st, err_idx, var_binds = await get_cmd(
-            engine, auth, transport, ContextData(), *obj_types,
-        )
-        if err_ind:
-            raise RuntimeError(f"SNMP error: {err_ind}")
-        if err_st:
-            raise RuntimeError(f"SNMP error at {err_idx}: {err_st.prettyPrint()}")
-        result = {}
-        for oid, val in var_binds:
-            result[str(oid)] = val.prettyPrint()
-        return result
 
     async def walk(self, oid: str) -> list[tuple[str, str]]:
-        from pysnmp.hlapi.asyncio import (
-            ContextData, ObjectIdentity, ObjectType, SnmpEngine, UdpTransportTarget, bulk_cmd,
-        )
-        port = int(self._cred.get("port", 161))
-        timeout = int(self._cred.get("timeout", 10))
-        engine = SnmpEngine()
-        transport = await UdpTransportTarget.create((self._host, port), timeout=timeout, retries=1)
-        auth = self._build_auth()
-        rows = []
-        current_oid = oid
-        base_tuple = tuple(int(x) for x in oid.split("."))
-        base_len = len(base_tuple)
-        while len(rows) < 500:
-            err_ind, err_st, err_idx, var_binds = await bulk_cmd(
-                engine, auth, transport, ContextData(), 0, 25,
-                ObjectType(ObjectIdentity(current_oid)),
+        import asyncio
+
+        async def _do_walk():
+            from pysnmp.hlapi.asyncio import (
+                ContextData, ObjectIdentity, ObjectType, SnmpEngine,
+                UdpTransportTarget, bulk_cmd,
             )
-            if err_ind or err_st:
-                break
-            if not var_binds:
-                break
-            out_of_tree = False
-            last_oid = None
-            for row in var_binds:
-                for name, val in row:
-                    oid_tuple = tuple(name)
-                    if oid_tuple[:base_len] != base_tuple:
-                        out_of_tree = True
-                        break
-                    name_str = str(name)
-                    rows.append((name_str, val.prettyPrint()))
-                    last_oid = name_str
-                if out_of_tree:
+            engine = SnmpEngine()
+            transport = await UdpTransportTarget.create(
+                (self._host, self._port), timeout=self._timeout, retries=1,
+            )
+            auth = self._build_auth()
+            rows = []
+            current_oid = oid
+            base_tuple = tuple(int(x) for x in oid.split("."))
+            base_len = len(base_tuple)
+            while len(rows) < 500:
+                err_ind, err_st, err_idx, var_binds = await bulk_cmd(
+                    engine, auth, transport, ContextData(), 0, 25,
+                    ObjectType(ObjectIdentity(current_oid)),
+                )
+                if err_ind or err_st:
                     break
-            if out_of_tree or last_oid is None or last_oid == current_oid:
-                break
-            current_oid = last_oid
-        return rows
+                if not var_binds:
+                    break
+                out_of_tree = False
+                last_oid = None
+                for row in var_binds:
+                    for name, val in row:
+                        oid_tuple = tuple(name)
+                        if oid_tuple[:base_len] != base_tuple:
+                            out_of_tree = True
+                            break
+                        name_str = str(name)
+                        rows.append((name_str, val.prettyPrint()))
+                        last_oid = name_str
+                    if out_of_tree:
+                        break
+                if out_of_tree or last_oid is None or last_oid == current_oid:
+                    break
+                current_oid = last_oid
+            engine.close_dispatcher()
+            return rows
+
+        return await asyncio.wait_for(
+            asyncio.to_thread(self._run_in_thread(_do_walk)),
+            timeout=self._timeout * 3 + 10,
+        )
 
     async def close(self):
         pass

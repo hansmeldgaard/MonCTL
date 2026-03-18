@@ -285,10 +285,21 @@ class PollEngine:
                 poller = cls()
                 await poller.setup()
 
-                result = await asyncio.wait_for(
-                    poller.poll(ctx),
-                    timeout=float(job.max_execution_time),
-                )
+                poll_task = asyncio.create_task(poller.poll(ctx))
+                timeout_secs = float(job.max_execution_time)
+                try:
+                    result = await asyncio.wait_for(
+                        asyncio.shield(poll_task),
+                        timeout=timeout_secs,
+                    )
+                except asyncio.TimeoutError:
+                    # wait_for timed out — force-cancel the shielded task
+                    poll_task.cancel()
+                    try:
+                        await asyncio.wait_for(poll_task, timeout=5.0)
+                    except (asyncio.TimeoutError, asyncio.CancelledError):
+                        pass
+                    raise  # re-raise TimeoutError
 
             except asyncio.TimeoutError:
                 execution_ms = int((time.time() - start) * 1000)
