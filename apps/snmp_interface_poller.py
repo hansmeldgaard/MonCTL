@@ -70,6 +70,16 @@ def _has_metric(mode: str, metric: str) -> bool:
     return mode == "all" or metric in mode.split(",")
 
 
+def _safe_int(val, default: int = 0) -> int:
+    """Convert SNMP value to int, returning default for non-numeric values."""
+    if val is None:
+        return default
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        return default
+
+
 class _InlineSnmpClient:
     """Fallback SNMP client when no connector is bound.
 
@@ -354,7 +364,7 @@ class Poller(BasePoller):
             for idx in if_indices:
                 if_name = str(raw.get("ifName", {}).get(idx, raw.get("ifDescr", {}).get(idx, f"if{idx}")))
                 if_alias = str(raw.get("ifAlias", {}).get(idx, ""))
-                oper_status = _OPER_STATUS.get(int(raw.get("ifOperStatus", {}).get(idx, 4)), "unknown")
+                oper_status = _OPER_STATUS.get(_safe_int(raw.get("ifOperStatus", {}).get(idx, 4), 4), "unknown")
 
                 if not monitored:
                     if exclude_oper and oper_status in exclude_oper:
@@ -366,17 +376,17 @@ class Poller(BasePoller):
 
                 metrics_mode = metrics_lookup.get(idx, "all")
 
-                in_octets = int(raw.get("ifHCInOctets", {}).get(idx, raw.get("ifInOctets", {}).get(idx, 0)))
-                out_octets = int(raw.get("ifHCOutOctets", {}).get(idx, raw.get("ifOutOctets", {}).get(idx, 0)))
+                in_octets = _safe_int(raw.get("ifHCInOctets", {}).get(idx, raw.get("ifInOctets", {}).get(idx, 0)))
+                out_octets = _safe_int(raw.get("ifHCOutOctets", {}).get(idx, raw.get("ifOutOctets", {}).get(idx, 0)))
 
                 high_speed = raw.get("ifHighSpeed", {}).get(idx)
-                if high_speed and int(high_speed) > 0:
-                    speed_mbps = int(high_speed)
+                if high_speed and _safe_int(high_speed) > 0:
+                    speed_mbps = _safe_int(high_speed)
                 else:
                     speed_raw = raw.get("ifSpeed", {}).get(idx, 0)
-                    speed_mbps = int(int(speed_raw) / 1_000_000) if speed_raw else 0
+                    speed_mbps = _safe_int(speed_raw) // 1_000_000 if speed_raw else 0
 
-                admin_status = _ADMIN_STATUS.get(int(raw.get("ifAdminStatus", {}).get(idx, 3)), "unknown")
+                admin_status = _ADMIN_STATUS.get(_safe_int(raw.get("ifAdminStatus", {}).get(idx, 3), 3), "unknown")
 
                 row = {
                     "if_index": idx,
@@ -387,12 +397,12 @@ class Poller(BasePoller):
                     "if_oper_status": oper_status,
                     "in_octets": in_octets if _has_metric(metrics_mode, "traffic") else 0,
                     "out_octets": out_octets if _has_metric(metrics_mode, "traffic") else 0,
-                    "in_errors": int(raw.get("ifInErrors", {}).get(idx, 0)) if _has_metric(metrics_mode, "errors") else 0,
-                    "out_errors": int(raw.get("ifOutErrors", {}).get(idx, 0)) if _has_metric(metrics_mode, "errors") else 0,
-                    "in_discards": int(raw.get("ifInDiscards", {}).get(idx, 0)) if _has_metric(metrics_mode, "discards") else 0,
-                    "out_discards": int(raw.get("ifOutDiscards", {}).get(idx, 0)) if _has_metric(metrics_mode, "discards") else 0,
-                    "in_unicast_pkts": int(raw.get("ifInUcastPkts", {}).get(idx, 0)) if metrics_mode == "all" else 0,
-                    "out_unicast_pkts": int(raw.get("ifOutUcastPkts", {}).get(idx, 0)) if metrics_mode == "all" else 0,
+                    "in_errors": _safe_int(raw.get("ifInErrors", {}).get(idx, 0)) if _has_metric(metrics_mode, "errors") else 0,
+                    "out_errors": _safe_int(raw.get("ifOutErrors", {}).get(idx, 0)) if _has_metric(metrics_mode, "errors") else 0,
+                    "in_discards": _safe_int(raw.get("ifInDiscards", {}).get(idx, 0)) if _has_metric(metrics_mode, "discards") else 0,
+                    "out_discards": _safe_int(raw.get("ifOutDiscards", {}).get(idx, 0)) if _has_metric(metrics_mode, "discards") else 0,
+                    "in_unicast_pkts": _safe_int(raw.get("ifInUcastPkts", {}).get(idx, 0)) if metrics_mode == "all" else 0,
+                    "out_unicast_pkts": _safe_int(raw.get("ifOutUcastPkts", {}).get(idx, 0)) if metrics_mode == "all" else 0,
                     "poll_interval_sec": poll_interval,
                 }
                 interface_rows.append(row)
