@@ -63,17 +63,25 @@ function StatusBadge({ status }: { status: SubsystemStatus }) {
   );
 }
 
-function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
+function DetailGrid({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between py-0.5 text-sm">
-      <span className="text-zinc-500">{label}</span>
-      <span className="text-zinc-300 font-mono text-xs">{value ?? "\u2014"}</span>
+    <div className="grid grid-cols-[max-content_1fr] gap-x-8 gap-y-1 text-sm">
+      {children}
     </div>
   );
 }
 
+function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <>
+      <span className="text-zinc-500">{label}</span>
+      <span className="text-zinc-300 font-mono text-xs">{value ?? "\u2014"}</span>
+    </>
+  );
+}
+
 function SectionTitle({ children }: { children: React.ReactNode }) {
-  return <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500 mt-3 mb-1">{children}</p>;
+  return <div className="col-span-2 text-xs font-semibold uppercase tracking-wider text-zinc-500 mt-3 mb-1">{children}</div>;
 }
 
 function ProgressBar({ pct, className }: { pct: number; className?: string }) {
@@ -120,11 +128,13 @@ function CentralCard({ d }: { d: Record<string, unknown> }) {
         <StatusBadge status={(d.status as SubsystemStatus) ?? "unknown"} />
       </CardHeader>
       <CardContent>
-        <DetailRow label="Role" value={String(d.role ?? "\u2014")} />
-        <DetailRow label="Uptime" value={formatUptime(Number(d.uptime_seconds ?? 0))} />
-        <DetailRow label="RSS" value={`${d.rss_mb} MB`} />
-        <DetailRow label="Python" value={String(d.python_version ?? "\u2014")} />
-        <DetailRow label="PID" value={String(d.pid ?? "\u2014")} />
+        <DetailGrid>
+          <DetailRow label="Role" value={String(d.role ?? "\u2014")} />
+          <DetailRow label="Uptime" value={formatUptime(Number(d.uptime_seconds ?? 0))} />
+          <DetailRow label="RSS" value={`${d.rss_mb} MB`} />
+          <DetailRow label="Python" value={String(d.python_version ?? "\u2014")} />
+          <DetailRow label="PID" value={String(d.pid ?? "\u2014")} />
+        </DetailGrid>
       </CardContent>
     </Card>
   );
@@ -141,20 +151,22 @@ function AlertsCard({ sub }: { sub: { status: SubsystemStatus; details: Record<s
         <StatusBadge status={sub.status} />
       </CardHeader>
       <CardContent>
-        {totalFiring === 0 ? (
-          <p className="text-sm text-zinc-500">No alerts firing</p>
-        ) : (
-          <>
-            {firing && Object.entries(firing).map(([sev, count]) => (
-              <DetailRow key={sev} label={sev} value={
-                <span className={sev === "critical" ? "text-red-400" : sev === "warning" ? "text-amber-400" : "text-zinc-300"}>
-                  {count}
-                </span>
-              } />
-            ))}
-          </>
-        )}
-        <DetailRow label="Rules" value={`${d.enabled_rules ?? 0} / ${d.total_rules ?? 0} enabled`} />
+        <DetailGrid>
+          {totalFiring === 0 ? (
+            <span className="col-span-2 text-sm text-zinc-500">No alerts firing</span>
+          ) : (
+            <>
+              {firing && Object.entries(firing).map(([sev, count]) => (
+                <DetailRow key={sev} label={sev} value={
+                  <span className={sev === "critical" ? "text-red-400" : sev === "warning" ? "text-amber-400" : "text-zinc-300"}>
+                    {count}
+                  </span>
+                } />
+              ))}
+            </>
+          )}
+          <DetailRow label="Rules" value={`${d.enabled_rules ?? 0} / ${d.total_rules ?? 0} enabled`} />
+        </DetailGrid>
       </CardContent>
     </Card>
   );
@@ -170,10 +182,12 @@ function IngestionCard({ sub }: { sub: { status: SubsystemStatus; details: Recor
         <StatusBadge status={sub.status} />
       </CardHeader>
       <CardContent>
-        <DetailRow label="Total" value={`${d.total_rows_per_sec ?? 0} rows/s`} />
-        {byTable && Object.entries(byTable).map(([table, info]) => (
-          <DetailRow key={table} label={table} value={`${info.rows_per_sec}/s`} />
-        ))}
+        <DetailGrid>
+          <DetailRow label="Total" value={`${d.total_rows_per_sec ?? 0} rows/s`} />
+          {byTable && Object.entries(byTable).map(([table, info]) => (
+            <DetailRow key={table} label={table} value={`${info.rows_per_sec}/s`} />
+          ))}
+        </DetailGrid>
       </CardContent>
     </Card>
   );
@@ -194,18 +208,20 @@ function PostgreSQLCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: n
         </div>
       </CardHeader>
       <CardContent>
-        <DetailRow label="Version" value={String(d.version ?? "\u2014")} />
-        <DetailRow label="DB size" value={d.db_size_bytes ? formatBytes(Number(d.db_size_bytes)) : "\u2014"} />
-        <DetailRow label="Pool" value={`${d.pool_size} size \u00b7 ${d.checked_out} out \u00b7 ${d.overflow} overflow`} />
-        <DetailRow label="Connections" value={String(d.active_connections ?? "\u2014")} />
-        {tableCounts && (
-          <>
-            <SectionTitle>Table counts</SectionTitle>
-            {Object.entries(tableCounts).map(([name, count]) => (
-              <DetailRow key={name} label={name} value={count != null ? formatNumber(count) : "\u2014"} />
-            ))}
-          </>
-        )}
+        <DetailGrid>
+          <DetailRow label="Version" value={String(d.version ?? "\u2014")} />
+          <DetailRow label="DB size" value={d.db_size_bytes ? formatBytes(Number(d.db_size_bytes)) : "\u2014"} />
+          <DetailRow label="Pool" value={`${d.pool_size} size \u00b7 ${d.checked_out} out \u00b7 ${d.overflow} overflow`} />
+          <DetailRow label="Connections" value={String(d.active_connections ?? "\u2014")} />
+          {tableCounts && (
+            <>
+              <SectionTitle>Table counts</SectionTitle>
+              {Object.entries(tableCounts).map(([name, count]) => (
+                <DetailRow key={name} label={name} value={count != null ? formatNumber(count) : "\u2014"} />
+              ))}
+            </>
+          )}
+        </DetailGrid>
       </CardContent>
     </Card>
   );
@@ -235,10 +251,12 @@ function ClickHouseCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: n
         </div>
       </CardHeader>
       <CardContent className="space-y-0">
-        <DetailRow label="Version" value={String(d.version ?? "\u2014")} />
-        {d.uptime_seconds != null && <DetailRow label="Uptime" value={formatUptime(Number(d.uptime_seconds))} />}
-        <DetailRow label="Total size" value={`${formatBytes(Number(d.total_bytes ?? 0))} \u00b7 ${formatNumber(Number(d.total_rows ?? 0))} rows`} />
-        {d.pk_memory_bytes != null && <DetailRow label="PK memory" value={formatBytes(Number(d.pk_memory_bytes))} />}
+        <DetailGrid>
+          <DetailRow label="Version" value={String(d.version ?? "\u2014")} />
+          {d.uptime_seconds != null && <DetailRow label="Uptime" value={formatUptime(Number(d.uptime_seconds))} />}
+          <DetailRow label="Total size" value={`${formatBytes(Number(d.total_bytes ?? 0))} \u00b7 ${formatNumber(Number(d.total_rows ?? 0))} rows`} />
+          {d.pk_memory_bytes != null && <DetailRow label="PK memory" value={formatBytes(Number(d.pk_memory_bytes))} />}
+        </DetailGrid>
 
         {/* Server resources */}
         {server && (
@@ -253,10 +271,12 @@ function ClickHouseCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: n
                 <ProgressBar pct={disk.used_pct} />
               </div>
             ))}
-            <DetailRow label="Memory" value={`OS ${formatBytes(server.os_memory_total_bytes - server.os_memory_free_bytes)} / ${formatBytes(server.os_memory_total_bytes)} \u00b7 CH ${formatBytes(server.ch_memory_resident_bytes)}`} />
-            <DetailRow label="CPU" value={`user ${server.cpu_user_pct}% \u00b7 sys ${server.cpu_system_pct}% \u00b7 io ${server.cpu_iowait_pct}% \u00b7 idle ${server.cpu_idle_pct}%`} />
-            <DetailRow label="Load" value={`${server.load_average[0]} / ${server.load_average[1]} / ${server.load_average[2]}`} />
-            <DetailRow label="Connections" value={String(server.tcp_connections)} />
+            <DetailGrid>
+              <DetailRow label="Memory" value={`OS ${formatBytes(server.os_memory_total_bytes - server.os_memory_free_bytes)} / ${formatBytes(server.os_memory_total_bytes)} \u00b7 CH ${formatBytes(server.ch_memory_resident_bytes)}`} />
+              <DetailRow label="CPU" value={`user ${server.cpu_user_pct}% \u00b7 sys ${server.cpu_system_pct}% \u00b7 io ${server.cpu_iowait_pct}% \u00b7 idle ${server.cpu_idle_pct}%`} />
+              <DetailRow label="Load" value={`${server.load_average[0]} / ${server.load_average[1]} / ${server.load_average[2]}`} />
+              <DetailRow label="Connections" value={String(server.tcp_connections)} />
+            </DetailGrid>
             <p className="text-[10px] text-zinc-600 mt-0.5">Connected node only</p>
           </>
         )}
@@ -291,12 +311,14 @@ function ClickHouseCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: n
 
         {/* Keeper */}
         {keeper && (
-          <DetailRow label="Keeper" value={
-            <span className={keeper.reachable && !keeper.session_expired ? "text-emerald-400" : "text-red-400"}>
-              {keeper.reachable ? "Reachable" : "Unreachable"}
-              {keeper.session_expired && " \u00b7 Session expired"}
-            </span>
-          } />
+          <DetailGrid>
+            <DetailRow label="Keeper" value={
+              <span className={keeper.reachable && !keeper.session_expired ? "text-emerald-400" : "text-red-400"}>
+                {keeper.reachable ? "Reachable" : "Unreachable"}
+                {keeper.session_expired && " \u00b7 Session expired"}
+              </span>
+            } />
+          </DetailGrid>
         )}
 
         {/* Replication */}
@@ -328,17 +350,19 @@ function ClickHouseCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: n
         )}
 
         {/* Merges + Mutations */}
-        {merges && (
-          <DetailRow label="Merges" value={`${merges.active_count ?? merges.active_merges ?? 0} active${(merges.longest_seconds ?? 0) > 0 ? ` (longest: ${merges.longest_seconds}s)` : ""}`} />
-        )}
-        {mutations && (
-          <DetailRow label="Mutations" value={
-            <span className={mutations.failed > 0 ? "text-red-400" : ""}>
-              {mutations.pending} pending{mutations.failed > 0 ? ` \u00b7 ${mutations.failed} failed` : ""}
-            </span>
-          } />
-        )}
-        {server && <DetailRow label="Max parts/partition" value={String(server.max_parts_per_partition)} />}
+        <DetailGrid>
+          {merges && (
+            <DetailRow label="Merges" value={`${merges.active_count ?? merges.active_merges ?? 0} active${(merges.longest_seconds ?? 0) > 0 ? ` (longest: ${merges.longest_seconds}s)` : ""}`} />
+          )}
+          {mutations && (
+            <DetailRow label="Mutations" value={
+              <span className={mutations.failed > 0 ? "text-red-400" : ""}>
+                {mutations.pending} pending{mutations.failed > 0 ? ` \u00b7 ${mutations.failed} failed` : ""}
+              </span>
+            } />
+          )}
+          {server && <DetailRow label="Max parts/partition" value={String(server.max_parts_per_partition)} />}
+        </DetailGrid>
 
         {/* Data tables */}
         {tables && (
@@ -379,9 +403,11 @@ function ClickHouseCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: n
         {/* Query performance */}
         {slowQueries && (
           <Collapsible title="Query performance (1h)">
-            <DetailRow label="Queries" value={formatNumber(slowQueries.queries_1h)} />
-            <DetailRow label="Avg duration" value={`${slowQueries.avg_duration_ms.toFixed(1)}ms`} />
-            <DetailRow label="Slow (>5s)" value={String(slowQueries.slow_5s)} />
+            <DetailGrid>
+              <DetailRow label="Queries" value={formatNumber(slowQueries.queries_1h)} />
+              <DetailRow label="Avg duration" value={`${slowQueries.avg_duration_ms.toFixed(1)}ms`} />
+              <DetailRow label="Slow (>5s)" value={String(slowQueries.slow_5s)} />
+            </DetailGrid>
           </Collapsible>
         )}
 
@@ -419,20 +445,22 @@ function RedisCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: number
         </div>
       </CardHeader>
       <CardContent>
-        <DetailRow label="Version" value={String(d.version ?? "\u2014")} />
-        <DetailRow label="Memory" value={d.used_memory_bytes ? `${formatBytes(Number(d.used_memory_bytes))} / ${formatBytes(Number(d.used_memory_peak_bytes ?? 0))} peak` : "\u2014"} />
-        <DetailRow label="RSS" value={d.used_memory_rss_bytes ? formatBytes(Number(d.used_memory_rss_bytes)) : "\u2014"} />
-        <DetailRow label="Keys" value={formatNumber(Number(d.db_size ?? 0))} />
-        <DetailRow label="Clients" value={String(d.connected_clients ?? "\u2014")} />
-        <DetailRow label="Leader" value={String(d.leader_instance ?? "\u2014")} />
-        {keyStats && (
-          <>
-            <SectionTitle>Key breakdown</SectionTitle>
-            {Object.entries(keyStats).map(([prefix, count]) => (
-              <DetailRow key={prefix} label={prefix} value={formatNumber(count)} />
-            ))}
-          </>
-        )}
+        <DetailGrid>
+          <DetailRow label="Version" value={String(d.version ?? "\u2014")} />
+          <DetailRow label="Memory" value={d.used_memory_bytes ? `${formatBytes(Number(d.used_memory_bytes))} / ${formatBytes(Number(d.used_memory_peak_bytes ?? 0))} peak` : "\u2014"} />
+          <DetailRow label="RSS" value={d.used_memory_rss_bytes ? formatBytes(Number(d.used_memory_rss_bytes)) : "\u2014"} />
+          <DetailRow label="Keys" value={formatNumber(Number(d.db_size ?? 0))} />
+          <DetailRow label="Clients" value={String(d.connected_clients ?? "\u2014")} />
+          <DetailRow label="Leader" value={String(d.leader_instance ?? "\u2014")} />
+          {keyStats && (
+            <>
+              <SectionTitle>Key breakdown</SectionTitle>
+              {Object.entries(keyStats).map(([prefix, count]) => (
+                <DetailRow key={prefix} label={prefix} value={formatNumber(count)} />
+              ))}
+            </>
+          )}
+        </DetailGrid>
       </CardContent>
     </Card>
   );
@@ -450,17 +478,19 @@ function SchedulerCard({ sub }: { sub: { status: SubsystemStatus; details: Recor
         <StatusBadge status={sub.status} />
       </CardHeader>
       <CardContent>
-        <DetailRow label="Leader" value={String(d.current_leader ?? "\u2014")} />
-        <DetailRow label="This instance" value={d.is_this_instance ? "Yes" : "No"} />
-        <DetailRow label="Leader TTL" value={`${d.leader_key_ttl ?? 0}s`} />
-        {lastRuns && (
-          <>
-            <SectionTitle>Last runs</SectionTitle>
-            {Object.entries(lastRuns).map(([name, ts]) => (
-              <DetailRow key={name} label={name.replace("last_", "")} value={ts ? timeAgo(ts) : "never"} />
-            ))}
-          </>
-        )}
+        <DetailGrid>
+          <DetailRow label="Leader" value={String(d.current_leader ?? "\u2014")} />
+          <DetailRow label="This instance" value={d.is_this_instance ? "Yes" : "No"} />
+          <DetailRow label="Leader TTL" value={`${d.leader_key_ttl ?? 0}s`} />
+          {lastRuns && (
+            <>
+              <SectionTitle>Last runs</SectionTitle>
+              {Object.entries(lastRuns).map(([name, ts]) => (
+                <DetailRow key={name} label={name.replace("last_", "")} value={ts ? timeAgo(ts) : "never"} />
+              ))}
+            </>
+          )}
+        </DetailGrid>
       </CardContent>
     </Card>
   );
