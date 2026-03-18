@@ -551,10 +551,11 @@ async def device_performance(
 
     if from_ts:
         sql += " AND executed_at >= {from_ts:DateTime64}"
-        params["from_ts"] = from_ts.replace("Z", "+00:00")
+        # Strip timezone offset — ClickHouse DateTime64 params expect naive format
+        params["from_ts"] = from_ts.replace("Z", "").replace("+00:00", "").split("+")[0]
     if to_ts:
         sql += " AND executed_at <= {to_ts:DateTime64}"
-        params["to_ts"] = to_ts.replace("Z", "+00:00")
+        params["to_ts"] = to_ts.replace("Z", "").replace("+00:00", "").split("+")[0]
     if component_type:
         sql += " AND component_type = {component_type:String}"
         params["component_type"] = component_type
