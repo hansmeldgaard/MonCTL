@@ -218,7 +218,7 @@ function ClickHouseCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: n
   const cluster = d.cluster as { cluster_name: string; shard_count: number; replica_count: number; nodes: { shard: number; replica: number; host: string; address: string; port: number; is_local: boolean }[] } | null;
   const replication = d.replication as { table: string; is_leader: boolean; is_readonly: boolean; queue_size: number; absolute_delay: number; active_replicas: number; total_replicas: number; is_session_expired: boolean; log_lag: number; inserts_in_queue: number; merges_in_queue: number }[] | null;
   const keeper = d.keeper as { reachable: boolean; session_expired: boolean } | null;
-  const merges = d.merges as { active_count: number; longest_seconds: number } | null;
+  const merges = d.merges as Record<string, number> | null;
   const mutations = d.mutations as { pending: number; failed: number } | null;
   const server = d.server as { disks: { name: string; free_bytes: number; total_bytes: number; used_pct: number }[]; os_memory_total_bytes: number; os_memory_free_bytes: number; ch_memory_resident_bytes: number; cpu_user_pct: number; cpu_system_pct: number; cpu_idle_pct: number; cpu_iowait_pct: number; load_average: [number, number, number]; tcp_connections: number; max_parts_per_partition: number } | null;
   const slowQueries = d.slow_queries as { queries_1h: number; slow_5s: number; avg_duration_ms: number } | null;
@@ -328,7 +328,7 @@ function ClickHouseCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: n
 
         {/* Merges + Mutations */}
         {merges && (
-          <DetailRow label="Merges" value={`${merges.active_count} active${merges.longest_seconds > 0 ? ` (longest: ${merges.longest_seconds}s)` : ""}`} />
+          <DetailRow label="Merges" value={`${merges.active_count ?? merges.active_merges ?? 0} active${(merges.longest_seconds ?? 0) > 0 ? ` (longest: ${merges.longest_seconds}s)` : ""}`} />
         )}
         {mutations && (
           <DetailRow label="Mutations" value={
@@ -355,14 +355,18 @@ function ClickHouseCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: n
                 {Object.entries(tables).map(([name, info]) => (
                   <TableRow key={name}>
                     <TableCell className="py-1 text-xs font-mono">{name}</TableCell>
-                    <TableCell className="py-1 text-xs font-mono text-right">{formatNumber(info.rows)}</TableCell>
-                    <TableCell className="py-1 text-xs font-mono text-right">{formatBytes(info.bytes)}</TableCell>
-                    <TableCell className="py-1 text-xs font-mono text-right">{info.parts}</TableCell>
+                    <TableCell className="py-1 text-xs font-mono text-right">{formatNumber(info.rows ?? 0)}</TableCell>
+                    <TableCell className="py-1 text-xs font-mono text-right">{info.bytes != null ? formatBytes(info.bytes) : "\u2014"}</TableCell>
+                    <TableCell className="py-1 text-xs font-mono text-right">{info.parts != null ? info.parts : "\u2014"}</TableCell>
                     <TableCell className="py-1 text-xs">
-                      <span className="flex items-center gap-1.5">
-                        <FreshnessDot isoDate={info.latest_received_at} />
-                        {info.latest_received_at ? timeAgo(info.latest_received_at) : "\u2014"}
-                      </span>
+                      {info.rows > 0 ? (
+                        <span className="flex items-center gap-1.5">
+                          <FreshnessDot isoDate={info.latest_received_at} />
+                          {info.latest_received_at ? timeAgo(info.latest_received_at) : "\u2014"}
+                        </span>
+                      ) : (
+                        <span className="text-zinc-600">No data</span>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}

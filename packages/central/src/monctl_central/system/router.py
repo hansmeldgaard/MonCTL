@@ -136,7 +136,7 @@ async def _check_clickhouse() -> dict:
         client.query("SELECT 1")
         latency_ms = round((time.monotonic() - t0) * 1000, 2)
 
-        # --- basic table stats (existing) ---
+        # --- basic table stats ---
         tables = {}
         for table in _TABLES:
             try:
@@ -152,14 +152,19 @@ async def _check_clickhouse() -> dict:
                     if latest_result.result_rows
                     else None
                 )
+                # Empty tables return epoch (1970-01-01) for max() — treat as None
+                if row_count == 0:
+                    latest_val = None
                 tables[table] = {
                     "rows": row_count,
+                    "bytes": 0,
+                    "parts": 0,
                     "latest_received_at": (
                         latest_val.isoformat() if latest_val else None
                     ),
                 }
             except Exception:
-                tables[table] = {"rows": 0, "latest_received_at": None}
+                tables[table] = {"rows": 0, "bytes": 0, "parts": 0, "latest_received_at": None}
 
         # --- version & uptime ---
         version = None
@@ -186,6 +191,7 @@ async def _check_clickhouse() -> dict:
                 " FROM system.parts"
                 " WHERE active AND database = currentDatabase()"
                 " GROUP BY table"
+                " SETTINGS max_memory_usage = 500000000"
             )
             for row in r.named_results():
                 table_storage[row["table"]] = {
@@ -197,6 +203,12 @@ async def _check_clickhouse() -> dict:
                 total_rows_all += row["rows"]
         except Exception:
             pass
+
+        # Merge bytes/parts into the tables dict
+        for tbl_name, storage in table_storage.items():
+            if tbl_name in tables:
+                tables[tbl_name]["bytes"] = storage.get("bytes", 0)
+                tables[tbl_name]["parts"] = storage.get("parts", 0)
 
         # --- pk_memory_bytes ---
         pk_memory_bytes = 0
@@ -256,13 +268,15 @@ async def _check_clickhouse() -> dict:
         try:
             r = client.query(
                 "SELECT count() AS cnt,"
+                " max(elapsed) AS longest_seconds,"
                 " sum(total_size_bytes_compressed) AS total_bytes"
                 " FROM system.merges"
             )
             if r.result_rows:
                 merges = {
-                    "active_merges": r.first_row[0],
-                    "total_bytes_merging": r.first_row[1],
+                    "active_count": r.first_row[0],
+                    "longest_seconds": round(r.first_row[1], 1) if r.first_row[1] else 0,
+                    "total_bytes_merging": r.first_row[2],
                 }
         except Exception:
             pass
@@ -304,6 +318,7 @@ async def _check_clickhouse() -> dict:
                 " WHERE event_time > now() - INTERVAL 1 HOUR"
                 " AND query_duration_ms > 5000"
                 " AND type = 'QueryFinish'"
+                " SETTINGS max_memory_usage = 500000000"
             )
             slow_queries = r.first_row[0] if r.result_rows else 0
         except Exception:
@@ -313,15 +328,17 @@ async def _check_clickhouse() -> dict:
         recent_errors = []
         try:
             r = client.query(
-                "SELECT name, value, last_error_time"
+                "SELECT name, value, last_error_time, last_error_message"
                 " FROM system.errors"
-                " ORDER BY last_error_time DESC LIMIT 5"
+                " ORDER BY last_error_time DESC LIMIT 10"
+                " SETTINGS max_memory_usage = 500000000"
             )
             for row in r.named_results():
                 recent_errors.append({
                     "name": row["name"],
                     "count": row["value"],
-                    "last_error_time": str(row["last_error_time"]),
+                    "last_time": str(row["last_error_time"]),
+                    "message": row.get("last_error_message"),
                 })
         except Exception:
             pass
