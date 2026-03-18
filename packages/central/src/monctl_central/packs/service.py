@@ -86,9 +86,11 @@ async def export_pack(pack_id: uuid.UUID, db: AsyncSession) -> dict:
     if apps:
         result["contents"]["apps"] = [_export_app(a) for a in apps]
 
-    # Alert definitions
+    # Alert definitions (with app relationship for app_name)
     alerts = (await db.execute(
-        select(AppAlertDefinition).where(AppAlertDefinition.pack_id == pack.id)
+        select(AppAlertDefinition)
+        .options(selectinload(AppAlertDefinition.app))
+        .where(AppAlertDefinition.pack_id == pack.id)
     )).scalars().all()
     if alerts:
         result["contents"]["alert_rules"] = [_export_alert(a) for a in alerts]
@@ -163,6 +165,7 @@ def _export_alert(a: AppAlertDefinition) -> dict:
     return {
         "name": a.name,
         "description": a.description,
+        "app_name": a.app.name if a.app else None,
         "app_id": str(a.app_id),
         "app_version_id": str(a.app_version_id),
         "expression": a.expression,
@@ -326,9 +329,74 @@ async def import_pack(
 
     stats = {"created": 0, "updated": 0, "skipped": 0}
 
+    # Track app name → ID and old_id → new_id mapping for alert_rules resolution
+    app_name_to_id: dict[str, uuid.UUID] = {}
+    # Map old pack app_id UUIDs to new database UUIDs
+    old_app_id_to_new: dict[str, uuid.UUID] = {}
+    _pack_apps = data.get("contents", {}).get("apps", [])
+    # Build reverse mapping: find which app_id UUIDs in alert_rules correspond to which app names
+    # by checking if alert_rules reference app_ids that match the pack's own apps
+    _pack_app_name_by_old_id: dict[str, str] = {}
+    # The pack file may reference apps by UUID — build name lookup from alert rules' app_ids
+    _alert_app_ids: set[str] = set()
+    for _ar in data.get("contents", {}).get("alert_rules", []):
+        if _ar.get("app_id"):
+            _alert_app_ids.add(_ar["app_id"])
+
     for section, model, name_field in ENTITY_MAP:
         items = data.get("contents", {}).get(section, [])
         for item in items:
+            # For alert_rules, resolve app_id to a valid app in the database
+            if section == "alert_rules":
+                resolved_id: uuid.UUID | None = None
+                old_id = item.get("app_id", "")
+
+                # 1. Try explicit app_name
+                if item.get("app_name"):
+                    resolved_id = app_name_to_id.get(item["app_name"])
+                    if not resolved_id:
+                        r = (await db.execute(select(App).where(App.name == item["app_name"]))).scalar_one_or_none()
+                        if r:
+                            resolved_id = r.id
+
+                # 2. Try old_id → new_id mapping (from apps created earlier in this import)
+                if not resolved_id and old_id in old_app_id_to_new:
+                    resolved_id = old_app_id_to_new[old_id]
+
+                # 3. Try to find old_id in pack app names, then look up by name
+                if not resolved_id and old_id in _pack_app_name_by_old_id:
+                    resolved_id = app_name_to_id.get(_pack_app_name_by_old_id[old_id])
+
+                # 4. If pack has exactly one app, use it
+                if not resolved_id and len(_pack_apps) == 1:
+                    app_name_single = _pack_apps[0].get("name", "")
+                    resolved_id = app_name_to_id.get(app_name_single)
+                    if not resolved_id:
+                        r = (await db.execute(select(App).where(App.name == app_name_single))).scalar_one_or_none()
+                        if r:
+                            resolved_id = r.id
+
+                # 5. Last resort: check if old_id happens to exist in the DB
+                if not resolved_id and old_id:
+                    try:
+                        r = (await db.execute(select(App).where(App.id == uuid.UUID(old_id)))).scalar_one_or_none()
+                        if r:
+                            resolved_id = r.id
+                    except (ValueError, Exception):
+                        pass
+
+                if resolved_id:
+                    item["app_id"] = str(resolved_id)
+                    from monctl_central.storage.models import AppVersion
+                    latest_ver = (await db.execute(
+                        select(AppVersion).where(
+                            AppVersion.app_id == resolved_id,
+                            AppVersion.is_latest == True,  # noqa: E712
+                        )
+                    )).scalar_one_or_none()
+                    if latest_ver:
+                        item["app_version_id"] = str(latest_ver.id)
+
             item_name = item.get(name_field, "")
             resolution_key = f"{section}:{item_name}"
             resolution = resolutions.get(resolution_key, "skip")
@@ -339,11 +407,20 @@ async def import_pack(
 
             if existing and resolution == "skip":
                 stats["skipped"] += 1
+                if section == "apps":
+                    app_name_to_id[item_name] = existing.id
+                    if len(_pack_apps) == 1:
+                        for _aid in _alert_app_ids:
+                            old_app_id_to_new[_aid] = existing.id
                 continue
             elif existing and resolution == "overwrite":
                 _update_entity(existing, item, section, pack.id)
                 if section == "apps":
                     await _sync_app_versions(db, existing, item.get("versions", []))
+                    app_name_to_id[item_name] = existing.id
+                    if len(_pack_apps) == 1:
+                        for _aid in _alert_app_ids:
+                            old_app_id_to_new[_aid] = existing.id
                 elif section == "connectors":
                     await _sync_connector_versions(db, existing, item.get("versions", []))
                 stats["updated"] += 1
@@ -355,6 +432,10 @@ async def import_pack(
                 await db.flush()
                 if section == "apps":
                     await _create_app_versions(db, entity, item.get("versions", []))
+                    app_name_to_id[new_name] = entity.id
+                    if len(_pack_apps) == 1:
+                        for _aid in _alert_app_ids:
+                            old_app_id_to_new[_aid] = entity.id
                 elif section == "connectors":
                     await _create_connector_versions(db, entity, item.get("versions", []))
                 stats["created"] += 1
@@ -364,6 +445,10 @@ async def import_pack(
                 await db.flush()
                 if section == "apps":
                     await _create_app_versions(db, entity, item.get("versions", []))
+                    app_name_to_id[item_name] = entity.id
+                    if len(_pack_apps) == 1:
+                        for _aid in _alert_app_ids:
+                            old_app_id_to_new[_aid] = entity.id
                 elif section == "connectors":
                     await _create_connector_versions(db, entity, item.get("versions", []))
                 stats["created"] += 1
@@ -395,12 +480,17 @@ def _create_entity(item: dict, section: str, pack_id: uuid.UUID, db: AsyncSessio
             pack_id=pack_id,
         )
     elif section == "alert_rules":
+        # expression can be a string or dict — ensure it's a string
+        expr = item["expression"]
+        if isinstance(expr, dict):
+            import json as _json
+            expr = _json.dumps(expr)
         return AppAlertDefinition(
             app_id=uuid.UUID(item["app_id"]) if item.get("app_id") else uuid.uuid4(),
             app_version_id=uuid.UUID(item["app_version_id"]) if item.get("app_version_id") else uuid.uuid4(),
             name=item["name"],
             description=item.get("description"),
-            expression=item["expression"],
+            expression=expr,
             window=item.get("window", "5m"),
             severity=item.get("severity", "warning"),
             message_template=item.get("message_template"),
@@ -463,7 +553,11 @@ def _update_entity(existing, item: dict, section: str, pack_id: uuid.UUID) -> No
         existing.target_table = item.get("target_table", existing.target_table)
     elif section == "alert_rules":
         existing.description = item.get("description")
-        existing.expression = item.get("expression", existing.expression)
+        expr = item.get("expression", existing.expression)
+        if isinstance(expr, dict):
+            import json as _json
+            expr = _json.dumps(expr)
+        existing.expression = expr
         existing.window = item.get("window", existing.window)
         existing.severity = item.get("severity", existing.severity)
         existing.message_template = item.get("message_template")
