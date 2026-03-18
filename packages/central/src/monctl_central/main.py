@@ -145,9 +145,9 @@ async def lifespan(app: FastAPI):
             "name": "snmp",
             "description": "SNMP v2c/v3 connector — polls OIDs via PySNMP",
             "connector_type": "snmp",
-            "version": "1.1.0",
+            "version": "1.2.0",
             "entry_class": "SnmpConnector",
-            "requirements": [],
+            "requirements": ["pysnmp>=7.1"],
             "source_code": '''\
 """Built-in SNMP connector for MonCTL.
 
@@ -460,13 +460,61 @@ class SshConnector:
                     ConnectorVersion.is_latest == True,  # noqa: E712
                 )
                 latest_ver = (await session.execute(latest_stmt)).scalar_one_or_none()
-                if latest_ver and latest_ver.checksum != src_checksum:
+                needs_update = (
+                    latest_ver
+                    and (
+                        latest_ver.checksum != src_checksum
+                        or latest_ver.requirements != spec.get("requirements")
+                    )
+                )
+                if needs_update:
                     latest_ver.source_code = spec["source_code"]
                     latest_ver.checksum = src_checksum
                     latest_ver.requirements = spec.get("requirements")
                     latest_ver.entry_class = spec["entry_class"]
-                    logger.info("connector_updated", name=spec["name"])
+                    latest_ver.version = spec["version"]
+                    logger.info("connector_updated", name=spec["name"],
+                                version=spec["version"])
 
+        await session.commit()
+
+    # ── Seed app-level connector bindings ─────────────────────────────────
+    from monctl_central.storage.models import App, AppConnectorBinding
+
+    _APP_CONNECTOR_REQUIREMENTS: dict[str, list[dict[str, str]]] = {
+        "snmp_check": [{"alias": "snmp", "connector_name": "snmp"}],
+        "snmp_interface_poller": [{"alias": "snmp", "connector_name": "snmp"}],
+    }
+
+    async with factory() as session:
+        for app_name, bindings in _APP_CONNECTOR_REQUIREMENTS.items():
+            app = (await session.execute(
+                select(App).where(App.name == app_name)
+            )).scalar_one_or_none()
+            if app is None:
+                continue
+            for binding_spec in bindings:
+                existing = (await session.execute(
+                    select(AppConnectorBinding).where(
+                        AppConnectorBinding.app_id == app.id,
+                        AppConnectorBinding.alias == binding_spec["alias"],
+                    )
+                )).scalar_one_or_none()
+                if existing:
+                    continue
+                connector = (await session.execute(
+                    select(Connector).where(Connector.name == binding_spec["connector_name"])
+                )).scalar_one_or_none()
+                if connector is None:
+                    continue
+                session.add(AppConnectorBinding(
+                    app_id=app.id,
+                    connector_id=connector.id,
+                    alias=binding_spec["alias"],
+                    use_latest=True,
+                ))
+                logger.info("app_connector_binding_seeded",
+                            app=app_name, alias=binding_spec["alias"])
         await session.commit()
 
     # ── ClickHouse schema init ─────────────────────────────────────────────

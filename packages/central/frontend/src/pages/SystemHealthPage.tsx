@@ -1,6 +1,9 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import {
+  ArrowDown,
   ArrowDownToLine,
+  ArrowUp,
+  ArrowUpDown,
   Bell,
   ChevronDown,
   ChevronRight,
@@ -12,11 +15,14 @@ import {
   Radio,
   RefreshCw,
   Server,
+  X,
   Zap,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
+import { Input } from "@/components/ui/input.tsx";
+import { Select } from "@/components/ui/select.tsx";
 import {
   Table,
   TableBody,
@@ -44,9 +50,6 @@ const statusDotColors: Record<SubsystemStatus, string> = {
   critical: "bg-red-400",
   unknown: "bg-zinc-400",
 };
-
-// subsystem metadata used by cards above — kept for reference but
-// each card component renders its own icon/label directly.
 
 // ── Shared components ────────────────────────────────────────────────────────
 
@@ -460,11 +463,90 @@ function SchedulerCard({ sub }: { sub: { status: SubsystemStatus; details: Recor
 
 // ── Collectors section ───────────────────────────────────────────────────────
 
+type CollectorSortField = "name" | "status" | "last_seen_at" | "total_jobs" | "effective_load" | "group_name";
+type SortDir = "asc" | "desc";
+
+function CollectorSortHead({
+  label, field, sortBy, sortDir, onSort, className,
+}: {
+  label: string; field: CollectorSortField; sortBy: CollectorSortField; sortDir: SortDir;
+  onSort: (field: CollectorSortField) => void; className?: string;
+}) {
+  const active = sortBy === field;
+  return (
+    <TableHead
+      className={`text-xs py-1 cursor-pointer select-none hover:text-zinc-200 ${className ?? ""}`}
+      onClick={() => onSort(field)}
+    >
+      <span className="inline-flex items-center gap-1">
+        {label}
+        {active ? (
+          sortDir === "asc" ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />
+        ) : (
+          <ArrowUpDown className="h-3 w-3 text-zinc-600" />
+        )}
+      </span>
+    </TableHead>
+  );
+}
+
 function CollectorsSection({ sub }: { sub: { status: SubsystemStatus; details: Record<string, unknown> } }) {
   const d = sub.details;
   const byStatus = d.by_status as Record<string, number> | undefined;
   const collectors = (d.collectors ?? []) as CollectorHealthDetail[];
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  // Sort state
+  const [sortBy, setSortBy] = useState<CollectorSortField>("name");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+
+  // Filter state
+  const [filterStatus, setFilterStatus] = useState("");
+  const [filterSearch, setFilterSearch] = useState("");
+
+  function onSort(field: CollectorSortField) {
+    if (field === sortBy) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortBy(field);
+      setSortDir(field === "name" || field === "group_name" || field === "status" ? "asc" : "desc");
+    }
+  }
+
+  const statusOptions = useMemo(() => {
+    const statuses = new Set(collectors.map((c) => c.status));
+    return Array.from(statuses).sort();
+  }, [collectors]);
+
+  const sortedCollectors = useMemo(() => {
+    let filtered = collectors;
+
+    if (filterStatus) {
+      filtered = filtered.filter((c) => c.status === filterStatus);
+    }
+
+    if (filterSearch.trim()) {
+      const q = filterSearch.trim().toLowerCase();
+      filtered = filtered.filter((c) =>
+        (c.name ?? "").toLowerCase().includes(q) ||
+        (c.hostname ?? "").toLowerCase().includes(q) ||
+        (c.group_name ?? "").toLowerCase().includes(q)
+      );
+    }
+
+    return [...filtered].sort((a, b) => {
+      let cmp = 0;
+      switch (sortBy) {
+        case "name": cmp = (a.name ?? "").localeCompare(b.name ?? ""); break;
+        case "status": cmp = (a.status ?? "").localeCompare(b.status ?? ""); break;
+        case "last_seen_at": cmp = (a.last_seen_at ?? "").localeCompare(b.last_seen_at ?? ""); break;
+        case "total_jobs": cmp = (a.total_jobs ?? 0) - (b.total_jobs ?? 0); break;
+        case "effective_load": cmp = (a.effective_load ?? 0) - (b.effective_load ?? 0); break;
+        case "group_name": cmp = (a.group_name ?? "").localeCompare(b.group_name ?? ""); break;
+      }
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+  }, [collectors, filterStatus, filterSearch, sortBy, sortDir]);
 
   function toggleExpand(id: string) {
     setExpanded((prev) => {
@@ -493,19 +575,56 @@ function CollectorsSection({ sub }: { sub: { status: SubsystemStatus; details: R
           <span className="font-mono">load {Number(d.avg_load ?? 0).toFixed(3)}</span>
         </div>
 
-        {collectors.length > 0 && (
+        {/* Filter bar */}
+        <div className="flex items-center gap-3 mb-3">
+          <Input
+            placeholder="Search collectors..."
+            value={filterSearch}
+            onChange={(e) => setFilterSearch(e.target.value)}
+            className="w-56 h-7 text-xs"
+          />
+          <Select
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+            className="w-36 text-xs"
+          >
+            <option value="">All Statuses</option>
+            {statusOptions.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </Select>
+          {(filterStatus || filterSearch) && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => { setFilterStatus(""); setFilterSearch(""); }}
+              className="h-7 px-2"
+            >
+              <X className="h-3 w-3 mr-1" /> Clear
+            </Button>
+          )}
+          <span className="text-xs text-zinc-500 ml-auto">
+            {sortedCollectors.length} of {collectors.length} collector{collectors.length !== 1 ? "s" : ""}
+          </span>
+        </div>
+
+        {sortedCollectors.length === 0 ? (
+          <p className="text-sm text-zinc-500 py-8 text-center">
+            No collectors match the current filters.
+          </p>
+        ) : (
           <Table>
             <TableHeader><TableRow>
               <TableHead className="text-xs py-1 w-6"></TableHead>
-              <TableHead className="text-xs py-1">Name</TableHead>
-              <TableHead className="text-xs py-1">Status</TableHead>
-              <TableHead className="text-xs py-1">Last seen</TableHead>
-              <TableHead className="text-xs py-1 text-right">Jobs</TableHead>
-              <TableHead className="text-xs py-1 text-right">Load</TableHead>
-              <TableHead className="text-xs py-1">Group</TableHead>
+              <CollectorSortHead label="Name" field="name" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+              <CollectorSortHead label="Status" field="status" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+              <CollectorSortHead label="Last seen" field="last_seen_at" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+              <CollectorSortHead label="Jobs" field="total_jobs" sortBy={sortBy} sortDir={sortDir} onSort={onSort} className="text-right" />
+              <CollectorSortHead label="Load" field="effective_load" sortBy={sortBy} sortDir={sortDir} onSort={onSort} className="text-right" />
+              <CollectorSortHead label="Group" field="group_name" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
             </TableRow></TableHeader>
             <TableBody>
-              {collectors.map((c) => {
+              {sortedCollectors.map((c) => {
                 const isExp = expanded.has(c.id);
                 return (
                   <>
@@ -521,7 +640,7 @@ function CollectorsSection({ sub }: { sub: { status: SubsystemStatus; details: R
                       </TableCell>
                       <TableCell className="py-1.5 text-xs text-zinc-500">{timeAgo(c.last_seen_at)}</TableCell>
                       <TableCell className="py-1.5 text-xs font-mono text-right">{c.total_jobs}</TableCell>
-                      <TableCell className="py-1.5 text-xs font-mono text-right">{c.load_score.toFixed(3)}</TableCell>
+                      <TableCell className="py-1.5 text-xs font-mono text-right">{c.effective_load.toFixed(3)}</TableCell>
                       <TableCell className="py-1.5 text-xs text-zinc-500">{c.group_name ?? "\u2014"}</TableCell>
                     </TableRow>
                     {isExp && (

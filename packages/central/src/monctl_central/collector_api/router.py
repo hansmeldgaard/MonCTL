@@ -33,8 +33,10 @@ from monctl_central.storage.models import (
     App,
     AppAssignment,
     AppCache,
+    AppConnectorBinding,
     AppVersion,
     AssignmentConnectorBinding,
+    AssignmentCredentialOverride,
     Collector,
     Connector,
     ConnectorVersion,
@@ -290,12 +292,46 @@ async def get_jobs(
                 "poll_metrics": meta.poll_metrics,
             })
 
-    # Pre-load credential names for connector bindings (batch query)
-    all_cred_ids = set()
+    # Pre-load app-level connector bindings (batch)
+    app_ids = {row.App.id for row in rows}
+    acb_stmt = select(AppConnectorBinding).where(AppConnectorBinding.app_id.in_(app_ids))
+    acb_result = await db.execute(acb_stmt)
+    app_bindings_map: dict[uuid.UUID, list[AppConnectorBinding]] = {}
+    for acb in acb_result.scalars().all():
+        app_bindings_map.setdefault(acb.app_id, []).append(acb)
+
+    # Pre-load assignment credential overrides (batch)
+    assignment_ids = {row.AppAssignment.id for row in rows}
+    override_stmt = select(AssignmentCredentialOverride).where(
+        AssignmentCredentialOverride.assignment_id.in_(assignment_ids)
+    )
+    override_result = await db.execute(override_stmt)
+    overrides_map: dict[uuid.UUID, dict[str, uuid.UUID]] = {}
+    for ov in override_result.scalars().all():
+        overrides_map.setdefault(ov.assignment_id, {})[ov.alias] = ov.credential_id
+
+    # Pre-load latest connector versions for use_latest resolution
+    latest_cv_stmt = select(ConnectorVersion).where(ConnectorVersion.is_latest == True)  # noqa: E712
+    latest_cv_result = await db.execute(latest_cv_stmt)
+    latest_connector_versions: dict[uuid.UUID, uuid.UUID] = {}
+    for cv in latest_cv_result.scalars().all():
+        latest_connector_versions[cv.connector_id] = cv.id
+
+    # Collect all credential IDs we might need names for
+    all_cred_ids: set[uuid.UUID] = set()
     for row in rows:
+        # Legacy: assignment connector bindings
         for b in (row.AppAssignment.connector_bindings or []):
             if b.credential_id:
                 all_cred_ids.add(b.credential_id)
+        # New: assignment credential_id, device default_credential_id
+        if row.AppAssignment.credential_id:
+            all_cred_ids.add(row.AppAssignment.credential_id)
+        if row.Device and row.Device.default_credential_id:
+            all_cred_ids.add(row.Device.default_credential_id)
+    for alias_map in overrides_map.values():
+        all_cred_ids.update(alias_map.values())
+
     cred_name_map: dict[uuid.UUID, str] = {}
     if all_cred_ids:
         cred_stmt = select(Credential.id, Credential.name).where(Credential.id.in_(all_cred_ids))
@@ -342,19 +378,49 @@ async def get_jobs(
             dev_key = str(device.id)
             if dev_key in monitored_map:
                 params["monitored_interfaces"] = monitored_map[dev_key]
-            # If not in monitored_map, no interfaces known yet → walk mode (no key injected)
 
-        # Build connector bindings for this assignment
+        # Build connector bindings from APP-level bindings (new model)
+        # with credential resolution: override > assignment > device default
+        app_cbs = app_bindings_map.get(app.id, [])
+        cred_overrides = overrides_map.get(assignment.id, {})
+
         bindings = []
-        for b in (assignment.connector_bindings or []):
-            bindings.append({
-                "alias": b.alias,
-                "connector_id": str(b.connector_id),
-                "connector_version_id": str(b.connector_version_id),
-                "credential_name": cred_name_map.get(b.credential_id) if b.credential_id else None,
-                "use_latest": b.use_latest,
-                "settings": b.settings or {},
-            })
+        if app_cbs:
+            # New path: read from app connector bindings
+            for acb in app_cbs:
+                # Resolve connector version
+                version_id = acb.connector_version_id
+                if acb.use_latest:
+                    version_id = latest_connector_versions.get(acb.connector_id, version_id)
+
+                # Resolve credential: override > assignment > device default
+                cred_id: uuid.UUID | None = None
+                if acb.alias in cred_overrides:
+                    cred_id = cred_overrides[acb.alias]
+                elif assignment.credential_id:
+                    cred_id = assignment.credential_id
+                elif device and device.default_credential_id:
+                    cred_id = device.default_credential_id
+
+                bindings.append({
+                    "alias": acb.alias,
+                    "connector_id": str(acb.connector_id),
+                    "connector_version_id": str(version_id) if version_id else None,
+                    "credential_name": cred_name_map.get(cred_id) if cred_id else None,
+                    "use_latest": acb.use_latest,
+                    "settings": acb.settings or {},
+                })
+        else:
+            # Fallback: legacy assignment connector bindings (for apps not yet migrated)
+            for b in (assignment.connector_bindings or []):
+                bindings.append({
+                    "alias": b.alias,
+                    "connector_id": str(b.connector_id),
+                    "connector_version_id": str(b.connector_version_id),
+                    "credential_name": cred_name_map.get(b.credential_id) if b.credential_id else None,
+                    "use_latest": b.use_latest,
+                    "settings": b.settings or {},
+                })
 
         jobs.append({
             "job_id": str(assignment.id),

@@ -122,6 +122,9 @@ class App(Base):
     )
 
     versions: Mapped[list["AppVersion"]] = relationship(back_populates="app", cascade="all, delete-orphan")
+    connector_bindings: Mapped[list["AppConnectorBinding"]] = relationship(
+        back_populates="app", cascade="all, delete-orphan"
+    )
 
 
 class AppVersion(Base):
@@ -310,6 +313,9 @@ class AppAssignment(Base):
     # Optional role for structured monitoring checks: "availability" | "latency" | None
     role: Mapped[str | None] = mapped_column(String(20), nullable=True)
     use_latest: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    credential_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("credentials.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default="now()"
     )
@@ -321,7 +327,11 @@ class AppAssignment(Base):
     device: Mapped["Device | None"] = relationship(back_populates="assignments")
     app: Mapped[App] = relationship()
     app_version: Mapped[AppVersion] = relationship()
+    credential: Mapped["Credential | None"] = relationship(foreign_keys=[credential_id])
     connector_bindings: Mapped[list["AssignmentConnectorBinding"]] = relationship(
+        back_populates="assignment", cascade="all, delete-orphan"
+    )
+    credential_overrides: Mapped[list["AssignmentCredentialOverride"]] = relationship(
         back_populates="assignment", cascade="all, delete-orphan"
     )
 
@@ -843,6 +853,56 @@ class AssignmentConnectorBinding(Base):
     )
 
     assignment: Mapped["AppAssignment"] = relationship(back_populates="connector_bindings")
+
+
+class AppConnectorBinding(Base):
+    """Declares a connector requirement for an app.
+
+    An app can require multiple connectors (e.g., SNMP + SSH).
+    Each binding has an alias that the app uses to reference the connector
+    in its code via context.connectors[alias].
+    """
+    __tablename__ = "app_connector_bindings"
+    __table_args__ = (
+        UniqueConstraint("app_id", "alias", name="uq_app_connector_alias"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    app_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("apps.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    connector_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("connectors.id", ondelete="RESTRICT"), nullable=False
+    )
+    alias: Mapped[str] = mapped_column(String(64), nullable=False)
+    use_latest: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    connector_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("connector_versions.id", ondelete="SET NULL"), nullable=True
+    )
+    settings: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+
+    app: Mapped["App"] = relationship(back_populates="connector_bindings")
+    connector: Mapped["Connector"] = relationship()
+    connector_version: Mapped["ConnectorVersion | None"] = relationship()
+
+
+class AssignmentCredentialOverride(Base):
+    """Per-assignment credential override for a specific connector alias."""
+    __tablename__ = "assignment_credential_overrides"
+    __table_args__ = (
+        UniqueConstraint("assignment_id", "alias", name="uq_assignment_cred_override_alias"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    assignment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app_assignments.id", ondelete="CASCADE"), nullable=False
+    )
+    alias: Mapped[str] = mapped_column(String(64), nullable=False)
+    credential_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("credentials.id", ondelete="CASCADE"), nullable=False
+    )
+
+    assignment: Mapped["AppAssignment"] = relationship(back_populates="credential_overrides")
 
 
 class Pack(Base):

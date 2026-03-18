@@ -18,8 +18,6 @@ dependencies = [
     "cryptography>=42.0.0",
     # Logging
     "structlog>=24.1",
-    # SNMP polling (interface poller)
-    "pysnmp>=7.1",
 ]
 
 [project.scripts]

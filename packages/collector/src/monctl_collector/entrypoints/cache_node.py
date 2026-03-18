@@ -476,6 +476,67 @@ async def _start_status_server(
         return None
 
 
+async def _get_container_states() -> dict[str, str] | None:
+    """Query Docker socket for sibling container states.
+
+    Returns a dict like {"cache-node": "running", "poll-worker-1": "running"}
+    or None if the Docker socket is not available.
+    """
+    docker_socket = "/var/run/docker.sock"
+    if not os.path.exists(docker_socket):
+        return None
+    try:
+        connector = aiohttp.UnixConnector(path=docker_socket)
+        async with aiohttp.ClientSession(connector=connector) as session:
+            async with session.get(
+                "http://localhost/containers/json?all=true",
+                timeout=aiohttp.ClientTimeout(total=3),
+            ) as resp:
+                if resp.status != 200:
+                    return None
+                containers = await resp.json()
+                states: dict[str, str] = {}
+                for c in containers:
+                    name = c.get("Names", [""])[0].lstrip("/")
+                    state = c.get("State", "unknown")
+                    if any(svc in name for svc in ["cache-node", "poll-worker", "forwarder"]):
+                        states[name] = state
+                return states if states else None
+    except Exception:
+        return None
+
+
+def _get_queue_stats(scheduler: JobScheduler) -> dict | None:
+    """Gather queue and execution stats from the scheduler."""
+    try:
+        now = time.time()
+        one_hour_ago = now - 3600
+        overdue = 0
+        errored_last_hour = 0
+        exec_times: list[float] = []
+
+        for profile in scheduler._profiles.values():
+            if profile.next_deadline > 0 and profile.next_deadline < now:
+                overdue += 1
+            if profile.error_count > 0 and profile.last_run > one_hour_ago:
+                errored_last_hour += profile.error_count
+            if profile.last_execution_time > 0:
+                exec_times.append(profile.last_execution_time * 1000)
+
+        avg_exec_ms = round(sum(exec_times) / len(exec_times), 1) if exec_times else 0
+        max_exec_ms = round(max(exec_times), 1) if exec_times else 0
+
+        return {
+            "pending_results": 0,
+            "jobs_overdue": overdue,
+            "jobs_errored_last_hour": errored_last_hour,
+            "avg_execution_ms": avg_exec_ms,
+            "max_execution_ms": max_exec_ms,
+        }
+    except Exception:
+        return None
+
+
 async def _heartbeat_loop(
     central_client: CentralAPIClient,
     node_id: str,
@@ -486,9 +547,19 @@ async def _heartbeat_loop(
     while True:
         try:
             load_info = dataclasses.asdict(scheduler.get_current_load_info())
-            ok = await central_client.post_heartbeat(node_id, load_info)
+            container_states = await _get_container_states()
+            queue_stats = _get_queue_stats(scheduler)
+
+            ok = await central_client.post_heartbeat(
+                node_id,
+                load_info,
+                container_states=container_states,
+                queue_stats=queue_stats,
+            )
             if ok:
-                logger.debug("heartbeat_sent", node_id=node_id)
+                logger.debug("heartbeat_sent", node_id=node_id,
+                             containers=bool(container_states),
+                             queue=bool(queue_stats))
             else:
                 logger.warning("heartbeat_rejected", node_id=node_id)
         except Exception as exc:

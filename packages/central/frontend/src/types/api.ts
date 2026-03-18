@@ -248,6 +248,8 @@ export interface DeviceAssignment {
   config: Record<string, unknown>;
   enabled: boolean;
   use_latest: boolean;
+  role: string | null;
+  credential_id: string | null;
   connector_bindings?: ConnectorBindingInfo[];
   created_at: string;
 }
@@ -268,9 +270,19 @@ export interface AppVersion {
   is_latest: boolean;
 }
 
+export interface AppConnectorBindingInfo {
+  alias: string;
+  connector_id: string;
+  connector_name: string;
+  use_latest: boolean;
+  connector_version_id: string | null;
+  settings: Record<string, unknown>;
+}
+
 export interface AppDetail extends AppSummary {
   config_schema: Record<string, unknown> | null;
   versions: AppVersion[];
+  connector_bindings?: AppConnectorBindingInfo[];
 }
 
 export interface DisplayTemplate {
@@ -803,6 +815,7 @@ export interface ConnectorSummary {
   is_builtin: boolean;
   version_count: number;
   latest_version: string | null;
+  latest_version_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -832,9 +845,9 @@ export interface ConnectorDetail {
 export interface ConnectorBindingInfo {
   id: string;
   alias: string;
-  connector: { id: string; name: string };
-  connector_version: { id: string; version: string };
-  credential: { id: string; name: string } | null;
+  connector_id: string;
+  connector_version_id: string;
+  credential_id: string | null;
   use_latest: boolean;
   settings: Record<string, unknown>;
 }

@@ -201,6 +201,8 @@ class CentralAPIClient:
         load_info: dict,
         peer_address: str | None = None,
         peer_states: dict[str, str] | None = None,
+        container_states: dict[str, str] | None = None,
+        queue_stats: dict | None = None,
     ) -> bool:
         """Send a heartbeat with current load information.
 
@@ -216,6 +218,8 @@ class CentralAPIClient:
             "stolen_job_count": load_info.get("stolen_job_count", 0),
             "peer_address": peer_address,
             "peer_states": peer_states,
+            "container_states": container_states,
+            "queue_stats": queue_stats,
         }
         try:
             async with self._session.post(self._url("/heartbeat"), json=payload) as resp:

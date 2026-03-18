@@ -27,6 +27,7 @@ services:
       - cache_data:/data
       - /etc/monctl/setup.yaml:/etc/monctl/setup.yaml:rw
       - /etc/machine-id:/etc/machine-id:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c",

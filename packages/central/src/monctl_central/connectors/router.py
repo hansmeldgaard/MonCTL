@@ -110,7 +110,10 @@ async def list_connectors(
         version_count = len(c.versions)
         latest = next((v for v in c.versions if v.is_latest), None)
         latest_version = latest.version if latest else None
-        data.append(_fmt_connector(c, version_count=version_count, latest_version=latest_version))
+        latest_version_id = str(latest.id) if latest else None
+        entry = _fmt_connector(c, version_count=version_count, latest_version=latest_version)
+        entry["latest_version_id"] = latest_version_id
+        data.append(entry)
 
     return {"status": "success", "data": data}
 

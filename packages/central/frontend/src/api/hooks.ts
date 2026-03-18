@@ -774,6 +774,7 @@ export function useUpdateAssignment() {
         enabled?: boolean;
         app_version_id?: string;
         use_latest?: boolean;
+        connector_bindings?: { alias: string; connector_id: string; connector_version_id: string; credential_id?: string | null; use_latest?: boolean; settings?: Record<string, unknown> }[];
       };
     }) => apiPut<{ id: string }>(`/apps/assignments/${id}`, data),
     onSuccess: () => {

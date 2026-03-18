@@ -14,6 +14,7 @@ from monctl_central.dependencies import apply_tenant_filter, get_db, require_aut
 from monctl_central.storage.models import (
     App,
     AppAssignment,
+    AppConnectorBinding,
     AppVersion,
     AssignmentConnectorBinding,
     Connector,
@@ -61,7 +62,7 @@ class CreateAppRequest(BaseModel):
 
 class ConnectorBindingInput(BaseModel):
     connector_id: str
-    connector_version_id: str
+    connector_version_id: str | None = None
     credential_id: str | None = None
     alias: str
     use_latest: bool = False
@@ -335,11 +336,26 @@ async def get_app(
 ):
     """Get app details including all versions (sorted newest first)."""
     from sqlalchemy.orm import selectinload
-    stmt = select(App).options(selectinload(App.versions)).where(App.id == uuid.UUID(app_id))
+    stmt = (
+        select(App)
+        .options(selectinload(App.versions), selectinload(App.connector_bindings))
+        .where(App.id == uuid.UUID(app_id))
+    )
     result = await db.execute(stmt)
     app = result.scalar_one_or_none()
     if app is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App not found")
+
+    # Load connector names for display
+    connector_ids = {b.connector_id for b in app.connector_bindings}
+    connector_names: dict[uuid.UUID, str] = {}
+    if connector_ids:
+        from monctl_central.storage.models import Connector as ConnectorModel
+        cn_rows = (await db.execute(
+            select(ConnectorModel.id, ConnectorModel.name).where(ConnectorModel.id.in_(connector_ids))
+        )).all()
+        connector_names = {r.id: r.name for r in cn_rows}
+
     return {
         "status": "success",
         "data": {
@@ -353,8 +369,147 @@ async def get_app(
                 {"id": str(v.id), "version": v.version, "is_latest": v.is_latest}
                 for v in sorted(app.versions, key=lambda v: v.published_at, reverse=True)
             ],
+            "connector_bindings": [
+                {
+                    "alias": b.alias,
+                    "connector_id": str(b.connector_id),
+                    "connector_name": connector_names.get(b.connector_id, ""),
+                    "use_latest": b.use_latest,
+                    "connector_version_id": str(b.connector_version_id) if b.connector_version_id else None,
+                    "settings": b.settings or {},
+                }
+                for b in app.connector_bindings
+            ],
         },
     }
+
+
+# ── App connector binding CRUD ─────────────────────────────────────────────
+
+
+class AppConnectorBindingInput(BaseModel):
+    alias: str
+    connector_id: str
+    use_latest: bool = True
+    connector_version_id: str | None = None
+    settings: dict = Field(default_factory=dict)
+
+
+@router.get("/{app_id}/connectors")
+async def list_app_connectors(
+    app_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """List connector bindings for an app."""
+    stmt = select(AppConnectorBinding).where(AppConnectorBinding.app_id == uuid.UUID(app_id))
+    rows = (await db.execute(stmt)).scalars().all()
+    return {
+        "status": "success",
+        "data": [
+            {
+                "alias": b.alias,
+                "connector_id": str(b.connector_id),
+                "use_latest": b.use_latest,
+                "connector_version_id": str(b.connector_version_id) if b.connector_version_id else None,
+                "settings": b.settings or {},
+            }
+            for b in rows
+        ],
+    }
+
+
+@router.post("/{app_id}/connectors", status_code=status.HTTP_201_CREATED)
+async def add_app_connector(
+    app_id: str,
+    request: AppConnectorBindingInput,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Add a connector binding to an app."""
+    app = await db.get(App, uuid.UUID(app_id))
+    if not app:
+        raise HTTPException(status_code=404, detail="App not found")
+
+    # Check for duplicate alias
+    existing = (await db.execute(
+        select(AppConnectorBinding).where(
+            AppConnectorBinding.app_id == app.id,
+            AppConnectorBinding.alias == request.alias,
+        )
+    )).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=409, detail=f"Alias '{request.alias}' already exists on this app")
+
+    # Resolve version_id if use_latest
+    version_id = None
+    if request.connector_version_id:
+        version_id = uuid.UUID(request.connector_version_id)
+    elif not request.use_latest:
+        latest = (await db.execute(
+            select(ConnectorVersion).where(
+                ConnectorVersion.connector_id == uuid.UUID(request.connector_id),
+                ConnectorVersion.is_latest == True,  # noqa: E712
+            )
+        )).scalar_one_or_none()
+        if latest:
+            version_id = latest.id
+
+    binding = AppConnectorBinding(
+        app_id=app.id,
+        connector_id=uuid.UUID(request.connector_id),
+        alias=request.alias,
+        use_latest=request.use_latest,
+        connector_version_id=version_id,
+        settings=request.settings,
+    )
+    db.add(binding)
+    await db.flush()
+    return {"status": "success", "data": {"alias": binding.alias}}
+
+
+@router.put("/{app_id}/connectors/{alias}")
+async def update_app_connector(
+    app_id: str,
+    alias: str,
+    request: AppConnectorBindingInput,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Update a connector binding on an app."""
+    binding = (await db.execute(
+        select(AppConnectorBinding).where(
+            AppConnectorBinding.app_id == uuid.UUID(app_id),
+            AppConnectorBinding.alias == alias,
+        )
+    )).scalar_one_or_none()
+    if not binding:
+        raise HTTPException(status_code=404, detail="Connector binding not found")
+
+    binding.connector_id = uuid.UUID(request.connector_id)
+    binding.use_latest = request.use_latest
+    binding.connector_version_id = uuid.UUID(request.connector_version_id) if request.connector_version_id else None
+    binding.settings = request.settings
+    return {"status": "success", "data": {"alias": binding.alias}}
+
+
+@router.delete("/{app_id}/connectors/{alias}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_app_connector(
+    app_id: str,
+    alias: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Remove a connector binding from an app."""
+    binding = (await db.execute(
+        select(AppConnectorBinding).where(
+            AppConnectorBinding.app_id == uuid.UUID(app_id),
+            AppConnectorBinding.alias == alias,
+        )
+    )).scalar_one_or_none()
+    if not binding:
+        raise HTTPException(status_code=404, detail="Connector binding not found")
+    await db.delete(binding)
 
 
 @router.post("/assignments", status_code=status.HTTP_201_CREATED)
@@ -408,10 +563,22 @@ async def create_assignment(
 
     # Create connector bindings if provided
     for binding in request.connector_bindings:
+        version_id = binding.connector_version_id
+        if not version_id:
+            # Resolve latest version for this connector
+            latest = (await db.execute(
+                select(ConnectorVersion).where(
+                    ConnectorVersion.connector_id == uuid.UUID(binding.connector_id),
+                    ConnectorVersion.is_latest == True,  # noqa: E712
+                )
+            )).scalar_one_or_none()
+            if not latest:
+                raise HTTPException(status_code=400, detail=f"No latest version for connector {binding.connector_id}")
+            version_id = str(latest.id)
         acb = AssignmentConnectorBinding(
             assignment_id=assignment.id,
             connector_id=uuid.UUID(binding.connector_id),
-            connector_version_id=uuid.UUID(binding.connector_version_id),
+            connector_version_id=uuid.UUID(version_id),
             credential_id=uuid.UUID(binding.credential_id) if binding.credential_id else None,
             alias=binding.alias,
             use_latest=binding.use_latest,
@@ -488,6 +655,7 @@ class UpdateAssignmentRequest(BaseModel):
     enabled: bool | None = None
     app_version_id: str | None = None
     use_latest: bool | None = None
+    connector_bindings: list[ConnectorBindingInput] | None = None
 
 
 @router.put("/assignments/{assignment_id}")
@@ -519,6 +687,37 @@ async def update_assignment(
     if request.use_latest is not None:
         assignment.use_latest = request.use_latest
     assignment.updated_at = utc_now()
+
+    # Replace connector bindings if provided
+    if request.connector_bindings is not None:
+        from sqlalchemy import delete as sa_delete
+        await db.execute(
+            sa_delete(AssignmentConnectorBinding).where(
+                AssignmentConnectorBinding.assignment_id == assignment.id
+            )
+        )
+        for binding in request.connector_bindings:
+            version_id = binding.connector_version_id
+            if not version_id:
+                latest = (await db.execute(
+                    select(ConnectorVersion).where(
+                        ConnectorVersion.connector_id == uuid.UUID(binding.connector_id),
+                        ConnectorVersion.is_latest == True,  # noqa: E712
+                    )
+                )).scalar_one_or_none()
+                if not latest:
+                    raise HTTPException(status_code=400, detail=f"No latest version for connector {binding.connector_id}")
+                version_id = str(latest.id)
+            acb = AssignmentConnectorBinding(
+                assignment_id=assignment.id,
+                connector_id=uuid.UUID(binding.connector_id),
+                connector_version_id=uuid.UUID(version_id),
+                credential_id=uuid.UUID(binding.credential_id) if binding.credential_id else None,
+                alias=binding.alias,
+                use_latest=binding.use_latest,
+                settings=binding.settings,
+            )
+            db.add(acb)
 
     await db.flush()
 
