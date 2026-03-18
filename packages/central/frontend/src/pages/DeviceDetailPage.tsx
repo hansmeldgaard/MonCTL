@@ -9,7 +9,9 @@ import {
   BarChart2,
   Bell,
   Clock,
+  Gauge,
   Layout,
+  ListChecks,
   Loader2,
   Monitor,
   Network,
@@ -71,6 +73,7 @@ import {
   useUpdateDevice,
   useUpdateDeviceMonitoring,
   useDeviceThresholds,
+  useAlertInstances,
   useUpdateAlertInstance,
   useCreateThresholdOverride,
   useUpdateThresholdOverride,
@@ -2191,10 +2194,12 @@ function formatInterval(seconds: number): string {
 }
 
 function AssignmentsTab({ deviceId }: { deviceId: string }) {
+  const { data: device } = useDevice(deviceId);
   const { data: assignments, isLoading } = useDeviceAssignments(deviceId);
   const deleteAssignment = useDeleteAssignment();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
 
   if (isLoading) {
     return (
@@ -2206,10 +2211,21 @@ function AssignmentsTab({ deviceId }: { deviceId: string }) {
 
   if (!assignments || assignments.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-48 text-zinc-500 gap-2">
-        <Plug className="h-10 w-10 text-zinc-600" />
-        <p className="text-sm">No app assignments for this device.</p>
-        <p className="text-xs text-zinc-600">Assign apps via the Overview tab or the Add Assignment dialog.</p>
+      <div className="space-y-4">
+        <div className="flex flex-col items-center justify-center h-48 text-zinc-500 gap-2">
+          <ListChecks className="h-10 w-10 text-zinc-600" />
+          <p className="text-sm">No app assignments for this device.</p>
+          <Button size="sm" variant="secondary" className="mt-2 gap-1.5" onClick={() => setAddOpen(true)}>
+            <Plus className="h-3.5 w-3.5" /> Assign App
+          </Button>
+        </div>
+        <AddAssignmentDialog
+          deviceId={deviceId}
+          deviceCollectorGroupId={device?.collector_group_id ?? null}
+          deviceCollectorGroupName={device?.collector_group_name ?? null}
+          open={addOpen}
+          onClose={() => setAddOpen(false)}
+        />
       </div>
     );
   }
@@ -2219,6 +2235,12 @@ function AssignmentsTab({ deviceId }: { deviceId: string }) {
 
   return (
     <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-zinc-500">{assignments.length} assignment{assignments.length !== 1 ? "s" : ""}</p>
+        <Button size="sm" onClick={() => setAddOpen(true)} className="gap-1.5">
+          <Plus className="h-3.5 w-3.5" /> Assign App
+        </Button>
+      </div>
       <Table>
         <TableHeader>
           <TableRow>
@@ -2322,19 +2344,25 @@ function AssignmentsTab({ deviceId }: { deviceId: string }) {
         open={!!editingId}
         onClose={() => setEditingId(null)}
       />
+
+      <AddAssignmentDialog
+        deviceId={deviceId}
+        deviceCollectorGroupId={device?.collector_group_id ?? null}
+        deviceCollectorGroupName={device?.collector_group_name ?? null}
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+      />
     </div>
   );
 }
 
-// ── Tab 4: Settings ──────────────────────────────────────
+// ── Tab: Settings ──────────────────────────────────────
 
 function SettingsTab({ deviceId }: { deviceId: string }) {
   const { data: device, isLoading: deviceLoading } = useDevice(deviceId);
   const { data: deviceTypes } = useDeviceTypes();
   const { data: tenants } = useTenants();
   const { data: collectorGroups } = useCollectorGroups();
-  const { data: assignments } = useDeviceAssignments(deviceId);
-  const deleteAssignment = useDeleteAssignment();
   const updateDevice = useUpdateDevice();
 
   // Device fields
@@ -2352,11 +2380,6 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
   const [labelsSaving, setLabelsSaving] = useState(false);
   const [labelsSaveSuccess, setLabelsSaveSuccess] = useState(false);
   const [labelError, setLabelError] = useState<string | null>(null);
-
-  // Assignment dialogs
-  const [addOpen, setAddOpen] = useState(false);
-  const [editTarget, setEditTarget] = useState<DeviceAssignment | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
 
   // Initialize form fields when device loads
   useEffect(() => {
@@ -2416,16 +2439,6 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
       setLabelError(err instanceof Error ? err.message : "Failed to save labels");
     } finally {
       setLabelsSaving(false);
-    }
-  }
-
-  async function handleDeleteAssignment() {
-    if (!deleteTarget) return;
-    try {
-      await deleteAssignment.mutateAsync(deleteTarget.id);
-      setDeleteTarget(null);
-    } catch {
-      // silently ignore
     }
   }
 
@@ -2535,141 +2548,6 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
 
       {/* Monitoring Configuration */}
       <MonitoringCard deviceId={deviceId} device={device} />
-
-      {/* Assigned Apps */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            Assigned Apps
-            <Button
-              size="sm"
-              variant="secondary"
-              className="ml-auto gap-1.5"
-              onClick={() => setAddOpen(true)}
-            >
-              <Plus className="h-4 w-4" />
-              Add App
-            </Button>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {!assignments || assignments.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 text-zinc-600">
-              <p className="text-sm">No apps assigned to this device.</p>
-              <Button
-                size="sm"
-                variant="secondary"
-                className="mt-3 gap-1.5"
-                onClick={() => setAddOpen(true)}
-              >
-                <Plus className="h-4 w-4" />
-                Assign first app
-              </Button>
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>App</TableHead>
-                  <TableHead>Version</TableHead>
-                  <TableHead>Schedule</TableHead>
-                  <TableHead>Connectors</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="w-20"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {assignments.map((a) => (
-                  <TableRow key={a.id}>
-                    <TableCell className="font-medium text-zinc-200">{a.app.name}</TableCell>
-                    <TableCell className="text-zinc-500 font-mono text-xs">
-                      {a.app.version}
-                      {a.use_latest && (
-                        <Badge variant="default" className="ml-1.5 text-[10px]">latest</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-zinc-400 text-sm">{a.schedule_human}</TableCell>
-                    <TableCell>
-                      {a.connector_bindings && a.connector_bindings.length > 0 ? (
-                        <div className="flex flex-wrap gap-1">
-                          {a.connector_bindings.map((cb) => (
-                            <Badge key={cb.id} variant="info" className="text-[10px] gap-1">
-                              <Plug className="h-2.5 w-2.5" />
-                              {cb.alias}
-                            </Badge>
-                          ))}
-                        </div>
-                      ) : (
-                        <span className="text-zinc-600 text-xs">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={a.enabled ? "success" : "default"}>
-                        {a.enabled ? "enabled" : "disabled"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => setEditTarget(a)}
-                          className="rounded p-1 text-zinc-600 hover:text-zinc-200 hover:bg-zinc-700 transition-colors cursor-pointer"
-                          title="Edit"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </button>
-                        <button
-                          onClick={() => setDeleteTarget({ id: a.id, name: a.app.name })}
-                          className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                          title="Remove"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-
-      <AddAssignmentDialog
-        deviceId={deviceId}
-        deviceCollectorGroupId={device?.collector_group_id ?? null}
-        deviceCollectorGroupName={device?.collector_group_name ?? null}
-        open={addOpen}
-        onClose={() => setAddOpen(false)}
-      />
-
-      <EditAssignmentDialog
-        assignment={editTarget}
-        open={!!editTarget}
-        onClose={() => setEditTarget(null)}
-      />
-
-      <Dialog
-        open={!!deleteTarget}
-        onClose={() => setDeleteTarget(null)}
-        title="Remove App Assignment"
-      >
-        <p className="text-sm text-zinc-400">
-          Remove{" "}
-          <span className="font-semibold text-zinc-200">{deleteTarget?.name}</span>
-          {" "}from this device? The app will stop running on the next collector heartbeat.
-        </p>
-        <DialogFooter>
-          <Button variant="secondary" onClick={() => setDeleteTarget(null)}>Cancel</Button>
-          <Button
-            variant="destructive"
-            onClick={handleDeleteAssignment}
-            disabled={deleteAssignment.isPending}
-          >
-            {deleteAssignment.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-            Remove
-          </Button>
-        </DialogFooter>
-      </Dialog>
     </div>
   );
 }
@@ -2856,6 +2734,133 @@ function HistoryTab({ deviceId }: { deviceId: string }) {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+// ── Tab: Alerts ──────────────────────────────────────────
+
+function SeverityBadge({ severity }: { severity: string }) {
+  const variants: Record<string, string> = {
+    info: "bg-blue-500/15 text-blue-400 border-blue-500/20",
+    warning: "bg-amber-500/15 text-amber-400 border-amber-500/20",
+    critical: "bg-red-500/15 text-red-400 border-red-500/20",
+    emergency: "bg-purple-500/15 text-purple-400 border-purple-500/20",
+    recovery: "bg-emerald-500/15 text-emerald-400 border-emerald-500/20",
+  };
+  return (
+    <span className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-xs font-medium ${variants[severity] ?? variants.warning}`}>
+      {severity}
+    </span>
+  );
+}
+
+function AlertsTab({ deviceId }: { deviceId: string }) {
+  const { data: instances, isLoading } = useAlertInstances({ device_id: deviceId });
+  const updateInstance = useUpdateAlertInstance();
+
+  if (isLoading) {
+    return (
+      <div className="flex h-48 items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-brand-500" />
+      </div>
+    );
+  }
+
+  if (!instances || instances.length === 0) {
+    return (
+      <Card>
+        <CardContent>
+          <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
+            <Bell className="h-10 w-10 mb-3 text-zinc-600" />
+            <p className="text-sm">No alert definitions for this device</p>
+            <p className="text-xs text-zinc-600 mt-1">
+              Alert definitions are created on apps and automatically applied when assigned
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // Group by app name
+  const grouped: Record<string, typeof instances> = {};
+  for (const inst of instances) {
+    const key = inst.app_name ?? "Unknown";
+    (grouped[key] ??= []).push(inst);
+  }
+
+  return (
+    <div className="space-y-4">
+      {Object.entries(grouped).map(([appName, appInstances]) => (
+        <Card key={appName}>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm">
+              {appName}
+              <Badge variant="default" className="text-xs">{appInstances.length}</Badge>
+              {appInstances.some((i) => i.state === "firing") && (
+                <Badge variant="destructive" className="text-xs">
+                  {appInstances.filter((i) => i.state === "firing").length} firing
+                </Badge>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-[80px]">State</TableHead>
+                  <TableHead>Alert Name</TableHead>
+                  <TableHead>Expression</TableHead>
+                  <TableHead className="w-[90px]">Severity</TableHead>
+                  <TableHead className="w-[80px]">Value</TableHead>
+                  <TableHead className="w-[100px]">Firing Since</TableHead>
+                  <TableHead className="w-[70px] text-center">Enabled</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {appInstances.map((inst) => (
+                  <TableRow key={inst.id}>
+                    <TableCell>
+                      <Badge variant={inst.state === "firing" ? "destructive" : "success"}>
+                        {inst.state}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="font-medium text-zinc-200">
+                      {inst.definition_name ?? "\u2014"}
+                      {inst.entity_labels?.if_name && (
+                        <span className="ml-1.5 text-xs text-zinc-500">
+                          ({inst.entity_labels.if_name})
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs text-zinc-400 max-w-[250px] truncate">
+                      {inst.definition_expression ?? "\u2014"}
+                    </TableCell>
+                    <TableCell>
+                      <SeverityBadge severity={inst.definition_severity ?? "warning"} />
+                    </TableCell>
+                    <TableCell className="font-mono text-xs text-zinc-300">
+                      {inst.current_value != null ? Number(inst.current_value).toFixed(1) : "\u2014"}
+                    </TableCell>
+                    <TableCell className="text-zinc-500 text-xs">
+                      {inst.state === "firing" && inst.started_at ? timeAgo(inst.started_at) : "\u2014"}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <input
+                        type="checkbox"
+                        checked={inst.enabled}
+                        onChange={() => updateInstance.mutate({ id: inst.id, enabled: !inst.enabled })}
+                        className="accent-brand-500 cursor-pointer"
+                      />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
   );
 }
 
@@ -3201,20 +3206,26 @@ export function DeviceDetailPage() {
           </TabTrigger>
           <TabTrigger value="assignments">
             <span className="flex items-center gap-1.5">
-              <Plug className="h-3.5 w-3.5" />
+              <ListChecks className="h-3.5 w-3.5" />
               Assignments
+            </span>
+          </TabTrigger>
+          <TabTrigger value="alerts">
+            <span className="flex items-center gap-1.5">
+              <Bell className="h-3.5 w-3.5" />
+              Alerts
+            </span>
+          </TabTrigger>
+          <TabTrigger value="thresholds">
+            <span className="flex items-center gap-1.5">
+              <Gauge className="h-3.5 w-3.5" />
+              Thresholds
             </span>
           </TabTrigger>
           <TabTrigger value="settings">
             <span className="flex items-center gap-1.5">
               <Settings2 className="h-3.5 w-3.5" />
               Settings
-            </span>
-          </TabTrigger>
-          <TabTrigger value="thresholds">
-            <span className="flex items-center gap-1.5">
-              <Bell className="h-3.5 w-3.5" />
-              Thresholds
             </span>
           </TabTrigger>
           <TabTrigger value="history">
@@ -3240,11 +3251,14 @@ export function DeviceDetailPage() {
         <TabsContent value="assignments">
           <AssignmentsTab deviceId={deviceId} />
         </TabsContent>
-        <TabsContent value="settings">
-          <SettingsTab deviceId={deviceId} />
+        <TabsContent value="alerts">
+          <AlertsTab deviceId={deviceId} />
         </TabsContent>
         <TabsContent value="thresholds">
           <ThresholdsTab deviceId={deviceId} />
+        </TabsContent>
+        <TabsContent value="settings">
+          <SettingsTab deviceId={deviceId} />
         </TabsContent>
         <TabsContent value="history">
           <HistoryTab deviceId={deviceId} />
