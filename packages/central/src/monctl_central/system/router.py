@@ -772,54 +772,112 @@ async def _check_alerts(db: AsyncSession) -> dict:
     }
 
 
+def _fetch_collector_docker_stats_from_ch() -> list[dict]:
+    """Read latest Docker container stats from ClickHouse performance table."""
+    from collections import defaultdict
+
+    ch = get_clickhouse()
+    try:
+        client = ch._get_client()
+        r = client.query(
+            "SELECT collector_name, component, metric_names, metric_values"
+            " FROM performance_latest FINAL"
+            " WHERE component_type = 'docker_container'"
+            " ORDER BY collector_name, component"
+            " SETTINGS max_memory_usage = 500000000"
+        )
+    except Exception:
+        logger.warning("docker_ch_query_failed", exc_info=True)
+        return []
+
+    by_collector: dict[str, list[dict]] = defaultdict(list)
+    for row in r.named_results():
+        collector = row["collector_name"] or "unknown"
+        names = row.get("metric_names", [])
+        values = row.get("metric_values", [])
+        md = dict(zip(names, values)) if names and values else {}
+        by_collector[collector].append({
+            "name": row["component"],
+            "status": "running" if md.get("running", 0) == 1.0 else "stopped",
+            "health": "healthy" if md.get("health", -1) == 1.0 else "unhealthy" if md.get("health", -1) == 0.0 else None,
+            "cpu_pct": md.get("cpu_pct"),
+            "mem_usage_bytes": int(md["mem_usage_bytes"]) if "mem_usage_bytes" in md else None,
+            "mem_limit_bytes": int(md["mem_limit_bytes"]) if "mem_limit_bytes" in md else None,
+            "mem_pct": md.get("mem_pct"),
+            "net_rx_bytes": int(md["net_rx_bytes"]) if "net_rx_bytes" in md else None,
+            "net_tx_bytes": int(md["net_tx_bytes"]) if "net_tx_bytes" in md else None,
+            "restart_count": int(md.get("restart_count", 0)),
+        })
+
+    results = []
+    for cname, containers in by_collector.items():
+        results.append({
+            "label": cname,
+            "status": "ok",
+            "source": "collector",
+            "data": {
+                "hostname": cname,
+                "container_count": len([c for c in containers if c["status"] == "running"]),
+                "total_containers": len(containers),
+                "host": None,
+                "containers": containers,
+            },
+        })
+    return results
+
+
 async def _check_docker_infrastructure() -> dict:
-    """Query central-tier sidecars for Docker container stats."""
+    """Query central sidecars + read collector data from ClickHouse."""
     import httpx
 
     raw = settings.docker_stats_hosts
-    if not raw:
-        return {
-            "status": "healthy",
-            "latency_ms": None,
-            "details": {"configured": False, "hosts": []},
-        }
-
-    hosts = []
-    for entry in raw.split(","):
-        parts = entry.strip().split(":")
-        if len(parts) == 3:
-            hosts.append({"label": parts[0], "url": f"http://{parts[1]}:{parts[2]}/stats"})
-
-    if not hosts:
-        return {
-            "status": "healthy",
-            "latency_ms": None,
-            "details": {"configured": False, "hosts": []},
-        }
+    sidecar_hosts = []
+    if raw:
+        for entry in raw.split(","):
+            parts = entry.strip().split(":")
+            if len(parts) == 3:
+                sidecar_hosts.append({"label": parts[0], "url": f"http://{parts[1]}:{parts[2]}/stats"})
 
     t0 = time.monotonic()
 
+    # Central tier: query sidecars (20s timeout — docker stats API is slow)
     async def _fetch(client: httpx.AsyncClient, host: dict) -> dict:
         try:
-            resp = await client.get(host["url"], timeout=3.0)
+            resp = await client.get(host["url"], timeout=20.0)
             resp.raise_for_status()
             return {"label": host["label"], "status": "ok", "source": "sidecar", "data": resp.json()}
         except Exception as exc:
             return {"label": host["label"], "status": "unreachable", "source": "sidecar", "data": None, "error": str(exc)}
 
-    async with httpx.AsyncClient() as client:
-        results = list(await asyncio.gather(*[_fetch(client, h) for h in hosts]))
+    sidecar_results: list[dict] = []
+    if sidecar_hosts:
+        async with httpx.AsyncClient() as client:
+            sidecar_results = list(await asyncio.gather(
+                *[_fetch(client, h) for h in sidecar_hosts]
+            ))
+
+    # Worker tier: read from ClickHouse
+    collector_results = await asyncio.to_thread(_fetch_collector_docker_stats_from_ch)
 
     latency_ms = round((time.monotonic() - t0) * 1000, 2)
 
-    reachable = sum(1 for r in results if r["status"] == "ok")
-    total = len(results)
+    all_hosts = sidecar_results + collector_results
+
+    if not all_hosts:
+        return {
+            "status": "healthy",
+            "latency_ms": None,
+            "details": {"configured": False, "hosts": []},
+        }
+
+    reachable = sum(1 for r in all_hosts if r["status"] == "ok")
+    total = len(all_hosts)
 
     status = "healthy"
     if reachable < total:
         status = "degraded" if reachable > 0 else "critical"
 
-    for host in results:
+    for host in all_hosts:
         if host.get("data"):
             for c in host["data"].get("containers", []):
                 if c.get("health") == "unhealthy" and status == "healthy":
@@ -834,15 +892,18 @@ async def _check_docker_infrastructure() -> dict:
             "configured": True,
             "reachable_hosts": reachable,
             "total_hosts": total,
-            "hosts": results,
+            "hosts": all_hosts,
         },
     }
 
 
-async def _run_check(name: str, coro) -> tuple[str, dict]:
+_DOCKER_CHECK_TIMEOUT = 30.0  # Docker stats API is slow (2s per container)
+
+
+async def _run_check(name: str, coro, timeout: float | None = None) -> tuple[str, dict]:
     """Run a single subsystem check with timeout."""
     try:
-        result = await asyncio.wait_for(coro, timeout=_CHECK_TIMEOUT)
+        result = await asyncio.wait_for(coro, timeout=timeout or _CHECK_TIMEOUT)
         return name, result
     except asyncio.TimeoutError:
         return name, {
@@ -894,7 +955,7 @@ async def system_health(
         _run_check("scheduler", _check_scheduler()),
         _run_check("ingestion", _check_ingestion()),
         _run_check("alerts", _check_alerts_standalone()),
-        _run_check("docker", _check_docker_infrastructure()),
+        _run_check("docker", _check_docker_infrastructure(), timeout=_DOCKER_CHECK_TIMEOUT),
         return_exceptions=True,
     )
 
