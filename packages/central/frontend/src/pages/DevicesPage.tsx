@@ -6,6 +6,7 @@ import {
   ArrowUpDown,
   ChevronLeft,
   ChevronRight,
+  FileText,
   Loader2,
   Minus,
   Monitor,
@@ -27,6 +28,7 @@ import {
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import { useDevices, useLatestResults, useBulkDeleteDevices, useLabelKeys } from "@/api/hooks.ts";
 import { AddDeviceDialog } from "@/components/AddDeviceDialog.tsx";
+import { ApplyTemplateDialog } from "@/components/ApplyTemplateDialog.tsx";
 
 export function DevicesPage() {
   // ── Pagination ──────────────────────────────────────────
@@ -76,6 +78,7 @@ export function DevicesPage() {
   // ── Bulk delete ─────────────────────────────────────────
   const bulkDelete = useBulkDeleteDevices();
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [applyTemplateOpen, setApplyTemplateOpen] = useState(false);
 
   // ── Add dialog ──────────────────────────────────────────
   const [addOpen, setAddOpen] = useState(false);
@@ -236,6 +239,14 @@ export function DevicesPage() {
             <span className="text-sm text-zinc-300">
               {selected.size} selected
             </span>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setApplyTemplateOpen(true)}
+              className="gap-1.5"
+            >
+              <FileText className="h-3.5 w-3.5" /> Apply Template
+            </Button>
             <Button
               size="sm"
               variant="destructive"
@@ -590,6 +601,13 @@ export function DevicesPage() {
 
       {/* Add Device Dialog */}
       <AddDeviceDialog open={addOpen} onClose={() => setAddOpen(false)} />
+
+      {/* Apply Template Dialog */}
+      <ApplyTemplateDialog
+        open={applyTemplateOpen}
+        onClose={() => setApplyTemplateOpen(false)}
+        deviceIds={[...selected]}
+      />
 
       {/* Confirm Delete Dialog */}
       <Dialog

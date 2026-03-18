@@ -9,6 +9,7 @@ import {
   BarChart2,
   Bell,
   Clock,
+  FileText,
   Gauge,
   Layout,
   ListChecks,
@@ -81,6 +82,7 @@ import {
 } from "@/api/hooks.ts";
 import type { Device as DeviceType, DeviceAssignment, DeviceThresholdRow } from "@/types/api.ts";
 import { ConfigDataRenderer } from "@/components/ConfigDataRenderer.tsx";
+import { ApplyTemplateDialog } from "@/components/ApplyTemplateDialog.tsx";
 import { InterfaceTrafficChart } from "@/components/InterfaceTrafficChart.tsx";
 import { timeAgo, formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
@@ -2200,6 +2202,7 @@ function AssignmentsTab({ deviceId }: { deviceId: string }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [applyTemplateOpen, setApplyTemplateOpen] = useState(false);
 
   if (isLoading) {
     return (
@@ -2237,9 +2240,14 @@ function AssignmentsTab({ deviceId }: { deviceId: string }) {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-zinc-500">{assignments.length} assignment{assignments.length !== 1 ? "s" : ""}</p>
-        <Button size="sm" onClick={() => setAddOpen(true)} className="gap-1.5">
-          <Plus className="h-3.5 w-3.5" /> Assign App
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => setApplyTemplateOpen(true)} className="gap-1.5">
+            <FileText className="h-3.5 w-3.5" /> Apply Template
+          </Button>
+          <Button size="sm" onClick={() => setAddOpen(true)} className="gap-1.5">
+            <Plus className="h-3.5 w-3.5" /> Assign App
+          </Button>
+        </div>
       </div>
       <Table>
         <TableHeader>
@@ -2351,6 +2359,13 @@ function AssignmentsTab({ deviceId }: { deviceId: string }) {
         deviceCollectorGroupName={device?.collector_group_name ?? null}
         open={addOpen}
         onClose={() => setAddOpen(false)}
+      />
+
+      <ApplyTemplateDialog
+        open={applyTemplateOpen}
+        onClose={() => setApplyTemplateOpen(false)}
+        deviceIds={[deviceId]}
+        deviceName={device?.name}
       />
     </div>
   );
