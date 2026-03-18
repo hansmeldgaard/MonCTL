@@ -2577,51 +2577,56 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleSaveDevice} className="space-y-4 max-w-md">
-            <div className="space-y-1.5">
-              <Label htmlFor="s-name">Name</Label>
-              <Input id="s-name" value={name} onChange={(e) => setName(e.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="s-address">Address</Label>
-              <Input id="s-address" value={address} onChange={(e) => setAddress(e.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="s-dtype">Device Type</Label>
-              <Select id="s-dtype" value={deviceType} onChange={(e) => setDeviceType(e.target.value)}>
-                {(deviceTypes ?? []).map((dt) => (
-                  <option key={dt.id} value={dt.name}>{dt.name}</option>
-                ))}
-              </Select>
-            </div>
-            {tenants && tenants.length > 0 && (
-              <div className="space-y-1.5">
-                <Label htmlFor="s-tenant">Tenant</Label>
-                <Select id="s-tenant" value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
-                  <option value="">— No tenant —</option>
-                  {tenants.map((t) => (
-                    <option key={t.id} value={t.id}>{t.name}</option>
+          <form onSubmit={handleSaveDevice}>
+            <div className="grid grid-cols-2 gap-x-8 gap-y-3">
+              <div className="grid grid-cols-[110px_1fr] items-center gap-2">
+                <Label htmlFor="s-name" className="text-right">Name</Label>
+                <Input id="s-name" value={name} onChange={(e) => setName(e.target.value)} />
+              </div>
+              <div className="grid grid-cols-[110px_1fr] items-center gap-2">
+                <Label htmlFor="s-dtype" className="text-right">Device Type</Label>
+                <Select id="s-dtype" value={deviceType} onChange={(e) => setDeviceType(e.target.value)}>
+                  {(deviceTypes ?? []).map((dt) => (
+                    <option key={dt.id} value={dt.name}>{dt.name}</option>
                   ))}
                 </Select>
               </div>
-            )}
-            <div className="space-y-1.5">
-              <Label htmlFor="s-cgroup">Collector Group</Label>
-              <Select id="s-cgroup" value={collectorGroupId} onChange={(e) => setCollectorGroupId(e.target.value)}>
-                <option value="">— No group —</option>
-                {(collectorGroups ?? []).map((g) => (
-                  <option key={g.id} value={g.id}>{g.name}</option>
-                ))}
-              </Select>
+              <div className="grid grid-cols-[110px_1fr] items-center gap-2">
+                <Label htmlFor="s-address" className="text-right">Address</Label>
+                <Input id="s-address" value={address} onChange={(e) => setAddress(e.target.value)} />
+              </div>
+              {tenants && tenants.length > 0 ? (
+                <div className="grid grid-cols-[110px_1fr] items-center gap-2">
+                  <Label htmlFor="s-tenant" className="text-right">Tenant</Label>
+                  <Select id="s-tenant" value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
+                    <option value="">{"\u2014"} No tenant {"\u2014"}</option>
+                    {tenants.map((t) => (
+                      <option key={t.id} value={t.id}>{t.name}</option>
+                    ))}
+                  </Select>
+                </div>
+              ) : <div />}
+              <div />
+              <div className="grid grid-cols-[110px_1fr] items-center gap-2">
+                <Label htmlFor="s-cgroup" className="text-right">Collector Group</Label>
+                <Select id="s-cgroup" value={collectorGroupId} onChange={(e) => setCollectorGroupId(e.target.value)}>
+                  <option value="">{"\u2014"} No group {"\u2014"}</option>
+                  {(collectorGroups ?? []).map((g) => (
+                    <option key={g.id} value={g.id}>{g.name}</option>
+                  ))}
+                </Select>
+              </div>
             </div>
-            {saveError && <p className="text-sm text-red-400">{saveError}</p>}
-            {saveSuccess && <p className="text-sm text-emerald-400">Saved successfully.</p>}
-            <Button type="submit" size="sm" disabled={updateDevice.isPending}>
-              {updateDevice.isPending
-                ? <Loader2 className="h-4 w-4 animate-spin" />
-                : <Save className="h-4 w-4" />}
-              Save Changes
-            </Button>
+            <div className="mt-4 pt-4 border-t border-zinc-800 flex items-center gap-3">
+              <Button type="submit" size="sm" disabled={updateDevice.isPending}>
+                {updateDevice.isPending
+                  ? <Loader2 className="h-4 w-4 animate-spin" />
+                  : <Save className="h-4 w-4" />}
+                Save Changes
+              </Button>
+              {saveError && <p className="text-sm text-red-400">{saveError}</p>}
+              {saveSuccess && <p className="text-sm text-emerald-400">Saved.</p>}
+            </div>
           </form>
         </CardContent>
       </Card>
