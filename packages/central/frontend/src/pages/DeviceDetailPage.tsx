@@ -309,7 +309,15 @@ function AddAssignmentDialog({
             <Select
               id="aa-sched-type"
               value={scheduleType}
-              onChange={(e) => setScheduleType(e.target.value)}
+              onChange={(e) => {
+                const newType = e.target.value;
+                setScheduleType(newType);
+                if (newType === "cron") {
+                  setScheduleValue("*/5 * * * *");
+                } else {
+                  setScheduleValue("60");
+                }
+              }}
             >
               <option value="interval">Interval (seconds)</option>
               <option value="cron">Cron expression</option>
@@ -325,6 +333,11 @@ function AddAssignmentDialog({
               onChange={(e) => setScheduleValue(e.target.value)}
               placeholder={scheduleType === "interval" ? "60" : "*/5 * * * *"}
             />
+            <p className="text-xs text-zinc-500">
+              {scheduleType === "interval"
+                ? "How often to run, in seconds"
+                : "Standard cron: min hour day month weekday"}
+            </p>
           </div>
         </div>
 
@@ -531,7 +544,15 @@ function EditAssignmentDialog({ assignment, open, onClose }: EditAssignmentDialo
             <Select
               id="ea-sched-type"
               value={scheduleType}
-              onChange={(e) => setScheduleType(e.target.value)}
+              onChange={(e) => {
+                const newType = e.target.value;
+                setScheduleType(newType);
+                if (newType === "cron" && !/\s/.test(scheduleValue)) {
+                  setScheduleValue("*/5 * * * *");
+                } else if (newType === "interval" && /\s/.test(scheduleValue)) {
+                  setScheduleValue("60");
+                }
+              }}
             >
               <option value="interval">Interval (seconds)</option>
               <option value="cron">Cron expression</option>
@@ -547,6 +568,11 @@ function EditAssignmentDialog({ assignment, open, onClose }: EditAssignmentDialo
               onChange={(e) => setScheduleValue(e.target.value)}
               placeholder={scheduleType === "interval" ? "60" : "*/5 * * * *"}
             />
+            <p className="text-xs text-zinc-500">
+              {scheduleType === "interval"
+                ? "How often to run, in seconds"
+                : "Standard cron: min hour day month weekday"}
+            </p>
           </div>
         </div>
 
