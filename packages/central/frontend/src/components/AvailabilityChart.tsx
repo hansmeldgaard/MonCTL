@@ -99,6 +99,10 @@ function buildChartData(
 } {
   if (!results.length) return { data: [], appNames: [] };
 
+  // Exclude interface-role results — they belong on the Interfaces tab, not here
+  results = results.filter((r) => r.role !== "interface");
+  if (!results.length) return { data: [], appNames: [] };
+
   // Collect unique app names for series
   const assignmentToApp = new Map<string, string>();
   for (const r of results) {

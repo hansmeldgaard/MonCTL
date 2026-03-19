@@ -945,11 +945,13 @@ async def submit_results(
                     })
                 continue  # Skip the default row builder below
 
-        # Interface-table apps: unpack interface_rows into one CH row per interface
-        # If interface_rows is empty/None (e.g. SNMP timeout), fall through to
-        # availability_latency so the error/status is still recorded.
+        # Interface-table apps: if no interface_rows (e.g. SNMP timeout), skip
+        # this result entirely. Interface poller failures should NOT be written
+        # to availability_latency — they pollute the availability/latency chart.
+        # The device's dedicated availability check already tracks reachability.
         if target_table == "interface" and not r.interface_rows:
-            target_table = "availability_latency"
+            skipped += 1
+            continue
 
         if target_table == "interface" and r.interface_rows:
             from monctl_central.cache import get_previous_counters, cache_current_counters

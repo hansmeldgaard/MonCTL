@@ -984,6 +984,7 @@ function OverviewTab({ deviceId }: { deviceId: string }) {
     fromTs,
     toTs,
     5000,
+    "availability_latency",
   );
 
   return (

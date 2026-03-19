@@ -740,13 +740,15 @@ export function useDeviceHistory(
   fromTs: string | null,
   toTs: string | null = null,
   limit = 1000,
+  table?: string,
 ) {
   return useQuery({
-    queryKey: ["device-history", deviceId, fromTs, toTs, limit],
+    queryKey: ["device-history", deviceId, fromTs, toTs, limit, table],
     queryFn: () => {
       const params = new URLSearchParams({
         device_id: deviceId!,
         limit: String(limit),
+        ...(table ? { table } : {}),
         ...(fromTs ? { from_ts: fromTs } : {}),
         ...(toTs ? { to_ts: toTs } : {}),
       });
