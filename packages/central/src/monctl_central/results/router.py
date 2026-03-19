@@ -68,6 +68,9 @@ def _format_ch_row(r: dict) -> dict:
     }
 
 
+# Tables for general history queries (interface has its own dedicated tab/endpoints)
+HISTORY_TABLES = {"availability_latency", "performance", "config"}
+# All tables (used by explicit table= queries and /latest)
 VALID_TABLES = {"availability_latency", "performance", "interface", "config"}
 
 
@@ -89,7 +92,7 @@ async def list_results(
     if table and table in VALID_TABLES:
         tables = [table]
     else:
-        tables = list(VALID_TABLES)
+        tables = list(HISTORY_TABLES)
 
     ch = get_clickhouse()
 

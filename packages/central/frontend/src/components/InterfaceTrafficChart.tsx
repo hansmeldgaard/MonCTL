@@ -13,9 +13,15 @@ import type { InterfaceRecord } from "@/types/api.ts";
 
 // ── Shared helpers ──────────────────────────────────────────
 
-const CHART_COLORS = [
-  "#06b6d4", "#f97316", "#22c55e", "#a855f7",
-  "#ef4444", "#eab308", "#ec4899", "#6366f1",
+const CHART_COLOR_PAIRS = [
+  { in: "#06b6d4", out: "#6366f1" },  // cyan / indigo
+  { in: "#22c55e", out: "#f97316" },  // green / orange
+  { in: "#a855f7", out: "#eab308" },  // purple / yellow
+  { in: "#ec4899", out: "#14b8a6" },  // pink / teal
+  { in: "#ef4444", out: "#3b82f6" },  // red / blue
+  { in: "#84cc16", out: "#d946ef" },  // lime / fuchsia
+  { in: "#f59e0b", out: "#8b5cf6" },  // amber / violet
+  { in: "#10b981", out: "#f43f5e" },  // emerald / rose
 ];
 
 export type TrafficUnit = "auto" | "kbps" | "mbps" | "gbps" | "pct";
@@ -232,7 +238,7 @@ export function MultiInterfaceChart({
           return (
             <div key={id}>
               <div className="text-xs text-zinc-400 mb-1 flex items-center gap-2">
-                <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: CHART_COLORS[idx % CHART_COLORS.length] }} />
+                <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: CHART_COLOR_PAIRS[idx % CHART_COLOR_PAIRS.length].in }} />
                 {interfaceNames[idx]}
               </div>
               <ResponsiveContainer width="100%" height={120}>
@@ -243,10 +249,10 @@ export function MultiInterfaceChart({
                   <YAxis tick={{ fill: "#71717a", fontSize: 10 }} tickFormatter={yFormatter} width={50} />
                   <Tooltip contentStyle={{ backgroundColor: "#18181b", border: "1px solid #3f3f46", borderRadius: "0.5rem", fontSize: "0.7rem" }}
                     labelFormatter={(ts) => formatTimeLabel(Number(ts), timezone)} isAnimationActive={false} />
-                  <Area type="monotone" dataKey="in_val" name="In" stroke={CHART_COLORS[idx % CHART_COLORS.length]}
-                    fill={CHART_COLORS[idx % CHART_COLORS.length]} fillOpacity={0.15} strokeWidth={1.5} isAnimationActive={false} />
-                  <Area type="monotone" dataKey="out_val" name="Out" stroke={CHART_COLORS[idx % CHART_COLORS.length]}
-                    fill={CHART_COLORS[idx % CHART_COLORS.length]} fillOpacity={0.05} strokeDasharray="4 2" strokeWidth={1.5} isAnimationActive={false} />
+                  <Area type="monotone" dataKey="in_val" name="In" stroke={CHART_COLOR_PAIRS[idx % CHART_COLOR_PAIRS.length].in}
+                    fill={CHART_COLOR_PAIRS[idx % CHART_COLOR_PAIRS.length].in} fillOpacity={0.15} strokeWidth={1.5} isAnimationActive={false} />
+                  <Area type="monotone" dataKey="out_val" name="Out" stroke={CHART_COLOR_PAIRS[idx % CHART_COLOR_PAIRS.length].out}
+                    fill={CHART_COLOR_PAIRS[idx % CHART_COLOR_PAIRS.length].out} fillOpacity={0.1} strokeWidth={1.5} isAnimationActive={false} />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -272,16 +278,19 @@ export function MultiInterfaceChart({
         <Tooltip contentStyle={{ backgroundColor: "#18181b", border: "1px solid #3f3f46", borderRadius: "0.5rem", fontSize: "0.75rem" }}
           labelFormatter={(ts) => formatTimeLabel(Number(ts), timezone)} isAnimationActive={false} />
         <Legend />
-        {interfaceIds.map((id, idx) => (
-          <React.Fragment key={id}>
-            <Area type="monotone" dataKey={`${id}_in`} name={`${interfaceNames[idx]} In`}
-              stroke={CHART_COLORS[idx % CHART_COLORS.length]} fill={CHART_COLORS[idx % CHART_COLORS.length]}
-              fillOpacity={0.1} strokeWidth={1.5} isAnimationActive={false} connectNulls={false} />
-            <Area type="monotone" dataKey={`${id}_out`} name={`${interfaceNames[idx]} Out`}
-              stroke={CHART_COLORS[idx % CHART_COLORS.length]} fill={CHART_COLORS[idx % CHART_COLORS.length]}
-              fillOpacity={0.05} strokeDasharray="4 2" strokeWidth={1.5} isAnimationActive={false} connectNulls={false} />
-          </React.Fragment>
-        ))}
+        {interfaceIds.map((id, idx) => {
+          const pair = CHART_COLOR_PAIRS[idx % CHART_COLOR_PAIRS.length];
+          return (
+            <React.Fragment key={id}>
+              <Area type="monotone" dataKey={`${id}_in`} name={`${interfaceNames[idx]} In`}
+                stroke={pair.in} fill={pair.in}
+                fillOpacity={0.1} strokeWidth={1.5} isAnimationActive={false} connectNulls={false} />
+              <Area type="monotone" dataKey={`${id}_out`} name={`${interfaceNames[idx]} Out`}
+                stroke={pair.out} fill={pair.out}
+                fillOpacity={0.1} strokeWidth={1.5} isAnimationActive={false} connectNulls={false} />
+            </React.Fragment>
+          );
+        })}
       </AreaChart>
     </ResponsiveContainer>
   );
