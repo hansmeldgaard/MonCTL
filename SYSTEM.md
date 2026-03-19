@@ -7,21 +7,17 @@
 
 ## Hvad er MonCTL
 
-Distribueret monitoring-platform med central management server og distribuerede collector-noder. Collectors henter job-assignments fra central, eksekverer monitoring checks (ping, port, SNMP, custom apps) og sender resultater tilbage til central for lagring i ClickHouse.
+Distribueret monitoring-platform med central management server og distribuerede collector-noder. Collectors henter job-assignments fra central, eksekverer monitoring checks (ping, port, SNMP, HTTP, custom apps) og sender resultater tilbage til central for lagring i ClickHouse.
 
 ## Arkitektur
 
 ```
 Browser → HAProxy (VIP 10.145.210.40:443) → central1-4 (:8443)
-                                              ├── PostgreSQL (Patroni HA, 2 noder)
-                                              ├── ClickHouse (replicated cluster, 2 noder)
+                                              ├── PostgreSQL (Patroni HA)
+                                              ├── ClickHouse (replicated cluster)
                                               └── Redis (single, central1)
 
-Collectors (worker1-2) → poll jobs fra central → eksekver checks → forward resultater
-  Hver collector kører 3 processer:
-    cache-node  (gRPC + gossip + job scheduler)
-    poll-worker (job execution + app venvs)
-    forwarder   (batch result posting)
+Collectors (worker1-4) → poll jobs fra central → eksekver checks → forward resultater
 ```
 
 ## Tech Stack
@@ -30,11 +26,11 @@ Collectors (worker1-2) → poll jobs fra central → eksekver checks → forward
 |-------|-----------|
 | Backend | Python 3.11, FastAPI, SQLAlchemy 2.0 async, Alembic, Pydantic 2 |
 | Frontend | React 19, TypeScript 5.9, Vite 7, Tailwind CSS v4, React Query (TanStack) 5 |
-| Time-series | ClickHouse (ReplicatedMergeTree, 2 noder) |
+| Time-series | ClickHouse (ReplicatedMergeTree, replicated cluster) |
 | Relational DB | PostgreSQL 16 (Patroni HA) |
 | Cache | Redis (single node) |
 | Proxy | HAProxy (TLS termination) + Keepalived (VIP failover) |
-| Collector | Python 3.12, gRPC, SQLite (lokal buffer), SWIM gossip protocol |
+| Collector | Python 3.12, gRPC, SQLite (lokal buffer) |
 | Icons | Lucide React |
 | Charts | Recharts |
 | Code editor | CodeMirror 6 (Python syntax) |
@@ -44,16 +40,23 @@ Collectors (worker1-2) → poll jobs fra central → eksekver checks → forward
 | Rolle | Hosts | IPs |
 |-------|-------|-----|
 | Central | central1-4 | 10.145.210.41-.44 |
-| Workers | worker1-2 | 10.145.210.31-.32 |
+| Workers | worker1-4 | 10.145.210.31-.34 |
 | VIP | (keepalived) | 10.145.210.40 |
 
-SSH bruger: `monctl` på alle servere.
+SSH bruger: `monctl` på alle servere. Compose files: `/opt/monctl/{central,collector}/docker-compose.yml`.
 
 ---
 
 ## Package-struktur
 
 ```
+apps/                               # Built-in monitoring apps (source stored in DB)
+├── ping_check.py                   # ICMP ping (BasePoller)
+├── port_check.py                   # TCP port check (BasePoller)
+├── http_check.py                   # HTTP/HTTPS check (BasePoller)
+├── snmp_check.py                   # SNMP scalar OID query (BasePoller)
+└── snmp_interface_poller.py        # Full ifTable/ifXTable monitoring (BasePoller)
+
 packages/
 ├── central/                        # Central management server
 │   ├── src/monctl_central/
@@ -62,113 +65,118 @@ packages/
 │   │   ├── dependencies.py         # DI: get_db, get_engine, get_session_factory, get_clickhouse,
 │   │   │                           #     require_auth, require_admin, require_collector_auth,
 │   │   │                           #     apply_tenant_filter, check_tenant_access
-│   │   ├── cache.py                # Redis client (_redis global) + caching (api keys, credentials, enrichment)
+│   │   ├── cache.py                # Redis client + caching (api keys, credentials, enrichment, interface ID, refresh flags)
 │   │   ├── storage/
-│   │   │   ├── models.py           # Alle PostgreSQL-modeller (se nedenfor)
-│   │   │   └── clickhouse.py       # ClickHouseClient wrapper, 4 domænetabeller + MV'er
-│   │   ├── api/router.py           # Hovedrouter — monterer alle sub-routers på /v1/
-│   │   ├── auth/
-│   │   │   ├── router.py           # POST /login, /logout, /refresh, GET /me
-│   │   │   └── service.py          # JWT creation/validation, bcrypt hashing
-│   │   ├── devices/router.py       # Device CRUD + server-side sort/filter/pagination
+│   │   │   ├── models.py           # 42 SQLAlchemy models (alle PostgreSQL-tabeller)
+│   │   │   └── clickhouse.py       # ClickHouseClient wrapper, 5 domænetabeller + MV'er + rollup
+│   │   ├── api/router.py           # Hovedrouter — monterer 28 sub-routers på /v1/
+│   │   ├── auth/                   # JWT cookie auth (login, refresh, me)
+│   │   ├── devices/router.py       # Device CRUD, bulk-patch, monitoring config, interface metadata, credentials
 │   │   ├── collectors/router.py    # Collector register, approve, reject, heartbeat, config
 │   │   ├── collector_api/router.py # /api/v1/ endpoints collectors kalder (jobs, apps, credentials, results)
 │   │   ├── collector_groups/router.py
 │   │   ├── apps/router.py          # App CRUD + AppVersion CRUD + Assignment CRUD
-│   │   ├── results/router.py       # Check results query API (læser fra ClickHouse)
-│   │   ├── credentials/
-│   │   │   ├── router.py           # Credential CRUD (secrets returneres aldrig)
-│   │   │   └── crypto.py           # AES-256-GCM encrypt/decrypt
-│   │   ├── credential_keys/router.py
-│   │   ├── templates/router.py     # Device templates (bulk app assignment)
-│   │   ├── alerting/router.py      # Alert rules + active alerts
-│   │   ├── tls/router.py           # TLS certificate management
-│   │   ├── settings/router.py      # System settings key-value store
+│   │   ├── results/router.py       # ClickHouse query API (history, latest, interfaces)
+│   │   ├── credentials/            # Credential CRUD, types, templates, crypto
+│   │   ├── credential_keys/        # Reusable credential field definitions
+│   │   ├── connectors/             # Connector CRUD + versions
+│   │   ├── alerting/               # Alert definitions, instances, evaluation engine, event policies
+│   │   ├── events/                 # Active/cleared events, acknowledgement
+│   │   ├── packs/                  # Monitoring pack import/export
+│   │   ├── python_modules/         # Package registry + PyPI import + wheel distribution
+│   │   ├── docker_infra/           # Docker host monitoring (stats, logs, events, images)
+│   │   ├── roles/                  # Custom RBAC roles + permissions
+│   │   ├── templates/router.py     # Monitoring templates (bulk app assignment)
 │   │   ├── tenants/router.py       # Multi-tenant support
-│   │   ├── users/router.py         # User CRUD + timezone + tenant assignments
-│   │   ├── device_types/router.py
-│   │   ├── registration_tokens/router.py
-│   │   ├── snmp_oids/router.py
-│   │   ├── ingestion/router.py     # Legacy POST /ingest endpoint
+│   │   ├── users/router.py         # User CRUD + timezone + API keys
+│   │   ├── settings/router.py      # System settings (retention, intervals, etc.)
 │   │   ├── system/router.py        # GET /system/health — concurrent subsystem checks
-│   │   └── scheduler/
-│   │       ├── leader.py           # Redis SETNX + TTL leader election (key: monctl:scheduler:leader)
-│   │       └── tasks.py            # SchedulerRunner: health monitor (60s) + alert eval (30s)
+│   │   └── scheduler/              # Leader election + background tasks (health monitor + alert eval)
 │   ├── frontend/                   # React SPA
 │   │   └── src/
 │   │       ├── main.tsx            # Entry point + React Query client (30s stale, retry=1)
 │   │       ├── App.tsx             # React Router — alle routes
 │   │       ├── api/
-│   │       │   ├── client.ts       # fetch() wrapper: apiGet, apiPost, apiPut, apiDelete
-│   │       │   └── hooks.ts        # 70+ React Query hooks for alle API endpoints
-│   │       ├── types/api.ts        # TypeScript interfaces for alle API responses
+│   │       │   ├── client.ts       # fetch() wrapper: apiGet, apiPost, apiPut, apiPatch, apiDelete
+│   │       │   └── hooks.ts        # 177 React Query hooks for alle API endpoints
+│   │       ├── types/api.ts        # 93+ TypeScript interfaces for alle API responses
 │   │       ├── lib/utils.ts        # cn(), formatDate(dateStr, tz), timeAgo(), capitalize(), truncate()
 │   │       ├── hooks/
 │   │       │   ├── useAuth.tsx     # Auth context (user, login, logout, refresh)
 │   │       │   └── useTimezone.ts  # Returnerer user.timezone, default "UTC"
-│   │       ├── pages/              # 17 sider (se nedenfor)
-│   │       ├── components/         # Delte komponenter (se nedenfor)
-│   │       │   └── ui/             # Shadcn-style UI primitiver
-│   │       └── layouts/            # AppLayout, Sidebar, Header
-│   └── alembic/                    # 16 migrationer, kører auto ved container startup
-├── collector/                      # Collector node (v2, 3 processer)
+│   │       ├── pages/              # 26 page components
+│   │       ├── components/         # 18 feature-komponenter + 10 UI-primitiver
+│   │       │   └── ui/             # badge, button, card, clearable-input, dialog, input, label, select, table, tabs
+│   │       └── layouts/            # AppLayout, Sidebar (13 nav items), Header
+│   └── alembic/                    # 35 migrationer, kører auto ved container startup
+├── collector/                      # Collector node
 │   └── src/monctl_collector/
 │       ├── config.py               # YAML + env config
 │       ├── central/
 │       │   ├── api_client.py       # HTTP client for /api/v1/
-│       │   └── credentials.py      # Encrypted credential manager (Fernet, SQLite cache)
+│       │   └── credentials.py      # Credential fetch + local encrypted cache
 │       ├── polling/
-│       │   ├── engine.py           # Min-heap deadline scheduler, light/heavy semaphore lanes
+│       │   ├── engine.py           # Min-heap deadline scheduler + connector instantiation
 │       │   └── base.py             # BasePoller ABC: setup(), poll(context), teardown()
-│       ├── apps/manager.py         # App download + venv management (shared by hash)
-│       ├── jobs/
-│       │   ├── models.py           # JobDefinition, JobProfile (EMA), ScheduledJob, NodeLoadInfo
-│       │   ├── scheduler.py        # Job sync fra central, app-affinity worker assignment
-│       │   └── work_stealer.py     # Load-balancing via gRPC (disabled by default)
-│       ├── cluster/
-│       │   ├── gossip.py           # SWIM protocol — failure detection + load piggybacking
-│       │   ├── membership.py       # ALIVE → SUSPECTED → DEAD state machine
-│       │   └── hash_ring.py        # Consistent hashing (150 vnodes, SHA-256)
-│       ├── peer/
-│       │   ├── server.py           # gRPC servicer (cache, cluster, jobs, credentials, results, apps)
-│       │   └── client.py           # gRPC client + channel pool
+│       ├── apps/manager.py         # App/connector download, venv management, class loading
+│       ├── forward/forwarder.py    # Result batching + posting to central
 │       ├── cache/
-│       │   ├── local_cache.py      # SQLite med 6 tabeller (cache, jobs, profiles, apps, credentials, results)
-│       │   └── distributed_cache.py
-│       ├── forward/forwarder.py    # Batch result posting med offline resilience
-│       └── entrypoints/            # cache_node.py, poll_worker.py, forwarder_main.py
-├── common/                         # Delt: utc_now(), generate_api_key(), hash_api_key(), CheckState enum
-└── sdk/                            # MonitoringApp, MetricCollector, EventSource base classes
+│       │   ├── local_cache.py      # SQLite backend (jobs, results, credentials, app_cache)
+│       │   ├── app_cache_sync.py   # Syncs app cache with central
+│       │   └── app_cache_accessor.py # Runtime accessor for apps
+│       ├── jobs/                   # Job models, scheduling, work stealing
+│       └── peer/                   # gRPC client/server for inter-collector communication
+├── common/                         # Shared: monctl_common.utils (utc_now, hash_api_key)
+└── sdk/                            # SDK package (base classes, testing utilities)
 ```
 
 ---
 
-## PostgreSQL-modeller (storage/models.py)
+## PostgreSQL-modeller (storage/models.py) — 42 modeller
 
-| Model | Tabel | Nøglefelter | Relationer |
-|-------|-------|-------------|------------|
-| CollectorCluster | collector_clusters | id, name, replication_factor, peer_port, settings (JSONB) | → collectors[] |
-| Collector | collectors | id, name, hostname, ip_addresses, status (PENDING/ACTIVE/DOWN/REJECTED), load_score, effective_load, total_jobs, deadline_miss_rate, group_id, cluster_id, fingerprint, approved_at | → cluster, group, assignments[], api_keys[] |
-| CollectorGroup | collector_groups | id, name, description, label_selector (JSONB) | → collectors[], devices[] |
-| App | apps | id, name, description, app_type (script/sdk), config_schema (JSONB), target_table | → versions[] |
-| AppVersion | app_versions | id, app_id, version, source_code, requirements (JSONB), entry_class, is_latest, checksum | → app |
-| AppAssignment | app_assignments | id, app_id, app_version_id, collector_id (nullable), device_id (nullable), config (JSONB), schedule_type, schedule_value, resource_limits, role, use_latest, enabled | → collector, device, app, app_version |
-| Device | devices | id, name, address, device_type, tenant_id, collector_group_id, default_credential_id, labels (JSONB), metadata (JSONB) | → tenant, collector_group, default_credential, assignments[] |
-| DeviceType | device_types | id, name, description, category | (10 seeded) |
-| Credential | credentials | id, name, credential_type, secret_data (AES-256-GCM encrypted) | |
-| CredentialKey | credential_keys | id, name, is_secret | |
-| CredentialValue | credential_values | id, credential_id, key_id, value | |
-| User | users | id, username, password_hash, role (admin/viewer), timezone, all_tenants, is_active | → tenant_assignments[] |
-| Tenant | tenants | id, name, metadata (JSONB) | → user_assignments[] |
-| UserTenant | user_tenants | (user_id, tenant_id) composite PK | → user, tenant |
-| AlertRule | alert_rules | id, name, rule_type, condition (JSONB), severity, enabled | → states[] |
-| AlertState | alert_states | id, rule_id, state (firing/resolved), labels, started_at | → rule |
-| ApiKey | api_keys | id, key_hash, key_type (collector/management), collector_id, scopes | → collector |
-| RegistrationToken | registration_tokens | id, token_hash, short_code, one_time, used, cluster_id | |
-| TlsCertificate | tls_certificates | id, name, cert_pem, key_pem_encrypted, is_active | |
-| Template | templates | id, name, config (JSONB) | |
-| SnmpOid | snmp_oids | id, name, oid, description | |
-| SystemSetting | system_settings | key (PK), value | |
+| Model | Tabel | Nøglefelter |
+|-------|-------|-------------|
+| CollectorCluster | collector_clusters | id, name, replication_factor, peer_port, settings (JSONB) |
+| Collector | collectors | id, name, hostname, ip_addresses, status (PENDING/ACTIVE/DOWN/REJECTED), load_score, effective_load, total_jobs, deadline_miss_rate, group_id, cluster_id, fingerprint |
+| CollectorGroup | collector_groups | id, name, description, label_selector (JSONB) |
+| App | apps | id, name, description, app_type (script/sdk), config_schema (JSONB), target_table |
+| AppVersion | app_versions | id, app_id, version, source_code, requirements (JSONB), entry_class, is_latest, checksum, display_template |
+| AppAssignment | app_assignments | id, app_id, app_version_id, collector_id, device_id, config (JSONB), schedule_type, schedule_value, resource_limits, role, use_latest, enabled, credential_id |
+| AppConnectorBinding | app_connector_bindings | id, app_id, connector_id, alias, use_latest, settings (JSONB) |
+| AssignmentConnectorBinding | assignment_connector_bindings | id, assignment_id, connector_id, connector_version_id, alias, credential_id, use_latest, settings (JSONB) |
+| AssignmentCredentialOverride | assignment_credential_overrides | id, assignment_id, alias, credential_id |
+| Device | devices | id, name, address, device_type, is_enabled, tenant_id, collector_group_id, default_credential_id, credentials (JSONB), labels (JSONB), metadata (JSONB) |
+| DeviceType | device_types | id, name, description, category |
+| Credential | credentials | id, name, credential_type, secret_data (AES-256-GCM encrypted), template_id |
+| CredentialKey | credential_keys | id, name, description, key_type (plain/secret/enum), is_secret, enum_values |
+| CredentialValue | credential_values | id, credential_id, key_id, value |
+| CredentialTemplate | credential_templates | id, name, description |
+| CredentialType | credential_types | id, name, description |
+| User | users | id, username, password_hash, role (admin/viewer), role_id, timezone, all_tenants, is_active |
+| Tenant | tenants | id, name, metadata (JSONB) |
+| UserTenant | user_tenants | (user_id, tenant_id) composite PK |
+| Role | roles | id, name, description, is_system |
+| RolePermission | role_permissions | id, role_id, resource, action |
+| AppAlertDefinition | app_alert_definitions | id, app_version_id, name, expression, window, severity, enabled, message_template, notification_channels |
+| AlertInstance | alert_instances | id, definition_id, assignment_id, device_id, state (ok/firing/resolved), enabled, entity_key, entity_labels |
+| ThresholdOverride | threshold_overrides | id, definition_id, device_id, entity_key, overrides (JSONB) |
+| EventPolicy | event_policies | id, name, definition_id, mode, fire_count_threshold, window_size, event_severity, auto_clear_on_resolve |
+| ApiKey | api_keys | id, key_hash, key_type (collector/management), collector_id, user_id, scopes |
+| RegistrationToken | registration_tokens | id, token_hash, short_code, one_time, used, cluster_id |
+| TlsCertificate | tls_certificates | id, name, cert_pem, key_pem_encrypted, is_active |
+| Template | templates | id, name, description, config (JSONB) |
+| SnmpOid | snmp_oids | id, name, oid, description |
+| SystemSetting | system_settings | key (PK), value |
+| InterfaceMetadata | interface_metadata | id, device_id, if_name, current_if_index, if_descr, if_alias, if_speed_mbps, polling_enabled, alerting_enabled, poll_metrics |
+| LabelKey | label_keys | id, key, description, color, show_description, predefined_values |
+| PythonModule | python_modules | id, name, description, homepage_url, is_approved |
+| PythonModuleVersion | python_module_versions | id, module_id, version, dependencies, python_requires |
+| WheelFile | wheel_files | id, version_id, filename, file_data, sha256_hash, file_size, python_tag, abi_tag, platform_tag |
+| Connector | connectors | id, name, description, connector_type, is_builtin |
+| ConnectorVersion | connector_versions | id, connector_id, version, source_code, requirements, entry_class, is_latest, checksum |
+| Pack | packs | id, pack_uid, name, description, author, current_version |
+| PackVersion | pack_versions | id, pack_id, version, manifest (JSONB), changelog |
+| AppCache | app_cache | id, app_name, cache_key, cache_value, ttl_seconds, device_id |
 
 ### Konventioner
 
@@ -176,64 +184,135 @@ packages/
 - Altid `created_at` og `updated_at` med `server_default="now()"`
 - ForeignKey pattern: `ForeignKey("table.id", ondelete="SET NULL")`
 - JSONB med `server_default="{}"` for dict-felter
+- `metadata_` mapped til `"metadata"` kolonne for at undgå keyword-konflikter
 
 ---
 
 ## ClickHouse-tabeller (storage/clickhouse.py)
 
-4 domænetabeller + materialized views (ReplacingMergeTree for `_latest`):
+5 domænetabeller + materialized views (ReplacingMergeTree for `_latest`):
 
 | Tabel | Indhold | ORDER BY | Nøglekolonner |
 |-------|---------|----------|---------------|
 | availability_latency | Ping, HTTP, port checks | (assignment_id, executed_at) | state, rtt_ms, response_time_ms, reachable, status_code |
 | performance | CPU, memory, custom metrics | (device_id, component_type, component, executed_at) | component, component_type, metric_names[], metric_values[] |
-| interface | Network interface stats | (device_id, if_index, executed_at) | if_name, if_speed_mbps, in/out_octets, in/out_rate_bps, utilization |
+| interface | Network interface stats | (device_id, interface_id, executed_at) | interface_id, if_name, if_speed_mbps, in/out rates, errors, discards, utilization |
 | config | Config/discovery data | (device_id, component_type, component, config_key, executed_at) | config_key, config_value, config_hash |
+| events | Collector events | TTL 30 days | event_type, severity, message |
 
 Alle tabeller har: assignment_id, collector_id, app_id, device_id, executed_at, received_at + denormaliserede felter: collector_name, device_name, app_name, tenant_id.
 
-Hver tabel har en `_latest` materialized view (ReplacingMergeTree) der holder seneste resultat per nøgle.
+Hver tabel har en `_latest` materialized view (ReplacingMergeTree) der holder seneste resultat per nøgle. Interface har også `interface_hourly` og `interface_daily` rollup-tabeller.
 
-**Query-metoder**: `query_latest()`, `query_history()`, `query_by_device()`, `query_for_alert()`, `insert_by_table()`.
+**Multi-tier retention**: Raw (7 dage), hourly rollup (90 dage), daily rollup (730 dage). Auto-tier selection baseret på query time range.
+
+**History query default**: `GET /v1/results` queries `availability_latency`, `performance`, `config` (IKKE `interface` — interface har egne endpoints).
+
+---
+
+## Key Subsystems
+
+### Credential System
+
+**Storage**: `Credential` model med AES-256-GCM encrypted `secret_data` kolonne.
+
+**Types**: Managed via `CredentialType` tabel. Bruges som dropdown i credential creation UI.
+
+**Templates**: `CredentialTemplate` + felter definerer hvilke keys en credential-type kræver.
+
+**Resolution chain** (for connector bindings, i prioritetsrækkefølge):
+1. `AssignmentCredentialOverride` — per-assignment, per-connector-alias override
+2. `AppAssignment.credential_id` — assignment-level credential
+3. `Device.default_credential_id` — device-level fallback
+
+**Device credentials**: `Device.credentials` JSONB kolonne mapper `{credential_type: credential_id}` for per-protocol credential assignment.
+
+### Connector System
+
+**App-level bindings**: `AppConnectorBinding` erklærer hvilke connectors en app kræver (fx snmp_interface_poller kræver "snmp" connector). Managed i App Detail UI.
+
+**Loading**: `apps/manager.py` downloader connector-kode fra central, installerer venvs, og loader klasser. Venv site-packages tilføjes **permanent til sys.path** så lazy imports virker.
+
+**SNMP Connector**: Accepterer både `snmp_version` og `version` credential keys for bagudkompatibilitet. Bygger pysnmp v7 auth objects for v1/v2c/v3.
+
+### Interface Monitoring
+
+**Metadata**: `InterfaceMetadata` tabel cacher stabil interface-identitet `(device_id, if_name)` med `polling_enabled`, `alerting_enabled`, `poll_metrics` settings.
+
+**Targeted polling**: GetJobs injicerer `monitored_interfaces` liste i job-parametre. Poller bruger targeted SNMP GET i stedet for full walk.
+
+**Metadata refresh**: `POST /v1/devices/{id}/interface-metadata/refresh` sætter Redis flag. Næste job-fetch omitter `monitored_interfaces`, tvinger full SNMP walk.
+
+**Rate calculation**: Central-side (ikke collector). Previous counters cached i Redis per interface. Delta/rate computed ved result ingestion.
+
+### Device Enable/Disable
+
+**Model**: `Device.is_enabled` boolean (default `true`). Disabled devices udelukkes fra collector job scheduling via `or_(device_id IS NULL, Device.is_enabled == True)` filter i `GET /api/v1/jobs`.
+
+**Bulk operations**: `POST /v1/devices/bulk-patch` accepterer `{device_ids, is_enabled?, collector_group_id?, tenant_id?}`. Tenant-scoped visibility filtering. Ved flytning til collector group migreres assignments og collector config versions bumpes.
+
+**Frontend**: DevicesPage bulk action bar inkluderer Enable, Disable, Move to Group, Move to Tenant knapper. Disabled devices renderes med `opacity-50` og grå status dot.
+
+### Alerting System
+
+- `AppAlertDefinition`: Alert rules defineret per app (DSL expression language)
+- `AlertInstance`: Active/resolved alert instances per assignment + entity
+- `ThresholdOverride`: Per-device per-entity threshold overrides
+- `EventPolicy`: Regler for at promovere alerts til events
+- Background evaluation engine med leader election (Redis SETNX + TTL)
+
+### Packs System
+
+Import/export af monitoring packs (apps + connectors + alert definitions + credential templates). Preview + conflict detection. Version tracking.
 
 ---
 
 ## API-endpoints
 
-### Web API (`/v1/`)
+### Web API (`/v1/`) — 28 routers
 
 | Router | Prefix | Endpoints | Auth |
 |--------|--------|-----------|------|
 | auth | /v1/auth | POST login, logout, refresh; GET me | Public (login) |
-| devices | /v1/devices | GET list (sort/filter/paginate), POST create, GET/:id, PUT/:id, DELETE/:id | require_auth |
-| collectors | /v1/collectors | POST register, POST /:id/approve, POST /:id/reject, POST /:id/heartbeat, GET /:id/config, GET list, PUT/:id, DELETE/:id | Mixed |
+| devices | /v1/devices | GET list (sort/filter/paginate), POST create, POST bulk-patch, POST bulk-delete, GET/:id, PUT/:id, DELETE/:id, monitoring CRUD, interface-metadata CRUD | require_auth |
+| collectors | /v1/collectors | POST register, approve, reject, heartbeat; GET list, /:id, config; PUT/:id, DELETE/:id | Mixed |
 | collector_groups | /v1/collector-groups | CRUD | require_auth |
-| apps | /v1/apps | CRUD apps + versions + assignments | require_auth |
-| results | /v1/results | GET list, GET /latest, GET /by-device/:id | require_auth |
-| credentials | /v1/credentials | CRUD (secrets aldrig returneret) | require_auth |
+| apps | /v1/apps | CRUD apps + versions + assignments + connector bindings | require_auth |
+| results | /v1/results | GET list, /latest, /by-device/:id, /interfaces, /interface-history | require_auth |
+| credentials | /v1/credentials | CRUD + types CRUD (secrets aldrig returneret) | require_auth |
 | credential_keys | /v1/credential-keys | CRUD | require_auth |
-| alerting | /v1/alerts | GET /rules, POST /rules, GET /active | require_auth |
+| credential_templates | /v1/credential-templates | CRUD | require_auth |
+| connectors | /v1/connectors | CRUD connectors + versions | require_auth |
+| alerting | /v1/alerts | Definitions, instances, evaluation, metrics, thresholds | require_auth |
+| events | /v1/events | GET list, POST acknowledge, POST clear | require_auth |
 | tenants | /v1/tenants | CRUD | require_auth |
-| users | /v1/users | CRUD + PUT /me/timezone + POST /:id/tenants | require_admin (mest) |
+| users | /v1/users | CRUD + PUT /me/timezone + tenant assignments | require_admin (mest) |
+| roles | /v1/roles | CRUD + permissions | require_admin |
 | device_types | /v1/device-types | CRUD | require_auth |
 | snmp_oids | /v1/snmp-oids | CRUD | require_auth |
+| label_keys | /v1/label-keys | CRUD | require_auth |
 | registration_tokens | /v1/registration-tokens | POST create, GET list | require_auth |
 | templates | /v1/templates | CRUD + POST /:id/apply | require_auth |
+| packs | /v1/packs | Import, export, preview, CRUD | require_auth |
+| python_modules | /v1/python-modules | Registry + PyPI import + wheel upload/download | require_auth |
+| user_api_keys | /v1/user-api-keys | CRUD | require_auth |
 | settings | /v1/settings | GET, PUT | require_admin |
-| tls | /v1/settings/tls | GET, POST /generate, POST /upload, POST /deploy | require_admin |
+| tls | /v1/settings/tls | GET, POST generate/upload/deploy | require_admin |
 | system | /v1/system | GET /health (concurrent subsystem checks) | require_admin |
+| docker_infra | /v1/docker-infra | GET overview, stats, containers, logs, events, images | require_auth |
 | ingestion | /v1 | POST /ingest (legacy) | require_collector_auth |
 
 ### Collector API (`/api/v1/`)
 
 | Endpoint | Metode | Formål |
 |----------|--------|--------|
-| /api/v1/jobs | GET | Hent job assignments (server-side partitioning) |
-| /api/v1/jobs/:id | GET | Hent enkelt job |
+| /api/v1/jobs | GET | Hent job assignments (server-side weighted partitioning, excludes disabled devices) |
 | /api/v1/apps/:id/metadata | GET | App metadata |
 | /api/v1/apps/:id/code | GET | App source code + requirements |
+| /api/v1/connectors/:id/code | GET | Connector source code + requirements |
 | /api/v1/credentials/:name | GET | Dekrypteret credential |
 | /api/v1/results | POST | Push check resultater |
+| /api/v1/app-cache | GET/PUT | App-level persistent cache |
 
 ### API Response-format
 
@@ -254,54 +333,72 @@ Hver tabel har en `_latest` materialized view (ReplacingMergeTree) der holder se
 ```python
 stmt = apply_tenant_filter(stmt, auth, Device.tenant_id)
 ```
-- `tenant_ids = None` → unrestricted (admin/api_key)
-- `tenant_ids = []` → see nothing
-- `tenant_ids = [ids]` → filter
 
 ---
 
 ## Frontend — sider og komponenter
 
-### Sider (17)
+### Sider (26)
 
 | Side | Route | Formål |
 |------|-------|--------|
 | LoginPage | /login | Username/password login |
-| DashboardPage | / | Stat-kort (devices, up, down, alerts) + tabeller (alerts, collectors, recent results) |
-| SystemHealthPage | /system-health | 5 subsystem-kort (PG, CH, Redis, Collectors, Scheduler) med status/latency/detaljer |
-| DevicesPage | /devices | Server-side pagination/sort/filter, bulk delete, status dots fra ClickHouse |
-| DeviceDetailPage | /devices/:id | 3 tabs: Overview (info+edit), Activity (AvailabilityChart+TimeRangePicker), Settings (assignments CRUD) |
+| DashboardPage | / | Stat-kort + tabeller (alerts, collectors, recent results) |
+| SystemHealthPage | /system-health | Subsystem-kort (PG, CH, Redis, Collectors, Scheduler) + collector-tabel med filter |
+| DockerInfraPage | /docker-infrastructure | Docker host overview, containers, logs, events, images |
+| DevicesPage | /devices | Server-side pagination/sort/filter, bulk actions (enable/disable/move/delete/template), status dots |
+| DeviceDetailPage | /devices/:id | Tabs: Overview, Checks (history+chart), Assignments, Interfaces, Performance, Config, Thresholds |
 | AppsPage | /apps | App liste med type/target_table/version count |
-| AppDetailPage | /apps/:id | 2 tabs: Overview (edit), Versions (CodeEditor, create/edit/delete versions) |
+| AppDetailPage | /apps/:id | Tabs: Overview (edit), Versions (CodeEditor), Connector Bindings, Alert Definitions |
+| ConnectorsPage | /connectors | Connector liste |
+| ConnectorDetailPage | /connectors/:id | Connector versions + code editor |
+| PythonModulesPage | /python-modules | Package registry, PyPI import, wheel upload |
 | AssignmentsPage | /assignments | Read-only tabel over alle assignments med søgning |
-| AlertsPage | /alerts | 2 tabs: Active Alerts, Alert Rules |
-| SettingsPage | /settings/:tab | 10 tabs: Profile, System, Device Types, Collectors, Credentials, SNMP OIDs, Data Retention, TLS, Users, Tenants |
-| CollectorsPage | (embedded) | Pending/Active collectors, Groups, Registration Tokens |
-| CredentialsPage | (embedded) | Credential Keys + Credentials CRUD |
-| UsersPage | (embedded) | User CRUD + tenant assignments |
-| TenantsPage | (embedded) | Tenant CRUD med metadata editor |
-| DeviceTypesPage | (embedded) | Device type CRUD (built-in kan ikke slettes) |
-| SnmpOidsPage | (embedded) | SNMP OID catalog CRUD |
 | TemplatesPage | /templates | Template CRUD |
+| PacksPage | /packs | Monitoring pack liste |
+| PackDetailPage | /packs/:id | Pack versions, entities, export |
+| AlertsPage | /alerts | Tabs: Alert Definitions, Alert Instances |
+| EventsPage | /events | Active/cleared events med acknowledge/clear |
+| SettingsPage | /settings/:tab | Tabs: Profile, System, Device Types, Collectors, Credentials, SNMP OIDs, Labels, Roles, Users, Tenants |
+| CollectorsPage | (settings tab) | Pending/Active collectors, Groups, Registration Tokens |
+| CredentialsPage | (settings tab) | Credential Keys + Templates + Types + Credentials CRUD |
+| UsersPage | (settings tab) | User CRUD + tenant assignments |
+| TenantsPage | (settings tab) | Tenant CRUD med metadata editor |
+| DeviceTypesPage | (settings tab) | Device type CRUD |
+| LabelKeysPage | (settings tab) | Label key CRUD med farver og predefined values |
+| RolesPage | (settings tab) | RBAC role CRUD + permissions |
+| SnmpOidsPage | (settings tab) | SNMP OID catalog CRUD |
 
-### Feature-komponenter
+### Feature-komponenter (18)
 
 | Komponent | Formål |
 |-----------|--------|
-| AddDeviceDialog | Form dialog: name, address, type, tenant (required), group (required), credential (optional) |
-| AvailabilityChart | Recharts: availability strip + latency lines, adaptive buckets, gap detection, timezone-aware |
-| TimeRangePicker | Dropdown: presets (15m-30d-all) + relative + absolute custom ranges |
+| AddDeviceDialog | Form dialog: name, address, type, tenant, group, credential |
+| ApplyTemplateDialog | Bulk apply monitoring template til valgte devices |
+| AvailabilityChart | Recharts: availability strip + latency lines, adaptive buckets, gap detection |
 | CodeEditor | CodeMirror 6: Python syntax, one-dark theme, resizable |
+| ConfigDataRenderer | Renders config key-value data med diff highlighting |
+| CredentialCell | Viser credential chain (override → assignment → device default) |
+| CreatePackDialog | Dialog til at oprette monitoring packs |
+| DisplayTemplateEditor | Editor for app display templates (HTML/CSS) |
+| InterfaceTrafficChart | Recharts: In/Out traffic chart for network interfaces |
 | KeyValueEditor | Key-value pair editor for metadata/labels |
+| LabelEditor | Label editor med auto-complete fra LabelKey definitions |
+| ModulePicker | Python module version picker for app requirements |
+| PerformanceChart | Recharts: Multi-metric performance chart |
+| PyPIImportDialog | Dialog til at importere packages fra PyPI |
 | StatusBadge | State → farve+label mapping (OK, WARNING, CRITICAL, DOWN, etc.) |
+| TimePicker | Time picker component |
+| TimeRangePicker | Dropdown: presets (15m-30d-all) + relative + absolute custom ranges |
+| WheelUploadDialog | Dialog til at uploade Python wheel files |
 
-### UI-primitiver (components/ui/)
+### UI-primitiver (10)
 
-badge, button, card, dialog, input, label, select, table, tabs
+badge, button, card, clearable-input, dialog, input, label, select, table, tabs
 
-### Sidebar navigation
+### Sidebar navigation (13 items)
 
-Dashboard → System Health → Devices → Apps → Assignments → Templates → Alerts → Settings
+Dashboard → System Health → Docker Infra → Devices → Apps → Connectors → Modules → Assignments → Templates → Packs → Alerts → Events → Settings
 
 ### Polling
 
@@ -314,7 +411,15 @@ Dashboard → System Health → Devices → Apps → Assignments → Templates �
 - `useQuery` med `queryKey` og `refetchInterval`
 - `useMutation` med `onSuccess: async () => { await qc.invalidateQueries(...) }`
 - `apiGet<T>()` returnerer `ApiResponse<T>` = `{status, data}`
-- Hooks: `useDevices(params)`, `useCreateDevice()`, `useDeleteDevice()`, etc.
+- Hooks: `useDevices(params)`, `useCreateDevice()`, `useBulkPatchDevices()`, etc.
+
+### Frontend UI-patterns
+
+**ClearableInput** (`components/ui/clearable-input.tsx`): Wrapper around `<Input>` med inline `×` clear-knap. Knappen og `pr-7` padding er **altid i DOM** (skjult via `opacity-0 pointer-events-none`) for at undgå fokus-tab.
+
+**Filter empty states**: Når filtre er aktive men matcher intet, vis altid tabellen (headers + filter inputs) med en tom body-række. Vis kun den store centered empty state når der virkelig er nul items OG ingen filtre er aktive.
+
+**Conditional rendering og fokus**: Brug aldrig `{condition && <Element/>}` til at indsætte/fjerne elementer i en parent container der har sibling form inputs. Brug i stedet CSS visibility (`opacity-0 pointer-events-none`).
 
 ---
 
@@ -339,10 +444,6 @@ Dashboard → System Health → Devices → Apps → Assignments → Templates �
 
 `_redis` er en module-level global i `cache.py`. Importér med `from monctl_central.cache import _redis`.
 
-### Pool-status
-
-`get_engine().pool` giver adgang til `pool.size()`, `pool.checkedout()`, `pool.overflow()`, `pool.status()`.
-
 ### Scheduler leader
 
 Redis key `monctl:scheduler:leader` med 30s TTL. Læs med `_redis.get()` og `_redis.ttl()`.
@@ -358,15 +459,15 @@ raise HTTPException(status_code=409, detail="Already exists")
 ### Build & Deploy
 
 ```bash
-# Build
+# Central build
 docker build --platform linux/amd64 --no-cache -t monctl-central:latest -f docker/Dockerfile.central .
 
-# Push til alle servere
+# Push til alle central servere
 for ip in 41 42 43 44; do
   docker save monctl-central:latest | ssh monctl@10.145.210.$ip 'docker load'
 done
 
-# Restart
+# Restart central
 for ip in 41 42 43 44; do
   ssh monctl@10.145.210.$ip 'cd /opt/monctl/central && docker compose down && docker compose up -d'
 done
@@ -375,9 +476,18 @@ done
 ### Collector deploy
 
 ```bash
-docker build --platform linux/amd64 --no-cache -t monctl-collector:latest -f docker/Dockerfile.collector-v2 packages/collector/
-# Compose file: /opt/monctl/collector/docker-compose.yml
+docker build --platform linux/amd64 --no-cache -t monctl-collector:latest -f docker/Dockerfile.collector-v2 .
+# Push til worker1-4 (.31-.34), restart: cd /opt/monctl/collector && docker compose down && docker compose up -d
 ```
+
+### Vigtige deploy-noter
+
+- Brug `Dockerfile.collector-v2` (ikke `Dockerfile.collector`)
+- Ingen npm/node på servere — Dockerfile håndterer frontend build
+- Ingen package-lock.json — bruger `npm install` (ikke `npm ci`)
+- Altid `--no-cache` ved rebuild efter source changes
+- Brug `docker compose up -d` (ikke `restart`) for at bruge nye images
+- Deploy til ALLE 4 central nodes og ALLE 4 worker nodes
 
 ### Kode-stil
 
