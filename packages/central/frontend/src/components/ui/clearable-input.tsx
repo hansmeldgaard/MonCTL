@@ -15,19 +15,20 @@ export const ClearableInput = forwardRef<HTMLInputElement, ClearableInputProps>(
         <Input
           ref={ref}
           value={value}
-          className={cn(hasValue && "pr-7", className)}
+          className={cn("pr-7", className)}
           {...props}
         />
-        {hasValue && (
-          <button
-            type="button"
-            onClick={onClear}
-            className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700/50 transition-colors"
-            tabIndex={-1}
-          >
-            <X className="h-3 w-3" />
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={onClear}
+          className={cn(
+            "absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700/50 transition-colors",
+            hasValue ? "opacity-100" : "opacity-0 pointer-events-none",
+          )}
+          tabIndex={-1}
+        >
+          <X className="h-3 w-3" />
+        </button>
       </div>
     );
   }
