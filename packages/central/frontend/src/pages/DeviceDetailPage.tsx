@@ -67,6 +67,7 @@ import {
   useRefreshInterfaceMetadata,
   useInterfaceMetadata,
   useUpdateInterfaceSettings,
+  useBulkUpdateInterfaceSettings,
   useAppDetail,
   useApps,
   useSnmpOids,
@@ -1088,6 +1089,7 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
   const { data: interfaces, isLoading } = useInterfaceLatest(deviceId);
   const { data: metadata } = useInterfaceMetadata(deviceId);
   const updateSettings = useUpdateInterfaceSettings();
+  const bulkUpdate = useBulkUpdateInterfaceSettings();
   const refreshMeta = useRefreshInterfaceMetadata();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [timeRange, setTimeRange] = useState<TimeRangeValue>(DEFAULT_RANGE);
@@ -1205,6 +1207,52 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
     return false;
   };
 
+  const selectedHavePolling = (): boolean | "mixed" => {
+    const ids = [...selectedIds].filter(id => filteredIds.has(id));
+    if (ids.length === 0) return false;
+    const states = ids.map(id => metaMap.get(id)?.polling_enabled ?? true);
+    if (states.every(Boolean)) return true;
+    if (states.some(Boolean)) return "mixed";
+    return false;
+  };
+
+  const selectedHaveAlerting = (): boolean | "mixed" => {
+    const ids = [...selectedIds].filter(id => filteredIds.has(id));
+    if (ids.length === 0) return false;
+    const states = ids.map(id => metaMap.get(id)?.alerting_enabled ?? true);
+    if (states.every(Boolean)) return true;
+    if (states.some(Boolean)) return "mixed";
+    return false;
+  };
+
+  const bulkTogglePolling = (enable: boolean) => {
+    const ids = [...selectedIds].filter(id => filteredIds.has(id));
+    if (ids.length === 0) return;
+    bulkUpdate.mutate({ deviceId, data: { interface_ids: ids, polling_enabled: enable } });
+  };
+
+  const bulkToggleAlerting = (enable: boolean) => {
+    const ids = [...selectedIds].filter(id => filteredIds.has(id));
+    if (ids.length === 0) return;
+    bulkUpdate.mutate({ deviceId, data: { interface_ids: ids, alerting_enabled: enable } });
+  };
+
+  const BulkToggleHead = ({ label, state, onToggle }: { label: string; state: boolean | "mixed"; onToggle: (enable: boolean) => void }) => (
+    <TableHead className="text-center w-14">
+      <div className="flex flex-col items-center gap-0.5">
+        <span className="text-xs">{label}</span>
+        {activeSelectedCount > 0 && (
+          <input type="checkbox" checked={state === true}
+            ref={el => { if (el) el.indeterminate = state === "mixed"; }}
+            onChange={() => onToggle(state !== true)}
+            onClick={e => e.stopPropagation()}
+            className="accent-brand-500 cursor-pointer"
+            title={`${state === true ? "Disable" : "Enable"} ${label.toLowerCase()} for ${activeSelectedCount} selected`} />
+        )}
+      </div>
+    </TableHead>
+  );
+
   const SortHead = ({ col, children }: { col: IfaceSortKey; children: React.ReactNode }) => (
     <TableHead className="cursor-pointer select-none" onClick={() => toggleSort(col)}>
       <span className="flex items-center gap-1">
@@ -1265,27 +1313,6 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
           <TimeRangePicker value={timeRange} onChange={setTimeRange} timezone={tz} />
         </div>
       </div>
-
-      {/* Bulk metric controls */}
-      {activeSelectedCount > 0 && (
-        <Card><CardContent className="py-2">
-          <div className="flex items-center gap-6 text-xs">
-            <span className="text-zinc-400 font-medium">Metrics for {activeSelectedCount} selected:</span>
-            {METRIC_TYPES.map(metric => {
-              const state = selectedHaveMetric(metric);
-              return (
-                <label key={metric} className="flex items-center gap-1.5 cursor-pointer select-none">
-                  <input type="checkbox" checked={state === true}
-                    ref={el => { if (el) el.indeterminate = state === "mixed"; }}
-                    onChange={() => bulkToggleMetric(metric, state !== true)}
-                    className="accent-brand-500 cursor-pointer" />
-                  <span className="text-zinc-300 capitalize">{metric}</span>
-                </label>
-              );
-            })}
-          </div>
-        </CardContent></Card>
-      )}
 
       {/* Multi-interface chart */}
       {showMultiChart && multiHistory ? (
@@ -1350,12 +1377,12 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
                 <SortHead col="in_errors">In Err</SortHead>
                 <SortHead col="out_errors">Out Err</SortHead>
                 <SortHead col="last_polled">Last Polled</SortHead>
-                <TableHead className="w-14 text-center">Poll</TableHead>
-                <TableHead className="w-14 text-center">Alert</TableHead>
-                <TableHead className="text-center">Traffic</TableHead>
-                <TableHead className="text-center">Errors</TableHead>
-                <TableHead className="text-center">Discards</TableHead>
-                <TableHead className="text-center">Status</TableHead>
+                <BulkToggleHead label="Poll" state={selectedHavePolling()} onToggle={bulkTogglePolling} />
+                <BulkToggleHead label="Alert" state={selectedHaveAlerting()} onToggle={bulkToggleAlerting} />
+                <BulkToggleHead label="Traffic" state={selectedHaveMetric("traffic")} onToggle={(e) => bulkToggleMetric("traffic", e)} />
+                <BulkToggleHead label="Errors" state={selectedHaveMetric("errors")} onToggle={(e) => bulkToggleMetric("errors", e)} />
+                <BulkToggleHead label="Discards" state={selectedHaveMetric("discards")} onToggle={(e) => bulkToggleMetric("discards", e)} />
+                <BulkToggleHead label="Status" state={selectedHaveMetric("status")} onToggle={(e) => bulkToggleMetric("status", e)} />
               </TableRow>
               {/* Filter row */}
               <TableRow className="bg-zinc-900/50">
