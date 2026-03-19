@@ -49,7 +49,7 @@ packages/
 │   │   │   └── clickhouse.py   # ClickHouse client, DDL, insert/query methods
 │   │   ├── api/router.py       # Main router (mounts 25+ sub-routers at /v1/)
 │   │   ├── auth/               # JWT cookie auth (login, refresh, me)
-│   │   ├── devices/router.py   # Device CRUD, monitoring config, interface metadata, credentials
+│   │   ├── devices/router.py   # Device CRUD, bulk-patch, monitoring config, interface metadata, credentials
 │   │   ├── collectors/router.py # Collector registration, approval, heartbeat
 │   │   ├── collector_api/router.py # /api/v1/ endpoints collectors call (jobs, results, credentials)
 │   │   ├── apps/router.py      # App CRUD + assignment CRUD + version management
@@ -72,13 +72,13 @@ packages/
 │   │   └── src/
 │   │       ├── api/
 │   │       │   ├── client.ts   # fetch() wrapper (apiGet, apiPost, apiPut, apiPatch, apiDelete)
-│   │       │   └── hooks.ts    # 114 React Query hooks for ALL API endpoints
-│   │       ├── types/api.ts    # 90+ TypeScript interfaces for API responses
+│   │       │   └── hooks.ts    # 116 React Query hooks for ALL API endpoints
+│   │       ├── types/api.ts    # 93+ TypeScript interfaces for API responses
 │   │       ├── pages/          # 26 page components
-│   │       ├── components/     # 18 reusable UI components
+│   │       ├── components/     # 19 reusable UI components (incl. ClearableInput)
 │   │       ├── hooks/          # useAuth, useTimezone
 │   │       └── layouts/        # Sidebar + Header + AppLayout
-│   └── alembic/                # 41 database migrations
+│   └── alembic/                # 42 database migrations
 ├── collector/                  # Collector node
 │   └── src/monctl_collector/
 │       ├── config.py           # YAML + env config
@@ -152,6 +152,14 @@ packages/
 Each table has a `*_latest` materialized view (ReplacingMergeTree) for instant latest-per-key lookups. Interface also has `interface_hourly` and `interface_daily` rollup tables.
 
 **History query default**: `GET /v1/results` queries `availability_latency`, `performance`, `config` by default (NOT `interface` — interface data has its own dedicated endpoints to avoid flooding the History tab with one row per interface per poll).
+
+### Device Enable/Disable
+
+**Model**: `Device.is_enabled` boolean column (default `true`). Disabled devices are excluded from collector job scheduling via an `or_(device_id IS NULL, Device.is_enabled == True)` filter in `GET /api/v1/jobs`.
+
+**Bulk operations**: `POST /v1/devices/bulk-patch` accepts `{device_ids, is_enabled?, collector_group_id?, tenant_id?}`. Applies tenant-scoped visibility filtering. When moving to a collector group, also migrates assignments (nulls out explicit collector_id) and bumps collector config versions.
+
+**Frontend**: DevicesPage bulk action bar includes Enable, Disable, Move to Group, Move to Tenant buttons. Disabled devices render with `opacity-50` and a grey status dot.
 
 ### Alerting System
 
@@ -283,3 +291,11 @@ SSH user: `monctl` for all servers. Compose files at `/opt/monctl/{central,colle
 - Python: ruff with line-length 100, target Python 3.11
 - TypeScript: standard React conventions, path aliases `@/`
 - Communicate in Danish when the user writes in Danish
+
+### Frontend UI Patterns
+
+**ClearableInput** (`components/ui/clearable-input.tsx`): Wraps `<Input>` with an inline `×` clear button. The button and `pr-7` padding are **always in the DOM** (hidden via `opacity-0 pointer-events-none`) to avoid focus loss caused by DOM structure changes during typing.
+
+**Filter empty states**: When filters are active but match no results, always keep the table visible (headers + filter inputs) with an empty body row message like `"No devices match your filters"`. Only show the big centered empty state (icon + action button) when there are truly zero items AND no filters are active. This lets users refine their query without losing context.
+
+**Conditional rendering and focus**: Never use `{condition && <Element/>}` to insert/remove elements in a parent container that has sibling form inputs — React's index-based reconciliation can cause focus loss. Instead, always render the element and toggle visibility with CSS (`opacity-0 pointer-events-none`).
