@@ -842,6 +842,46 @@ export function useBulkUpdateInterfaceSettings() {
   });
 }
 
+export function useRefreshInterfaceMetadata() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (deviceId: string) =>
+      apiPost(`/devices/${deviceId}/interface-metadata/refresh`),
+    onSuccess: (_res, deviceId) => {
+      qc.invalidateQueries({ queryKey: ["interface-metadata", deviceId] });
+    },
+  });
+}
+
+export function useMultiInterfaceHistory(
+  deviceId: string | undefined,
+  fromTs: string | null,
+  toTs: string | null = null,
+  interfaceIds: string[] = [],
+  limit = 2000,
+) {
+  return useQuery({
+    queryKey: ["interface-history-multi", deviceId, fromTs, toTs, interfaceIds, limit],
+    queryFn: async () => {
+      const perIface = Math.max(200, Math.floor(limit / interfaceIds.length));
+      const results = await Promise.all(
+        interfaceIds.map((ifaceId) => {
+          const params = new URLSearchParams({
+            limit: String(perIface),
+            ...(fromTs ? { from_ts: fromTs } : {}),
+            ...(toTs ? { to_ts: toTs } : {}),
+            interface_id: ifaceId,
+          });
+          return apiGet<InterfaceRecord[]>(`/results/interfaces/${deviceId}?${params}`);
+        })
+      );
+      return results.map((r) => r.data);
+    },
+    enabled: !!deviceId && interfaceIds.length > 0,
+    refetchInterval: POLL_DETAIL,
+  });
+}
+
 // ── Device assignments (for Settings tab) ────────────────
 
 export function useDeviceAssignments(deviceId: string | undefined) {

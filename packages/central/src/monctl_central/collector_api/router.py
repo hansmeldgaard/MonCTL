@@ -376,7 +376,13 @@ async def get_jobs(
         params = dict(assignment.config)
         if app.target_table == "interface" and device is not None:
             dev_key = str(device.id)
-            if dev_key in monitored_map:
+            # Check if a metadata refresh was requested (forces full walk)
+            from monctl_central.cache import get_and_clear_interface_refresh_flag
+            refresh_requested = await get_and_clear_interface_refresh_flag(dev_key)
+            if refresh_requested:
+                logger.info("interface_refresh_requested", device_id=dev_key)
+                # Omit monitored_interfaces → poller will do a full walk
+            elif dev_key in monitored_map:
                 params["monitored_interfaces"] = monitored_map[dev_key]
 
         # Build connector bindings from APP-level bindings (new model)

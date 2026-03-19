@@ -230,3 +230,24 @@ async def get_or_load_enrichment(
     if data:
         await set_cached_enrichment(assignment_id, data)
     return data or {}
+
+
+# ---------------------------------------------------------------------------
+# Interface metadata refresh flag
+# ---------------------------------------------------------------------------
+
+_IFACE_REFRESH_PREFIX = "iface-refresh:"
+
+
+async def set_interface_refresh_flag(device_id: str, ttl: int = 600) -> None:
+    """Signal that the next interface poll for this device should do a full walk."""
+    if _redis:
+        await _redis.set(f"{_IFACE_REFRESH_PREFIX}{device_id}", "1", ex=ttl)
+
+
+async def get_and_clear_interface_refresh_flag(device_id: str) -> bool:
+    """Check and atomically clear the refresh flag. Returns True if flag was set."""
+    if _redis:
+        result = await _redis.getdel(f"{_IFACE_REFRESH_PREFIX}{device_id}")
+        return result is not None
+    return False

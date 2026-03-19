@@ -19,6 +19,7 @@ import {
   Network,
   Plug,
   Plus,
+  RefreshCw,
   Save,
   Settings2,
   Tag,
@@ -65,7 +66,8 @@ import {
   useDeviceResults,
   useDeviceTypes,
   useInterfaceLatest,
-  useInterfaceHistory,
+  useMultiInterfaceHistory,
+  useRefreshInterfaceMetadata,
   useInterfaceMetadata,
   useUpdateInterfaceSettings,
   useAppDetail,
@@ -88,7 +90,8 @@ import type { Device as DeviceType, DeviceAssignment, DeviceThresholdRow } from 
 import { ConfigDataRenderer } from "@/components/ConfigDataRenderer.tsx";
 import { ApplyTemplateDialog } from "@/components/ApplyTemplateDialog.tsx";
 import { PerformanceChart } from "@/components/PerformanceChart.tsx";
-import { InterfaceTrafficChart } from "@/components/InterfaceTrafficChart.tsx";
+import { MultiInterfaceChart, formatTraffic } from "@/components/InterfaceTrafficChart.tsx";
+import type { TrafficUnit, ChartMetric, ChartMode } from "@/components/InterfaceTrafficChart.tsx";
 import { CredentialCell } from "@/components/CredentialCell.tsx";
 import { timeAgo, formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
@@ -1404,14 +1407,7 @@ function formatSpeed(mbps: number): string {
   return `${mbps} Mbps`;
 }
 
-function formatBps(bps: number): string {
-  if (bps >= 1e9) return `${(bps / 1e9).toFixed(2)} Gbps`;
-  if (bps >= 1e6) return `${(bps / 1e6).toFixed(2)} Mbps`;
-  if (bps >= 1e3) return `${(bps / 1e3).toFixed(1)} Kbps`;
-  return `${bps.toFixed(0)} bps`;
-}
-
-// formatBytes removed — traffic columns now show rates (bps) only
+// formatBps removed — traffic columns now use formatTraffic from InterfaceTrafficChart
 
 // ── Tab: Interfaces ──────────────────────────────────────
 
@@ -1430,28 +1426,40 @@ function serializeMetrics(set: Set<string>): string {
   return [...set].join(",");
 }
 
+function matchesTextFilter(value: string, filter: string): boolean {
+  if (!filter) return true;
+  const lower = value.toLowerCase();
+  const f = filter.toLowerCase();
+  if (f.includes("*") || f.startsWith("^") || f.endsWith("$")) {
+    try {
+      return new RegExp(f.replace(/\*/g, ".*")).test(lower);
+    } catch {
+      return lower.includes(f);
+    }
+  }
+  return lower.includes(f);
+}
+
+const MAX_CHART_INTERFACES = 8;
+
 function InterfacesTab({ deviceId }: { deviceId: string }) {
   const { data: interfaces, isLoading } = useInterfaceLatest(deviceId);
   const { data: metadata } = useInterfaceMetadata(deviceId);
   const updateSettings = useUpdateInterfaceSettings();
-  const [selectedInterfaceId, setSelectedInterfaceId] = useState<string | null>(null);
+  const refreshMeta = useRefreshInterfaceMetadata();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [timeRange, setTimeRange] = useState<TimeRangeValue>(DEFAULT_RANGE);
-  const [searchText, setSearchText] = useState("");
-  const [filterOperStatus, setFilterOperStatus] = useState<string>("");
-  const [filterSpeed, setFilterSpeed] = useState<string>("");
   const [sortKey, setSortKey] = useState<IfaceSortKey>("if_index");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [trafficUnit, setTrafficUnit] = useState<TrafficUnit>("auto");
+  const [chartMetric, setChartMetric] = useState<ChartMetric>("traffic");
+  const [chartMode, setChartMode] = useState<ChartMode>("overlaid");
+  const [filterName, setFilterName] = useState("");
+  const [filterAlias, setFilterAlias] = useState("");
+  const [filterOperStatus, setFilterOperStatus] = useState<string>("");
+  const [filterSpeed, setFilterSpeed] = useState<string>("");
   const tz = useTimezone();
   const { fromTs, toTs } = useMemo(() => rangeToTimestamps(timeRange), [timeRange]);
-
-  const { data: history } = useInterfaceHistory(
-    deviceId,
-    fromTs,
-    toTs,
-    selectedInterfaceId,
-    2000,
-  );
 
   // Build metadata lookup
   const metaMap = useMemo(() => {
@@ -1468,34 +1476,15 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
   const availableSpeeds = useMemo(() =>
     [...new Set((interfaces ?? []).map(i => i.if_speed_mbps))].filter(Boolean).sort((a, b) => a - b), [interfaces]);
 
-  // Filter — supports multiple terms: plain text matches name/alias/index,
-  // "o:up" matches oper status, "a:down" matches admin status
+  // Filter
   const filtered = useMemo(() => {
     let data = interfaces ?? [];
-    if (searchText) {
-      const terms = searchText.toLowerCase().split(/\s+/).filter(Boolean);
-      data = data.filter(i => {
-        return terms.every(term => {
-          if (term.startsWith("o:")) {
-            const val = term.slice(2);
-            return val ? i.if_oper_status.toLowerCase().includes(val) : true;
-          }
-          if (term.startsWith("a:")) {
-            const val = term.slice(2);
-            return val ? i.if_admin_status.toLowerCase().includes(val) : true;
-          }
-          return (
-            i.if_name.toLowerCase().includes(term) ||
-            i.if_alias.toLowerCase().includes(term) ||
-            String(i.if_index).includes(term)
-          );
-        });
-      });
-    }
+    if (filterName) data = data.filter(i => matchesTextFilter(i.if_name, filterName));
+    if (filterAlias) data = data.filter(i => matchesTextFilter(i.if_alias || "", filterAlias));
     if (filterOperStatus) data = data.filter(i => i.if_oper_status === filterOperStatus);
     if (filterSpeed) data = data.filter(i => i.if_speed_mbps === Number(filterSpeed));
     return data;
-  }, [interfaces, searchText, filterOperStatus, filterSpeed]);
+  }, [interfaces, filterName, filterAlias, filterOperStatus, filterSpeed]);
 
   // Sort
   const sorted = useMemo(() => {
@@ -1528,51 +1517,43 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
   const filteredIds = useMemo(() => new Set(filtered.map(i => i.interface_id)), [filtered]);
   const allFilteredSelected = filtered.length > 0 && filtered.every(i => selectedIds.has(i.interface_id));
   const someFilteredSelected = filtered.some(i => selectedIds.has(i.interface_id));
+  const activeSelectedCount = [...selectedIds].filter(id => filteredIds.has(id)).length;
 
   const toggleSelectAll = () => {
     if (allFilteredSelected) {
-      // Deselect all filtered
-      setSelectedIds(prev => {
-        const next = new Set(prev);
-        for (const i of filtered) next.delete(i.interface_id);
-        return next;
-      });
+      setSelectedIds(prev => { const next = new Set(prev); for (const i of filtered) next.delete(i.interface_id); return next; });
     } else {
-      // Select all filtered
-      setSelectedIds(prev => {
-        const next = new Set(prev);
-        for (const i of filtered) next.add(i.interface_id);
-        return next;
-      });
+      setSelectedIds(prev => { const next = new Set(prev); for (const i of filtered) next.add(i.interface_id); return next; });
     }
   };
 
   const toggleSelect = (id: string) => {
-    setSelectedIds(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+    setSelectedIds(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   };
+
+  // Multi-interface chart data
+  const chartInterfaceIds = useMemo(() => {
+    return [...selectedIds].filter(id => filteredIds.has(id)).slice(0, MAX_CHART_INTERFACES);
+  }, [selectedIds, filteredIds]);
+  const showMultiChart = chartInterfaceIds.length > 0;
+  const tooManySelected = activeSelectedCount > MAX_CHART_INTERFACES;
+
+  const { data: multiHistory } = useMultiInterfaceHistory(
+    deviceId, fromTs, toTs, showMultiChart ? chartInterfaceIds : [],
+  );
 
   // Bulk metric toggle for selected interfaces
   const bulkToggleMetric = (metric: string, enable: boolean) => {
     const ids = [...selectedIds].filter(id => filteredIds.has(id));
     if (ids.length === 0) return;
-
-    // For each selected interface, compute new poll_metrics
     for (const id of ids) {
       const meta = metaMap.get(id);
       const current = parseMetrics(meta?.poll_metrics ?? "all");
-      if (enable) current.add(metric);
-      else current.delete(metric);
-      const newVal = serializeMetrics(current);
-      updateSettings.mutate({ deviceId, interfaceId: id, data: { poll_metrics: newVal } });
+      if (enable) current.add(metric); else current.delete(metric);
+      updateSettings.mutate({ deviceId, interfaceId: id, data: { poll_metrics: serializeMetrics(current) } });
     }
   };
 
-  // Check if all selected interfaces have a given metric enabled
   const selectedHaveMetric = (metric: string): boolean | "mixed" => {
     const ids = [...selectedIds].filter(id => filteredIds.has(id));
     if (ids.length === 0) return false;
@@ -1592,32 +1573,23 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
   );
 
   if (isLoading) {
-    return (
-      <div className="flex h-64 items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
-      </div>
-    );
+    return <div className="flex h-64 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-brand-500" /></div>;
   }
 
   if (!interfaces?.length) {
     return (
-      <Card>
-        <CardContent className="py-12">
-          <div className="flex flex-col items-center justify-center text-zinc-500">
-            <Network className="mb-2 h-8 w-8 text-zinc-600" />
-            <p className="text-sm">No interface data collected yet.</p>
-            <p className="text-xs text-zinc-600 mt-1">
-              Assign an interface poller app to this device to start collecting data.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
+      <Card><CardContent className="py-12">
+        <div className="flex flex-col items-center justify-center text-zinc-500">
+          <Network className="mb-2 h-8 w-8 text-zinc-600" />
+          <p className="text-sm">No interface data collected yet.</p>
+          <p className="text-xs text-zinc-600 mt-1">Assign an interface poller app to this device to start collecting data.</p>
+        </div>
+      </CardContent></Card>
     );
   }
 
-  const upCount = interfaces.filter((i) => i.if_oper_status === "up").length;
-  const downCount = interfaces.filter((i) => i.if_oper_status === "down").length;
-  const activeSelectedCount = [...selectedIds].filter(id => filteredIds.has(id)).length;
+  const upCount = interfaces.filter(i => i.if_oper_status === "up").length;
+  const downCount = interfaces.filter(i => i.if_oper_status === "down").length;
 
   return (
     <div className="space-y-4">
@@ -1628,77 +1600,91 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
           <Badge variant="default">{interfaces.length}</Badge>
           <Badge variant="success">{upCount} up</Badge>
           {downCount > 0 && <Badge variant="destructive">{downCount} down</Badge>}
-          {activeSelectedCount > 0 && (
-            <Badge variant="default">{activeSelectedCount} selected</Badge>
-          )}
+          {activeSelectedCount > 0 && <Badge variant="default">{activeSelectedCount} selected</Badge>}
         </div>
+        <Button variant="outline" size="sm" className="h-7 text-xs gap-1" disabled={refreshMeta.isPending} onClick={() => refreshMeta.mutate(deviceId)}>
+          {refreshMeta.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+          Refresh Metadata
+        </Button>
+        {refreshMeta.isSuccess && <span className="text-xs text-emerald-400">Queued</span>}
         <div className="ml-auto flex items-center gap-2">
-          <Input
-            placeholder="Search name/alias o:up a:down..."
-            value={searchText}
-            onChange={e => setSearchText(e.target.value)}
-            className="h-7 w-64 text-xs"
-          />
-          {availableOperStatuses.length > 1 && (
-            <Select value={filterOperStatus} onChange={e => setFilterOperStatus(e.target.value)} className="h-7 text-xs w-28">
-              <option value="">All status</option>
-              {availableOperStatuses.map(s => <option key={s} value={s}>{s}</option>)}
-            </Select>
-          )}
-          {availableSpeeds.length > 1 && (
-            <Select value={filterSpeed} onChange={e => setFilterSpeed(e.target.value)} className="h-7 text-xs w-28">
-              <option value="">All speeds</option>
-              {availableSpeeds.map(s => <option key={s} value={String(s)}>{formatSpeed(s)}</option>)}
-            </Select>
-          )}
+          <Select value={trafficUnit} onChange={e => setTrafficUnit(e.target.value as TrafficUnit)} className="h-7 text-xs w-24">
+            <option value="auto">Auto</option>
+            <option value="kbps">Kbps</option>
+            <option value="mbps">Mbps</option>
+            <option value="gbps">Gbps</option>
+            <option value="pct">% util</option>
+          </Select>
+          <Select value={chartMetric} onChange={e => setChartMetric(e.target.value as ChartMetric)} className="h-7 text-xs w-28">
+            <option value="traffic">Traffic</option>
+            <option value="errors">Errors</option>
+            <option value="discards">Discards</option>
+          </Select>
           <TimeRangePicker value={timeRange} onChange={setTimeRange} timezone={tz} />
         </div>
       </div>
 
-      {/* Bulk metric controls — shown when interfaces are selected */}
+      {/* Bulk metric controls */}
       {activeSelectedCount > 0 && (
-        <Card>
-          <CardContent className="py-2">
-            <div className="flex items-center gap-6 text-xs">
-              <span className="text-zinc-400 font-medium">Metrics for {activeSelectedCount} selected:</span>
-              {METRIC_TYPES.map(metric => {
-                const state = selectedHaveMetric(metric);
-                return (
-                  <label key={metric} className="flex items-center gap-1.5 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={state === true}
-                      ref={el => { if (el) el.indeterminate = state === "mixed"; }}
-                      onChange={() => bulkToggleMetric(metric, state !== true)}
-                      className="accent-brand-500 cursor-pointer"
-                    />
-                    <span className="text-zinc-300 capitalize">{metric}</span>
-                  </label>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
+        <Card><CardContent className="py-2">
+          <div className="flex items-center gap-6 text-xs">
+            <span className="text-zinc-400 font-medium">Metrics for {activeSelectedCount} selected:</span>
+            {METRIC_TYPES.map(metric => {
+              const state = selectedHaveMetric(metric);
+              return (
+                <label key={metric} className="flex items-center gap-1.5 cursor-pointer select-none">
+                  <input type="checkbox" checked={state === true}
+                    ref={el => { if (el) el.indeterminate = state === "mixed"; }}
+                    onChange={() => bulkToggleMetric(metric, state !== true)}
+                    className="accent-brand-500 cursor-pointer" />
+                  <span className="text-zinc-300 capitalize">{metric}</span>
+                </label>
+              );
+            })}
+          </div>
+        </CardContent></Card>
       )}
 
-      {/* Traffic chart for selected interface */}
-      {selectedInterfaceId != null && history?.length ? (
+      {/* Multi-interface chart */}
+      {showMultiChart && multiHistory ? (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-zinc-400 flex items-center gap-2">
-              Traffic — {interfaces.find((i) => i.interface_id === selectedInterfaceId)?.if_name ?? selectedInterfaceId}
-              <button
-                onClick={() => setSelectedInterfaceId(null)}
-                className="ml-2 text-zinc-600 hover:text-zinc-300 cursor-pointer"
-              >
-                <X className="h-3.5 w-3.5 inline" />
-              </button>
+            <CardTitle className="text-sm text-zinc-400 flex items-center gap-2 flex-wrap">
+              <span>
+                {chartMetric === "traffic" ? "Traffic" : chartMetric === "errors" ? "Errors" : "Discards"}
+                {" \u2014 "}{chartInterfaceIds.length} interface{chartInterfaceIds.length > 1 ? "s" : ""}
+              </span>
+              <div className="ml-auto flex items-center gap-2">
+                <div className="flex items-center gap-0.5 border border-zinc-700 rounded px-0.5">
+                  <button onClick={() => setChartMode("overlaid")}
+                    className={`px-1.5 py-0.5 text-xs rounded ${chartMode === "overlaid" ? "bg-zinc-700 text-zinc-200" : "text-zinc-500"}`}>Overlay</button>
+                  <button onClick={() => setChartMode("stacked")}
+                    className={`px-1.5 py-0.5 text-xs rounded ${chartMode === "stacked" ? "bg-zinc-700 text-zinc-200" : "text-zinc-500"}`}>Stacked</button>
+                </div>
+                <button onClick={() => setSelectedIds(new Set())} className="text-zinc-600 hover:text-zinc-300">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <InterfaceTrafficChart data={history} timezone={tz} />
+            <MultiInterfaceChart
+              interfaceIds={chartInterfaceIds}
+              interfaceNames={chartInterfaceIds.map(id => interfaces?.find(i => i.interface_id === id)?.if_name ?? id)}
+              historyPerInterface={multiHistory}
+              metric={chartMetric}
+              unit={trafficUnit}
+              mode={chartMode}
+              timezone={tz}
+            />
           </CardContent>
         </Card>
+      ) : tooManySelected ? (
+        <Card><CardContent className="py-3">
+          <p className="text-sm text-zinc-400 text-center">
+            Select up to {MAX_CHART_INTERFACES} interfaces to show the chart. Currently {activeSelectedCount} selected.
+          </p>
+        </CardContent></Card>
       ) : null}
 
       {/* Interface table */}
@@ -1708,13 +1694,9 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
             <TableHeader>
               <TableRow>
                 <TableHead className="w-10" onClick={e => e.stopPropagation()}>
-                  <input
-                    type="checkbox"
-                    checked={allFilteredSelected}
+                  <input type="checkbox" checked={allFilteredSelected}
                     ref={el => { if (el) el.indeterminate = !allFilteredSelected && someFilteredSelected; }}
-                    onChange={toggleSelectAll}
-                    className="accent-brand-500 cursor-pointer"
-                  />
+                    onChange={toggleSelectAll} className="accent-brand-500 cursor-pointer" />
                 </TableHead>
                 <SortHead col="status">Status</SortHead>
                 <SortHead col="if_index">Index</SortHead>
@@ -1733,6 +1715,35 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
                 <TableHead className="text-center">Discards</TableHead>
                 <TableHead className="text-center">Status</TableHead>
               </TableRow>
+              {/* Filter row */}
+              <TableRow className="bg-zinc-900/50">
+                <TableCell />
+                <TableCell>
+                  {availableOperStatuses.length > 1 && (
+                    <Select value={filterOperStatus} onChange={e => setFilterOperStatus(e.target.value)} className="h-6 text-[10px] w-full">
+                      <option value="">All</option>
+                      {availableOperStatuses.map(s => <option key={s} value={s}>{s}</option>)}
+                    </Select>
+                  )}
+                </TableCell>
+                <TableCell />
+                <TableCell>
+                  <Input placeholder="Filter..." value={filterName} onChange={e => setFilterName(e.target.value)} className="h-6 text-[10px]" />
+                </TableCell>
+                <TableCell>
+                  <Input placeholder="Filter..." value={filterAlias} onChange={e => setFilterAlias(e.target.value)} className="h-6 text-[10px]" />
+                </TableCell>
+                <TableCell>
+                  {availableSpeeds.length > 1 && (
+                    <Select value={filterSpeed} onChange={e => setFilterSpeed(e.target.value)} className="h-6 text-[10px] w-full">
+                      <option value="">All</option>
+                      {availableSpeeds.map(s => <option key={s} value={String(s)}>{formatSpeed(s)}</option>)}
+                    </Select>
+                  )}
+                </TableCell>
+                <TableCell /><TableCell /><TableCell /><TableCell /><TableCell />
+                <TableCell /><TableCell /><TableCell /><TableCell /><TableCell /><TableCell />
+              </TableRow>
             </TableHeader>
             <TableBody>
               {sorted.map((iface) => {
@@ -1744,140 +1755,55 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
 
                 const toggleMetric = (metric: string) => {
                   const next = new Set(metrics);
-                  if (next.has(metric)) next.delete(metric);
-                  else next.add(metric);
-                  updateSettings.mutate({
-                    deviceId,
-                    interfaceId: iface.interface_id,
-                    data: { poll_metrics: serializeMetrics(next) },
-                  });
+                  if (next.has(metric)) next.delete(metric); else next.add(metric);
+                  updateSettings.mutate({ deviceId, interfaceId: iface.interface_id, data: { poll_metrics: serializeMetrics(next) } });
                 };
 
                 return (
-                <TableRow
-                  key={iface.interface_id}
-                  className={`cursor-pointer transition-colors ${
-                    selectedInterfaceId === iface.interface_id
-                      ? "bg-brand-500/10"
-                      : isSelected
-                        ? "bg-zinc-800/70"
-                        : "hover:bg-zinc-800/50"
-                  }`}
-                  onClick={() =>
-                    setSelectedInterfaceId(
-                      selectedInterfaceId === iface.interface_id ? null : iface.interface_id,
-                    )
-                  }
+                <TableRow key={iface.interface_id}
+                  className={`cursor-pointer transition-colors ${isSelected ? "bg-zinc-800/70" : "hover:bg-zinc-800/50"}`}
+                  onClick={() => toggleSelect(iface.interface_id)}
                 >
                   <TableCell onClick={e => e.stopPropagation()}>
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      onChange={() => toggleSelect(iface.interface_id)}
-                      className="accent-brand-500 cursor-pointer"
-                    />
+                    <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(iface.interface_id)} className="accent-brand-500 cursor-pointer" />
                   </TableCell>
                   <TableCell>
-                    <div
-                      className={`h-2.5 w-2.5 rounded-full ${
-                        iface.if_oper_status === "up"
-                          ? "bg-emerald-500"
-                          : iface.if_oper_status === "down"
-                            ? "bg-red-500"
-                            : "bg-zinc-600"
-                      }`}
-                    />
+                    <div className={`h-2.5 w-2.5 rounded-full ${iface.if_oper_status === "up" ? "bg-emerald-500" : iface.if_oper_status === "down" ? "bg-red-500" : "bg-zinc-600"}`} />
                   </TableCell>
-                  <TableCell className="font-mono text-xs text-zinc-500">
-                    {iface.if_index}
-                  </TableCell>
-                  <TableCell className="font-medium text-zinc-100">
-                    {iface.if_name}
-                  </TableCell>
-                  <TableCell className="text-zinc-400 text-sm">
-                    {iface.if_alias || "\u2014"}
-                  </TableCell>
-                  <TableCell className="text-zinc-300 text-sm">
-                    {formatSpeed(iface.if_speed_mbps)}
-                  </TableCell>
+                  <TableCell className="font-mono text-xs text-zinc-500">{iface.if_index}</TableCell>
+                  <TableCell className="font-medium text-zinc-100">{iface.if_name}</TableCell>
+                  <TableCell className="text-zinc-400 text-sm">{iface.if_alias || "\u2014"}</TableCell>
+                  <TableCell className="text-zinc-300 text-sm">{formatSpeed(iface.if_speed_mbps)}</TableCell>
                   <TableCell className="font-mono text-xs text-cyan-400">
-                    {iface.in_rate_bps > 0
-                      ? formatBps(iface.in_rate_bps)
-                      : "\u2014"}
+                    {iface.in_rate_bps > 0 ? formatTraffic(iface.in_rate_bps, trafficUnit, iface.if_speed_mbps) : "\u2014"}
                   </TableCell>
                   <TableCell className="font-mono text-xs text-indigo-400">
-                    {iface.out_rate_bps > 0
-                      ? formatBps(iface.out_rate_bps)
-                      : "\u2014"}
+                    {iface.out_rate_bps > 0 ? formatTraffic(iface.out_rate_bps, trafficUnit, iface.if_speed_mbps) : "\u2014"}
                   </TableCell>
                   <TableCell className="font-mono text-xs">
-                    <span className={iface.in_errors > 0 ? "text-amber-400" : "text-zinc-600"}>
-                      {iface.in_errors.toLocaleString()}
-                    </span>
+                    <span className={iface.in_errors > 0 ? "text-amber-400" : "text-zinc-600"}>{iface.in_errors.toLocaleString()}</span>
                   </TableCell>
                   <TableCell className="font-mono text-xs">
-                    <span className={iface.out_errors > 0 ? "text-amber-400" : "text-zinc-600"}>
-                      {iface.out_errors.toLocaleString()}
-                    </span>
+                    <span className={iface.out_errors > 0 ? "text-amber-400" : "text-zinc-600"}>{iface.out_errors.toLocaleString()}</span>
                   </TableCell>
-                  <TableCell className="text-zinc-500 text-xs">
-                    {timeAgo(iface.executed_at)}
+                  <TableCell className="text-zinc-500 text-xs">{timeAgo(iface.executed_at)}</TableCell>
+                  <TableCell className="text-center" onClick={e => e.stopPropagation()}>
+                    <input type="checkbox" checked={pollingOn} onChange={() => updateSettings.mutate({ deviceId, interfaceId: iface.interface_id, data: { polling_enabled: !pollingOn } })} className="accent-brand-500 cursor-pointer" />
                   </TableCell>
                   <TableCell className="text-center" onClick={e => e.stopPropagation()}>
-                    <input
-                      type="checkbox"
-                      checked={pollingOn}
-                      onChange={() => updateSettings.mutate({
-                        deviceId,
-                        interfaceId: iface.interface_id,
-                        data: { polling_enabled: !pollingOn },
-                      })}
-                      className="accent-brand-500 cursor-pointer"
-                    />
+                    <input type="checkbox" checked={alertingOn} onChange={() => updateSettings.mutate({ deviceId, interfaceId: iface.interface_id, data: { alerting_enabled: !alertingOn } })} className="accent-amber-500 cursor-pointer" />
                   </TableCell>
                   <TableCell className="text-center" onClick={e => e.stopPropagation()}>
-                    <input
-                      type="checkbox"
-                      checked={alertingOn}
-                      onChange={() => updateSettings.mutate({
-                        deviceId,
-                        interfaceId: iface.interface_id,
-                        data: { alerting_enabled: !alertingOn },
-                      })}
-                      className="accent-amber-500 cursor-pointer"
-                    />
+                    <input type="checkbox" checked={metrics.has("traffic")} onChange={() => toggleMetric("traffic")} className="accent-cyan-500 cursor-pointer" />
                   </TableCell>
                   <TableCell className="text-center" onClick={e => e.stopPropagation()}>
-                    <input
-                      type="checkbox"
-                      checked={metrics.has("traffic")}
-                      onChange={() => toggleMetric("traffic")}
-                      className="accent-cyan-500 cursor-pointer"
-                    />
+                    <input type="checkbox" checked={metrics.has("errors")} onChange={() => toggleMetric("errors")} className="accent-amber-500 cursor-pointer" />
                   </TableCell>
                   <TableCell className="text-center" onClick={e => e.stopPropagation()}>
-                    <input
-                      type="checkbox"
-                      checked={metrics.has("errors")}
-                      onChange={() => toggleMetric("errors")}
-                      className="accent-amber-500 cursor-pointer"
-                    />
+                    <input type="checkbox" checked={metrics.has("discards")} onChange={() => toggleMetric("discards")} className="accent-orange-500 cursor-pointer" />
                   </TableCell>
                   <TableCell className="text-center" onClick={e => e.stopPropagation()}>
-                    <input
-                      type="checkbox"
-                      checked={metrics.has("discards")}
-                      onChange={() => toggleMetric("discards")}
-                      className="accent-orange-500 cursor-pointer"
-                    />
-                  </TableCell>
-                  <TableCell className="text-center" onClick={e => e.stopPropagation()}>
-                    <input
-                      type="checkbox"
-                      checked={metrics.has("status")}
-                      onChange={() => toggleMetric("status")}
-                      className="accent-emerald-500 cursor-pointer"
-                    />
+                    <input type="checkbox" checked={metrics.has("status")} onChange={() => toggleMetric("status")} className="accent-emerald-500 cursor-pointer" />
                   </TableCell>
                 </TableRow>
                 );

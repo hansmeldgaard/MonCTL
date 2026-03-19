@@ -660,6 +660,27 @@ async def bulk_update_interface_settings(
     return {"status": "success", "data": updated}
 
 
+@router.post("/{device_id}/interface-metadata/refresh")
+async def refresh_interface_metadata(
+    device_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Queue a metadata refresh — the next interface poll will do a full SNMP walk
+    instead of targeted GETs, rediscovering all interfaces and updating metadata.
+    """
+    device = await db.get(Device, uuid.UUID(device_id))
+    if device is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+    if not check_tenant_access(auth, device.tenant_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    from monctl_central.cache import set_interface_refresh_flag
+    await set_interface_refresh_flag(device_id)
+
+    return {"status": "success", "data": {"message": "Interface metadata refresh queued. Next poll will perform a full walk."}}
+
+
 @router.delete("/{device_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_device(
     device_id: str,
