@@ -8,6 +8,7 @@ import {
   Database,
   Globe,
   KeyRound,
+  LayoutList,
   Loader2,
   Network,
   Plus,
@@ -28,6 +29,7 @@ import { Label } from "@/components/ui/label.tsx";
 import { Select } from "@/components/ui/select.tsx";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import { useAuth } from "@/hooks/useAuth.tsx";
+import { useTablePreferences, PAGE_SIZE_OPTIONS } from "@/hooks/useTablePreferences.ts";
 import {
   useHealth,
   useSystemSettings,
@@ -75,6 +77,8 @@ type TabKey = (typeof TABS)[number]["key"];
 function ProfileTab() {
   const { user, refresh } = useAuth();
   const updateTimezone = useUpdateMyTimezone();
+  const { pageSize, scrollMode, updatePreferences, isUpdating: tablePrefUpdating } = useTablePreferences();
+  const [tablePrefSaved, setTablePrefSaved] = useState(false);
   const [selectedTz, setSelectedTz] = useState(user?.timezone ?? "UTC");
   const [tzSaved, setTzSaved] = useState(false);
 
@@ -150,6 +154,71 @@ function ProfileTab() {
           ) : (
             <p className="text-sm text-zinc-500">User info not available</p>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <LayoutList className="h-4 w-4" />
+            Table Display
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between rounded-md bg-zinc-800/50 px-4 py-3">
+              <div>
+                <span className="text-sm text-zinc-400">Display Mode</span>
+                <p className="text-xs text-zinc-600 mt-0.5">
+                  {scrollMode === "infinite"
+                    ? "Loads more rows as you scroll down"
+                    : "Fixed number of rows with page navigation"}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Select
+                  value={scrollMode}
+                  onChange={async (e) => {
+                    await updatePreferences({ table_scroll_mode: e.target.value as "paginated" | "infinite" });
+                    setTablePrefSaved(true);
+                    setTimeout(() => setTablePrefSaved(false), 2000);
+                  }}
+                  disabled={tablePrefUpdating}
+                  className="w-40"
+                >
+                  <option value="paginated">Paginated</option>
+                  <option value="infinite">Infinite Scroll</option>
+                </Select>
+              </div>
+            </div>
+            <div className="flex items-center justify-between rounded-md bg-zinc-800/50 px-4 py-3">
+              <div>
+                <span className="text-sm text-zinc-400">Rows per page</span>
+                <p className="text-xs text-zinc-600 mt-0.5">
+                  {scrollMode === "infinite"
+                    ? "Rows loaded per batch when scrolling"
+                    : "Rows displayed per page"}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Select
+                  value={String(pageSize)}
+                  onChange={async (e) => {
+                    await updatePreferences({ table_page_size: Number(e.target.value) });
+                    setTablePrefSaved(true);
+                    setTimeout(() => setTablePrefSaved(false), 2000);
+                  }}
+                  disabled={tablePrefUpdating}
+                  className="w-24"
+                >
+                  {PAGE_SIZE_OPTIONS.map((s) => (
+                    <option key={s} value={String(s)}>{s}</option>
+                  ))}
+                </Select>
+                {tablePrefSaved && <span className="text-sm text-emerald-400">Saved!</span>}
+              </div>
+            </div>
+          </div>
         </CardContent>
       </Card>
     </div>

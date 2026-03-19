@@ -34,13 +34,16 @@ import { Select } from "@/components/ui/select.tsx";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import { useDevices, useLatestResults, useBulkDeleteDevices, useBulkPatchDevices, useCollectorGroups, useTenants, useLabelKeys } from "@/api/hooks.ts";
 import type { DeviceBulkPatchRequest } from "@/types/api.ts";
+import { useTablePreferences, PAGE_SIZE_OPTIONS } from "@/hooks/useTablePreferences.ts";
 import { AddDeviceDialog } from "@/components/AddDeviceDialog.tsx";
 import { ApplyTemplateDialog } from "@/components/ApplyTemplateDialog.tsx";
 
 export function DevicesPage() {
+  // ── Table preferences ──────────────────────────────────
+  const { pageSize, scrollMode, updatePreferences } = useTablePreferences();
+
   // ── Pagination ──────────────────────────────────────────
   const [page, setPage] = useState(0);
-  const [pageSize] = useState(50);
 
   // ── Sorting ─────────────────────────────────────────────
   const [sortBy, setSortBy] = useState("name");
@@ -641,6 +644,26 @@ export function DevicesPage() {
 
               {/* Pagination */}
               <div className="flex items-center justify-between border-t border-zinc-800 pt-3 mt-3">
+                <div className="flex items-center gap-2">
+                  <Select
+                    value={scrollMode}
+                    onChange={(e) => { updatePreferences({ table_scroll_mode: e.target.value as "paginated" | "infinite" }); setPage(0); }}
+                    className="w-36 text-xs h-7"
+                  >
+                    <option value="paginated">Paginated</option>
+                    <option value="infinite">Infinite Scroll</option>
+                  </Select>
+                  <Select
+                    value={String(pageSize)}
+                    onChange={(e) => { updatePreferences({ table_page_size: Number(e.target.value) }); setPage(0); }}
+                    className="w-20 text-xs h-7"
+                  >
+                    {PAGE_SIZE_OPTIONS.map((s) => (
+                      <option key={s} value={String(s)}>{s}</option>
+                    ))}
+                  </Select>
+                  <span className="text-xs text-zinc-600">rows</span>
+                </div>
                 <span className="text-sm text-zinc-500">
                   Showing {startItem}&ndash;{endItem} of {total}
                 </span>

@@ -532,6 +532,8 @@ class User(Base):
         UUID(as_uuid=True), ForeignKey("roles.id", ondelete="SET NULL"), nullable=True
     )
     timezone: Mapped[str] = mapped_column(String(50), nullable=False, default="UTC")
+    table_page_size: Mapped[int] = mapped_column(Integer, nullable=False, server_default="50", default=50)
+    table_scroll_mode: Mapped[str] = mapped_column(String(16), nullable=False, server_default="paginated", default="paginated")
     # Legacy single-tenant FK (kept for backward compat, not used for access control)
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True

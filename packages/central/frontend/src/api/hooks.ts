@@ -1051,6 +1051,17 @@ export function useUpdateMyTimezone() {
   });
 }
 
+export function useUpdateTablePreferences() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { table_page_size?: number; table_scroll_mode?: "paginated" | "infinite" }) =>
+      apiPut<{ table_page_size: number; table_scroll_mode: string }>("/users/me/table-preferences", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["users"] });
+    },
+  });
+}
+
 export function useDeleteUser() {
   const qc = useQueryClient();
   return useMutation({

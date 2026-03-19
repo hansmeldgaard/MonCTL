@@ -64,11 +64,57 @@ class UpdateTimezoneRequest(BaseModel):
     timezone: str = Field(min_length=1, max_length=50)
 
 
+VALID_PAGE_SIZES = {50, 100, 250, 500}
+VALID_SCROLL_MODES = {"paginated", "infinite"}
+
+
+class UpdateTablePreferencesRequest(BaseModel):
+    table_page_size: int | None = None
+    table_scroll_mode: str | None = None
+
+
 class AssignTenantRequest(BaseModel):
     tenant_id: str
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
+
+@router.put("/me/table-preferences")
+async def update_my_table_preferences(
+    request: UpdateTablePreferencesRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Update the current user's table display preferences."""
+    user = await db.get(User, uuid.UUID(auth["user_id"]))
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if request.table_page_size is not None:
+        if request.table_page_size not in VALID_PAGE_SIZES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"table_page_size must be one of {sorted(VALID_PAGE_SIZES)}",
+            )
+        user.table_page_size = request.table_page_size
+
+    if request.table_scroll_mode is not None:
+        if request.table_scroll_mode not in VALID_SCROLL_MODES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"table_scroll_mode must be one of {sorted(VALID_SCROLL_MODES)}",
+            )
+        user.table_scroll_mode = request.table_scroll_mode
+
+    user.updated_at = utc_now()
+    return {
+        "status": "success",
+        "data": {
+            "table_page_size": user.table_page_size,
+            "table_scroll_mode": user.table_scroll_mode,
+        },
+    }
+
 
 @router.put("/me/timezone")
 async def update_my_timezone(

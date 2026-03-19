@@ -14,6 +14,8 @@ export interface AuthUser {
   role_id?: string | null;
   role_name?: string | null;
   timezone: string;
+  table_page_size: number;
+  table_scroll_mode: "paginated" | "infinite";
   all_tenants?: boolean;
   tenant_ids?: string[] | null; // null = unrestricted, [] = see nothing, [ids] = specific
   permissions?: string[] | null; // null = admin (full access), ["resource:action", ...]

@@ -74,6 +74,8 @@ async def login(
             "role": user.role,
             "display_name": user.display_name,
             "timezone": user.timezone,
+            "table_page_size": user.table_page_size,
+            "table_scroll_mode": user.table_scroll_mode,
         },
     }
 
@@ -186,6 +188,8 @@ async def get_me(request: Request, db: AsyncSession = Depends(get_db)):
             "role_id": str(user.role_id) if user and user.role_id else None,
             "role_name": user.assigned_role.name if user and user.assigned_role else None,
             "timezone": user.timezone if user else "UTC",
+            "table_page_size": user.table_page_size if user else 50,
+            "table_scroll_mode": user.table_scroll_mode if user else "paginated",
             "all_tenants": all_tenants,
             "tenant_ids": tenant_ids,
             "permissions": permissions_list,
