@@ -23,7 +23,6 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
-import { Input } from "@/components/ui/input.tsx";
 import { ClearableInput } from "@/components/ui/clearable-input.tsx";
 import { Select } from "@/components/ui/select.tsx";
 import {
