@@ -5,15 +5,15 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
-from sqlalchemy import select
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 
 import sqlalchemy as sa
 from monctl_central.dependencies import apply_tenant_filter, check_tenant_access, get_db, require_auth
 from sqlalchemy.orm import selectinload
-from monctl_central.storage.models import Credential, CollectorGroup, Device, InterfaceMetadata, LabelKey, Tenant
+from monctl_central.storage.models import Credential, CollectorGroup, Device, InterfaceMetadata, LabelKey, Tenant, Collector
 from monctl_common.utils import utc_now
 
 router = APIRouter()
@@ -88,6 +88,7 @@ def _format_device(d: Device, resolved_credentials: dict | None = None) -> dict:
         "collector_group_name": d.collector_group.name if d.collector_group else None,
         "default_credential_id": str(d.default_credential_id) if d.default_credential_id else None,
         "default_credential_name": d.default_credential.name if d.default_credential else None,
+        "is_enabled": d.is_enabled,
         "credentials": resolved_credentials if resolved_credentials is not None else {},
         "labels": d.labels,
         "metadata": d.metadata_,
@@ -240,6 +241,82 @@ async def create_device(
     return {
         "status": "success",
         "data": _format_device(device, resolved_creds),
+    }
+
+
+class DeviceBulkPatchRequest(BaseModel):
+    device_ids: list[uuid.UUID]
+    is_enabled: bool | None = None
+    collector_group_id: uuid.UUID | None = None
+    tenant_id: uuid.UUID | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+@router.post("/bulk-patch")
+async def bulk_patch_devices(
+    body: DeviceBulkPatchRequest,
+    auth: dict = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bulk patch devices: enable/disable, move to collector group, move to tenant."""
+    if not body.device_ids:
+        raise HTTPException(status_code=400, detail="device_ids must not be empty")
+
+    if body.collector_group_id is not None:
+        grp = await db.get(CollectorGroup, body.collector_group_id)
+        if grp is None:
+            raise HTTPException(status_code=404, detail="Collector group not found")
+
+    if body.tenant_id is not None:
+        tenant = await db.get(Tenant, body.tenant_id)
+        if tenant is None:
+            raise HTTPException(status_code=404, detail="Tenant not found")
+
+    # Fetch visible devices (tenant-scoped)
+    stmt = select(Device.id).where(Device.id.in_(body.device_ids))
+    stmt = apply_tenant_filter(stmt, auth, Device.tenant_id)
+    result = await db.execute(stmt)
+    visible_ids = {row[0] for row in result.all()}
+    skipped = len(body.device_ids) - len(visible_ids)
+
+    # Build update values
+    updates: dict = {}
+    if body.is_enabled is not None:
+        updates["is_enabled"] = body.is_enabled
+    if body.collector_group_id is not None:
+        updates["collector_group_id"] = body.collector_group_id
+    if body.tenant_id is not None:
+        updates["tenant_id"] = body.tenant_id
+
+    if updates and visible_ids:
+        updates["updated_at"] = sa.func.now()
+        await db.execute(
+            update(Device).where(Device.id.in_(visible_ids)).values(**updates)
+        )
+
+        # When moving to a collector group, migrate assignments and bump collectors
+        if body.collector_group_id is not None:
+            from monctl_central.storage.models import AppAssignment
+            await db.execute(
+                update(AppAssignment)
+                .where(
+                    AppAssignment.device_id.in_(visible_ids),
+                    AppAssignment.collector_id.is_not(None),
+                )
+                .values(collector_id=None)
+            )
+            await db.execute(
+                update(Collector)
+                .where(Collector.group_id == body.collector_group_id)
+                .values(config_version=Collector.config_version + 1, updated_at=utc_now())
+            )
+
+        await db.commit()
+
+    return {
+        "status": "success",
+        "data": {"updated": len(visible_ids), "skipped": skipped},
     }
 
 

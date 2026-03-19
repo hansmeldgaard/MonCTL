@@ -22,7 +22,7 @@ from pathlib import Path
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from monctl_central.credentials.crypto import decrypt_dict
@@ -210,6 +210,12 @@ async def get_jobs(
         .outerjoin(Device, AppAssignment.device_id == Device.id)
         .options(selectinload(AppAssignment.connector_bindings))
         .where(AppAssignment.enabled == True)  # noqa: E712
+        .where(
+            or_(
+                AppAssignment.device_id.is_(None),
+                Device.is_enabled == True,  # noqa: E712
+            )
+        )
     )
 
     # Filter by collector group: only jobs for devices in this group

@@ -708,6 +708,17 @@ export function useBulkDeleteDevices() {
   });
 }
 
+export function useBulkPatchDevices() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: import("@/types/api.ts").DeviceBulkPatchRequest) =>
+      apiPost<import("@/types/api.ts").DeviceBulkPatchResult>("/devices/bulk-patch", body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["devices"] });
+    },
+  });
+}
+
 export function useUpdateDevice() {
   const qc = useQueryClient();
   return useMutation({

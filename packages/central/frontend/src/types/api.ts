@@ -106,9 +106,22 @@ export interface Device {
   labels: Record<string, string>;
   default_credential_id: string | null;
   default_credential_name: string | null;
+  is_enabled: boolean;
   credentials: Record<string, { id: string; name: string; credential_type: string }>;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface DeviceBulkPatchRequest {
+  device_ids: string[];
+  is_enabled?: boolean;
+  collector_group_id?: string;
+  tenant_id?: string;
+}
+
+export interface DeviceBulkPatchResult {
+  updated: number;
+  skipped: number;
 }
 
 export interface DeviceListParams {

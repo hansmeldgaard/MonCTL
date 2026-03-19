@@ -4,13 +4,17 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
+  Building2,
   ChevronLeft,
   ChevronRight,
   FileText,
+  FolderInput,
   Loader2,
   Minus,
   Monitor,
   Plus,
+  Power,
+  PowerOff,
   Trash2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
@@ -25,8 +29,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table.tsx";
+import { Select } from "@/components/ui/select.tsx";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
-import { useDevices, useLatestResults, useBulkDeleteDevices, useLabelKeys } from "@/api/hooks.ts";
+import { useDevices, useLatestResults, useBulkDeleteDevices, useBulkPatchDevices, useCollectorGroups, useTenants, useLabelKeys } from "@/api/hooks.ts";
+import type { DeviceBulkPatchRequest } from "@/types/api.ts";
 import { AddDeviceDialog } from "@/components/AddDeviceDialog.tsx";
 import { ApplyTemplateDialog } from "@/components/ApplyTemplateDialog.tsx";
 
@@ -77,8 +83,13 @@ export function DevicesPage() {
 
   // ── Bulk delete ─────────────────────────────────────────
   const bulkDelete = useBulkDeleteDevices();
+  const bulkPatch = useBulkPatchDevices();
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [applyTemplateOpen, setApplyTemplateOpen] = useState(false);
+  const [showMoveGroupDialog, setShowMoveGroupDialog] = useState(false);
+  const [showMoveTenantDialog, setShowMoveTenantDialog] = useState(false);
+  const [selectedGroupId, setSelectedGroupId] = useState("");
+  const [selectedTenantId, setSelectedTenantId] = useState("");
 
   // ── Add dialog ──────────────────────────────────────────
   const [addOpen, setAddOpen] = useState(false);
@@ -106,6 +117,8 @@ export function DevicesPage() {
   // ── Latest results for status dots ──────────────────────
   const { data: latestResults } = useLatestResults();
   const { data: labelKeys } = useLabelKeys();
+  const { data: collectorGroups } = useCollectorGroups();
+  const { data: tenants } = useTenants();
   const labelColorMap = new Map((labelKeys ?? []).map((lk) => [lk.key, lk.color]));
 
   // Build status maps
@@ -200,6 +213,15 @@ export function DevicesPage() {
     setConfirmDeleteOpen(false);
   }
 
+  // ── Bulk patch handler ──────────────────────────────────
+  async function handleBulkPatch(patch: Partial<DeviceBulkPatchRequest>) {
+    await bulkPatch.mutateAsync({
+      device_ids: [...selected],
+      ...patch,
+    });
+    setSelected(new Set());
+  }
+
   // ── Pagination math ─────────────────────────────────────
   const startItem = total === 0 ? 0 : page * pageSize + 1;
   const endItem = Math.min(page * pageSize + devices.length, total);
@@ -239,6 +261,42 @@ export function DevicesPage() {
             <span className="text-sm text-zinc-300">
               {selected.size} selected
             </span>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => handleBulkPatch({ is_enabled: true })}
+              disabled={bulkPatch.isPending}
+              className="gap-1.5"
+            >
+              <Power className="h-3.5 w-3.5" /> Enable
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => handleBulkPatch({ is_enabled: false })}
+              disabled={bulkPatch.isPending}
+              className="gap-1.5"
+            >
+              <PowerOff className="h-3.5 w-3.5" /> Disable
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => { setSelectedGroupId(""); setShowMoveGroupDialog(true); }}
+              disabled={bulkPatch.isPending}
+              className="gap-1.5"
+            >
+              <FolderInput className="h-3.5 w-3.5" /> Move to Group
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => { setSelectedTenantId(""); setShowMoveTenantDialog(true); }}
+              disabled={bulkPatch.isPending}
+              className="gap-1.5"
+            >
+              <Building2 className="h-3.5 w-3.5" /> Move to Tenant
+            </Button>
             <Button
               size="sm"
               variant="outline"
@@ -443,7 +501,7 @@ export function DevicesPage() {
                       const extraLabelCount = labelEntries.length - 2;
 
                       return (
-                        <TableRow key={device.id}>
+                        <TableRow key={device.id} className={!device.is_enabled ? "opacity-50" : undefined}>
                           {/* Checkbox */}
                           <TableCell>
                             <input
@@ -457,6 +515,9 @@ export function DevicesPage() {
                           {/* Status */}
                           <TableCell>
                             <div className="relative group w-fit cursor-default">
+                              {!device.is_enabled ? (
+                                <span className="inline-block h-2.5 w-2.5 rounded-full bg-zinc-600" title="Disabled" />
+                              ) : (
                               <span
                                 className={`inline-block h-2.5 w-2.5 rounded-full ${
                                   isUp === true
@@ -465,7 +526,7 @@ export function DevicesPage() {
                                       ? "bg-red-500"
                                       : "bg-zinc-600"
                                 }`}
-                              />
+                              />)}
                               {/* Latency tooltip */}
                               {latencyInfo && (
                                 <div
@@ -637,6 +698,78 @@ export function DevicesPage() {
               <Loader2 className="h-4 w-4 animate-spin" />
             )}
             Delete {selected.size} Devices
+          </Button>
+        </DialogFooter>
+      </Dialog>
+
+      {/* Move to Collector Group Dialog */}
+      <Dialog
+        open={showMoveGroupDialog}
+        onClose={() => setShowMoveGroupDialog(false)}
+        title="Move to Collector Group"
+      >
+        <p className="text-sm text-zinc-400 mb-4">
+          Select the target collector group for{" "}
+          <span className="font-semibold text-zinc-200">{selected.size}</span>{" "}
+          device(s). Existing assignments will be kept.
+        </p>
+        <Select
+          value={selectedGroupId}
+          onChange={(e) => setSelectedGroupId(e.target.value)}
+        >
+          <option value="">Select group...</option>
+          {(collectorGroups ?? []).map((g) => (
+            <option key={g.id} value={g.id}>{g.name}</option>
+          ))}
+        </Select>
+        <DialogFooter>
+          <Button variant="secondary" onClick={() => setShowMoveGroupDialog(false)}>
+            Cancel
+          </Button>
+          <Button
+            disabled={!selectedGroupId || bulkPatch.isPending}
+            onClick={async () => {
+              await handleBulkPatch({ collector_group_id: selectedGroupId });
+              setShowMoveGroupDialog(false);
+            }}
+          >
+            {bulkPatch.isPending ? "Moving..." : "Move"}
+          </Button>
+        </DialogFooter>
+      </Dialog>
+
+      {/* Move to Tenant Dialog */}
+      <Dialog
+        open={showMoveTenantDialog}
+        onClose={() => setShowMoveTenantDialog(false)}
+        title="Move to Tenant"
+      >
+        <p className="text-sm text-zinc-400 mb-4">
+          Select the target tenant for{" "}
+          <span className="font-semibold text-zinc-200">{selected.size}</span>{" "}
+          device(s). Existing assignments will be kept.
+        </p>
+        <Select
+          value={selectedTenantId}
+          onChange={(e) => setSelectedTenantId(e.target.value)}
+        >
+          <option value="">Select tenant...</option>
+          {(tenants ?? []).map((t) => (
+            <option key={t.id} value={t.id}>{t.name}</option>
+          ))}
+        </Select>
+        <DialogFooter>
+          <Button variant="secondary" onClick={() => setShowMoveTenantDialog(false)}>
+            Cancel
+          </Button>
+          <Button
+            disabled={!selectedTenantId || bulkPatch.isPending}
+            onClick={async () => {
+              await handleBulkPatch({ tenant_id: selectedTenantId });
+              setShowMoveTenantDialog(false);
+            }}
+          >
+            {bulkPatch.isPending ? "Moving..." : "Move"}
           </Button>
         </DialogFooter>
       </Dialog>
