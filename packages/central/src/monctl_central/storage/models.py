@@ -188,6 +188,9 @@ class Device(Base):
     default_credential_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("credentials.id", ondelete="SET NULL"), nullable=True
     )
+    credentials: Mapped[dict] = mapped_column(
+        "credentials", JSONB, nullable=False, server_default="{}"
+    )
     labels: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(

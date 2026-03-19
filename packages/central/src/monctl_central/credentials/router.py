@@ -133,6 +133,20 @@ async def list_credentials(
     }
 
 
+@router.get("/types")
+async def list_credential_types(
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Return distinct credential_type values in use."""
+    rows = (await db.execute(
+        select(Credential.credential_type)
+        .distinct()
+        .order_by(Credential.credential_type)
+    )).scalars().all()
+    return {"status": "success", "data": rows}
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_credential(
     request: CreateCredentialRequest,

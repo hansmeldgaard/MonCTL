@@ -11,6 +11,7 @@ import {
   Clock,
   FileText,
   Gauge,
+  Key,
   Layout,
   ListChecks,
   Loader2,
@@ -2468,11 +2469,19 @@ function AssignmentsTab({ deviceId }: { deviceId: string }) {
 
 // ── Tab: Settings ──────────────────────────────────────
 
+function formatCredentialType(type: string): string {
+  return type
+    .split("_")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
 function SettingsTab({ deviceId }: { deviceId: string }) {
   const { data: device, isLoading: deviceLoading } = useDevice(deviceId);
   const { data: deviceTypes } = useDeviceTypes();
   const { data: tenants } = useTenants();
   const { data: collectorGroups } = useCollectorGroups();
+  const { data: allCredentials } = useCredentials();
   const updateDevice = useUpdateDevice();
 
   // Device fields
@@ -2483,6 +2492,13 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
   const [collectorGroupId, setCollectorGroupId] = useState("");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
+
+  // Credentials (per-protocol)
+  const [deviceCreds, setDeviceCreds] = useState<Record<string, string>>({});
+  const [credsModified, setCredsModified] = useState(false);
+  const [credsSaving, setCredsSaving] = useState(false);
+  const [credsSaveSuccess, setCredsSaveSuccess] = useState(false);
+  const [credError, setCredError] = useState<string | null>(null);
 
   // Labels
   const [labels, setLabels] = useState<Record<string, string>>({});
@@ -2500,6 +2516,13 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
       setTenantId(device.tenant_id ?? "");
       setCollectorGroupId(device.collector_group_id ?? "");
       setLabels(device.labels ?? {});
+      // Build credentials state from resolved credentials
+      const cmap: Record<string, string> = {};
+      for (const [ctype, info] of Object.entries(device.credentials ?? {})) {
+        cmap[ctype] = info.id;
+      }
+      setDeviceCreds(cmap);
+      setCredsModified(false);
     }
   }, [device]);
 
@@ -2549,6 +2572,39 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
       setLabelError(err instanceof Error ? err.message : "Failed to save labels");
     } finally {
       setLabelsSaving(false);
+    }
+  }
+
+  // Group all credentials by type for dropdowns
+  const credsByType = useMemo(() => {
+    const map: Record<string, typeof allCredentials> = {};
+    for (const c of allCredentials ?? []) {
+      (map[c.credential_type] ??= []).push(c);
+    }
+    return map;
+  }, [allCredentials]);
+
+  // Available credential types (those that have credentials AND aren't already assigned)
+  const availableTypes = useMemo(() => {
+    return Object.keys(credsByType).filter((t) => !(t in deviceCreds));
+  }, [credsByType, deviceCreds]);
+
+  async function handleSaveCredentials() {
+    setCredError(null);
+    setCredsSaving(true);
+    setCredsSaveSuccess(false);
+    try {
+      await updateDevice.mutateAsync({
+        id: deviceId,
+        data: { credentials: deviceCreds },
+      });
+      setCredsModified(false);
+      setCredsSaveSuccess(true);
+      setTimeout(() => setCredsSaveSuccess(false), 3000);
+    } catch (err) {
+      setCredError(err instanceof Error ? err.message : "Failed to save credentials");
+    } finally {
+      setCredsSaving(false);
     }
   }
 
@@ -2622,6 +2678,96 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
               {saveSuccess && <p className="text-sm text-emerald-400">Saved.</p>}
             </div>
           </form>
+        </CardContent>
+      </Card>
+
+      {/* Credentials */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Key className="h-4 w-4" />
+            Credentials
+            {credsModified && (
+              <Button
+                size="sm"
+                className="ml-auto gap-1.5"
+                onClick={handleSaveCredentials}
+                disabled={credsSaving}
+              >
+                {credsSaving
+                  ? <Loader2 className="h-4 w-4 animate-spin" />
+                  : <Save className="h-4 w-4" />}
+                Save Credentials
+              </Button>
+            )}
+            {credsSaveSuccess && (
+              <span className="ml-auto text-sm text-emerald-400">Saved.</span>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {Object.keys(deviceCreds).length === 0 && availableTypes.length === 0 ? (
+            <p className="text-sm text-zinc-500">No credentials configured. Create credentials first.</p>
+          ) : (
+            <div className="space-y-2">
+              {Object.entries(deviceCreds).map(([ctype, credId]) => (
+                <div key={ctype} className="flex items-center gap-2">
+                  <Badge variant="default" className="text-xs min-w-[130px] justify-center">
+                    {formatCredentialType(ctype)}
+                  </Badge>
+                  <Select
+                    className="flex-1"
+                    value={credId}
+                    onChange={(e) => {
+                      setDeviceCreds((prev) => ({ ...prev, [ctype]: e.target.value }));
+                      setCredsModified(true);
+                    }}
+                  >
+                    <option value="">-- Select --</option>
+                    {(credsByType[ctype] ?? allCredentials ?? [])
+                      .filter((c) => c.credential_type === ctype)
+                      .map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                  </Select>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-7 p-0 text-zinc-500 hover:text-red-400"
+                    onClick={() => {
+                      setDeviceCreds((prev) => {
+                        const next = { ...prev };
+                        delete next[ctype];
+                        return next;
+                      });
+                      setCredsModified(true);
+                    }}
+                    title="Remove"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              ))}
+              {availableTypes.length > 0 && (
+                <Select
+                  className="max-w-xs text-zinc-500"
+                  value=""
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      setDeviceCreds((prev) => ({ ...prev, [e.target.value]: "" }));
+                      setCredsModified(true);
+                    }
+                  }}
+                >
+                  <option value="">+ Add credential type...</option>
+                  {availableTypes.map((t) => (
+                    <option key={t} value={t}>{formatCredentialType(t)}</option>
+                  ))}
+                </Select>
+              )}
+            </div>
+          )}
+          {credError && <p className="text-xs text-red-400 mt-2">{credError}</p>}
         </CardContent>
       </Card>
 

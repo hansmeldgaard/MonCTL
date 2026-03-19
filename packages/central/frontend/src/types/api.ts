@@ -106,6 +106,7 @@ export interface Device {
   labels: Record<string, string>;
   default_credential_id: string | null;
   default_credential_name: string | null;
+  credentials: Record<string, { id: string; name: string; credential_type: string }>;
   created_at?: string;
   updated_at?: string;
 }

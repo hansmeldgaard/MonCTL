@@ -1,12 +1,20 @@
-import { useState } from "react";
-import { Loader2 } from "lucide-react";
+import { useState, useMemo } from "react";
+import { Key, Loader2, X } from "lucide-react";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
+import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { Select } from "@/components/ui/select.tsx";
 import { useCreateDevice, useCollectorGroups, useCredentials, useDeviceTypes, useTenants } from "@/api/hooks.ts";
 import { LabelEditor } from "@/components/LabelEditor.tsx";
+
+function formatCredentialType(type: string): string {
+  return type
+    .split("_")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
 
 interface AddDeviceDialogProps {
   open: boolean;
@@ -25,9 +33,21 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
   const [deviceType, setDeviceType] = useState("host");
   const [tenantId, setTenantId] = useState("");
   const [collectorGroupId, setCollectorGroupId] = useState("");
-  const [credentialId, setCredentialId] = useState("");
+  const [deviceCreds, setDeviceCreds] = useState<Record<string, string>>({});
   const [labels, setLabels] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
+
+  const credsByType = useMemo(() => {
+    const map: Record<string, typeof credentials> = {};
+    for (const c of credentials ?? []) {
+      (map[c.credential_type] ??= []).push(c);
+    }
+    return map;
+  }, [credentials]);
+
+  const availableTypes = useMemo(() => {
+    return Object.keys(credsByType).filter((t) => !(t in deviceCreds));
+  }, [credsByType, deviceCreds]);
 
   function reset() {
     setName("");
@@ -35,7 +55,7 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
     setDeviceType("host");
     setTenantId("");
     setCollectorGroupId("");
-    setCredentialId("");
+    setDeviceCreds({});
     setLabels({});
     setError(null);
   }
@@ -64,6 +84,10 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
       return;
     }
 
+    // Use first credential as default_credential_id for backward compat
+    const credValues = Object.values(deviceCreds).filter(Boolean);
+    const defaultCredId = credValues.length > 0 ? credValues[0] : undefined;
+
     try {
       await createDevice.mutateAsync({
         name: name.trim(),
@@ -71,7 +95,8 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
         device_type: deviceType,
         tenant_id: tenantId || undefined,
         collector_group_id: collectorGroupId || undefined,
-        default_credential_id: credentialId || undefined,
+        default_credential_id: defaultCredId,
+        credentials: deviceCreds,
         labels: Object.keys(labels).length > 0 ? labels : undefined,
       });
       reset();
@@ -142,7 +167,7 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
             value={tenantId}
             onChange={(e) => setTenantId(e.target.value)}
           >
-            <option value="">— Select tenant —</option>
+            <option value="">{"\u2014"} Select tenant {"\u2014"}</option>
             {(tenants ?? []).map((t) => (
               <option key={t.id} value={t.id}>
                 {t.name}
@@ -159,7 +184,7 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
             value={collectorGroupId}
             onChange={(e) => setCollectorGroupId(e.target.value)}
           >
-            <option value="">— Select collector group —</option>
+            <option value="">{"\u2014"} Select collector group {"\u2014"}</option>
             {(collectorGroups ?? []).map((g) => (
               <option key={g.id} value={g.id}>
                 {g.name}
@@ -168,24 +193,65 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
           </Select>
         </div>
 
-        {/* Default Credential (only if credentials exist) */}
+        {/* Per-protocol Credentials */}
         {credentials && credentials.length > 0 && (
           <div className="space-y-1.5">
-            <Label htmlFor="device-credential">
-              Default Credential <span className="text-zinc-500 font-normal">(optional)</span>
+            <Label className="flex items-center gap-1.5">
+              <Key className="h-3.5 w-3.5" />
+              Credentials <span className="text-zinc-500 font-normal">(optional)</span>
             </Label>
-            <Select
-              id="device-credential"
-              value={credentialId}
-              onChange={(e) => setCredentialId(e.target.value)}
-            >
-              <option value="">— No credential —</option>
-              {credentials.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
+            <div className="space-y-2">
+              {Object.entries(deviceCreds).map(([ctype, credId]) => (
+                <div key={ctype} className="flex items-center gap-2">
+                  <Badge variant="default" className="text-xs min-w-[110px] justify-center">
+                    {formatCredentialType(ctype)}
+                  </Badge>
+                  <Select
+                    className="flex-1"
+                    value={credId}
+                    onChange={(e) =>
+                      setDeviceCreds((prev) => ({ ...prev, [ctype]: e.target.value }))
+                    }
+                  >
+                    <option value="">-- Select --</option>
+                    {(credsByType[ctype] ?? []).map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </Select>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-7 p-0 text-zinc-500 hover:text-red-400"
+                    onClick={() =>
+                      setDeviceCreds((prev) => {
+                        const next = { ...prev };
+                        delete next[ctype];
+                        return next;
+                      })
+                    }
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
               ))}
-            </Select>
+              {availableTypes.length > 0 && (
+                <Select
+                  className="max-w-xs text-zinc-500"
+                  value=""
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      setDeviceCreds((prev) => ({ ...prev, [e.target.value]: "" }));
+                    }
+                  }}
+                >
+                  <option value="">+ Add credential type...</option>
+                  {availableTypes.map((t) => (
+                    <option key={t} value={t}>{formatCredentialType(t)}</option>
+                  ))}
+                </Select>
+              )}
+            </div>
           </div>
         )}
 

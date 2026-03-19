@@ -57,6 +57,7 @@ class CreateDeviceRequest(BaseModel):
     tenant_id: str | None = Field(default=None, description="UUID of the owning tenant")
     collector_group_id: str | None = Field(default=None, description="UUID of the collector group")
     default_credential_id: str | None = Field(default=None, description="UUID of the default credential")
+    credentials: dict[str, str] = Field(default_factory=dict, description="Per-protocol credential mapping: {credential_type: credential_id}")
     labels: dict[str, str] = Field(default_factory=dict, description="Key-value labels")
     metadata: dict = Field(default_factory=dict, description="Additional metadata")
 
@@ -69,11 +70,12 @@ class UpdateDeviceRequest(BaseModel):
     tenant_id: str | None = None
     collector_group_id: str | None = None
     default_credential_id: str | None = None
+    credentials: dict[str, str] | None = None
     labels: dict[str, str] | None = None
     metadata: dict | None = None
 
 
-def _format_device(d: Device) -> dict:
+def _format_device(d: Device, resolved_credentials: dict | None = None) -> dict:
     return {
         "id": str(d.id),
         "name": d.name,
@@ -86,11 +88,39 @@ def _format_device(d: Device) -> dict:
         "collector_group_name": d.collector_group.name if d.collector_group else None,
         "default_credential_id": str(d.default_credential_id) if d.default_credential_id else None,
         "default_credential_name": d.default_credential.name if d.default_credential else None,
+        "credentials": resolved_credentials if resolved_credentials is not None else {},
         "labels": d.labels,
         "metadata": d.metadata_,
         "created_at": d.created_at.isoformat() if d.created_at else None,
         "updated_at": d.updated_at.isoformat() if d.updated_at else None,
     }
+
+
+async def _resolve_device_credentials(device: Device, db) -> dict:
+    """Resolve device credentials JSONB to {type: {id, name, credential_type}} for API response."""
+    from monctl_central.storage.models import Credential
+    cred_map = device.credentials or {}
+    if not cred_map:
+        return {}
+    cred_ids = []
+    for v in cred_map.values():
+        if v:
+            try:
+                cred_ids.append(uuid.UUID(v))
+            except ValueError:
+                pass
+    if not cred_ids:
+        return {}
+    rows = (await db.execute(
+        select(Credential.id, Credential.name, Credential.credential_type)
+        .where(Credential.id.in_(cred_ids))
+    )).all()
+    name_map = {str(r.id): {"id": str(r.id), "name": r.name, "credential_type": r.credential_type} for r in rows}
+    result = {}
+    for ctype, cid in cred_map.items():
+        if cid in name_map:
+            result[ctype] = name_map[cid]
+    return result
 
 
 @router.get("")
@@ -198,6 +228,7 @@ async def create_device(
         tenant_id=uuid.UUID(request.tenant_id) if request.tenant_id else None,
         collector_group_id=uuid.UUID(request.collector_group_id) if request.collector_group_id else None,
         default_credential_id=uuid.UUID(request.default_credential_id) if request.default_credential_id else None,
+        credentials=request.credentials,
         labels=request.labels,
         metadata_=request.metadata,
     )
@@ -205,9 +236,10 @@ async def create_device(
     await _auto_register_label_keys(request.labels, db)
     await db.flush()
     await db.refresh(device, ["tenant", "collector_group", "default_credential"])
+    resolved_creds = await _resolve_device_credentials(device, db)
     return {
         "status": "success",
-        "data": _format_device(device),
+        "data": _format_device(device, resolved_creds),
     }
 
 
@@ -228,7 +260,8 @@ async def get_device(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
     if not check_tenant_access(auth, device.tenant_id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    return {"status": "success", "data": _format_device(device)}
+    resolved_creds = await _resolve_device_credentials(device, db)
+    return {"status": "success", "data": _format_device(device, resolved_creds)}
 
 
 @router.put("/{device_id}")
@@ -269,6 +302,8 @@ async def update_device(
 
     if request.default_credential_id is not None:
         device.default_credential_id = uuid.UUID(request.default_credential_id) if request.default_credential_id != "" else None
+    if request.credentials is not None:
+        device.credentials = request.credentials
     if request.labels is not None:
         device.labels = request.labels
         await _auto_register_label_keys(request.labels, db)
@@ -303,7 +338,8 @@ async def update_device(
         )
 
     await db.refresh(device, ["tenant", "collector_group", "default_credential"])
-    return {"status": "success", "data": _format_device(device)}
+    resolved_creds = await _resolve_device_credentials(device, db)
+    return {"status": "success", "data": _format_device(device, resolved_creds)}
 
 
 class MonitoringCheckConfig(BaseModel):

@@ -635,6 +635,7 @@ export function useCreateDevice() {
       tenant_id?: string;
       collector_group_id?: string;
       default_credential_id?: string;
+      credentials?: Record<string, string>;
       labels?: Record<string, string>;
     }) => apiPost<Device>("/devices", data),
     onSuccess: async () => {
@@ -678,6 +679,7 @@ export function useUpdateDevice() {
         device_type: string;
         tenant_id: string | null;
         collector_group_id: string | null;
+        credentials: Record<string, string>;
         labels: Record<string, string>;
       }>;
     }) => apiPut<Device>(`/devices/${id}`, data),
