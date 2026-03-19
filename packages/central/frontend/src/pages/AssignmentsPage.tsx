@@ -3,7 +3,7 @@ import { ListChecks, Loader2, Search } from "lucide-react";
 import { CredentialCell } from "@/components/CredentialCell.tsx";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
-import { Input } from "@/components/ui/input.tsx";
+import { ClearableInput } from "@/components/ui/clearable-input.tsx";
 import {
   Table,
   TableBody,
@@ -46,11 +46,12 @@ export function AssignmentsPage() {
       <div className="flex items-center gap-3">
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
-          <Input
+          <ClearableInput
             placeholder="Search by app or device..."
             className="pl-9"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            onClear={() => setSearch("")}
           />
         </div>
         <span className="text-sm text-zinc-500">
@@ -66,14 +67,10 @@ export function AssignmentsPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {filtered.length === 0 ? (
+          {filtered.length === 0 && !search ? (
             <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
               <ListChecks className="mb-2 h-8 w-8 text-zinc-600" />
-              <p className="text-sm">
-                {search
-                  ? "No assignments match your search"
-                  : "No assignments configured"}
-              </p>
+              <p className="text-sm">No assignments configured</p>
             </div>
           ) : (
             <Table>
@@ -89,7 +86,13 @@ export function AssignmentsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filtered.map((assignment) => (
+                {filtered.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center py-8 text-zinc-500 text-sm">
+                      No assignments match your search
+                    </TableCell>
+                  </TableRow>
+                ) : filtered.map((assignment) => (
                   <TableRow key={assignment.id}>
                     <TableCell>
                       <div className="flex items-center gap-2">

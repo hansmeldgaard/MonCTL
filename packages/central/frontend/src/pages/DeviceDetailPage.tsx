@@ -31,6 +31,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.t
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
+import { ClearableInput } from "@/components/ui/clearable-input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { Select } from "@/components/ui/select.tsx";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
@@ -1397,10 +1398,10 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
                 </TableCell>
                 <TableCell />
                 <TableCell>
-                  <Input placeholder="Filter..." value={filterName} onChange={e => setFilterName(e.target.value)} className="h-6 text-[10px]" />
+                  <ClearableInput placeholder="Filter..." value={filterName} onChange={e => setFilterName(e.target.value)} onClear={() => setFilterName("")} className="h-6 text-[10px]" />
                 </TableCell>
                 <TableCell>
-                  <Input placeholder="Filter..." value={filterAlias} onChange={e => setFilterAlias(e.target.value)} className="h-6 text-[10px]" />
+                  <ClearableInput placeholder="Filter..." value={filterAlias} onChange={e => setFilterAlias(e.target.value)} onClear={() => setFilterAlias("")} className="h-6 text-[10px]" />
                 </TableCell>
                 <TableCell>
                   {availableSpeeds.length > 1 && (

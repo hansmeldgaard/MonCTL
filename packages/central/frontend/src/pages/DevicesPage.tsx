@@ -17,8 +17,9 @@ import {
   PowerOff,
   Trash2,
 } from "lucide-react";
+import { X } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
-import { Input } from "@/components/ui/input.tsx";
+import { ClearableInput } from "@/components/ui/clearable-input.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import {
@@ -316,6 +317,24 @@ export function DevicesPage() {
           </div>
         )}
 
+        {/* Clear All Filters */}
+        {hasActiveFilters && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              setFilterName("");
+              setFilterAddress("");
+              setFilterType("");
+              setFilterTenant("");
+              setFilterGroup("");
+            }}
+            className="gap-1.5 text-zinc-400 hover:text-zinc-200"
+          >
+            <X className="h-3.5 w-3.5" /> Clear All
+          </Button>
+        )}
+
         {/* Compact toggle */}
         <Button
           size="sm"
@@ -346,41 +365,19 @@ export function DevicesPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {devices.length === 0 && !isLoading ? (
+          {devices.length === 0 && !isLoading && !hasActiveFilters ? (
             <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
               <Monitor className="mb-2 h-8 w-8 text-zinc-600" />
-              {hasActiveFilters ? (
-                <>
-                  <p className="text-sm">No devices match your filters</p>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    className="mt-4"
-                    onClick={() => {
-                      setFilterName("");
-                      setFilterAddress("");
-                      setFilterType("");
-                      setFilterTenant("");
-                      setFilterGroup("");
-                    }}
-                  >
-                    Clear Filters
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <p className="text-sm">No devices found</p>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    className="mt-4"
-                    onClick={() => setAddOpen(true)}
-                  >
-                    <Plus className="h-4 w-4" />
-                    Add your first device
-                  </Button>
-                </>
-              )}
+              <p className="text-sm">No devices found</p>
+              <Button
+                size="sm"
+                variant="secondary"
+                className="mt-4"
+                onClick={() => setAddOpen(true)}
+              >
+                <Plus className="h-4 w-4" />
+                Add your first device
+              </Button>
             </div>
           ) : (
             <>
@@ -415,10 +412,11 @@ export function DevicesPage() {
                         >
                           Name <SortIcon col="name" />
                         </div>
-                        <Input
+                        <ClearableInput
                           placeholder="Filter..."
                           value={filterName}
                           onChange={(e) => setFilterName(e.target.value)}
+                          onClear={() => setFilterName("")}
                           className="mt-1 h-6 text-xs"
                         />
                       </TableHead>
@@ -431,10 +429,11 @@ export function DevicesPage() {
                         >
                           Address <SortIcon col="address" />
                         </div>
-                        <Input
+                        <ClearableInput
                           placeholder="Filter..."
                           value={filterAddress}
                           onChange={(e) => setFilterAddress(e.target.value)}
+                          onClear={() => setFilterAddress("")}
                           className="mt-1 h-6 text-xs"
                         />
                       </TableHead>
@@ -447,10 +446,11 @@ export function DevicesPage() {
                         >
                           Type <SortIcon col="device_type" />
                         </div>
-                        <Input
+                        <ClearableInput
                           placeholder="Filter..."
                           value={filterType}
                           onChange={(e) => setFilterType(e.target.value)}
+                          onClear={() => setFilterType("")}
                           className="mt-1 h-6 text-xs"
                         />
                       </TableHead>
@@ -463,10 +463,11 @@ export function DevicesPage() {
                         >
                           Tenant <SortIcon col="tenant_name" />
                         </div>
-                        <Input
+                        <ClearableInput
                           placeholder="Filter..."
                           value={filterTenant}
                           onChange={(e) => setFilterTenant(e.target.value)}
+                          onClear={() => setFilterTenant("")}
                           className="mt-1 h-6 text-xs"
                         />
                       </TableHead>
@@ -480,10 +481,11 @@ export function DevicesPage() {
                           Collector Group{" "}
                           <SortIcon col="collector_group_name" />
                         </div>
-                        <Input
+                        <ClearableInput
                           placeholder="Filter..."
                           value={filterGroup}
                           onChange={(e) => setFilterGroup(e.target.value)}
+                          onClear={() => setFilterGroup("")}
                           className="mt-1 h-6 text-xs"
                         />
                       </TableHead>
@@ -493,7 +495,13 @@ export function DevicesPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {devices.map((device) => {
+                    {devices.length === 0 && hasActiveFilters ? (
+                      <TableRow>
+                        <TableCell colSpan={9} className="text-center py-8 text-zinc-500 text-sm">
+                          No devices match your filters
+                        </TableCell>
+                      </TableRow>
+                    ) : devices.map((device) => {
                       const isUp = deviceReachability.get(device.id);
                       const latencyInfo = deviceLatency.get(device.id);
                       const labelEntries = Object.entries(device.labels ?? {});
@@ -628,6 +636,7 @@ export function DevicesPage() {
                       );
                     })}
                   </TableBody>
+
                 </Table>
               </div>
 

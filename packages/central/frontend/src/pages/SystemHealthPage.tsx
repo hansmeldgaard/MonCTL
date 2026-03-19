@@ -24,6 +24,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.t
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
+import { ClearableInput } from "@/components/ui/clearable-input.tsx";
 import { Select } from "@/components/ui/select.tsx";
 import {
   Table,
@@ -792,10 +793,11 @@ function CollectorsSection({ sub }: { sub: { status: SubsystemStatus; details: R
 
         {/* Filter bar */}
         <div className="flex items-center gap-3 mb-3">
-          <Input
+          <ClearableInput
             placeholder="Search collectors..."
             value={filterSearch}
             onChange={(e) => setFilterSearch(e.target.value)}
+            onClear={() => setFilterSearch("")}
             className="w-56 h-7 text-xs"
           />
           <Select
@@ -823,12 +825,7 @@ function CollectorsSection({ sub }: { sub: { status: SubsystemStatus; details: R
           </span>
         </div>
 
-        {sortedCollectors.length === 0 ? (
-          <p className="text-sm text-zinc-500 py-8 text-center">
-            No collectors match the current filters.
-          </p>
-        ) : (
-          <Table>
+        <Table>
             <TableHeader><TableRow>
               <TableHead className="text-xs py-1 w-6"></TableHead>
               <CollectorSortHead label="Name" field="name" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
@@ -839,7 +836,13 @@ function CollectorsSection({ sub }: { sub: { status: SubsystemStatus; details: R
               <CollectorSortHead label="Group" field="group_name" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
             </TableRow></TableHeader>
             <TableBody>
-              {sortedCollectors.map((c) => {
+              {sortedCollectors.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={7} className="text-center py-8 text-zinc-500 text-sm">
+                    No collectors match the current filters.
+                  </TableCell>
+                </TableRow>
+              ) : sortedCollectors.map((c) => {
                 const isExp = expanded.has(c.id);
                 return (
                   <>
@@ -906,7 +909,6 @@ function CollectorsSection({ sub }: { sub: { status: SubsystemStatus; details: R
               })}
             </TableBody>
           </Table>
-        )}
       </CardContent>
     </Card>
   );
