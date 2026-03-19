@@ -92,14 +92,45 @@ interface Props {
 }
 
 export function InterfaceTrafficChart({ data, timezone = "UTC" }: Props) {
-  const reversed = [...data].reverse();
-  const chartData = reversed
+  const sorted = [...data].sort(
+    (a, b) => new Date(a.executed_at).getTime() - new Date(b.executed_at).getTime()
+  );
+
+  // Primary: use pre-calculated rates from central
+  const rateData = sorted
     .filter((r) => r.in_rate_bps > 0 || r.out_rate_bps > 0)
     .map((r) => ({
       ts: new Date(r.executed_at).getTime(),
       in_bps: r.in_rate_bps,
       out_bps: r.out_rate_bps,
     }));
+
+  // Fallback: calculate client-side deltas from raw counters
+  let chartData = rateData;
+  let isFallback = false;
+
+  if (rateData.length < 2 && sorted.length >= 2) {
+    const deltaData: { ts: number; in_bps: number; out_bps: number }[] = [];
+    for (let i = 1; i < sorted.length; i++) {
+      const prev = sorted[i - 1];
+      const curr = sorted[i];
+      const dtSec =
+        (new Date(curr.executed_at).getTime() - new Date(prev.executed_at).getTime()) / 1000;
+      if (dtSec <= 0) continue;
+      const inDelta = curr.in_octets - prev.in_octets;
+      const outDelta = curr.out_octets - prev.out_octets;
+      if (inDelta < 0 || outDelta < 0) continue;
+      deltaData.push({
+        ts: new Date(curr.executed_at).getTime(),
+        in_bps: (inDelta * 8) / dtSec,
+        out_bps: (outDelta * 8) / dtSec,
+      });
+    }
+    if (deltaData.length >= 1) {
+      chartData = deltaData;
+      isFallback = true;
+    }
+  }
 
   if (chartData.length === 0) {
     return (
@@ -109,27 +140,35 @@ export function InterfaceTrafficChart({ data, timezone = "UTC" }: Props) {
     );
   }
 
-  const minTs = chartData[0].ts;
-  const maxTs = chartData[chartData.length - 1].ts;
+  const domainPadding = chartData.length === 1 ? 60_000 : 0;
+  const minTs = chartData[0].ts - domainPadding;
+  const maxTs = chartData[chartData.length - 1].ts + domainPadding;
 
   return (
-    <ResponsiveContainer width="100%" height={250}>
-      <AreaChart data={chartData} throttleDelay={0}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-        <XAxis dataKey="ts" type="number" scale="time" domain={[minTs, maxTs]}
-          tick={{ fill: "#71717a", fontSize: 11 }} tickFormatter={(ts) => formatTimeLabel(ts, timezone)} />
-        <YAxis tick={{ fill: "#71717a", fontSize: 11 }} tickFormatter={formatBpsShort} />
-        <Tooltip contentStyle={{ backgroundColor: "#18181b", border: "1px solid #3f3f46", borderRadius: "0.5rem", fontSize: "0.75rem" }}
-          labelFormatter={(ts) => formatTimeLabel(Number(ts), timezone)}
-          formatter={(value, name) => [formatBpsShort(Number(value)), name === "in_bps" ? "Inbound" : "Outbound"]}
-          isAnimationActive={false} />
-        <Legend />
-        <Area type="monotone" dataKey="in_bps" name="Inbound" stroke="#06b6d4" fill="#06b6d4"
-          fillOpacity={0.15} strokeWidth={1.5} isAnimationActive={false} connectNulls={false} />
-        <Area type="monotone" dataKey="out_bps" name="Outbound" stroke="#6366f1" fill="#6366f1"
-          fillOpacity={0.15} strokeWidth={1.5} isAnimationActive={false} connectNulls={false} />
-      </AreaChart>
-    </ResponsiveContainer>
+    <div>
+      {isFallback && (
+        <div className="text-xs text-amber-500/70 mb-1">
+          Showing estimated rates from counter deltas — central rate calculation warming up
+        </div>
+      )}
+      <ResponsiveContainer width="100%" height={250}>
+        <AreaChart data={chartData} throttleDelay={0}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+          <XAxis dataKey="ts" type="number" scale="time" domain={[minTs, maxTs]}
+            tick={{ fill: "#71717a", fontSize: 11 }} tickFormatter={(ts) => formatTimeLabel(ts, timezone)} />
+          <YAxis tick={{ fill: "#71717a", fontSize: 11 }} tickFormatter={formatBpsShort} />
+          <Tooltip contentStyle={{ backgroundColor: "#18181b", border: "1px solid #3f3f46", borderRadius: "0.5rem", fontSize: "0.75rem" }}
+            labelFormatter={(ts) => formatTimeLabel(Number(ts), timezone)}
+            formatter={(value, name) => [formatBpsShort(Number(value)), name === "in_bps" ? "Inbound" : "Outbound"]}
+            isAnimationActive={false} />
+          <Legend />
+          <Area type="monotone" dataKey="in_bps" name="Inbound" stroke="#06b6d4" fill="#06b6d4"
+            fillOpacity={0.15} strokeWidth={1.5} isAnimationActive={false} connectNulls={false} />
+          <Area type="monotone" dataKey="out_bps" name="Outbound" stroke="#6366f1" fill="#6366f1"
+            fillOpacity={0.15} strokeWidth={1.5} isAnimationActive={false} connectNulls={false} />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
   );
 }
 

@@ -181,18 +181,55 @@ async def invalidate_cached_interface(device_id: str, if_name: str) -> None:
 # ---------------------------------------------------------------------------
 
 _IFACE_PREV_PREFIX = "iface-prev:"
-_IFACE_PREV_TTL = 1200  # 20 minutes
+_IFACE_PREV_TTL = 7200  # 2 hours — must exceed the longest practical poll interval
 
 
 async def get_previous_counters(interface_id: str) -> dict | None:
-    if _redis is None:
-        return None
+    """Get previous counter values from Redis cache, falling back to ClickHouse interface_latest."""
+    if _redis is not None:
+        try:
+            cached = await _redis.get(f"{_IFACE_PREV_PREFIX}{interface_id}")
+            if cached:
+                return json.loads(cached)
+        except Exception:
+            pass
+
+    # ClickHouse fallback — query interface_latest for the most recent row
     try:
-        cached = await _redis.get(f"{_IFACE_PREV_PREFIX}{interface_id}")
-        if cached:
-            return json.loads(cached)
+        import asyncio
+        from monctl_central.dependencies import get_clickhouse
+        ch = get_clickhouse()
+        if ch:
+            rows = await asyncio.to_thread(
+                ch._get_client().query,
+                "SELECT in_octets, out_octets, executed_at "
+                "FROM interface_latest FINAL "
+                "WHERE interface_id = {interface_id:String} "
+                "LIMIT 1",
+                parameters={"interface_id": interface_id},
+            )
+            named = list(rows.named_results())
+            if named:
+                ea = named[0]["executed_at"]
+                prev = {
+                    "in_octets": named[0]["in_octets"],
+                    "out_octets": named[0]["out_octets"],
+                    "executed_at": ea.isoformat() if hasattr(ea, "isoformat") else str(ea),
+                }
+                # Re-populate Redis cache for next poll
+                if _redis is not None:
+                    try:
+                        await _redis.setex(
+                            f"{_IFACE_PREV_PREFIX}{interface_id}",
+                            _IFACE_PREV_TTL,
+                            json.dumps(prev),
+                        )
+                    except Exception:
+                        pass
+                return prev
     except Exception:
         pass
+
     return None
 
 

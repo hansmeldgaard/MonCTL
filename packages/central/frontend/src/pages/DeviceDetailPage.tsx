@@ -1238,20 +1238,17 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
     bulkUpdate.mutate({ deviceId, data: { interface_ids: ids, alerting_enabled: enable } });
   };
 
-  const BulkToggleHead = ({ label, state, onToggle }: { label: string; state: boolean | "mixed"; onToggle: (enable: boolean) => void }) => (
-    <TableHead className="text-center w-14">
-      <div className="flex flex-col items-center gap-0.5">
-        <span className="text-xs">{label}</span>
-        {activeSelectedCount > 0 && (
-          <input type="checkbox" checked={state === true}
-            ref={el => { if (el) el.indeterminate = state === "mixed"; }}
-            onChange={() => onToggle(state !== true)}
-            onClick={e => e.stopPropagation()}
-            className="accent-brand-500 cursor-pointer"
-            title={`${state === true ? "Disable" : "Enable"} ${label.toLowerCase()} for ${activeSelectedCount} selected`} />
-        )}
-      </div>
-    </TableHead>
+  const BulkToggleCell = ({ label, state, onToggle }: { label: string; state: boolean | "mixed"; onToggle: (enable: boolean) => void }) => (
+    <TableCell className="text-center">
+      {activeSelectedCount > 0 ? (
+        <input type="checkbox" checked={state === true}
+          ref={el => { if (el) el.indeterminate = state === "mixed"; }}
+          onChange={() => onToggle(state !== true)}
+          onClick={e => e.stopPropagation()}
+          className="accent-brand-500 cursor-pointer"
+          title={`${state === true ? "Disable" : "Enable"} ${label.toLowerCase()} for ${activeSelectedCount} selected`} />
+      ) : null}
+    </TableCell>
   );
 
   const SortHead = ({ col, children }: { col: IfaceSortKey; children: React.ReactNode }) => (
@@ -1378,12 +1375,12 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
                 <SortHead col="in_errors">In Err</SortHead>
                 <SortHead col="out_errors">Out Err</SortHead>
                 <SortHead col="last_polled">Last Polled</SortHead>
-                <BulkToggleHead label="Poll" state={selectedHavePolling()} onToggle={bulkTogglePolling} />
-                <BulkToggleHead label="Alert" state={selectedHaveAlerting()} onToggle={bulkToggleAlerting} />
-                <BulkToggleHead label="Traffic" state={selectedHaveMetric("traffic")} onToggle={(e) => bulkToggleMetric("traffic", e)} />
-                <BulkToggleHead label="Errors" state={selectedHaveMetric("errors")} onToggle={(e) => bulkToggleMetric("errors", e)} />
-                <BulkToggleHead label="Discards" state={selectedHaveMetric("discards")} onToggle={(e) => bulkToggleMetric("discards", e)} />
-                <BulkToggleHead label="Status" state={selectedHaveMetric("status")} onToggle={(e) => bulkToggleMetric("status", e)} />
+                <TableHead className="text-center w-14 text-xs">Poll</TableHead>
+                <TableHead className="text-center w-14 text-xs">Alert</TableHead>
+                <TableHead className="text-center text-xs">Traffic</TableHead>
+                <TableHead className="text-center text-xs">Errors</TableHead>
+                <TableHead className="text-center text-xs">Discards</TableHead>
+                <TableHead className="text-center text-xs">Status</TableHead>
               </TableRow>
               {/* Filter row */}
               <TableRow className="bg-zinc-900/50">
@@ -1412,7 +1409,12 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
                   )}
                 </TableCell>
                 <TableCell /><TableCell /><TableCell /><TableCell /><TableCell />
-                <TableCell /><TableCell /><TableCell /><TableCell /><TableCell /><TableCell />
+                <BulkToggleCell label="Poll" state={selectedHavePolling()} onToggle={bulkTogglePolling} />
+                <BulkToggleCell label="Alert" state={selectedHaveAlerting()} onToggle={bulkToggleAlerting} />
+                <BulkToggleCell label="Traffic" state={selectedHaveMetric("traffic")} onToggle={(e) => bulkToggleMetric("traffic", e)} />
+                <BulkToggleCell label="Errors" state={selectedHaveMetric("errors")} onToggle={(e) => bulkToggleMetric("errors", e)} />
+                <BulkToggleCell label="Discards" state={selectedHaveMetric("discards")} onToggle={(e) => bulkToggleMetric("discards", e)} />
+                <BulkToggleCell label="Status" state={selectedHaveMetric("status")} onToggle={(e) => bulkToggleMetric("status", e)} />
               </TableRow>
             </TableHeader>
             <TableBody>
