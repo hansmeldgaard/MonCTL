@@ -317,24 +317,6 @@ export function DevicesPage() {
           </div>
         )}
 
-        {/* Clear All Filters */}
-        {hasActiveFilters && (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => {
-              setFilterName("");
-              setFilterAddress("");
-              setFilterType("");
-              setFilterTenant("");
-              setFilterGroup("");
-            }}
-            className="gap-1.5 text-zinc-400 hover:text-zinc-200"
-          >
-            <X className="h-3.5 w-3.5" /> Clear All
-          </Button>
-        )}
-
         {/* Compact toggle */}
         <Button
           size="sm"
@@ -491,7 +473,24 @@ export function DevicesPage() {
                       </TableHead>
 
                       {/* Labels */}
-                      <TableHead>Labels</TableHead>
+                      <TableHead>
+                        <div className="flex items-center justify-between">
+                          Labels
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFilterName("");
+                              setFilterAddress("");
+                              setFilterType("");
+                              setFilterTenant("");
+                              setFilterGroup("");
+                            }}
+                            className={`inline-flex items-center gap-1 text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors ${hasActiveFilters ? "opacity-100" : "opacity-0 pointer-events-none"}`}
+                          >
+                            <X className="h-3 w-3" /> Clear All
+                          </button>
+                        </div>
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
