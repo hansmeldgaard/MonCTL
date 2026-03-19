@@ -940,3 +940,111 @@ export interface PackImportResult {
   updated: number;
   skipped: number;
 }
+
+// ── Docker Infrastructure types ──────────────────────────────────────────────
+
+export interface DockerHostInfo {
+  label: string;
+  url: string;
+}
+
+export interface DockerSystemInfo {
+  hostname: string;
+  docker: {
+    version: string;
+    api_version: string;
+    storage_driver: string;
+    os: string;
+    kernel: string;
+    architecture: string;
+    cpus: number;
+    memory_bytes: number;
+  };
+  host: {
+    load_avg: { "1m": number; "5m": number; "15m": number } | null;
+    cpu_count: number;
+    mem_total_bytes: number | null;
+    mem_available_bytes: number | null;
+    mem_free_bytes: number | null;
+    mem_buffers_bytes: number | null;
+    mem_cached_bytes: number | null;
+    swap_total_bytes: number | null;
+    swap_free_bytes: number | null;
+    uptime_seconds: number | null;
+    disk_total_bytes: number | null;
+    disk_used_bytes: number | null;
+    disk_free_bytes: number | null;
+  };
+  containers: {
+    running: number;
+    paused: number;
+    stopped: number;
+    total: number;
+  };
+}
+
+export interface DockerContainerLog {
+  container: string;
+  lines: string[];
+  count: number;
+  buffer_size: number;
+}
+
+export interface DockerEvent {
+  time: number;
+  time_iso: string;
+  type: string;
+  action: string;
+  actor_id: string;
+  actor_name: string;
+  actor_image: string;
+  exit_code: string | null;
+}
+
+export interface DockerEventsResponse {
+  events: DockerEvent[];
+  count: number;
+  buffer_size: number;
+  oldest_ts: number | null;
+}
+
+export interface DockerImageInfo {
+  id: string;
+  tags: string[];
+  size_bytes: number;
+  created: string;
+  dangling: boolean;
+}
+
+export interface DockerVolumeInfo {
+  name: string;
+  driver: string;
+  mountpoint: string;
+  created: string;
+}
+
+export interface DockerImagesResponse {
+  images: DockerImageInfo[];
+  volumes: DockerVolumeInfo[];
+  space_summary: {
+    images_total_bytes: number;
+    images_reclaimable_bytes: number;
+    volumes_total_bytes: number;
+    build_cache_bytes: number;
+  } | null;
+  image_count: number;
+  dangling_count: number;
+  volume_count: number;
+}
+
+export interface DockerOverviewHost {
+  label: string;
+  status: "ok" | "unreachable";
+  data: DockerSystemInfo | null;
+  error?: string;
+}
+
+export interface DockerOverviewResponse {
+  configured: boolean;
+  hosts: DockerOverviewHost[];
+}

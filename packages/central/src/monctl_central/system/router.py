@@ -836,18 +836,39 @@ async def _check_docker_infrastructure() -> dict:
         for entry in raw.split(","):
             parts = entry.strip().split(":")
             if len(parts) == 3:
-                sidecar_hosts.append({"label": parts[0], "url": f"http://{parts[1]}:{parts[2]}/stats"})
+                sidecar_hosts.append({"label": parts[0], "base_url": f"http://{parts[1]}:{parts[2]}"})
 
     t0 = time.monotonic()
 
     # Central tier: query sidecars (20s timeout — docker stats API is slow)
     async def _fetch(client: httpx.AsyncClient, host: dict) -> dict:
-        try:
-            resp = await client.get(host["url"], timeout=20.0)
-            resp.raise_for_status()
-            return {"label": host["label"], "status": "ok", "source": "sidecar", "data": resp.json()}
-        except Exception as exc:
-            return {"label": host["label"], "status": "unreachable", "source": "sidecar", "data": None, "error": str(exc)}
+        base_url = host["base_url"]
+
+        async def _get(path: str, timeout: float = 20.0):
+            try:
+                resp = await client.get(f"{base_url}{path}", timeout=timeout)
+                resp.raise_for_status()
+                return resp.json()
+            except Exception:
+                return None
+
+        stats_data, system_data = await asyncio.gather(
+            _get("/stats"), _get("/system", timeout=5.0)
+        )
+
+        if stats_data is None:
+            return {"label": host["label"], "status": "unreachable", "source": "sidecar", "data": None, "error": "Failed to fetch /stats"}
+
+        # Inject host system summary into the stats data
+        if system_data:
+            host_info = system_data.get("host", {})
+            stats_data["host"]["load_avg"] = host_info.get("load_avg")
+            stats_data["host"]["mem_total_bytes"] = host_info.get("mem_total_bytes")
+            stats_data["host"]["mem_available_bytes"] = host_info.get("mem_available_bytes")
+            stats_data["host"]["uptime_seconds"] = host_info.get("uptime_seconds")
+            stats_data["docker_version"] = system_data.get("docker", {}).get("version")
+
+        return {"label": host["label"], "status": "ok", "source": "sidecar", "data": stats_data}
 
     sidecar_results: list[dict] = []
     if sidecar_hosts:

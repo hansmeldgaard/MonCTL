@@ -2,6 +2,7 @@
 
 Collects container stats in a background thread every 15 seconds.
 Serves cached results instantly on GET /stats.
+Also provides /logs, /events, /images, /system endpoints.
 """
 
 import json
@@ -10,7 +11,10 @@ import shutil
 import socket
 import threading
 import time
+from collections import deque
+from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs
 
 import docker
 
@@ -21,6 +25,87 @@ COLLECT_INTERVAL = int(os.environ.get("COLLECT_INTERVAL", "15"))
 _cached_stats: dict = {}
 _cached_stats_lock = threading.Lock()
 
+# ── Ring buffers ──────────────────────────────────────────────────────────────
+
+# Container logs: {container_name: deque(maxlen=500)}
+_log_buffers: dict[str, deque] = {}
+_LOG_LINES_PER_CONTAINER = 500
+_MAX_TRACKED_CONTAINERS = 20
+_log_lock = threading.Lock()
+
+# Docker events: deque of event dicts, newest last
+_event_buffer: deque = deque(maxlen=500)
+_event_lock = threading.Lock()
+
+
+def _parse_qs_single(path: str) -> dict[str, str]:
+    """Parse query string, return single-value dict."""
+    qs = parse_qs(urlparse(path).query)
+    return {k: v[0] for k, v in qs.items()}
+
+
+# ── Background threads ───────────────────────────────────────────────────────
+
+def _log_collector():
+    """Background thread: tail logs from all running containers into ring buffers."""
+    threads: dict[str, threading.Thread] = {}
+
+    def _tail_container(container):
+        name = container.name
+        buf = deque(maxlen=_LOG_LINES_PER_CONTAINER)
+        with _log_lock:
+            _log_buffers[name] = buf
+        try:
+            for line in container.logs(stream=True, follow=True, tail=50, timestamps=True):
+                decoded = line.decode("utf-8", errors="replace").rstrip("\n")
+                buf.append(decoded)
+        except Exception:
+            pass  # container stopped or removed
+
+    while True:
+        try:
+            running = {c.name: c for c in client.containers.list() if c.status == "running"}
+            # Start tailing new containers (respect max)
+            for name, c in running.items():
+                if name not in threads and len(threads) < _MAX_TRACKED_CONTAINERS:
+                    t = threading.Thread(target=_tail_container, args=(c,), daemon=True)
+                    t.start()
+                    threads[name] = t
+            # Clean up dead threads
+            for name in list(threads):
+                if not threads[name].is_alive():
+                    del threads[name]
+                    with _log_lock:
+                        _log_buffers.pop(name, None)
+        except Exception:
+            pass
+        time.sleep(10)
+
+
+def _event_listener():
+    """Background thread: listen to Docker events and buffer them."""
+    while True:
+        try:
+            for event in client.events(decode=True):
+                entry = {
+                    "time": event.get("time", 0),
+                    "time_iso": datetime.fromtimestamp(
+                        event.get("time", 0), tz=timezone.utc
+                    ).isoformat(),
+                    "type": event.get("Type", ""),
+                    "action": event.get("Action", ""),
+                    "actor_id": event.get("Actor", {}).get("ID", "")[:12],
+                    "actor_name": event.get("Actor", {}).get("Attributes", {}).get("name", ""),
+                    "actor_image": event.get("Actor", {}).get("Attributes", {}).get("image", ""),
+                    "exit_code": event.get("Actor", {}).get("Attributes", {}).get("exitCode"),
+                }
+                with _event_lock:
+                    _event_buffer.append(entry)
+        except Exception:
+            time.sleep(5)
+
+
+# ── Stats collection ─────────────────────────────────────────────────────────
 
 def _collect_stats() -> dict:
     containers = []
@@ -127,22 +212,182 @@ def _background_collector():
 
 
 class StatsHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == "/stats":
-            try:
-                with _cached_stats_lock:
-                    data = _cached_stats
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps(data).encode())
-            except BrokenPipeError:
-                pass
-        elif self.path == "/health":
-            self.send_response(200)
+    def _json_response(self, code: int, data):
+        try:
+            self.send_response(code)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(b'{"status":"ok"}')
+            self.wfile.write(json.dumps(data).encode())
+        except BrokenPipeError:
+            pass
+
+    def do_GET(self):
+        path = urlparse(self.path).path
+
+        if path == "/stats":
+            with _cached_stats_lock:
+                data = _cached_stats
+            self._json_response(200, data)
+
+        elif path == "/health":
+            self._json_response(200, {"status": "ok"})
+
+        elif path == "/logs":
+            params = _parse_qs_single(self.path)
+            container = params.get("container", "")
+            tail = min(int(params.get("tail", "100")), _LOG_LINES_PER_CONTAINER)
+
+            if not container:
+                self._json_response(400, {"error": "container parameter required"})
+                return
+
+            with _log_lock:
+                buf = _log_buffers.get(container)
+                lines = list(buf)[-tail:] if buf else []
+
+            self._json_response(200, {
+                "container": container,
+                "lines": lines,
+                "count": len(lines),
+                "buffer_size": _LOG_LINES_PER_CONTAINER,
+            })
+
+        elif path == "/events":
+            params = _parse_qs_single(self.path)
+            since = float(params.get("since", "0"))
+            limit = min(int(params.get("limit", "100")), 500)
+
+            with _event_lock:
+                events = [e for e in _event_buffer if e["time"] >= since]
+            events = events[-limit:]
+
+            self._json_response(200, {
+                "events": events,
+                "count": len(events),
+                "buffer_size": _event_buffer.maxlen,
+                "oldest_ts": _event_buffer[0]["time"] if _event_buffer else None,
+            })
+
+        elif path == "/images":
+            images = []
+            for img in client.images.list(all=True):
+                tags = img.tags or []
+                images.append({
+                    "id": img.short_id,
+                    "tags": tags,
+                    "size_bytes": img.attrs.get("Size", 0),
+                    "created": img.attrs.get("Created", ""),
+                    "dangling": len(tags) == 0,
+                })
+
+            volumes = []
+            for vol in client.volumes.list():
+                volumes.append({
+                    "name": vol.name,
+                    "driver": vol.attrs.get("Driver", ""),
+                    "mountpoint": vol.attrs.get("Mountpoint", ""),
+                    "created": vol.attrs.get("CreatedAt", ""),
+                })
+
+            try:
+                df = client.df()
+                space_summary = {
+                    "images_total_bytes": sum(i.get("Size", 0) for i in df.get("Images", [])),
+                    "images_reclaimable_bytes": sum(
+                        i.get("Size", 0) for i in df.get("Images", [])
+                        if i.get("Containers", 0) == 0
+                    ),
+                    "volumes_total_bytes": sum(
+                        v.get("UsageData", {}).get("Size", 0)
+                        for v in df.get("Volumes", [])
+                    ),
+                    "build_cache_bytes": sum(
+                        b.get("Size", 0) for b in df.get("BuildCache", [])
+                    ),
+                }
+            except Exception:
+                space_summary = None
+
+            self._json_response(200, {
+                "images": sorted(images, key=lambda i: i["size_bytes"], reverse=True),
+                "volumes": sorted(volumes, key=lambda v: v["name"]),
+                "space_summary": space_summary,
+                "image_count": len(images),
+                "dangling_count": sum(1 for i in images if i["dangling"]),
+                "volume_count": len(volumes),
+            })
+
+        elif path == "/system":
+            info = client.info()
+
+            load_avg = None
+            cpu_count = info.get("NCPU", 1)
+            try:
+                with open("/host_root/proc/loadavg") as f:
+                    parts = f.read().split()
+                    load_avg = {
+                        "1m": float(parts[0]),
+                        "5m": float(parts[1]),
+                        "15m": float(parts[2]),
+                    }
+            except Exception:
+                pass
+
+            mem = {}
+            try:
+                with open("/host_root/proc/meminfo") as f:
+                    for line in f:
+                        parts = line.split()
+                        key = parts[0].rstrip(":")
+                        if key in ("MemTotal", "MemFree", "MemAvailable", "Buffers", "Cached", "SwapTotal", "SwapFree"):
+                            mem[key] = int(parts[1]) * 1024
+            except Exception:
+                pass
+
+            uptime_seconds = None
+            try:
+                with open("/host_root/proc/uptime") as f:
+                    uptime_seconds = float(f.read().split()[0])
+            except Exception:
+                pass
+
+            disk = shutil.disk_usage("/host_root") if os.path.exists("/host_root") else None
+
+            self._json_response(200, {
+                "hostname": HOSTNAME,
+                "docker": {
+                    "version": info.get("ServerVersion", ""),
+                    "api_version": info.get("ApiVersion", ""),
+                    "storage_driver": info.get("Driver", ""),
+                    "os": info.get("OperatingSystem", ""),
+                    "kernel": info.get("KernelVersion", ""),
+                    "architecture": info.get("Architecture", ""),
+                    "cpus": cpu_count,
+                    "memory_bytes": info.get("MemTotal", 0),
+                },
+                "host": {
+                    "load_avg": load_avg,
+                    "cpu_count": cpu_count,
+                    "mem_total_bytes": mem.get("MemTotal"),
+                    "mem_available_bytes": mem.get("MemAvailable"),
+                    "mem_free_bytes": mem.get("MemFree"),
+                    "mem_buffers_bytes": mem.get("Buffers"),
+                    "mem_cached_bytes": mem.get("Cached"),
+                    "swap_total_bytes": mem.get("SwapTotal"),
+                    "swap_free_bytes": mem.get("SwapFree"),
+                    "uptime_seconds": uptime_seconds,
+                    "disk_total_bytes": disk.total if disk else None,
+                    "disk_used_bytes": disk.used if disk else None,
+                    "disk_free_bytes": disk.free if disk else None,
+                },
+                "containers": {
+                    "running": info.get("ContainersRunning", 0),
+                    "paused": info.get("ContainersPaused", 0),
+                    "stopped": info.get("ContainersStopped", 0),
+                    "total": info.get("Containers", 0),
+                },
+            })
+
         else:
             self.send_response(404)
             self.end_headers()
@@ -156,9 +401,10 @@ if __name__ == "__main__":
     _cached_stats = _collect_stats()
     print(f"Initial collection done: {_cached_stats['container_count']} running containers")
 
-    collector_thread = threading.Thread(target=_background_collector, daemon=True)
-    collector_thread.start()
+    threading.Thread(target=_background_collector, daemon=True).start()
+    threading.Thread(target=_log_collector, daemon=True).start()
+    threading.Thread(target=_event_listener, daemon=True).start()
 
     server = HTTPServer(("0.0.0.0", 9100), StatsHandler)
-    print(f"Listening on :9100")
+    print("Listening on :9100")
     server.serve_forever()

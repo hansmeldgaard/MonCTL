@@ -59,6 +59,12 @@ import type {
   PerformanceAppSummary,
   PerformanceRecord,
   AvailableEntities,
+  DockerHostInfo,
+  DockerOverviewResponse,
+  DockerSystemInfo,
+  DockerContainerLog,
+  DockerEventsResponse,
+  DockerImagesResponse,
 } from "@/types/api.ts";
 
 // ── Polling intervals ────────────────────────────────────
@@ -2070,5 +2076,72 @@ export function useDeletePack() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["packs"] });
     },
+  });
+}
+
+// ── Docker Infrastructure ───────────────────────────────────
+
+export function useDockerHosts() {
+  return useQuery({
+    queryKey: ["docker-infra", "hosts"],
+    queryFn: () => apiGet<DockerHostInfo[]>("/docker-infra/hosts"),
+  });
+}
+
+export function useDockerOverview() {
+  return useQuery({
+    queryKey: ["docker-infra", "overview"],
+    queryFn: () => apiGet<DockerOverviewResponse>("/docker-infra/overview"),
+    refetchInterval: 30_000,
+  });
+}
+
+export function useDockerHostStats(hostLabel: string) {
+  return useQuery({
+    queryKey: ["docker-infra", "stats", hostLabel],
+    queryFn: () => apiGet<Record<string, unknown>>(`/docker-infra/hosts/${hostLabel}/stats`),
+    refetchInterval: 15_000,
+    enabled: !!hostLabel,
+  });
+}
+
+export function useDockerHostSystem(hostLabel: string) {
+  return useQuery({
+    queryKey: ["docker-infra", "system", hostLabel],
+    queryFn: () => apiGet<DockerSystemInfo>(`/docker-infra/hosts/${hostLabel}/system`),
+    refetchInterval: 30_000,
+    enabled: !!hostLabel,
+  });
+}
+
+export function useDockerContainerLogs(hostLabel: string, container: string, tail = 100) {
+  return useQuery({
+    queryKey: ["docker-infra", "logs", hostLabel, container, tail],
+    queryFn: () =>
+      apiGet<DockerContainerLog>(
+        `/docker-infra/hosts/${hostLabel}/logs?container=${encodeURIComponent(container)}&tail=${tail}`
+      ),
+    refetchInterval: 5_000,
+    enabled: !!hostLabel && !!container,
+  });
+}
+
+export function useDockerEvents(hostLabel: string, since = 0, limit = 100) {
+  return useQuery({
+    queryKey: ["docker-infra", "events", hostLabel, since],
+    queryFn: () =>
+      apiGet<DockerEventsResponse>(
+        `/docker-infra/hosts/${hostLabel}/events?since=${since}&limit=${limit}`
+      ),
+    refetchInterval: 10_000,
+    enabled: !!hostLabel,
+  });
+}
+
+export function useDockerImages(hostLabel: string) {
+  return useQuery({
+    queryKey: ["docker-infra", "images", hostLabel],
+    queryFn: () => apiGet<DockerImagesResponse>(`/docker-infra/hosts/${hostLabel}/images`),
+    enabled: !!hostLabel,
   });
 }

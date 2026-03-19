@@ -17,6 +17,7 @@ import { ConnectorsPage } from "@/pages/ConnectorsPage.tsx";
 import { ConnectorDetailPage } from "@/pages/ConnectorDetailPage.tsx";
 import { SettingsPage } from "@/pages/SettingsPage.tsx";
 import { SystemHealthPage } from "@/pages/SystemHealthPage.tsx";
+import { DockerInfraPage } from "@/pages/DockerInfraPage.tsx";
 
 export function App() {
   return (
@@ -25,6 +26,7 @@ export function App() {
       <Route element={<AppLayout />}>
         <Route index element={<DashboardPage />} />
         <Route path="system-health" element={<SystemHealthPage />} />
+        <Route path="docker-infrastructure" element={<DockerInfraPage />} />
         <Route path="devices" element={<DevicesPage />} />
         <Route path="devices/:id" element={<DeviceDetailPage />} />
         <Route path="apps" element={<AppsPage />} />

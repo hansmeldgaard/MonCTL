@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { Link } from "react-router-dom";
 import {
   ArrowDown,
   ArrowDownToLine,
@@ -506,7 +507,16 @@ interface DockerHost {
     hostname: string;
     container_count: number;
     total_containers: number;
-    host: { disk_total_bytes: number | null; disk_used_bytes: number | null; disk_free_bytes: number | null } | null;
+    docker_version?: string | null;
+    host: {
+      disk_total_bytes: number | null;
+      disk_used_bytes: number | null;
+      disk_free_bytes: number | null;
+      load_avg?: { "1m": number; "5m": number; "15m": number } | null;
+      mem_total_bytes?: number | null;
+      mem_available_bytes?: number | null;
+      uptime_seconds?: number | null;
+    } | null;
     containers: {
       name: string;
       image?: string;
@@ -589,6 +599,23 @@ function DockerInfraCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: 
 
               {isExp && host.data && (
                 <div className="ml-5 mt-1">
+                  {/* Host summary row */}
+                  {host.data.host && (host.data.host.load_avg || host.data.host.mem_total_bytes) && (
+                    <div className="flex items-center gap-4 text-xs text-zinc-400 mb-2 px-2 flex-wrap">
+                      {host.data.host.load_avg && (
+                        <span className="font-mono">Load: {host.data.host.load_avg["1m"]} / {host.data.host.load_avg["5m"]} / {host.data.host.load_avg["15m"]}</span>
+                      )}
+                      {host.data.host.mem_total_bytes != null && host.data.host.mem_available_bytes != null && (
+                        <span className="font-mono">Mem: {formatBytes(host.data.host.mem_total_bytes - host.data.host.mem_available_bytes)} / {formatBytes(host.data.host.mem_total_bytes)}</span>
+                      )}
+                      {host.data.host.uptime_seconds != null && (
+                        <span className="font-mono">Up: {formatUptime(host.data.host.uptime_seconds)}</span>
+                      )}
+                      <Link to={`/docker-infrastructure?host=${host.label}`} className="ml-auto text-blue-400 hover:text-blue-300">
+                        View details →
+                      </Link>
+                    </div>
+                  )}
                   {host.data.host && host.data.host.disk_total_bytes != null && (
                     <div className="mb-2">
                       <div className="flex items-center justify-between text-xs text-zinc-500 mb-0.5">
