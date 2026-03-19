@@ -2,12 +2,12 @@
 
 ## Project Overview
 
-MonCTL is a distributed monitoring platform with a central management server and distributed collector nodes. Collectors pull job assignments from central, execute monitoring checks (ping, port, SNMP, custom apps), and forward results back to central for storage in ClickHouse.
+MonCTL is a distributed monitoring platform with a central management server and distributed collector nodes. Collectors pull job assignments from central, execute monitoring checks (ping, port, SNMP, HTTP, custom apps), and forward results back to central for storage in ClickHouse.
 
 ## Architecture
 
 ```
-Browser → HAProxy (VIP 10.145.210.40:443) → central1-4 (:8444)
+Browser → HAProxy (VIP 10.145.210.40:443) → central1-4 (:8443)
                                               ├── PostgreSQL (Patroni HA)
                                               ├── ClickHouse (replicated cluster)
                                               └── Redis
@@ -19,82 +19,147 @@ Collectors (worker1-4) → poll jobs from central → execute checks → forward
 
 - **Backend**: Python 3.11, FastAPI, SQLAlchemy async, Alembic migrations
 - **Frontend**: React 19, TypeScript, Vite, Tailwind CSS v4, React Query (TanStack)
-- **Time-series storage**: ClickHouse (replicated cluster, 3 nodes)
-- **Relational DB**: PostgreSQL 16 (Patroni HA, 2 nodes)
+- **Time-series storage**: ClickHouse (replicated cluster)
+- **Relational DB**: PostgreSQL 16 (Patroni HA)
 - **Cache**: Redis
 - **Proxy**: HAProxy (TLS termination, round-robin to 4 central nodes)
-- **Collector**: Python 3.11, gRPC (peer communication), SQLite (local result buffer)
+- **Collector**: Python 3.12, gRPC (peer communication), SQLite (local result buffer)
 - **Icons**: Lucide React
 - **Charts**: Recharts
 
 ## Package Structure
 
 ```
+apps/                           # Built-in monitoring apps (source stored in DB)
+├── ping_check.py               # ICMP ping (BasePoller)
+├── port_check.py               # TCP port check (BasePoller)
+├── http_check.py               # HTTP/HTTPS check (BasePoller)
+├── snmp_check.py               # SNMP scalar OID query (BasePoller)
+└── snmp_interface_poller.py    # Full ifTable/ifXTable monitoring (BasePoller)
+
 packages/
 ├── central/                    # Central management server
 │   ├── src/monctl_central/
 │   │   ├── main.py             # FastAPI app, lifespan, seed logic
 │   │   ├── config.py           # Settings via env vars (MONCTL_ prefix)
 │   │   ├── dependencies.py     # DI: get_db, get_clickhouse, require_auth, require_admin
-│   │   ├── cache.py            # Redis client wrapper + caching utilities
+│   │   ├── cache.py            # Redis client + caching (enrichment, interface ID, refresh flags)
 │   │   ├── storage/
-│   │   │   ├── models.py       # SQLAlchemy models (all PostgreSQL tables)
-│   │   │   └── clickhouse.py   # ClickHouse client wrapper, schemas, queries
-│   │   ├── api/router.py       # Main API router (mounts all sub-routers at /v1/)
+│   │   │   ├── models.py       # SQLAlchemy models (33 models, all PostgreSQL tables)
+│   │   │   └── clickhouse.py   # ClickHouse client, DDL, insert/query methods
+│   │   ├── api/router.py       # Main router (mounts 25+ sub-routers at /v1/)
 │   │   ├── auth/               # JWT cookie auth (login, refresh, me)
-│   │   │   ├── router.py       # POST /login, /logout, /refresh, GET /me
-│   │   │   └── service.py      # JWT creation/validation, bcrypt hashing
-│   │   ├── devices/router.py   # Device CRUD + server-side sort/filter/pagination
+│   │   ├── devices/router.py   # Device CRUD, monitoring config, interface metadata, credentials
 │   │   ├── collectors/router.py # Collector registration, approval, heartbeat
-│   │   ├── collector_api/router.py # /api/v1/ endpoints collectors call
-│   │   ├── apps/router.py      # App CRUD + assignment CRUD
-│   │   ├── results/router.py   # Check results query API (reads from ClickHouse)
-│   │   ├── credentials/
-│   │   │   ├── router.py       # Credential CRUD (secrets never returned)
-│   │   │   └── crypto.py       # AES-256-GCM encrypt/decrypt
-│   │   ├── credential_keys/router.py  # Reusable credential field definitions
-│   │   ├── templates/router.py # Device templates (bulk app assignment)
-│   │   ├── alerting/           # Alert rules + evaluation engine
-│   │   ├── tls/router.py       # TLS certificate management
-│   │   ├── settings/router.py  # System settings (data retention, etc.)
+│   │   ├── collector_api/router.py # /api/v1/ endpoints collectors call (jobs, results, credentials)
+│   │   ├── apps/router.py      # App CRUD + assignment CRUD + version management
+│   │   ├── results/router.py   # ClickHouse query API (history, latest, interfaces)
+│   │   ├── credentials/        # Credential CRUD, types, crypto
+│   │   ├── credential_keys/    # Reusable credential field definitions
+│   │   ├── connectors/         # Connector CRUD + versions
+│   │   ├── alerting/           # Alert definitions, instances, evaluation engine, event policies
+│   │   ├── events/             # Active/cleared events, acknowledgement
+│   │   ├── packs/              # Monitoring pack import/export
+│   │   ├── python_modules/     # Package registry + PyPI import + wheel distribution
+│   │   ├── docker_infra/       # Docker host monitoring (stats, logs, events, images)
+│   │   ├── roles/              # Custom RBAC roles + permissions
+│   │   ├── templates/router.py # Monitoring templates (bulk app assignment)
 │   │   ├── tenants/router.py   # Multi-tenant support
-│   │   ├── users/router.py     # User CRUD + timezone preference
-│   │   ├── device_types/router.py # Device type catalogue
-│   │   ├── registration_tokens/router.py # Collector registration tokens
-│   │   ├── collector_groups/router.py # Collector group management
+│   │   ├── users/router.py     # User CRUD + timezone + API keys
+│   │   ├── settings/router.py  # System settings (retention, intervals, etc.)
 │   │   └── scheduler/          # Leader election + background tasks
 │   ├── frontend/               # React SPA
 │   │   └── src/
-│   │       ├── main.tsx         # Entry point + React Query client
-│   │       ├── App.tsx          # React Router configuration
 │   │       ├── api/
-│   │       │   ├── client.ts    # fetch() wrapper (apiGet, apiPost, apiPut, apiDelete)
-│   │       │   └── hooks.ts     # React Query hooks for ALL API endpoints
-│   │       ├── types/api.ts     # TypeScript types for ALL API responses
-│   │       ├── lib/utils.ts     # formatDate(dateStr, timezone), timeAgo(), cn()
-│   │       ├── hooks/
-│   │       │   ├── useAuth.tsx  # Auth context (user, login, logout, refresh)
-│   │       │   └── useTimezone.ts # Returns user's timezone preference
-│   │       ├── pages/           # One file per page
-│   │       ├── components/      # Shared UI components
-│   │       └── layouts/         # Sidebar + Header + AppLayout
-│   └── alembic/                # Database migrations
+│   │       │   ├── client.ts   # fetch() wrapper (apiGet, apiPost, apiPut, apiPatch, apiDelete)
+│   │       │   └── hooks.ts    # 114 React Query hooks for ALL API endpoints
+│   │       ├── types/api.ts    # 90+ TypeScript interfaces for API responses
+│   │       ├── pages/          # 26 page components
+│   │       ├── components/     # 18 reusable UI components
+│   │       ├── hooks/          # useAuth, useTimezone
+│   │       └── layouts/        # Sidebar + Header + AppLayout
+│   └── alembic/                # 41 database migrations
 ├── collector/                  # Collector node
 │   └── src/monctl_collector/
 │       ├── config.py           # YAML + env config
-│       ├── central/api_client.py # HTTP client for /api/v1/
+│       ├── central/
+│       │   ├── api_client.py   # HTTP client for /api/v1/
+│       │   └── credentials.py  # Credential fetch + local encrypted cache
 │       ├── polling/
-│       │   ├── engine.py       # Min-heap deadline scheduler
+│       │   ├── engine.py       # Min-heap deadline scheduler + connector instantiation
 │       │   └── base.py         # BasePoller abstract class
-│       ├── apps/manager.py     # App download + virtualenv management
-│       ├── forward/forwarder.py # Result batching + posting
-│       ├── cache/              # Local SQLite + distributed cache
-│       ├── cluster/            # Gossip protocol, membership
-│       ├── jobs/               # Job scheduling, work stealing
-│       └── peer/               # gRPC client/server
+│       ├── apps/manager.py     # App/connector download, venv management, class loading
+│       ├── forward/forwarder.py # Result batching + posting to central
+│       ├── cache/
+│       │   ├── local_cache.py  # SQLite backend (jobs, results, credentials, app_cache)
+│       │   ├── app_cache_sync.py  # Syncs app cache with central
+│       │   └── app_cache_accessor.py # Runtime accessor for apps
+│       ├── jobs/               # Job models, scheduling, work stealing
+│       └── peer/               # gRPC client/server for inter-collector communication
 ├── common/                     # Shared: monctl_common.utils (utc_now, hash_api_key)
-└── sdk/                        # SDK package
+└── sdk/                        # SDK package (base classes, testing utilities)
 ```
+
+---
+
+## Key Subsystems
+
+### Credential System
+
+**Storage**: `Credential` model with AES-256-GCM encrypted `secret_data` column.
+
+**Types**: Managed via `CredentialType` table (CRUD at `/v1/credentials/types`). Used as dropdown in credential creation UI — prevents typos.
+
+**Resolution chain** (for connector bindings, in order of precedence):
+1. `AssignmentCredentialOverride` — per-assignment, per-connector-alias override
+2. `AppAssignment.credential_id` — assignment-level credential
+3. `Device.default_credential_id` — device-level fallback
+
+**Device credentials**: `Device.credentials` JSONB column maps `{credential_type: credential_id}` for per-protocol credential assignment (e.g., separate SNMP and SSH credentials).
+
+### Connector System
+
+**App-level bindings**: `AppConnectorBinding` declares which connectors an app requires (e.g., snmp_interface_poller requires a "snmp" connector). Managed in the App Detail UI.
+
+**Loading**: `apps/manager.py` downloads connector code from central, installs venvs, and loads classes. Venv site-packages are **permanently added to sys.path** so lazy imports (e.g., `import pysnmp`) work at runtime.
+
+**SNMP Connector**: Accepts both `snmp_version` and `version` credential keys for backward compatibility. Builds pysnmp v7 auth objects for v1/v2c/v3.
+
+### Interface Monitoring
+
+**Metadata**: `InterfaceMetadata` table caches stable interface identity `(device_id, if_name)` with `polling_enabled`, `alerting_enabled`, `poll_metrics` settings.
+
+**Targeted polling**: GetJobs injects `monitored_interfaces` list (only polling_enabled=True interfaces) into job parameters. Poller uses targeted SNMP GET instead of full walk.
+
+**Name resolution**: In targeted GET mode, poller uses authoritative `if_name` from metadata rather than SNMP response, preventing incorrect names when SNMP fails.
+
+**Metadata refresh**: `POST /v1/devices/{id}/interface-metadata/refresh` sets a Redis flag. Next job-fetch omits `monitored_interfaces`, forcing a full SNMP walk to rediscover interfaces.
+
+**Rate calculation**: Central-side (not collector). Previous counters cached in Redis per interface. Delta/rate computed on result ingestion.
+
+**Multi-tier retention**: Raw (7 days), hourly rollup (90 days), daily rollup (730 days). Auto-tier selection based on query time range.
+
+### ClickHouse Tables
+
+| Table | Purpose | Key columns |
+|-------|---------|-------------|
+| `availability_latency` | Ping/port/HTTP check results | state, rtt_ms, response_time_ms, reachable |
+| `performance` | Custom metric results | component, component_type, metric_names[], metric_values[] |
+| `interface` | Per-interface SNMP data | interface_id, in/out octets, rates, errors, discards, utilization |
+| `config` | Configuration tracking | config_key, config_value, config_hash |
+| `events` | Collector events | TTL 30 days |
+
+Each table has a `*_latest` materialized view (ReplacingMergeTree) for instant latest-per-key lookups. Interface also has `interface_hourly` and `interface_daily` rollup tables.
+
+**History query default**: `GET /v1/results` queries `availability_latency`, `performance`, `config` by default (NOT `interface` — interface data has its own dedicated endpoints to avoid flooding the History tab with one row per interface per poll).
+
+### Alerting System
+
+- `AppAlertDefinition`: Alert rules defined per app (DSL expression language)
+- `AlertInstance`: Active/resolved alert instances
+- `ThresholdOverride`: Per-device per-entity overrides
+- `EventPolicy`: Rules for promoting alerts to events
+- Background evaluation engine with leader election
 
 ---
 
@@ -126,161 +191,25 @@ Conventions:
 
 **File**: `packages/central/alembic/versions/<revision_id>_<description>.py`
 
-Naming convention: `<8-char alphanumeric id>_<snake_case_description>.py` with sequential down_revision chain.
-
-```python
-revision = "m5n6o7p8q9r0"
-down_revision = "n6o7p8q9r0s1"  # Previous migration
-
-def upgrade() -> None:
-    op.create_table(
-        "my_entities",
-        sa.Column("id", UUID(as_uuid=True), primary_key=True),
-        sa.Column("name", sa.String(255), unique=True, nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default="now()"),
-    )
-
-def downgrade() -> None:
-    op.drop_table("my_entities")
-```
+Find the current head revision in the existing migration files. Naming: `<alphanumeric id>_<snake_case_description>.py`.
 
 Migrations run automatically on container startup with an advisory lock (safe for multi-instance).
 
 ### Step 3: Backend Router
 
-**File**: `packages/central/src/monctl_central/my_feature/router.py`
+Standard pattern (see existing routers):
+- `_fmt()` function to serialize model → dict
+- Pydantic `BaseModel` for request validation
+- `get_db` + `require_auth` dependencies
+- Response format: `{"status": "success", "data": ...}`
+- Register in `api/router.py`
 
-```python
-"""My feature endpoints."""
-from __future__ import annotations
-import uuid
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-from monctl_central.dependencies import get_db, require_auth
-from monctl_central.storage.models import MyEntity
-from monctl_common.utils import utc_now
+### Step 4: Frontend (Types → Hooks → Page → Route)
 
-router = APIRouter()
-
-def _fmt(e: MyEntity) -> dict:
-    return {
-        "id": str(e.id),
-        "name": e.name,
-        "description": e.description,
-        "created_at": e.created_at.isoformat() if e.created_at else None,
-    }
-
-class CreateRequest(BaseModel):
-    name: str
-    description: str | None = None
-
-@router.get("")
-async def list_entities(db: AsyncSession = Depends(get_db), auth: dict = Depends(require_auth)):
-    rows = (await db.execute(select(MyEntity).order_by(MyEntity.name))).scalars().all()
-    return {"status": "success", "data": [_fmt(e) for e in rows]}
-
-@router.post("", status_code=status.HTTP_201_CREATED)
-async def create_entity(req: CreateRequest, db: AsyncSession = Depends(get_db), auth: dict = Depends(require_auth)):
-    entity = MyEntity(name=req.name, description=req.description)
-    db.add(entity)
-    await db.flush()
-    return {"status": "success", "data": _fmt(entity)}
-
-@router.put("/{entity_id}")
-async def update_entity(entity_id: str, req: CreateRequest, db: AsyncSession = Depends(get_db), auth: dict = Depends(require_auth)):
-    entity = await db.get(MyEntity, uuid.UUID(entity_id))
-    if not entity:
-        raise HTTPException(status_code=404, detail="Not found")
-    entity.name = req.name
-    entity.updated_at = utc_now()
-    return {"status": "success", "data": _fmt(entity)}
-
-@router.delete("/{entity_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_entity(entity_id: str, db: AsyncSession = Depends(get_db), auth: dict = Depends(require_auth)):
-    entity = await db.get(MyEntity, uuid.UUID(entity_id))
-    if not entity:
-        raise HTTPException(status_code=404, detail="Not found")
-    await db.delete(entity)
-```
-
-**Register in** `api/router.py`:
-```python
-from monctl_central.my_feature.router import router as my_feature_router
-api_router.include_router(my_feature_router, prefix="/my-entities", tags=["my-feature"])
-```
-
-### Step 4: TypeScript Types
-
-**File**: `packages/central/frontend/src/types/api.ts`
-
-```typescript
-export interface MyEntity {
-  id: string;
-  name: string;
-  description: string | null;
-  created_at: string;
-}
-```
-
-### Step 5: React Query Hooks
-
-**File**: `packages/central/frontend/src/api/hooks.ts`
-
-```typescript
-export function useMyEntities() {
-  return useQuery({
-    queryKey: ["my-entities"],
-    queryFn: () => apiGet<MyEntity[]>("/my-entities"),
-    select: (res) => res.data,
-    refetchInterval: 30_000,
-  });
-}
-
-export function useCreateMyEntity() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (data: { name: string; description?: string }) =>
-      apiPost<MyEntity>("/my-entities", data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["my-entities"] });
-    },
-  });
-}
-
-export function useDeleteMyEntity() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => apiDelete(`/my-entities/${id}`),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["my-entities"] });
-    },
-  });
-}
-```
-
-### Step 6: Page Component
-
-**File**: `packages/central/frontend/src/pages/MyPage.tsx`
-
-Standard page structure pattern (see existing pages for reference):
-- Import hooks from `@/api/hooks.ts`
-- Import UI components from `@/components/ui/`
-- Loading state with `<Loader2>` spinner
-- Empty state with icon + message
-- Table or card layout for data
-- Dialog for create/edit forms
-- Use `formatDate(dateStr, tz)` with `useTimezone()` for all timestamps
-
-### Step 7: Routing + Navigation
-
-**`App.tsx`**: Add `<Route path="my-feature" element={<MyPage />} />`
-
-**`layouts/Sidebar.tsx`**: Add to `navItems` array:
-```typescript
-{ to: "/my-feature", icon: MyIcon, label: "My Feature", end: false },
-```
+1. **Types**: Add interface in `types/api.ts`
+2. **Hooks**: Add React Query hooks in `api/hooks.ts`
+3. **Page**: Create page in `pages/`
+4. **Route**: Add to `App.tsx` + `layouts/Sidebar.tsx`
 
 ---
 
@@ -305,70 +234,39 @@ Standard page structure pattern (see existing pages for reference):
 - All web API under `/v1/` (e.g., `/v1/devices`, `/v1/apps`)
 - Collector API under `/api/v1/` (e.g., `/api/v1/jobs`, `/api/v1/results`)
 - Use plural nouns: `/devices`, `/collectors`, `/apps`
-- Actions: `/collectors/{id}/approve`, `/templates/{id}/apply`
-- Sub-resources: `/users/{id}/tenants`
 
 ### Multi-Tenant Filtering
 
 ```python
 from monctl_central.dependencies import apply_tenant_filter
-stmt = select(Device)
 stmt = apply_tenant_filter(stmt, auth, Device.tenant_id)
 ```
-
-### Error Handling
-
-```python
-raise HTTPException(status_code=400, detail="Invalid input")
-raise HTTPException(status_code=404, detail="Not found")
-raise HTTPException(status_code=409, detail="Already exists")
-```
-
----
-
-## Frontend API Client
-
-**`api/client.ts`** wraps `fetch()` with:
-- `credentials: "include"` (sends cookies)
-- Auto-redirect to `/login` on 401
-- JSON content-type
-- Functions: `apiGet<T>()`, `apiPost<T>()`, `apiPut<T>()`, `apiDelete()`
-- Returns `ApiResponse<T>` = `{status: string, data: T}`
-
----
-
-## Database
-
-### PostgreSQL Models (storage/models.py)
-
-Key models: Device, Collector, CollectorCluster, CollectorGroup, App, AppVersion, AppAssignment, Credential, CredentialKey, CredentialValue, User, UserTenant, Tenant, AlertRule, AlertState, SystemSetting, TlsCertificate, Template, RegistrationToken, ApiKey, SnmpOid, DeviceType
-
-### ClickHouse (storage/clickhouse.py)
-
-- `check_results`: Time-series check results (TTL 90 days)
-- `check_results_latest`: Materialized view (ReplacingMergeTree) — latest per assignment
-- `events`: Collector events (TTL 30 days)
-- Query via: `ch.query_history()`, `ch.query_latest()`, `ch.insert_results()`
-
-### Timestamps
-
-- All stored in UTC (`DateTime(timezone=True)`)
-- Frontend uses `formatDate(dateStr, timezone)` from `lib/utils.ts`
-- User timezone stored in `User.timezone` column, accessed via `useTimezone()` hook
-- Charts (`AvailabilityChart`, `TimeRangePicker`) accept `timezone` prop
 
 ---
 
 ## Building & Deploying
 
-- Build locally: `docker build --platform linux/amd64 --no-cache -t monctl-central:latest -f docker/Dockerfile.central .`
-- Push: `docker save monctl-central:latest | ssh hans@192.168.1.41 'docker load'`
-- Distribute to central2-4 similarly
-- Restart: `ssh hans@<ip> 'cd /opt/monctl/central && docker compose -f docker-compose.central.yml down && docker compose -f docker-compose.central.yml up -d'`
+### Central
+```bash
+docker build --platform linux/amd64 --no-cache -t monctl-central:latest -f docker/Dockerfile.central .
+docker save monctl-central:latest | ssh monctl@10.145.210.41 'docker load'
+ssh monctl@10.145.210.41 'cd /opt/monctl/central && docker compose down && docker compose up -d'
+```
+
+### Collector
+```bash
+docker build --platform linux/amd64 --no-cache -t monctl-collector:latest -f docker/Dockerfile.collector-v2 .
+docker save monctl-collector:latest | ssh monctl@10.145.210.31 'docker load'
+ssh monctl@10.145.210.31 'cd /opt/monctl/collector && docker compose down && docker compose up -d'
+```
+
+**Important**:
+- Use `Dockerfile.collector-v2` (not `Dockerfile.collector`) — v2 uses CMD allowing docker-compose command override
 - No npm/node on servers — Dockerfile handles frontend build
 - No package-lock.json — uses `npm install` (not `npm ci`)
 - Always use `--no-cache` when rebuilding after source changes
 - Use `docker compose up -d` (not `restart`) to pick up new images
+- Deploy to ALL 4 central nodes and ALL 4 worker nodes
 
 ### Server Inventory
 
@@ -378,7 +276,7 @@ Key models: Device, Collector, CollectorCluster, CollectorGroup, App, AppVersion
 | Workers  | worker1-4      | 10.145.210.31 - .34    |
 | VIP      | (keepalived)   | 10.145.210.40          |
 
-SSH user: `monctl` for all servers.
+SSH user: `monctl` for all servers. Compose files at `/opt/monctl/{central,collector}/docker-compose.yml`.
 
 ### Code Style
 
