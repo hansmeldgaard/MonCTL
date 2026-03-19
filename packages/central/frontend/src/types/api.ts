@@ -233,6 +233,10 @@ export interface Assignment {
   config: Record<string, unknown>;
   enabled: boolean;
   use_latest: boolean;
+  credential_id: string | null;
+  credential_name: string | null;
+  credential_overrides?: { alias: string; credential_id: string; credential_name: string }[];
+  device_default_credential_name: string | null;
   created_at: string;
 }
 
@@ -250,6 +254,9 @@ export interface DeviceAssignment {
   use_latest: boolean;
   role: string | null;
   credential_id: string | null;
+  credential_name: string | null;
+  credential_overrides?: { alias: string; credential_id: string; credential_name: string }[];
+  device_default_credential_name: string | null;
   connector_bindings?: ConnectorBindingInfo[];
   created_at: string;
 }

@@ -299,6 +299,38 @@ async def list_assignments(
         dev_result = await db.execute(select(Device).where(Device.id.in_(device_ids)))
         devices = {d.id: d for d in dev_result.scalars().all()}
 
+    # ── Resolve credential names for display ──────────────────────────
+    from monctl_central.storage.models import Credential, AssignmentCredentialOverride
+
+    all_cred_ids: set[uuid.UUID] = set()
+    for row in rows:
+        a = row.AppAssignment
+        if a.credential_id:
+            all_cred_ids.add(a.credential_id)
+        if a.device_id and a.device_id in devices:
+            dev = devices[a.device_id]
+            if dev.default_credential_id:
+                all_cred_ids.add(dev.default_credential_id)
+
+    # Load credential overrides for all assignments
+    assignment_ids = [row.AppAssignment.id for row in rows]
+    overrides_map: dict[uuid.UUID, dict[str, uuid.UUID]] = {}
+    if assignment_ids:
+        override_stmt = select(AssignmentCredentialOverride).where(
+            AssignmentCredentialOverride.assignment_id.in_(assignment_ids)
+        )
+        override_result = await db.execute(override_stmt)
+        for ov in override_result.scalars().all():
+            overrides_map.setdefault(ov.assignment_id, {})[ov.alias] = ov.credential_id
+            all_cred_ids.add(ov.credential_id)
+
+    # Fetch all credential names in one query
+    cred_name_map: dict[uuid.UUID, str] = {}
+    if all_cred_ids:
+        cred_stmt = select(Credential.id, Credential.name).where(Credential.id.in_(all_cred_ids))
+        cred_rows = (await db.execute(cred_stmt)).all()
+        cred_name_map = {r.id: r.name for r in cred_rows}
+
     return {
         "status": "success",
         "data": [
@@ -332,6 +364,25 @@ async def list_assignments(
                 "enabled": row.AppAssignment.enabled,
                 "use_latest": row.AppAssignment.use_latest,
                 "role": row.AppAssignment.role,
+                "credential_id": str(row.AppAssignment.credential_id) if row.AppAssignment.credential_id else None,
+                "credential_name": cred_name_map.get(row.AppAssignment.credential_id) if row.AppAssignment.credential_id else None,
+                "credential_overrides": [
+                    {
+                        "alias": alias,
+                        "credential_id": str(cred_id),
+                        "credential_name": cred_name_map.get(cred_id, ""),
+                    }
+                    for alias, cred_id in overrides_map.get(row.AppAssignment.id, {}).items()
+                ],
+                "device_default_credential_name": (
+                    cred_name_map.get(devices[row.AppAssignment.device_id].default_credential_id)
+                    if (
+                        row.AppAssignment.device_id
+                        and row.AppAssignment.device_id in devices
+                        and devices[row.AppAssignment.device_id].default_credential_id
+                    )
+                    else None
+                ),
                 "connector_bindings": [
                     {
                         "id": str(b.id),

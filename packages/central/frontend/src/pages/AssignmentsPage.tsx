@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { ListChecks, Loader2, Search } from "lucide-react";
+import { CredentialCell } from "@/components/CredentialCell.tsx";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Input } from "@/components/ui/input.tsx";
@@ -82,6 +83,7 @@ export function AssignmentsPage() {
                   <TableHead>Device</TableHead>
                   <TableHead>Device Address</TableHead>
                   <TableHead>Schedule</TableHead>
+                  <TableHead>Credential(s)</TableHead>
                   <TableHead>Enabled</TableHead>
                   <TableHead>Created</TableHead>
                 </TableRow>
@@ -111,6 +113,13 @@ export function AssignmentsPage() {
                     </TableCell>
                     <TableCell className="text-zinc-400">
                       {assignment.schedule_human}
+                    </TableCell>
+                    <TableCell className="text-zinc-400">
+                      <CredentialCell
+                        credentialName={assignment.credential_name}
+                        credentialOverrides={assignment.credential_overrides}
+                        deviceDefaultCredentialName={assignment.device_default_credential_name}
+                      />
                     </TableCell>
                     <TableCell>
                       <Badge

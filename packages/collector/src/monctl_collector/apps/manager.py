@@ -244,8 +244,8 @@ class AppManager:
         """Dynamically load the BasePoller subclass from disk.
 
         Uses importlib to load module.py from the app directory.
-        The venv's site-packages are injected into sys.path so that imports
-        inside module.py resolve against the correct venv.
+        The venv's site-packages are kept in sys.path so that lazy imports
+        (e.g. pysnmp in connectors) resolve correctly at runtime.
         """
         app_dir = self._apps_dir / app_id / version
         meta = json.loads((app_dir / "metadata.json").read_text())
@@ -261,24 +261,20 @@ class AppManager:
                 if sp.exists():
                     site_packages.append(str(sp))
 
-        # Inject venv site-packages temporarily
-        orig_path = list(sys.path)
+        # Inject venv site-packages permanently so lazy imports work at runtime
         for sp in site_packages:
             if sp not in sys.path:
                 sys.path.insert(0, sp)
 
-        try:
-            module_path = app_dir / "module.py"
-            spec = importlib.util.spec_from_file_location(
-                f"monctl_app_{app_id}_{version}",
-                str(module_path),
-            )
-            if spec is None or spec.loader is None:
-                raise ImportError(f"Cannot load spec for {module_path}")
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-        finally:
-            sys.path[:] = orig_path
+        module_path = app_dir / "module.py"
+        spec = importlib.util.spec_from_file_location(
+            f"monctl_app_{app_id}_{version}",
+            str(module_path),
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError(f"Cannot load spec for {module_path}")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
 
         cls = getattr(mod, entry_class, None)
         if cls is None:
@@ -363,23 +359,20 @@ class AppManager:
                 if sp.exists():
                     site_packages.append(str(sp))
 
-        orig_path = list(sys.path)
+        # Keep venv site-packages in sys.path permanently for lazy imports
         for sp in site_packages:
             if sp not in sys.path:
                 sys.path.insert(0, sp)
 
-        try:
-            module_path = conn_dir / "module.py"
-            spec = importlib.util.spec_from_file_location(
-                f"monctl_connector_{connector_id}_{version_id}",
-                str(module_path),
-            )
-            if spec is None or spec.loader is None:
-                raise ImportError(f"Cannot load spec for {module_path}")
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-        finally:
-            sys.path[:] = orig_path
+        module_path = conn_dir / "module.py"
+        spec = importlib.util.spec_from_file_location(
+            f"monctl_connector_{connector_id}_{version_id}",
+            str(module_path),
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError(f"Cannot load spec for {module_path}")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
 
         cls = getattr(mod, entry_class, None)
         if cls is None:

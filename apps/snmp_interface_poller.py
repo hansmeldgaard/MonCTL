@@ -110,9 +110,15 @@ class Poller(BasePoller):
 
         try:
             raw: dict[str, dict[int, str | int]] = {}
+            monitored_names: dict[int, str] = {}
+            snmp_error: str | None = None
 
             if monitored:
                 # ── Targeted GET mode ──────────────────────────────────────
+                # Build lookup from monitored metadata (authoritative names)
+                for iface in monitored:
+                    monitored_names[int(iface["if_index"])] = iface.get("if_name", "")
+
                 oid_requests = []
                 for iface in monitored:
                     idx = int(iface["if_index"])
@@ -133,6 +139,8 @@ class Poller(BasePoller):
                     batch_meta.append(batch)
 
                 # Use get_many if available (single session), else fallback
+                snmp_error = None
+                get_errors: list[str] = []
                 if hasattr(snmp, "get_many"):
                     try:
                         all_results = await snmp.get_many(oid_batches)
@@ -141,8 +149,20 @@ class Poller(BasePoller):
                                 val = all_results.get(full_oid)
                                 if val is not None:
                                     raw.setdefault(oid_name, {})[if_index] = val
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        get_errors.append(f"get_many: {type(exc).__name__}: {exc}")
+                        # Fallback to individual GET calls
+                        for i, batch in enumerate(batch_meta):
+                            try:
+                                result = await snmp.get(oid_batches[i])
+                                for oid_name, if_index, full_oid in batch:
+                                    val = result.get(full_oid)
+                                    if val is not None:
+                                        raw.setdefault(oid_name, {})[if_index] = val
+                            except Exception as exc2:
+                                if len(get_errors) < 3:
+                                    get_errors.append(f"get[{i}]: {type(exc2).__name__}: {exc2}")
+                                continue
                 else:
                     for i, batch in enumerate(batch_meta):
                         try:
@@ -151,8 +171,12 @@ class Poller(BasePoller):
                                 val = result.get(full_oid)
                                 if val is not None:
                                     raw.setdefault(oid_name, {})[if_index] = val
-                        except Exception:
+                        except Exception as exc:
+                            if len(get_errors) < 3:
+                                get_errors.append(f"get[{i}]: {type(exc).__name__}: {exc}")
                             continue
+                if get_errors:
+                    snmp_error = "; ".join(get_errors)
 
                 if_indices = [int(iface["if_index"]) for iface in monitored]
                 metrics_lookup = {
@@ -180,7 +204,11 @@ class Poller(BasePoller):
             # Build per-interface rows
             interface_rows = []
             for idx in if_indices:
-                if_name = str(raw.get("ifName", {}).get(idx, raw.get("ifDescr", {}).get(idx, f"if{idx}")))
+                # In targeted mode, prefer the authoritative name from metadata
+                if monitored and monitored_names.get(idx):
+                    if_name = monitored_names[idx]
+                else:
+                    if_name = str(raw.get("ifName", {}).get(idx, raw.get("ifDescr", {}).get(idx, f"if{idx}")))
                 if_alias = str(raw.get("ifAlias", {}).get(idx, ""))
                 oper_status = _OPER_STATUS.get(_safe_int(raw.get("ifOperStatus", {}).get(idx, 4), 4), "unknown")
 
@@ -234,11 +262,12 @@ class Poller(BasePoller):
                 metrics=[
                     {"name": "interface_count", "value": len(interface_rows)},
                     {"name": "poll_mode", "value": 1 if monitored else 0},
+                    {"name": "snmp_oids_collected", "value": len(raw)},
                 ],
                 config_data=None,
                 status="ok" if interface_rows else "unknown",
                 reachable=True,
-                error_message=None,
+                error_message=snmp_error,
                 execution_time_ms=execution_ms,
                 interface_rows=interface_rows,
             )

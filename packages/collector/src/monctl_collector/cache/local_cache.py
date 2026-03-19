@@ -229,6 +229,17 @@ class LocalCache:
                 "max_execution_time": job.max_execution_time,
                 "enabled": job.enabled,
                 "updated_at": job.updated_at,
+                "connector_bindings": [
+                    {
+                        "alias": b.alias,
+                        "connector_id": b.connector_id,
+                        "connector_version_id": b.connector_version_id,
+                        "credential_name": b.credential_name,
+                        "use_latest": b.use_latest,
+                        "settings": b.settings,
+                    }
+                    for b in (job.connector_bindings or [])
+                ],
             })
             job_id = job.job_id
             updated_at = job.updated_at

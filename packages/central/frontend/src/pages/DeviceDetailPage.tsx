@@ -87,6 +87,7 @@ import { ConfigDataRenderer } from "@/components/ConfigDataRenderer.tsx";
 import { ApplyTemplateDialog } from "@/components/ApplyTemplateDialog.tsx";
 import { PerformanceChart } from "@/components/PerformanceChart.tsx";
 import { InterfaceTrafficChart } from "@/components/InterfaceTrafficChart.tsx";
+import { CredentialCell } from "@/components/CredentialCell.tsx";
 import { timeAgo, formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 
@@ -2356,7 +2357,7 @@ function AssignmentsTab({ deviceId }: { deviceId: string }) {
             <TableHead className="text-xs py-1">App</TableHead>
             <TableHead className="text-xs py-1">Role</TableHead>
             <TableHead className="text-xs py-1">Interval</TableHead>
-            <TableHead className="text-xs py-1">Connectors</TableHead>
+            <TableHead className="text-xs py-1">Credential(s)</TableHead>
             <TableHead className="text-xs py-1">Enabled</TableHead>
             <TableHead className="text-xs py-1 text-right">Actions</TableHead>
           </TableRow>
@@ -2378,18 +2379,11 @@ function AssignmentsTab({ deviceId }: { deviceId: string }) {
                 {a.schedule_type === "interval" ? formatInterval(Number(a.schedule_value)) : a.schedule_value}
               </TableCell>
               <TableCell className="py-1.5">
-                {a.connector_bindings && a.connector_bindings.length > 0 ? (
-                  <div className="flex flex-wrap gap-1">
-                    {a.connector_bindings.map((cb) => (
-                      <Badge key={cb.id || cb.alias} variant="info" className="text-[10px] gap-1">
-                        <Plug className="h-2.5 w-2.5" />
-                        {cb.alias}
-                      </Badge>
-                    ))}
-                  </div>
-                ) : (
-                  <span className="text-zinc-600 text-xs">{"\u2014"}</span>
-                )}
+                <CredentialCell
+                  credentialName={a.credential_name}
+                  credentialOverrides={a.credential_overrides}
+                  deviceDefaultCredentialName={a.device_default_credential_name}
+                />
               </TableCell>
               <TableCell className="py-1.5">
                 <Badge variant={a.enabled ? "success" : "default"} className="text-[10px]">
