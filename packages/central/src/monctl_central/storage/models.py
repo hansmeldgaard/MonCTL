@@ -266,6 +266,18 @@ class CredentialTemplate(Base):
     )
 
 
+class CredentialType(Base):
+    """Managed list of credential types (snmpv3, ssh_password, api_key, etc.)."""
+    __tablename__ = "credential_types"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default="now()"
+    )
+
+
 class CredentialValue(Base):
     """A key-value pair belonging to a credential."""
     __tablename__ = "credential_values"

@@ -308,6 +308,13 @@ export interface ConfigKeysResponse {
 
 // ── Credentials ───────────────────────────────────────────
 
+export interface CredentialType {
+  id: string;
+  name: string;
+  description: string | null;
+  created_at: string;
+}
+
 export interface Credential {
   id: string;
   name: string;

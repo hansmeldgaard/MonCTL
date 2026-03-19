@@ -54,6 +54,7 @@ import {
   useConnectors,
   useCreateAssignment,
   useCredentials,
+  useCredentialTypes,
   useDeleteAssignment,
   useUpdateAssignment,
   useDevice,
@@ -2482,6 +2483,7 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
   const { data: tenants } = useTenants();
   const { data: collectorGroups } = useCollectorGroups();
   const { data: allCredentials } = useCredentials();
+  const { data: credentialTypes } = useCredentialTypes();
   const updateDevice = useUpdateDevice();
 
   // Device fields
@@ -2584,10 +2586,15 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
     return map;
   }, [allCredentials]);
 
-  // Available credential types (those that have credentials AND aren't already assigned)
+  // Available credential types (from managed list, not already assigned)
   const availableTypes = useMemo(() => {
-    return Object.keys(credsByType).filter((t) => !(t in deviceCreds));
-  }, [credsByType, deviceCreds]);
+    const typeNames = (credentialTypes ?? []).map((ct) => ct.name);
+    // Also include types that have credentials but aren't in the managed list
+    for (const t of Object.keys(credsByType)) {
+      if (!typeNames.includes(t)) typeNames.push(t);
+    }
+    return typeNames.filter((t) => !(t in deviceCreds));
+  }, [credentialTypes, credsByType, deviceCreds]);
 
   async function handleSaveCredentials() {
     setCredError(null);

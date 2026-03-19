@@ -15,7 +15,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 
@@ -138,13 +138,83 @@ async def list_credential_types(
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
-    """Return distinct credential_type values in use."""
+    """Return all managed credential types."""
+    from monctl_central.storage.models import CredentialType
     rows = (await db.execute(
-        select(Credential.credential_type)
-        .distinct()
-        .order_by(Credential.credential_type)
+        select(CredentialType).order_by(CredentialType.name)
     )).scalars().all()
-    return {"status": "success", "data": rows}
+    return {
+        "status": "success",
+        "data": [
+            {"id": str(t.id), "name": t.name, "description": t.description, "created_at": t.created_at.isoformat() if t.created_at else None}
+            for t in rows
+        ],
+    }
+
+
+class CredentialTypeRequest(BaseModel):
+    name: str
+    description: str | None = None
+
+
+@router.post("/types", status_code=status.HTTP_201_CREATED)
+async def create_credential_type(
+    request: CredentialTypeRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Create a new credential type."""
+    from monctl_central.storage.models import CredentialType
+    ct = CredentialType(name=request.name, description=request.description)
+    db.add(ct)
+    await db.flush()
+    return {
+        "status": "success",
+        "data": {"id": str(ct.id), "name": ct.name, "description": ct.description},
+    }
+
+
+@router.put("/types/{type_id}")
+async def update_credential_type(
+    type_id: str,
+    request: CredentialTypeRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Update a credential type."""
+    from monctl_central.storage.models import CredentialType
+    from monctl_common.utils import utc_now
+    ct = await db.get(CredentialType, uuid.UUID(type_id))
+    if not ct:
+        raise HTTPException(status_code=404, detail="Credential type not found")
+    old_name = ct.name
+    ct.name = request.name
+    ct.description = request.description
+    await db.flush()
+    # Update all credentials that used the old name
+    if old_name != request.name:
+        await db.execute(
+            text("UPDATE credentials SET credential_type = :new WHERE credential_type = :old"),
+            {"new": request.name, "old": old_name},
+        )
+    return {
+        "status": "success",
+        "data": {"id": str(ct.id), "name": ct.name, "description": ct.description},
+    }
+
+
+@router.delete("/types/{type_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_credential_type(
+    type_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Delete a credential type."""
+    from monctl_central.storage.models import CredentialType
+    ct = await db.get(CredentialType, uuid.UUID(type_id))
+    if not ct:
+        raise HTTPException(status_code=404, detail="Credential type not found")
+    await db.delete(ct)
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)

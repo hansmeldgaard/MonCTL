@@ -30,8 +30,12 @@ import {
   useCreateCredentialTemplate,
   useUpdateCredentialTemplate,
   useDeleteCredentialTemplate,
+  useCredentialTypes,
+  useCreateCredentialType,
+  useUpdateCredentialType,
+  useDeleteCredentialType,
 } from "@/api/hooks.ts";
-import type { Credential, CredentialKey, CredentialTemplate } from "@/types/api.ts";
+import type { Credential, CredentialKey, CredentialTemplate, CredentialType } from "@/types/api.ts";
 import { formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 
@@ -335,6 +339,7 @@ function CredentialsCard() {
   const { data: credentials, isLoading } = useCredentials();
   const { data: credentialKeys } = useCredentialKeys();
   const { data: templates } = useCredentialTemplates();
+  const { data: credentialTypes } = useCredentialTypes();
   const createCredential = useCreateCredential();
   const updateCredential = useUpdateCredential();
   const deleteCredential = useDeleteCredential();
@@ -561,7 +566,14 @@ function CredentialsCard() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="cr-type">Type</Label>
-              <Input id="cr-type" placeholder="e.g. snmp_community" value={addType} onChange={(e) => setAddType(e.target.value)} disabled={!!addTemplateId} />
+              <Select id="cr-type" value={addType} onChange={(e) => setAddType(e.target.value)} disabled={!!addTemplateId}>
+                {(credentialTypes ?? []).map((ct) => (
+                  <option key={ct.id} value={ct.name}>{ct.name}{ct.description ? ` — ${ct.description}` : ""}</option>
+                ))}
+                {(!credentialTypes || credentialTypes.length === 0) && (
+                  <option value={addType}>{addType}</option>
+                )}
+              </Select>
             </div>
           </div>
           <div className="space-y-1.5">
@@ -1160,6 +1172,142 @@ function CredentialTemplatesCard() {
   );
 }
 
+// ── Credential Types Section ─────────────────────────────
+
+function CredentialTypesCard() {
+  const tz = useTimezone();
+  const { data: types, isLoading } = useCredentialTypes();
+  const createType = useCreateCredentialType();
+  const updateType = useUpdateCredentialType();
+  const deleteType = useDeleteCredentialType();
+
+  const [addOpen, setAddOpen] = useState(false);
+  const [addName, setAddName] = useState("");
+  const [addDesc, setAddDesc] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editDesc, setEditDesc] = useState("");
+
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault();
+    if (!addName.trim()) return;
+    await createType.mutateAsync({ name: addName.trim(), description: addDesc.trim() || undefined });
+    setAddName("");
+    setAddDesc("");
+    setAddOpen(false);
+  }
+
+  async function handleUpdate(id: string) {
+    if (!editName.trim()) return;
+    await updateType.mutateAsync({ id, data: { name: editName.trim(), description: editDesc.trim() || undefined } });
+    setEditingId(null);
+  }
+
+  function startEdit(t: CredentialType) {
+    setEditingId(t.id);
+    setEditName(t.name);
+    setEditDesc(t.description ?? "");
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex h-32 items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-brand-500" />
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Settings2 className="h-4 w-4" />
+            Credential Types
+            <Button size="sm" className="ml-auto gap-1.5" onClick={() => setAddOpen(true)}>
+              <Plus className="h-3.5 w-3.5" /> Add Type
+            </Button>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {(types ?? []).length === 0 ? (
+            <p className="text-sm text-zinc-500 py-8 text-center">No credential types defined.</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Description</TableHead>
+                  <TableHead>Created</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {(types ?? []).map((t) => (
+                  <TableRow key={t.id}>
+                    <TableCell className="font-mono text-sm">
+                      {editingId === t.id ? (
+                        <Input value={editName} onChange={(e) => setEditName(e.target.value)} className="h-7 text-sm" />
+                      ) : (
+                        <Badge variant="default">{t.name}</Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-zinc-400">
+                      {editingId === t.id ? (
+                        <Input value={editDesc} onChange={(e) => setEditDesc(e.target.value)} className="h-7 text-sm" placeholder="Description..." />
+                      ) : (
+                        t.description || <span className="text-zinc-600">{"\u2014"}</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-zinc-500 text-xs">{formatDate(t.created_at, tz)}</TableCell>
+                    <TableCell className="text-right">
+                      {editingId === t.id ? (
+                        <div className="flex items-center justify-end gap-1">
+                          <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => setEditingId(null)}>Cancel</Button>
+                          <Button size="sm" className="h-6 px-2 text-xs" onClick={() => handleUpdate(t.id)} disabled={updateType.isPending}>Save</Button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-end gap-1">
+                          <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => startEdit(t)} title="Edit">
+                            <Pencil className="h-3 w-3" />
+                          </Button>
+                          <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-red-400 hover:text-red-300" onClick={() => deleteType.mutate(t.id)} title="Delete">
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      <Dialog open={addOpen} onClose={() => setAddOpen(false)} title="New Credential Type">
+        <form onSubmit={handleCreate} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="ct-name">Name</Label>
+            <Input id="ct-name" placeholder="e.g. snmpv3" value={addName} onChange={(e) => setAddName(e.target.value)} autoFocus />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="ct-desc">Description <span className="text-zinc-500 font-normal">(optional)</span></Label>
+            <Input id="ct-desc" placeholder="e.g. SNMP version 3 credentials" value={addDesc} onChange={(e) => setAddDesc(e.target.value)} />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="secondary" onClick={() => setAddOpen(false)}>Cancel</Button>
+            <Button type="submit" disabled={createType.isPending}>
+              {createType.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              Create
+            </Button>
+          </DialogFooter>
+        </form>
+      </Dialog>
+    </>
+  );
+}
+
 // ── Main Page ────────────────────────────────────────────
 
 export function CredentialsPage() {
@@ -1176,11 +1324,15 @@ export function CredentialsPage() {
       <Tabs value={tab} onChange={setTab}>
         <TabsList>
           <TabTrigger value="credentials">Credentials</TabTrigger>
+          <TabTrigger value="types">Types</TabTrigger>
           <TabTrigger value="credential-keys">Credential Keys</TabTrigger>
           <TabTrigger value="templates">Templates</TabTrigger>
         </TabsList>
         <TabsContent value="credentials">
           <CredentialsCard />
+        </TabsContent>
+        <TabsContent value="types">
+          <CredentialTypesCard />
         </TabsContent>
         <TabsContent value="credential-keys">
           <CredentialKeysCard />

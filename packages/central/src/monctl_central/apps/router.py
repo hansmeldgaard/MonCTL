@@ -280,6 +280,7 @@ async def list_assignments(
         .join(AppVersion, AppAssignment.app_version_id == AppVersion.id)
         .outerjoin(DeviceModel, AppAssignment.device_id == DeviceModel.id)
         .options(selectinload(AppAssignment.connector_bindings))
+        .options(selectinload(App.connector_bindings))
     )
     if collector_id:
         stmt = stmt.where(AppAssignment.collector_id == uuid.UUID(collector_id))
@@ -380,6 +381,7 @@ async def list_assignments(
                         row.AppAssignment.device_id
                         and row.AppAssignment.device_id in devices
                         and devices[row.AppAssignment.device_id].default_credential_id
+                        and row.App.connector_bindings
                     )
                     else None
                 ),

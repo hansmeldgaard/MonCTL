@@ -14,6 +14,7 @@ import type {
   CredentialDetail,
   CredentialKey,
   CredentialTemplate,
+  CredentialType,
   CredentialTemplateField,
   Device,
   DeviceAssignment,
@@ -187,6 +188,48 @@ export function useCredentials() {
     queryFn: () => apiGet<Credential[]>("/credentials"),
     select: (res) => res.data,
     refetchInterval: POLL_LIST,
+  });
+}
+
+export function useCredentialTypes() {
+  return useQuery({
+    queryKey: ["credential-types"],
+    queryFn: () => apiGet<CredentialType[]>("/credentials/types"),
+    select: (res) => res.data,
+    refetchInterval: POLL_LIST,
+  });
+}
+
+export function useCreateCredentialType() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { name: string; description?: string }) =>
+      apiPost<CredentialType>("/credentials/types", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["credential-types"] });
+    },
+  });
+}
+
+export function useUpdateCredentialType() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: { name: string; description?: string } }) =>
+      apiPut<CredentialType>(`/credentials/types/${id}`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["credential-types"] });
+      qc.invalidateQueries({ queryKey: ["credentials"] });
+    },
+  });
+}
+
+export function useDeleteCredentialType() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/credentials/types/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["credential-types"] });
+    },
   });
 }
 
