@@ -17,7 +17,6 @@ import {
   Loader2,
   Monitor,
   Network,
-  Plug,
   Plus,
   RefreshCw,
   Save,
@@ -51,8 +50,6 @@ import { TimeRangePicker, rangeToTimestamps } from "@/components/TimeRangePicker
 import type { TimeRangeValue } from "@/components/TimeRangePicker.tsx";
 import {
   useCollectorGroups,
-  useCollectors,
-  useConnectors,
   useCreateAssignment,
   useCredentials,
   useCredentialTypes,
@@ -118,18 +115,10 @@ function AddAssignmentDialog({
   onClose,
 }: AddAssignmentDialogProps) {
   const { data: apps } = useApps();
-  const { data: collectors } = useCollectors();
-  const { data: connectors } = useConnectors();
-  const { data: credentials } = useCredentials();
   const [selectedAppId, setSelectedAppId] = useState("");
   const { data: appDetail } = useAppDetail(selectedAppId || undefined);
   const createAssignment = useCreateAssignment();
 
-  // "group" = let collector group handle routing; "specific" = pick a collector manually
-  const [routingMode, setRoutingMode] = useState<"group" | "specific">(
-    deviceCollectorGroupId ? "group" : "specific"
-  );
-  const [collectorId, setCollectorId] = useState("");
   const [scheduleType, setScheduleType] = useState("interval");
   const [scheduleValue, setScheduleValue] = useState("60");
   const [versionMode, setVersionMode] = useState<"latest" | "pinned">("latest");
@@ -139,31 +128,10 @@ function AddAssignmentDialog({
   const [configError, setConfigError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
 
-  // Connector bindings
-  interface BindingRow {
-    alias: string;
-    connector_id: string;
-    version_mode: "latest" | "pinned";
-    connector_version_id: string;
-    credential_id: string;
-    settings: string;
-  }
-  const [bindings, setBindings] = useState<BindingRow[]>([]);
-
   useEffect(() => {
     if (apps?.length && !selectedAppId) setSelectedAppId(apps[0].id);
   }, [apps, selectedAppId]);
 
-  useEffect(() => {
-    if (collectors?.length && !collectorId) setCollectorId(collectors[0].id);
-  }, [collectors, collectorId]);
-
-  // Reset routing mode when the dialog opens/device changes
-  useEffect(() => {
-    setRoutingMode(deviceCollectorGroupId ? "group" : "specific");
-  }, [deviceCollectorGroupId, open]);
-
-  // Reset version/config when app changes
   useEffect(() => {
     setVersionMode("latest");
     setSelectedVersionId("");
@@ -173,8 +141,6 @@ function AddAssignmentDialog({
 
   function reset() {
     setSelectedAppId(apps?.[0]?.id ?? "");
-    setCollectorId(collectors?.[0]?.id ?? "");
-    setRoutingMode(deviceCollectorGroupId ? "group" : "specific");
     setVersionMode("latest");
     setSelectedVersionId("");
     setScheduleType("interval");
@@ -183,7 +149,6 @@ function AddAssignmentDialog({
     setParsedConfig({});
     setConfigError(null);
     setFormError(null);
-    setBindings([]);
   }
 
   function handleClose() {
@@ -216,8 +181,8 @@ function AddAssignmentDialog({
       return;
     }
 
-    if (routingMode === "specific" && !collectorId) {
-      setFormError("Select a collector or switch to collector group routing.");
+    if (!deviceCollectorGroupId) {
+      setFormError("Device must be assigned to a collector group before adding assignments.");
       return;
     }
 
@@ -234,30 +199,15 @@ function AddAssignmentDialog({
     }
 
     try {
-      // Build connector bindings payload
-      const connectorBindings = bindings.length > 0 ? bindings.map((b) => {
-        let settings: Record<string, unknown> = {};
-        try { settings = JSON.parse(b.settings || "{}"); } catch { /* ignore */ }
-        return {
-          alias: b.alias,
-          connector_id: b.connector_id,
-          connector_version_id: b.version_mode === "latest" ? undefined : b.connector_version_id,
-          use_latest: b.version_mode === "latest",
-          credential_id: b.credential_id || undefined,
-          settings,
-        };
-      }) : undefined;
-
       await createAssignment.mutateAsync({
         app_id: selectedAppId,
         app_version_id: versionId,
-        collector_id: routingMode === "specific" ? collectorId : null,
+        collector_id: null,
         device_id: deviceId,
         schedule_type: scheduleType,
         schedule_value: scheduleValue,
         config,
         use_latest: versionMode === "latest",
-        connector_bindings: connectorBindings,
       });
       reset();
       onClose();
@@ -337,50 +287,17 @@ function AddAssignmentDialog({
           )}
         </div>
 
-        {/* Routing mode */}
-        <div className="space-y-2">
-          <Label>Collector Routing</Label>
-          {deviceCollectorGroupId && (
-            <label className="flex items-center gap-2.5 cursor-pointer rounded-md border border-zinc-700 px-3 py-2.5 hover:border-zinc-600 transition-colors">
-              <input
-                type="radio"
-                name="routing"
-                value="group"
-                checked={routingMode === "group"}
-                onChange={() => setRoutingMode("group")}
-                className="accent-brand-500"
-              />
-              <span className="text-sm text-zinc-200">
-                Use collector group
-                <span className="ml-1.5 text-xs text-zinc-500 font-normal">
-                  ({deviceCollectorGroupName ?? deviceCollectorGroupId})
-                </span>
-              </span>
-            </label>
-          )}
-          <label className="flex items-center gap-2.5 cursor-pointer rounded-md border border-zinc-700 px-3 py-2.5 hover:border-zinc-600 transition-colors">
-            <input
-              type="radio"
-              name="routing"
-              value="specific"
-              checked={routingMode === "specific"}
-              onChange={() => setRoutingMode("specific")}
-              className="accent-brand-500"
-            />
-            <span className="text-sm text-zinc-200">Use specific collector</span>
-          </label>
-
-          {routingMode === "specific" && (
-            <Select
-              id="aa-collector"
-              value={collectorId}
-              onChange={(e) => setCollectorId(e.target.value)}
-              className="mt-1"
-            >
-              {(collectors ?? []).map((c) => (
-                <option key={c.id} value={c.id}>{c.name || c.hostname}</option>
-              ))}
-            </Select>
+        {/* Collector Group (read-only) */}
+        <div className="space-y-1.5">
+          <Label>Collector Group</Label>
+          {deviceCollectorGroupId ? (
+            <p className="text-sm text-zinc-300 rounded-md border border-zinc-700 px-3 py-2.5">
+              {deviceCollectorGroupName ?? deviceCollectorGroupId}
+            </p>
+          ) : (
+            <p className="text-sm text-amber-400">
+              This device is not assigned to a collector group. Assign it to a group in Settings before adding apps.
+            </p>
           )}
         </div>
 
@@ -450,126 +367,6 @@ function AddAssignmentDialog({
           {configError && <p className="text-xs text-red-400">{configError}</p>}
         </div>
 
-        {/* Connector Bindings */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <Label className="flex items-center gap-1.5">
-              <Plug className="h-3.5 w-3.5" /> Connector Bindings
-            </Label>
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              className="gap-1"
-              onClick={() => setBindings([...bindings, {
-                alias: "",
-                connector_id: connectors?.[0]?.id ?? "",
-                version_mode: "latest",
-                connector_version_id: "",
-                credential_id: "",
-                settings: "{}",
-              }])}
-            >
-              <Plus className="h-3 w-3" /> Add Connector
-            </Button>
-          </div>
-          {bindings.map((b, idx) => (
-            <div key={idx} className="rounded-md border border-zinc-700 p-3 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-zinc-400">Binding #{idx + 1}</span>
-                <button
-                  type="button"
-                  onClick={() => setBindings(bindings.filter((_, i) => i !== idx))}
-                  className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                  title="Remove"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <Label className="text-xs">Alias</Label>
-                  <Input
-                    value={b.alias}
-                    onChange={(e) => {
-                      const next = [...bindings];
-                      next[idx] = { ...next[idx], alias: e.target.value };
-                      setBindings(next);
-                    }}
-                    placeholder="e.g. snmp_main"
-                    className="text-xs"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Connector</Label>
-                  <Select
-                    value={b.connector_id}
-                    onChange={(e) => {
-                      const next = [...bindings];
-                      next[idx] = { ...next[idx], connector_id: e.target.value, connector_version_id: "" };
-                      setBindings(next);
-                    }}
-                    className="text-xs"
-                  >
-                    <option value="">-- Select --</option>
-                    {(connectors ?? []).map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </Select>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <Label className="text-xs">Version</Label>
-                  <Select
-                    value={b.version_mode}
-                    onChange={(e) => {
-                      const next = [...bindings];
-                      next[idx] = { ...next[idx], version_mode: e.target.value as "latest" | "pinned" };
-                      setBindings(next);
-                    }}
-                    className="text-xs"
-                  >
-                    <option value="latest">Use Latest</option>
-                    <option value="pinned">Pin Version</option>
-                  </Select>
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Credential <span className="font-normal text-zinc-500">(opt.)</span></Label>
-                  <Select
-                    value={b.credential_id}
-                    onChange={(e) => {
-                      const next = [...bindings];
-                      next[idx] = { ...next[idx], credential_id: e.target.value };
-                      setBindings(next);
-                    }}
-                    className="text-xs"
-                  >
-                    <option value="">-- None --</option>
-                    {(credentials ?? []).map((cr) => (
-                      <option key={cr.id} value={cr.id}>{cr.name}</option>
-                    ))}
-                  </Select>
-                </div>
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Settings (JSON)</Label>
-                <textarea
-                  rows={2}
-                  value={b.settings}
-                  onChange={(e) => {
-                    const next = [...bindings];
-                    next[idx] = { ...next[idx], settings: e.target.value };
-                    setBindings(next);
-                  }}
-                  className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 font-mono text-xs text-zinc-100 focus:outline-none focus:ring-2 focus:ring-brand-500/50 resize-none"
-                  placeholder="{}"
-                />
-              </div>
-            </div>
-          ))}
-        </div>
-
         {formError && <p className="text-sm text-red-400">{formError}</p>}
 
         <DialogFooter>
@@ -597,8 +394,6 @@ interface EditAssignmentDialogProps {
 function EditAssignmentDialog({ assignment, open, onClose }: EditAssignmentDialogProps) {
   const updateAssignment = useUpdateAssignment();
   const { data: appDetail } = useAppDetail(assignment?.app.id);
-  const { data: connectors } = useConnectors();
-  const { data: credentials } = useCredentials();
 
   const [scheduleType, setScheduleType] = useState("interval");
   const [scheduleValue, setScheduleValue] = useState("60");
@@ -609,16 +404,7 @@ function EditAssignmentDialog({ assignment, open, onClose }: EditAssignmentDialo
   const [versionMode, setVersionMode] = useState<"latest" | "pinned">("latest");
   const [selectedVersionId, setSelectedVersionId] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
-  const [bindings, setBindings] = useState<{
-    alias: string;
-    connector_id: string;
-    version_mode: string;
-    connector_version_id: string;
-    credential_id: string;
-    settings: string;
-  }[]>([]);
 
-  // Populate fields when assignment changes
   useEffect(() => {
     if (assignment) {
       setScheduleType(assignment.schedule_type);
@@ -630,16 +416,6 @@ function EditAssignmentDialog({ assignment, open, onClose }: EditAssignmentDialo
       setSelectedVersionId(assignment.app_version_id);
       setConfigError(null);
       setFormError(null);
-      setBindings(
-        (assignment.connector_bindings ?? []).map((b) => ({
-          alias: b.alias,
-          connector_id: b.connector_id,
-          version_mode: b.use_latest ? "latest" : "pinned",
-          connector_version_id: b.connector_version_id,
-          credential_id: b.credential_id ?? "",
-          settings: JSON.stringify(b.settings ?? {}, null, 2),
-        })),
-      );
     }
   }, [assignment]);
 
@@ -671,19 +447,6 @@ function EditAssignmentDialog({ assignment, open, onClose }: EditAssignmentDialo
       return;
     }
 
-    // Build connector bindings payload
-    const connectorBindingsPayload = bindings.map((b) => {
-      const conn = connectors?.find((c) => c.id === b.connector_id);
-      return {
-        alias: b.alias,
-        connector_id: b.connector_id,
-        connector_version_id: b.version_mode === "latest" && conn?.latest_version_id ? conn.latest_version_id : b.connector_version_id,
-        credential_id: b.credential_id || null,
-        use_latest: b.version_mode === "latest",
-        settings: (() => { try { return JSON.parse(b.settings); } catch { return {}; } })(),
-      };
-    });
-
     try {
       await updateAssignment.mutateAsync({
         id: assignment.id,
@@ -694,7 +457,6 @@ function EditAssignmentDialog({ assignment, open, onClose }: EditAssignmentDialo
           enabled,
           app_version_id: versionId,
           use_latest: versionMode === "latest",
-          connector_bindings: connectorBindingsPayload,
         },
       });
       onClose();
@@ -826,126 +588,6 @@ function EditAssignmentDialog({ assignment, open, onClose }: EditAssignmentDialo
             />
           )}
           {configError && <p className="text-xs text-red-400">{configError}</p>}
-        </div>
-
-        {/* Connector Bindings */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <Label className="flex items-center gap-1.5">
-              <Plug className="h-3.5 w-3.5" /> Connector Bindings
-            </Label>
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              className="gap-1"
-              onClick={() => setBindings([...bindings, {
-                alias: "",
-                connector_id: connectors?.[0]?.id ?? "",
-                version_mode: "latest",
-                connector_version_id: "",
-                credential_id: "",
-                settings: "{}",
-              }])}
-            >
-              <Plus className="h-3 w-3" /> Add Connector
-            </Button>
-          </div>
-          {bindings.map((b, idx) => (
-            <div key={idx} className="rounded-md border border-zinc-700 p-3 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-zinc-400">Binding #{idx + 1}</span>
-                <button
-                  type="button"
-                  onClick={() => setBindings(bindings.filter((_, i) => i !== idx))}
-                  className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                  title="Remove"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <Label className="text-xs">Alias</Label>
-                  <Input
-                    value={b.alias}
-                    onChange={(e) => {
-                      const next = [...bindings];
-                      next[idx] = { ...next[idx], alias: e.target.value };
-                      setBindings(next);
-                    }}
-                    placeholder="e.g. snmp"
-                    className="text-xs"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Connector</Label>
-                  <Select
-                    value={b.connector_id}
-                    onChange={(e) => {
-                      const next = [...bindings];
-                      next[idx] = { ...next[idx], connector_id: e.target.value, connector_version_id: "" };
-                      setBindings(next);
-                    }}
-                    className="text-xs"
-                  >
-                    <option value="">-- Select --</option>
-                    {(connectors ?? []).map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </Select>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <Label className="text-xs">Version</Label>
-                  <Select
-                    value={b.version_mode}
-                    onChange={(e) => {
-                      const next = [...bindings];
-                      next[idx] = { ...next[idx], version_mode: e.target.value };
-                      setBindings(next);
-                    }}
-                    className="text-xs"
-                  >
-                    <option value="latest">Use Latest</option>
-                    <option value="pinned">Pin Version</option>
-                  </Select>
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Credential <span className="font-normal text-zinc-500">(opt.)</span></Label>
-                  <Select
-                    value={b.credential_id}
-                    onChange={(e) => {
-                      const next = [...bindings];
-                      next[idx] = { ...next[idx], credential_id: e.target.value };
-                      setBindings(next);
-                    }}
-                    className="text-xs"
-                  >
-                    <option value="">-- None --</option>
-                    {(credentials ?? []).map((cr) => (
-                      <option key={cr.id} value={cr.id}>{cr.name}</option>
-                    ))}
-                  </Select>
-                </div>
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Settings (JSON)</Label>
-                <textarea
-                  rows={2}
-                  value={b.settings}
-                  onChange={(e) => {
-                    const next = [...bindings];
-                    next[idx] = { ...next[idx], settings: e.target.value };
-                    setBindings(next);
-                  }}
-                  className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 font-mono text-xs text-zinc-100 focus:outline-none focus:ring-2 focus:ring-brand-500/50 resize-none"
-                  placeholder="{}"
-                />
-              </div>
-            </div>
-          ))}
         </div>
 
         {/* Enabled toggle */}
