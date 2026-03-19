@@ -254,6 +254,7 @@ class CredentialTemplate(Base):
         server_default=text("gen_random_uuid()"),
     )
     name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    credential_type: Mapped[str] = mapped_column(String(64), nullable=False, server_default="")
     description: Mapped[str | None] = mapped_column(Text)
     fields: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="[]")
     pack_id: Mapped[uuid.UUID | None] = mapped_column(

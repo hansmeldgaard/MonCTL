@@ -25,12 +25,14 @@ class TemplateField(BaseModel):
 
 class CreateCredentialTemplateRequest(BaseModel):
     name: str = Field(max_length=64)
+    credential_type: str = Field(max_length=64, default="")
     description: str | None = None
     fields: list[TemplateField] = Field(min_length=1)
 
 
 class UpdateCredentialTemplateRequest(BaseModel):
     name: str | None = None
+    credential_type: str | None = None
     description: str | None = None
     fields: list[TemplateField] | None = None
 
@@ -39,6 +41,7 @@ def _fmt(t: CredentialTemplate) -> dict:
     return {
         "id": str(t.id),
         "name": t.name,
+        "credential_type": t.credential_type,
         "description": t.description,
         "fields": t.fields,
         "created_at": t.created_at.isoformat() if t.created_at else None,
@@ -113,6 +116,7 @@ async def create_credential_template(
 
     t = CredentialTemplate(
         name=request.name,
+        credential_type=request.credential_type or request.name,
         description=request.description,
         fields=[f.model_dump() for f in request.fields],
     )
@@ -134,6 +138,8 @@ async def update_credential_template(
 
     if request.name is not None:
         t.name = request.name
+    if request.credential_type is not None:
+        t.credential_type = request.credential_type
     if request.description is not None:
         t.description = request.description
     if request.fields is not None:

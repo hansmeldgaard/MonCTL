@@ -352,6 +352,7 @@ export interface CredentialTemplateField {
 export interface CredentialTemplate {
   id: string;
   name: string;
+  credential_type: string;
   description: string | null;
   fields: CredentialTemplateField[];
   created_at: string;

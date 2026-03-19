@@ -1409,7 +1409,7 @@ export function useCredentialTemplates() {
 export function useCreateCredentialTemplate() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { name: string; description?: string; fields: CredentialTemplateField[] }) =>
+    mutationFn: (data: { name: string; credential_type?: string; description?: string; fields: CredentialTemplateField[] }) =>
       apiPost<CredentialTemplate>("/credential-templates", data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["credential-templates"] });
@@ -1420,7 +1420,7 @@ export function useCreateCredentialTemplate() {
 export function useUpdateCredentialTemplate() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: { name?: string; description?: string; fields?: CredentialTemplateField[] } }) =>
+    mutationFn: ({ id, data }: { id: string; data: { name?: string; credential_type?: string; description?: string; fields?: CredentialTemplateField[] } }) =>
       apiPut<CredentialTemplate>(`/credential-templates/${id}`, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["credential-templates"] });

@@ -347,17 +347,24 @@ function CredentialsCard() {
   const [addOpen, setAddOpen] = useState(false);
   const [addName, setAddName] = useState("");
   const [addDesc, setAddDesc] = useState("");
-  const [addType, setAddType] = useState("snmp_community");
+  const [addType, setAddType] = useState("");
   const [addTemplateId, setAddTemplateId] = useState("");
   const [addValues, setAddValues] = useState<Record<string, string>>({});
   const [addError, setAddError] = useState<string | null>(null);
+
+  // Set default type from credential types
+  useEffect(() => {
+    if (!addType && credentialTypes && credentialTypes.length > 0) {
+      setAddType(credentialTypes[0].name);
+    }
+  }, [credentialTypes, addType]);
 
   // When template changes, populate fields from template
   useEffect(() => {
     if (!addTemplateId) return;
     const tmpl = (templates ?? []).find((t) => t.id === addTemplateId);
     if (!tmpl) return;
-    setAddType(tmpl.name);
+    setAddType(tmpl.credential_type || tmpl.name);
     const vals: Record<string, string> = {};
     for (const f of tmpl.fields) {
       vals[f.key_name] = f.default_value ?? "";
@@ -418,7 +425,7 @@ function CredentialsCard() {
         credential_type: addTemplateId ? undefined : addType,
         secret: addValues,
       });
-      setAddName(""); setAddDesc(""); setAddType("snmp_community"); setAddTemplateId(""); setAddValues({}); setAddOpen(false);
+      setAddName(""); setAddDesc(""); setAddType(credentialTypes?.[0]?.name ?? ""); setAddTemplateId(""); setAddValues({}); setAddOpen(false);
     } catch (err) {
       setAddError(err instanceof Error ? err.message : "Failed to create credential");
     }
@@ -540,7 +547,7 @@ function CredentialsCard() {
             </Table>
           )}
           <div className="mt-4 flex justify-end border-t border-zinc-800 pt-4">
-            <Button size="sm" variant="secondary" onClick={() => { setAddName(""); setAddDesc(""); setAddType("snmp_community"); setAddTemplateId(""); setAddValues({}); setAddError(null); setAddOpen(true); }} className="gap-1.5">
+            <Button size="sm" variant="secondary" onClick={() => { setAddName(""); setAddDesc(""); setAddType(credentialTypes?.[0]?.name ?? ""); setAddTemplateId(""); setAddValues({}); setAddError(null); setAddOpen(true); }} className="gap-1.5">
               <Plus className="h-4 w-4" /> New Credential
             </Button>
           </div>
@@ -552,7 +559,7 @@ function CredentialsCard() {
         <form onSubmit={handleCreate} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="cr-template">Template</Label>
-            <Select id="cr-template" value={addTemplateId} onChange={(e) => { setAddTemplateId(e.target.value); if (!e.target.value) { setAddValues({}); setAddType("snmp_community"); } }}>
+            <Select id="cr-template" value={addTemplateId} onChange={(e) => { setAddTemplateId(e.target.value); if (!e.target.value) { setAddValues({}); setAddType(credentialTypes?.[0]?.name ?? ""); } }}>
               <option value="">Custom (no template)</option>
               {(templates ?? []).map((t) => (
                 <option key={t.id} value={t.id}>{t.name}{t.description ? ` — ${t.description}` : ""}</option>
@@ -837,6 +844,7 @@ function CredentialTemplatesCard() {
 
   const [addOpen, setAddOpen] = useState(false);
   const [addName, setAddName] = useState("");
+  const [addCredType, setAddCredType] = useState("");
   const [addDesc, setAddDesc] = useState("");
   const [addFields, setAddFields] = useState<{ key_name: string; required: boolean; default_value: string }[]>([]);
   const [addError, setAddError] = useState<string | null>(null);
@@ -844,6 +852,7 @@ function CredentialTemplatesCard() {
 
   const [editTarget, setEditTarget] = useState<CredentialTemplate | null>(null);
   const [editName, setEditName] = useState("");
+  const [editCredType, setEditCredType] = useState("");
   const [editDesc, setEditDesc] = useState("");
   const [editFields, setEditFields] = useState<{ key_name: string; required: boolean; default_value: string }[]>([]);
   const [editError, setEditError] = useState<string | null>(null);
@@ -861,6 +870,7 @@ function CredentialTemplatesCard() {
     try {
       await createTemplate.mutateAsync({
         name: addName.trim(),
+        credential_type: addCredType.trim() || undefined,
         description: addDesc.trim() || undefined,
         fields: addFields.map((f, i) => ({
           key_name: f.key_name,
@@ -869,7 +879,7 @@ function CredentialTemplatesCard() {
           display_order: i + 1,
         })),
       });
-      setAddName(""); setAddDesc(""); setAddFields([]); setAddOpen(false);
+      setAddName(""); setAddCredType(""); setAddDesc(""); setAddFields([]); setAddOpen(false);
     } catch (err) {
       setAddError(err instanceof Error ? err.message : "Failed to create template");
     }
@@ -877,6 +887,7 @@ function CredentialTemplatesCard() {
 
   function openEdit(t: CredentialTemplate) {
     setEditName(t.name);
+    setEditCredType(t.credential_type ?? "");
     setEditDesc(t.description ?? "");
     setEditFields(
       [...t.fields]
@@ -898,6 +909,7 @@ function CredentialTemplatesCard() {
         id: editTarget.id,
         data: {
           name: editName.trim(),
+          credential_type: editCredType.trim() || undefined,
           description: editDesc.trim() || undefined,
           fields: editFields.map((f, i) => ({
             key_name: f.key_name,
@@ -954,6 +966,7 @@ function CredentialTemplatesCard() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
+                  <TableHead>Type</TableHead>
                   <TableHead>Description</TableHead>
                   <TableHead>Fields</TableHead>
                   <TableHead>Created</TableHead>
@@ -964,6 +977,7 @@ function CredentialTemplatesCard() {
                 {templates.map((t) => (
                   <TableRow key={t.id}>
                     <TableCell className="font-medium font-mono text-sm text-zinc-100">{t.name}</TableCell>
+                    <TableCell><Badge variant="info">{t.credential_type}</Badge></TableCell>
                     <TableCell className="text-zinc-400 text-sm">{t.description ?? "—"}</TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-1">
@@ -991,7 +1005,7 @@ function CredentialTemplatesCard() {
             </Table>
           )}
           <div className="mt-4 flex justify-end border-t border-zinc-800 pt-4">
-            <Button size="sm" variant="secondary" onClick={() => { setAddName(""); setAddDesc(""); setAddFields([]); setAddError(null); setAddOpen(true); }} className="gap-1.5">
+            <Button size="sm" variant="secondary" onClick={() => { setAddName(""); setAddCredType(""); setAddDesc(""); setAddFields([]); setAddError(null); setAddOpen(true); }} className="gap-1.5">
               <Plus className="h-4 w-4" /> New Template
             </Button>
           </div>
@@ -1001,10 +1015,14 @@ function CredentialTemplatesCard() {
       {/* Add Template Dialog */}
       <Dialog open={addOpen} onClose={() => setAddOpen(false)} title="New Credential Template">
         <form onSubmit={handleCreate} className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="ct-name">Name</Label>
               <Input id="ct-name" placeholder="e.g. snmpv2c" value={addName} onChange={(e) => setAddName(e.target.value)} autoFocus />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="ct-cred-type">Credential Type</Label>
+              <Input id="ct-cred-type" placeholder="e.g. snmp, ssh" value={addCredType} onChange={(e) => setAddCredType(e.target.value)} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="ct-desc">Description</Label>
@@ -1082,10 +1100,14 @@ function CredentialTemplatesCard() {
       {/* Edit Template Dialog */}
       <Dialog open={!!editTarget} onClose={() => setEditTarget(null)} title="Edit Credential Template">
         <form onSubmit={handleEdit} className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="ct-edit-name">Name</Label>
               <Input id="ct-edit-name" value={editName} onChange={(e) => setEditName(e.target.value)} autoFocus />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="ct-edit-cred-type">Credential Type</Label>
+              <Input id="ct-edit-cred-type" value={editCredType} onChange={(e) => setEditCredType(e.target.value)} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="ct-edit-desc">Description</Label>
