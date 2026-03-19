@@ -1,23 +1,28 @@
 """Lightweight Docker stats sidecar for MonCTL.
 
-Exposes GET /stats on port 9100.
-Returns container list with CPU %, memory usage, network I/O, status, health.
-Also returns host-level info: hostname, disk usage.
+Collects container stats in a background thread every 15 seconds.
+Serves cached results instantly on GET /stats.
 """
 
 import json
 import os
 import shutil
 import socket
+import threading
+import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 import docker
 
 client = docker.from_env()
 HOSTNAME = os.environ.get("MONCTL_HOST_LABEL", socket.gethostname())
+COLLECT_INTERVAL = int(os.environ.get("COLLECT_INTERVAL", "15"))
+
+_cached_stats: dict = {}
+_cached_stats_lock = threading.Lock()
 
 
-def _get_stats() -> dict:
+def _collect_stats() -> dict:
     containers = []
 
     for c in client.containers.list(all=True):
@@ -97,6 +102,7 @@ def _get_stats() -> dict:
 
     return {
         "hostname": HOSTNAME,
+        "collected_at": time.time(),
         "container_count": len([c for c in containers if c["status"] == "running"]),
         "total_containers": len(containers),
         "host": {
@@ -108,16 +114,33 @@ def _get_stats() -> dict:
     }
 
 
+def _background_collector():
+    global _cached_stats
+    while True:
+        try:
+            stats = _collect_stats()
+            with _cached_stats_lock:
+                _cached_stats = stats
+        except Exception as e:
+            print(f"Collection error: {e}")
+        time.sleep(COLLECT_INTERVAL)
+
+
 class StatsHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/stats":
-            data = _get_stats()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps(data).encode())
+            try:
+                with _cached_stats_lock:
+                    data = _cached_stats
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(data).encode())
+            except BrokenPipeError:
+                pass
         elif self.path == "/health":
             self.send_response(200)
+            self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(b'{"status":"ok"}')
         else:
@@ -129,6 +152,13 @@ class StatsHandler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    print(f"Docker stats sidecar starting (host={HOSTNAME}, interval={COLLECT_INTERVAL}s)")
+    _cached_stats = _collect_stats()
+    print(f"Initial collection done: {_cached_stats['container_count']} running containers")
+
+    collector_thread = threading.Thread(target=_background_collector, daemon=True)
+    collector_thread.start()
+
     server = HTTPServer(("0.0.0.0", 9100), StatsHandler)
-    print(f"Docker stats sidecar listening on :9100 (host={HOSTNAME})")
+    print(f"Listening on :9100")
     server.serve_forever()
