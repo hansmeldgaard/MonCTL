@@ -37,14 +37,17 @@ def _ensure_utc_iso(dt) -> str | None:
 
 
 def _format_ch_row(r: dict) -> dict:
-    """Format a ClickHouse row dict into the API response format."""
+    """Format a ClickHouse row dict into the API response format.
+
+    Handles columns from all result tables (availability_latency, performance, config).
+    """
     state = r.get("state", 3)
     rtt = r.get("rtt_ms") or None
     resp_time = r.get("response_time_ms") or None
     status_code = r.get("status_code") or None
     exec_time = r.get("execution_time") or None
 
-    return {
+    out: dict = {
         "assignment_id": str(r.get("assignment_id", "")),
         "collector_id": str(r.get("collector_id", "")),
         "app_id": str(r.get("app_id", "")),
@@ -66,6 +69,22 @@ def _format_ch_row(r: dict) -> dict:
         "started_at": _ensure_utc_iso(r.get("started_at")),
         "collector_name": r.get("collector_name", "") or None,
     }
+
+    # Config table fields
+    if "config_key" in r:
+        out["config_key"] = r.get("config_key")
+        out["config_value"] = r.get("config_value")
+        out["config_hash"] = r.get("config_hash")
+
+    # Performance table fields
+    if "component" in r:
+        out["component"] = r.get("component")
+        out["component_type"] = r.get("component_type")
+    if "metric_names" in r:
+        out["metric_names"] = r.get("metric_names")
+        out["metric_values"] = r.get("metric_values")
+
+    return out
 
 
 # Tables for general history queries (interface has its own dedicated tab/endpoints)
