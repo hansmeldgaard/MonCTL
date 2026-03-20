@@ -274,6 +274,8 @@ export function MultiInterfaceChart({
             : calculateDeltas(rawData, inField, outField).map((p) => ({ ...p }));
 
           if (points.length === 0) return null;
+          const sPad = points.length <= 2 ? 60_000 : 0;
+          const sDomain: [number, number] = [points[0].ts - sPad, points[points.length - 1].ts + sPad];
           return (
             <div key={id}>
               <div className="text-xs text-zinc-400 mb-1 flex items-center gap-2">
@@ -283,7 +285,7 @@ export function MultiInterfaceChart({
               <ResponsiveContainer width="100%" height={120}>
                 <AreaChart data={points} throttleDelay={0}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-                  <XAxis dataKey="ts" type="number" scale="time" tick={{ fill: "#71717a", fontSize: 10 }}
+                  <XAxis dataKey="ts" type="number" scale="time" domain={sDomain} tick={{ fill: "#71717a", fontSize: 10 }}
                     tickFormatter={(ts) => formatTimeLabel(ts, timezone)} />
                   <YAxis tick={{ fill: "#71717a", fontSize: 10 }} tickFormatter={yFormatter} width={50} />
                   <Tooltip contentStyle={{ backgroundColor: "#18181b", border: "1px solid #3f3f46", borderRadius: "0.5rem", fontSize: "0.7rem" }}
@@ -307,11 +309,14 @@ export function MultiInterfaceChart({
     return <div className="flex items-center justify-center h-48 text-zinc-600 text-sm">Not enough data points.</div>;
   }
 
+  const domainPad = merged.length <= 2 ? 60_000 : 0;
+  const xDomain: [number, number] = [merged[0].ts - domainPad, merged[merged.length - 1].ts + domainPad];
+
   return (
     <ResponsiveContainer width="100%" height={300}>
       <AreaChart data={merged} throttleDelay={0}>
         <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-        <XAxis dataKey="ts" type="number" scale="time" tick={{ fill: "#71717a", fontSize: 11 }}
+        <XAxis dataKey="ts" type="number" scale="time" domain={xDomain} tick={{ fill: "#71717a", fontSize: 11 }}
           tickFormatter={(ts) => formatTimeLabel(ts, timezone)} />
         <YAxis tick={{ fill: "#71717a", fontSize: 11 }} tickFormatter={yFormatter} />
         <Tooltip contentStyle={{ backgroundColor: "#18181b", border: "1px solid #3f3f46", borderRadius: "0.5rem", fontSize: "0.75rem" }}
