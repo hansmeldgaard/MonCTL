@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FileText, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { FileText, Loader2, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
@@ -18,10 +18,17 @@ import {
 import type { Template } from "@/types/api.ts";
 import { formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
+import { useListState } from "@/hooks/useListState.ts";
+import { SortableHead } from "@/components/SortableHead.tsx";
+import { PaginationBar } from "@/components/PaginationBar.tsx";
+import { ClearableInput } from "@/components/ui/clearable-input.tsx";
 
 export function TemplatesPage() {
   const tz = useTimezone();
-  const { data: templates, isLoading } = useTemplates();
+  const listState = useListState();
+  const { data: response, isLoading } = useTemplates(listState.params);
+  const templates = response?.data ?? [];
+  const meta = (response as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
   const createTemplate = useCreateTemplate();
   const updateTemplate = useUpdateTemplate();
   const deleteTemplate = useDeleteTemplate();
@@ -95,9 +102,21 @@ export function TemplatesPage() {
           <h1 className="text-lg font-semibold text-zinc-100">Templates</h1>
           <p className="text-sm text-zinc-500">Reusable monitoring configurations for bulk device setup.</p>
         </div>
-        <Button size="sm" onClick={() => { setAddName(""); setAddDesc(""); setAddConfig("{}"); setAddError(null); setAddOpen(true); }} className="gap-1.5">
-          <Plus className="h-4 w-4" /> New Template
-        </Button>
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+            <ClearableInput
+              placeholder="Search templates..."
+              className="pl-9 w-64"
+              value={listState.search}
+              onChange={(e) => listState.setSearch(e.target.value)}
+              onClear={() => listState.setSearch("")}
+            />
+          </div>
+          <Button size="sm" onClick={() => { setAddName(""); setAddDesc(""); setAddConfig("{}"); setAddError(null); setAddOpen(true); }} className="gap-1.5">
+            <Plus className="h-4 w-4" /> New Template
+          </Button>
+        </div>
       </div>
 
       <Card>
@@ -111,10 +130,10 @@ export function TemplatesPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
+                  <SortableHead col="name" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>Name</SortableHead>
                   <TableHead>Description</TableHead>
                   <TableHead>Apps</TableHead>
-                  <TableHead>Created</TableHead>
+                  <SortableHead col="created_at" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>Created</SortableHead>
                   <TableHead className="w-20"></TableHead>
                 </TableRow>
               </TableHeader>
@@ -142,6 +161,13 @@ export function TemplatesPage() {
               </TableBody>
             </Table>
           )}
+          <PaginationBar
+            page={listState.page}
+            pageSize={listState.pageSize}
+            total={meta.total}
+            count={meta.count}
+            onPageChange={listState.setPage}
+          />
         </CardContent>
       </Card>
 

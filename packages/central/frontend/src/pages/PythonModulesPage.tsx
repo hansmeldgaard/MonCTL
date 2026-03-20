@@ -7,6 +7,7 @@ import {
   Download,
   Loader2,
   Package,
+  Search,
   ShieldCheck,
   ShieldOff,
   Trash2,
@@ -39,9 +40,13 @@ import {
   useAutoResolve,
 } from "@/api/hooks.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
+import { useListState } from "@/hooks/useListState.ts";
 import { formatDate } from "@/lib/utils.ts";
 import { WheelUploadDialog } from "@/components/WheelUploadDialog.tsx";
 import { PyPIImportDialog } from "@/components/PyPIImportDialog.tsx";
+import { SortableHead } from "@/components/SortableHead.tsx";
+import { PaginationBar } from "@/components/PaginationBar.tsx";
+import { ClearableInput } from "@/components/ui/clearable-input.tsx";
 import type { PythonModuleSummary } from "@/types/api.ts";
 
 function formatBytes(bytes: number): string {
@@ -237,7 +242,10 @@ function ModuleVersionsRow({ moduleId }: { moduleId: string }) {
 
 export function PythonModulesPage() {
   const tz = useTimezone();
-  const { data: modules, isLoading } = usePythonModules();
+  const listState = useListState();
+  const { data: response, isLoading } = usePythonModules(listState.params);
+  const modules = response?.data ?? [];
+  const meta = (response as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
   const { data: network } = useNetworkStatus();
   const toggleApproval = useToggleModuleApproval();
   const deleteModule = useDeletePythonModule();
@@ -283,6 +291,16 @@ export function PythonModulesPage() {
           {network && <NetworkBadge mode={network.mode} />}
         </div>
         <div className="flex items-center gap-2">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+            <ClearableInput
+              placeholder="Search modules..."
+              className="pl-9 w-64"
+              value={listState.search}
+              onChange={(e) => listState.setSearch(e.target.value)}
+              onClear={() => listState.setSearch("")}
+            />
+          </div>
           {network?.mode !== "offline" && (
             <>
               {modules && modules.some((m) => m.dep_missing > 0) && (
@@ -380,13 +398,13 @@ export function PythonModulesPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
+                  <SortableHead col="name" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>Name</SortableHead>
                   <TableHead>Description</TableHead>
                   <TableHead>Versions</TableHead>
                   <TableHead>Wheels</TableHead>
                   <TableHead>Dependencies</TableHead>
-                  <TableHead>Approved</TableHead>
-                  <TableHead>Created</TableHead>
+                  <SortableHead col="is_approved" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>Approved</SortableHead>
+                  <SortableHead col="created_at" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>Created</SortableHead>
                   <TableHead className="w-24"></TableHead>
                 </TableRow>
               </TableHeader>
@@ -511,6 +529,13 @@ export function PythonModulesPage() {
             </Table>
             );
           })()}
+          <PaginationBar
+            page={listState.page}
+            pageSize={listState.pageSize}
+            total={meta.total}
+            count={meta.count}
+            onPageChange={listState.setPage}
+          />
         </CardContent>
       </Card>
 

@@ -5,6 +5,7 @@ import {
   Clock,
   Loader2,
   Plus,
+  Search,
   Settings2,
   Trash2,
   Zap,
@@ -36,6 +37,10 @@ import {
 } from "@/api/hooks.ts";
 import { timeAgo, formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
+import { useListState } from "@/hooks/useListState.ts";
+import { SortableHead } from "@/components/SortableHead.tsx";
+import { PaginationBar } from "@/components/PaginationBar.tsx";
+import { ClearableInput } from "@/components/ui/clearable-input.tsx";
 import type { MonitoringEvent, EventPolicy } from "@/types/api.ts";
 
 type Tab = "active" | "cleared" | "policies";
@@ -56,8 +61,14 @@ const severityVariant = (severity: string) => {
 
 export function EventsPage() {
   const [tab, setTab] = useState<Tab>("active");
-  const { data: activeEvents, isLoading: activeLoading } = useActiveEvents();
-  const { data: clearedEvents, isLoading: clearedLoading } = useClearedEvents();
+  const activeListState = useListState({ defaultSortBy: "occurred_at", defaultSortDir: "desc" });
+  const clearedListState = useListState({ defaultSortBy: "occurred_at", defaultSortDir: "desc" });
+  const { data: activeResponse, isLoading: activeLoading } = useActiveEvents(activeListState.params);
+  const activeEvents = activeResponse?.data ?? [];
+  const activeMeta = (activeResponse as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
+  const { data: clearedResponse, isLoading: clearedLoading } = useClearedEvents(clearedListState.params);
+  const clearedEvents = clearedResponse?.data ?? [];
+  const clearedMeta = (clearedResponse as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
   const { data: policies, isLoading: policiesLoading } = useEventPolicies();
 
   const isLoading =
@@ -75,9 +86,9 @@ export function EventsPage() {
         >
           <Zap className="h-3.5 w-3.5" />
           Active Events
-          {activeEvents && activeEvents.length > 0 && (
+          {activeMeta.total > 0 && (
             <Badge variant="destructive" className="ml-1.5">
-              {activeEvents.length}
+              {activeMeta.total}
             </Badge>
           )}
         </Button>
@@ -104,9 +115,9 @@ export function EventsPage() {
           <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
         </div>
       ) : tab === "active" ? (
-        <ActiveEventsTab events={activeEvents ?? []} />
+        <ActiveEventsTab events={activeEvents} listState={activeListState} meta={activeMeta} />
       ) : tab === "cleared" ? (
-        <ClearedEventsTab events={clearedEvents ?? []} />
+        <ClearedEventsTab events={clearedEvents} listState={clearedListState} meta={clearedMeta} />
       ) : (
         <PoliciesTab policies={policies ?? []} />
       )}
@@ -114,7 +125,15 @@ export function EventsPage() {
   );
 }
 
-function ActiveEventsTab({ events }: { events: MonitoringEvent[] }) {
+function ActiveEventsTab({
+  events,
+  listState,
+  meta,
+}: {
+  events: MonitoringEvent[];
+  listState: ReturnType<typeof useListState>;
+  meta: { limit: number; offset: number; count: number; total: number };
+}) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const ackMut = useAcknowledgeEvents();
   const clearMut = useClearEvents();
@@ -152,7 +171,7 @@ function ActiveEventsTab({ events }: { events: MonitoringEvent[] }) {
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-2">
             <Zap className="h-4 w-4" />
-            Active Events ({events.length})
+            Active Events ({meta.total})
           </CardTitle>
           {selected.size > 0 && (
             <div className="flex items-center gap-2">
@@ -179,33 +198,54 @@ function ActiveEventsTab({ events }: { events: MonitoringEvent[] }) {
         </div>
       </CardHeader>
       <CardContent>
-        {events.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
-            <Zap className="mb-2 h-8 w-8 text-emerald-500/50" />
-            <p className="text-sm">No active events</p>
+        <div className="mb-4">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+            <ClearableInput
+              placeholder="Search events..."
+              className="pl-9 w-64"
+              value={listState.search}
+              onChange={(e) => listState.setSearch(e.target.value)}
+              onClear={() => listState.setSearch("")}
+            />
           </div>
-        ) : (
-          <Table>
-            <TableHeader>
+        </div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-10">
+                <input
+                  type="checkbox"
+                  checked={selected.size === events.length && events.length > 0}
+                  onChange={toggleAll}
+                  className="rounded border-zinc-700"
+                />
+              </TableHead>
+              <SortableHead col="severity" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>
+                Severity
+              </SortableHead>
+              <SortableHead col="source" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>
+                Source
+              </SortableHead>
+              <TableHead>Policy</TableHead>
+              <SortableHead col="message" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>
+                Message
+              </SortableHead>
+              <TableHead>Device</TableHead>
+              <SortableHead col="occurred_at" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>
+                Occurred
+              </SortableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {events.length === 0 ? (
               <TableRow>
-                <TableHead className="w-10">
-                  <input
-                    type="checkbox"
-                    checked={selected.size === events.length && events.length > 0}
-                    onChange={toggleAll}
-                    className="rounded border-zinc-700"
-                  />
-                </TableHead>
-                <TableHead>Severity</TableHead>
-                <TableHead>Source</TableHead>
-                <TableHead>Policy</TableHead>
-                <TableHead>Message</TableHead>
-                <TableHead>Device</TableHead>
-                <TableHead>Occurred</TableHead>
+                <TableCell colSpan={7} className="text-center text-zinc-500 py-8">
+                  {listState.search ? "No events match your search" : "No active events"}
+                </TableCell>
               </TableRow>
-            </TableHeader>
-            <TableBody>
-              {events.map((evt) => (
+            ) : (
+              events.map((evt) => (
                 <TableRow key={evt.id}>
                   <TableCell>
                     <input
@@ -236,16 +276,31 @@ function ActiveEventsTab({ events }: { events: MonitoringEvent[] }) {
                     {evt.occurred_at ? timeAgo(evt.occurred_at) : "—"}
                   </TableCell>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
+              ))
+            )}
+          </TableBody>
+        </Table>
+        <PaginationBar
+          page={listState.page}
+          pageSize={listState.pageSize}
+          total={meta.total}
+          count={meta.count}
+          onPageChange={listState.setPage}
+        />
       </CardContent>
     </Card>
   );
 }
 
-function ClearedEventsTab({ events }: { events: MonitoringEvent[] }) {
+function ClearedEventsTab({
+  events,
+  listState,
+  meta,
+}: {
+  events: MonitoringEvent[];
+  listState: ReturnType<typeof useListState>;
+  meta: { limit: number; offset: number; count: number; total: number };
+}) {
   const tz = useTimezone();
 
   return (
@@ -253,30 +308,51 @@ function ClearedEventsTab({ events }: { events: MonitoringEvent[] }) {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Clock className="h-4 w-4" />
-          Cleared Events ({events.length})
+          Cleared Events ({meta.total})
         </CardTitle>
       </CardHeader>
       <CardContent>
-        {events.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
-            <Clock className="mb-2 h-8 w-8 text-zinc-600" />
-            <p className="text-sm">No cleared events</p>
+        <div className="mb-4">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+            <ClearableInput
+              placeholder="Search cleared events..."
+              className="pl-9 w-64"
+              value={listState.search}
+              onChange={(e) => listState.setSearch(e.target.value)}
+              onClear={() => listState.setSearch("")}
+            />
           </div>
-        ) : (
-          <Table>
-            <TableHeader>
+        </div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <SortableHead col="severity" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>
+                Severity
+              </SortableHead>
+              <SortableHead col="source" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>
+                Source
+              </SortableHead>
+              <SortableHead col="message" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>
+                Message
+              </SortableHead>
+              <TableHead>Device</TableHead>
+              <SortableHead col="occurred_at" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>
+                Occurred
+              </SortableHead>
+              <TableHead>Cleared At</TableHead>
+              <TableHead>Cleared By</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {events.length === 0 ? (
               <TableRow>
-                <TableHead>Severity</TableHead>
-                <TableHead>Source</TableHead>
-                <TableHead>Message</TableHead>
-                <TableHead>Device</TableHead>
-                <TableHead>Occurred</TableHead>
-                <TableHead>Cleared At</TableHead>
-                <TableHead>Cleared By</TableHead>
+                <TableCell colSpan={7} className="text-center text-zinc-500 py-8">
+                  {listState.search ? "No events match your search" : "No cleared events"}
+                </TableCell>
               </TableRow>
-            </TableHeader>
-            <TableBody>
-              {events.map((evt) => (
+            ) : (
+              events.map((evt) => (
                 <TableRow key={evt.id}>
                   <TableCell>
                     <Badge variant={severityVariant(evt.severity)}>
@@ -302,10 +378,17 @@ function ClearedEventsTab({ events }: { events: MonitoringEvent[] }) {
                     {evt.cleared_by || "—"}
                   </TableCell>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
+              ))
+            )}
+          </TableBody>
+        </Table>
+        <PaginationBar
+          page={listState.page}
+          pageSize={listState.pageSize}
+          total={meta.total}
+          count={meta.count}
+          onPageChange={listState.setPage}
+        />
       </CardContent>
     </Card>
   );
@@ -414,7 +497,8 @@ function PoliciesTab({ policies }: { policies: EventPolicy[] }) {
 }
 
 function CreatePolicyDialog({ onClose }: { onClose: () => void }) {
-  const { data: definitions } = useAlertRules();
+  const { data: definitionsResp } = useAlertRules();
+  const definitions = definitionsResp?.data ?? [];
   const createMut = useCreateEventPolicy();
 
   const [name, setName] = useState("");

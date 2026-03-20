@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Bell, Clock, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
+import { Bell, Clock, Loader2, RefreshCw, Search, ShieldCheck } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
@@ -20,6 +20,10 @@ import {
 } from "@/api/hooks.ts";
 import { timeAgo, formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
+import { useListState } from "@/hooks/useListState.ts";
+import { SortableHead } from "@/components/SortableHead.tsx";
+import { PaginationBar } from "@/components/PaginationBar.tsx";
+import { ClearableInput } from "@/components/ui/clearable-input.tsx";
 import type { AlertInstance, AppAlertDefinition } from "@/types/api.ts";
 
 type Tab = "active" | "history" | "definitions";
@@ -43,7 +47,10 @@ const severityVariant = (severity: string) => {
 export function AlertsPage() {
   const [tab, setTab] = useState<Tab>("active");
   const { data: alerts, isLoading: alertsLoading } = useActiveAlerts();
-  const { data: definitions, isLoading: defsLoading } = useAlertRules();
+  const defsListState = useListState();
+  const { data: defsResponse, isLoading: defsLoading } = useAlertRules(defsListState.params);
+  const definitions = defsResponse?.data ?? [];
+  const defsMeta = (defsResponse as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
   const { data: resolvedData, isLoading: resolvedLoading } = useResolvedAlertInstances();
 
   const isLoading =
@@ -98,7 +105,7 @@ export function AlertsPage() {
           retentionDays={resolvedData?.meta?.retention_days ?? 7}
         />
       ) : (
-        <DefinitionsTab definitions={definitions ?? []} />
+        <DefinitionsTab definitions={definitions} listState={defsListState} meta={defsMeta} />
       )}
     </div>
   );
@@ -277,8 +284,12 @@ function HistoryTab({
 
 function DefinitionsTab({
   definitions,
+  listState,
+  meta,
 }: {
   definitions: AppAlertDefinition[];
+  listState: ReturnType<typeof useListState>;
+  meta: { limit: number; offset: number; count: number; total: number };
 }) {
   const invertDef = useInvertAlertDefinition();
   const createDef = useCreateAlertDefinition();
@@ -312,31 +323,50 @@ function DefinitionsTab({
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <ShieldCheck className="h-4 w-4" />
-          Alert Definitions ({definitions.length})
+          Alert Definitions ({meta.total})
         </CardTitle>
       </CardHeader>
       <CardContent>
-        {definitions.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
-            <ShieldCheck className="mb-2 h-8 w-8 text-zinc-600" />
-            <p className="text-sm">No alert definitions configured</p>
+        <div className="mb-4">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+            <ClearableInput
+              placeholder="Search definitions..."
+              className="pl-9 w-64"
+              value={listState.search}
+              onChange={(e) => listState.setSearch(e.target.value)}
+              onClear={() => listState.setSearch("")}
+            />
           </div>
-        ) : (
-          <Table>
-            <TableHeader>
+        </div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <SortableHead col="name" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>
+                Name
+              </SortableHead>
+              <TableHead>Expression</TableHead>
+              <TableHead>Window</TableHead>
+              <SortableHead col="severity" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>
+                Severity
+              </SortableHead>
+              <SortableHead col="enabled" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>
+                Enabled
+              </SortableHead>
+              <TableHead>Instances</TableHead>
+              <TableHead>Firing</TableHead>
+              <TableHead className="w-12"></TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {definitions.length === 0 ? (
               <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Expression</TableHead>
-                <TableHead>Window</TableHead>
-                <TableHead>Severity</TableHead>
-                <TableHead>Enabled</TableHead>
-                <TableHead>Instances</TableHead>
-                <TableHead>Firing</TableHead>
-                <TableHead className="w-12"></TableHead>
+                <TableCell colSpan={8} className="text-center text-zinc-500 py-8">
+                  {listState.search ? "No definitions match your search" : "No alert definitions configured"}
+                </TableCell>
               </TableRow>
-            </TableHeader>
-            <TableBody>
-              {definitions.map((defn) => (
+            ) : (
+              definitions.map((defn) => (
                 <TableRow key={defn.id}>
                   <TableCell className="font-medium text-zinc-100">
                     {defn.name}
@@ -386,10 +416,17 @@ function DefinitionsTab({
                     )}
                   </TableCell>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
+              ))
+            )}
+          </TableBody>
+        </Table>
+        <PaginationBar
+          page={listState.page}
+          pageSize={listState.pageSize}
+          total={meta.total}
+          count={meta.count}
+          onPageChange={listState.setPage}
+        />
       </CardContent>
     </Card>
   );

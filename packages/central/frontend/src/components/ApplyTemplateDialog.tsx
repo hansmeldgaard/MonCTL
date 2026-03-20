@@ -16,7 +16,8 @@ interface Props {
 }
 
 export function ApplyTemplateDialog({ open, onClose, deviceIds, deviceName }: Props) {
-  const { data: templates } = useTemplates();
+  const { data: templatesResp } = useTemplates();
+  const templates = templatesResp?.data ?? [];
   const applyTemplate = useApplyTemplate();
 
   const [selectedTemplateId, setSelectedTemplateId] = useState("");

@@ -66,7 +66,20 @@ import type {
   DockerContainerLog,
   DockerEventsResponse,
   DockerImagesResponse,
+  ListParams,
+  BulkUpdateAssignmentsRequest,
 } from "@/types/api.ts";
+
+function buildListQs(params: ListParams): string {
+  const qs = new URLSearchParams();
+  if (params.search) qs.set("search", params.search);
+  if (params.sort_by) qs.set("sort_by", params.sort_by);
+  if (params.sort_dir) qs.set("sort_dir", params.sort_dir);
+  if (params.limit) qs.set("limit", String(params.limit));
+  if (params.offset !== undefined) qs.set("offset", String(params.offset));
+  const s = qs.toString();
+  return s ? `?${s}` : "";
+}
 
 // ── Polling intervals ────────────────────────────────────
 
@@ -172,11 +185,10 @@ export function useCollectors(params?: { group_id?: string }) {
 
 // ── Assignments ──────────────────────────────────────────
 
-export function useAssignments() {
+export function useAssignments(params: ListParams = {}) {
   return useQuery({
-    queryKey: ["assignments"],
-    queryFn: () => apiGet<Assignment[]>("/apps/assignments"),
-    select: (res) => res.data,
+    queryKey: ["assignments", params],
+    queryFn: () => apiGet<Assignment[]>(`/apps/assignments${buildListQs(params)}`),
     refetchInterval: POLL_LIST,
   });
 }
@@ -245,11 +257,10 @@ export function useActiveAlerts() {
   });
 }
 
-export function useAlertRules() {
+export function useAlertRules(params: ListParams = {}) {
   return useQuery({
-    queryKey: ["alert-definitions"],
-    queryFn: () => apiGet<AppAlertDefinition[]>("/alerts/definitions"),
-    select: (res) => res.data,
+    queryKey: ["alert-definitions", params],
+    queryFn: () => apiGet<AppAlertDefinition[]>(`/alerts/definitions${buildListQs(params)}`),
     refetchInterval: POLL_LIST,
   });
 }
@@ -259,7 +270,6 @@ export function useAlertDefinitions(appId?: string) {
   return useQuery({
     queryKey: ["alert-definitions", appId ?? "all"],
     queryFn: () => apiGet<AppAlertDefinition[]>(`/alerts/definitions${params}`),
-    select: (res) => res.data,
     refetchInterval: POLL_LIST,
   });
 }
@@ -940,13 +950,24 @@ export function useDeleteAssignment() {
   });
 }
 
+export function useBulkUpdateAssignments() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: BulkUpdateAssignmentsRequest) =>
+      apiPut<{ updated: number }>("/apps/assignments/bulk-update", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["assignments"] });
+      qc.invalidateQueries({ queryKey: ["device-assignments"] });
+    },
+  });
+}
+
 // ── Apps list + app detail (for AddAssignmentDialog) ─────
 
-export function useApps() {
+export function useApps(params: ListParams = {}) {
   return useQuery({
-    queryKey: ["apps"],
-    queryFn: () => apiGet<AppSummary[]>("/apps"),
-    select: (res) => res.data,
+    queryKey: ["apps", params],
+    queryFn: () => apiGet<AppSummary[]>(`/apps${buildListQs(params)}`),
     refetchInterval: POLL_LIST,
   });
 }
@@ -1575,11 +1596,10 @@ export function useAppConfigKeys(appId: string | undefined, versionId?: string) 
 
 // ── Python Modules ──────────────────────────────────────
 
-export function usePythonModules() {
+export function usePythonModules(params: ListParams = {}) {
   return useQuery({
-    queryKey: ["python-modules"],
-    queryFn: () => apiGet<PythonModuleSummary[]>("/python-modules"),
-    select: (res) => res.data,
+    queryKey: ["python-modules", params],
+    queryFn: () => apiGet<PythonModuleSummary[]>(`/python-modules${buildListQs(params)}`),
     refetchInterval: POLL_LIST,
   });
 }
@@ -1793,11 +1813,10 @@ export function useDeployTlsCert() {
 
 // ── Templates ────────────────────────────────────────────
 
-export function useTemplates() {
+export function useTemplates(params: ListParams = {}) {
   return useQuery({
-    queryKey: ["templates"],
-    queryFn: () => apiGet<Template[]>("/templates"),
-    select: (res) => res.data,
+    queryKey: ["templates", params],
+    queryFn: () => apiGet<Template[]>(`/templates${buildListQs(params)}`),
     refetchInterval: POLL_LIST,
   });
 }
@@ -1932,11 +1951,10 @@ export function useCredentialDetail(id: string | undefined) {
 
 // ── Connectors ──────────────────────────────────────────
 
-export function useConnectors() {
+export function useConnectors(params: ListParams = {}) {
   return useQuery({
-    queryKey: ["connectors"],
-    queryFn: () => apiGet<ConnectorSummary[]>("/connectors"),
-    select: (res) => res.data,
+    queryKey: ["connectors", params],
+    queryFn: () => apiGet<ConnectorSummary[]>(`/connectors${buildListQs(params)}`),
     refetchInterval: POLL_LIST,
   });
 }
@@ -2034,20 +2052,18 @@ export function useSetConnectorLatest() {
 
 // ── Events ───────────────────────────────────────────────
 
-export function useActiveEvents() {
+export function useActiveEvents(params: ListParams = {}) {
   return useQuery({
-    queryKey: ["events-active"],
-    queryFn: () => apiGet<MonitoringEvent[]>("/events/active"),
-    select: (res) => res.data,
+    queryKey: ["events-active", params],
+    queryFn: () => apiGet<MonitoringEvent[]>(`/events/active${buildListQs(params)}`),
     refetchInterval: POLL_LIST,
   });
 }
 
-export function useClearedEvents() {
+export function useClearedEvents(params: ListParams = {}) {
   return useQuery({
-    queryKey: ["events-cleared"],
-    queryFn: () => apiGet<MonitoringEvent[]>("/events/cleared"),
-    select: (res) => res.data,
+    queryKey: ["events-cleared", params],
+    queryFn: () => apiGet<MonitoringEvent[]>(`/events/cleared${buildListQs(params)}`),
     refetchInterval: POLL_LIST,
   });
 }
@@ -2129,11 +2145,10 @@ export function useDeleteEventPolicy() {
 
 // ── Packs ─────────────────────────────────────────────────
 
-export function usePacks() {
+export function usePacks(params: ListParams = {}) {
   return useQuery({
-    queryKey: ["packs"],
-    queryFn: () => apiGet<Pack[]>("/packs"),
-    select: (res) => res.data,
+    queryKey: ["packs", params],
+    queryFn: () => apiGet<Pack[]>(`/packs${buildListQs(params)}`),
     refetchInterval: POLL_LIST,
   });
 }

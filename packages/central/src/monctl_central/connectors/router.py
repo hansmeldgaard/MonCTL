@@ -5,9 +5,10 @@ from __future__ import annotations
 import hashlib
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+import sqlalchemy as sa
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -95,13 +96,41 @@ class UpdateVersionRequest(BaseModel):
 # Connector CRUD
 # ---------------------------------------------------------------------------
 
+SORT_MAP = {
+    "name": Connector.name,
+    "connector_type": Connector.connector_type,
+    "created_at": Connector.created_at,
+}
+
+
 @router.get("")
 async def list_connectors(
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
+    search: str | None = Query(default=None),
+    sort_by: str = Query(default="name"),
+    sort_dir: str = Query(default="asc"),
+    limit: int = Query(default=50, le=500),
+    offset: int = Query(default=0, ge=0),
 ):
     """List all connectors with version_count and latest_version."""
-    stmt = select(Connector).options(selectinload(Connector.versions)).order_by(Connector.name)
+    base_stmt = select(Connector)
+
+    if search:
+        term = f"%{search}%"
+        base_stmt = base_stmt.where(or_(
+            Connector.name.ilike(term),
+            Connector.description.ilike(term),
+            Connector.connector_type.ilike(term),
+        ))
+
+    sort_col = SORT_MAP.get(sort_by, Connector.name)
+    base_stmt = base_stmt.order_by(sort_col.desc() if sort_dir == "desc" else sort_col.asc())
+
+    count_stmt = select(sa.func.count()).select_from(base_stmt.subquery())
+    total = (await db.execute(count_stmt)).scalar() or 0
+
+    stmt = base_stmt.options(selectinload(Connector.versions)).offset(offset).limit(limit)
     result = await db.execute(stmt)
     connectors = result.scalars().all()
 
@@ -115,7 +144,11 @@ async def list_connectors(
         entry["latest_version_id"] = latest_version_id
         data.append(entry)
 
-    return {"status": "success", "data": data}
+    return {
+        "status": "success",
+        "data": data,
+        "meta": {"limit": limit, "offset": offset, "count": len(data), "total": total},
+    }
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)

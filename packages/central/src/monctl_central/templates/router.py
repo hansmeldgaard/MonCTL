@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select, desc
+import sqlalchemy as sa
+from sqlalchemy import select, desc, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from monctl_central.dependencies import get_db, require_auth
@@ -33,15 +34,45 @@ def _format_template(t: Template) -> dict:
     }
 
 
+SORT_MAP = {"name": Template.name, "created_at": Template.created_at}
+
+
 @router.get("")
 async def list_templates(
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
+    search: str | None = Query(default=None),
+    sort_by: str = Query(default="name"),
+    sort_dir: str = Query(default="asc"),
+    limit: int = Query(default=50, le=500),
+    offset: int = Query(default=0, ge=0),
 ):
     """List all templates."""
-    result = await db.execute(select(Template).order_by(Template.name))
+    base_stmt = select(Template)
+
+    if search:
+        term = f"%{search}%"
+        base_stmt = base_stmt.where(or_(
+            Template.name.ilike(term),
+            Template.description.ilike(term),
+        ))
+
+    sort_col = SORT_MAP.get(sort_by, Template.name)
+    base_stmt = base_stmt.order_by(sort_col.desc() if sort_dir == "desc" else sort_col.asc())
+
+    count_stmt = select(sa.func.count()).select_from(base_stmt.subquery())
+    total = (await db.execute(count_stmt)).scalar() or 0
+
+    stmt = base_stmt.offset(offset).limit(limit)
+    result = await db.execute(stmt)
     templates = result.scalars().all()
-    return {"status": "success", "data": [_format_template(t) for t in templates]}
+    data = [_format_template(t) for t in templates]
+
+    return {
+        "status": "success",
+        "data": data,
+        "meta": {"limit": limit, "offset": offset, "count": len(data), "total": total},
+    }
 
 
 class CreateTemplateRequest(BaseModel):

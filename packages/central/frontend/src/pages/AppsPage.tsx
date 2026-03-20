@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { AppWindow, Loader2, Plug, Plus, Trash2 } from "lucide-react";
+import { AppWindow, Loader2, Plug, Plus, Search, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
+import { ClearableInput } from "@/components/ui/clearable-input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { Select } from "@/components/ui/select.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
@@ -17,10 +18,16 @@ import {
 } from "@/components/ui/table.tsx";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import { useApps, useCreateApp, useDeleteApp } from "@/api/hooks.ts";
+import { useListState } from "@/hooks/useListState.ts";
+import { SortableHead } from "@/components/SortableHead.tsx";
+import { PaginationBar } from "@/components/PaginationBar.tsx";
 import type { AppSummary } from "@/types/api.ts";
 
 export function AppsPage() {
-  const { data: apps, isLoading } = useApps();
+  const listState = useListState();
+  const { data: response, isLoading } = useApps(listState.params);
+  const apps = response?.data ?? [];
+  const meta = (response as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
   const createApp = useCreateApp();
   const deleteApp = useDeleteApp();
   const navigate = useNavigate();
@@ -91,10 +98,22 @@ export function AppsPage() {
             Manage monitoring apps and their versions.
           </p>
         </div>
-        <Button size="sm" onClick={() => { setAddName(""); setAddDesc(""); setAddType("script"); setAddTargetTable("availability_latency"); setAddConfigSchema(""); setAddError(null); setAddOpen(true); }} className="gap-1.5">
-          <Plus className="h-4 w-4" />
-          New App
-        </Button>
+        <div className="flex items-center gap-3">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+            <ClearableInput
+              placeholder="Search apps..."
+              className="pl-9 w-64"
+              value={listState.search}
+              onChange={(e) => listState.setSearch(e.target.value)}
+              onClear={() => listState.setSearch("")}
+            />
+          </div>
+          <Button size="sm" onClick={() => { setAddName(""); setAddDesc(""); setAddType("script"); setAddTargetTable("availability_latency"); setAddConfigSchema(""); setAddError(null); setAddOpen(true); }} className="gap-1.5">
+            <Plus className="h-4 w-4" />
+            New App
+          </Button>
+        </div>
       </div>
 
       <Card>
@@ -102,78 +121,89 @@ export function AppsPage() {
           <CardTitle className="flex items-center gap-2">
             <AppWindow className="h-4 w-4" />
             Apps
-            <Badge variant="default" className="ml-auto">{apps?.length ?? 0}</Badge>
+            <Badge variant="default" className="ml-auto">{meta.total}</Badge>
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {!apps || apps.length === 0 ? (
+          {apps.length === 0 && !listState.search ? (
             <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
               <AppWindow className="mb-2 h-8 w-8 text-zinc-600" />
               <p className="text-sm">No apps registered</p>
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Target Table</TableHead>
-                  <TableHead>Connectors</TableHead>
-                  <TableHead>Description</TableHead>
-                  <TableHead className="w-12"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {apps.map((app) => (
-                  <TableRow key={app.id}>
-                    <TableCell>
-                      <Link
-                        to={`/apps/${app.id}`}
-                        className="font-medium text-brand-400 hover:text-brand-300 transition-colors"
-                      >
-                        {app.name}
-                      </Link>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="info">
-                        {app.app_type}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="default" className="font-mono text-xs">
-                        {app.target_table}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      {app.connector_bindings && app.connector_bindings.length > 0 ? (
-                        <div className="flex flex-wrap gap-1">
-                          {app.connector_bindings.map((cb) => (
-                            <Badge key={cb.alias} variant="info" className="text-xs gap-1">
-                              <Plug className="h-2.5 w-2.5" />
-                              {cb.connector_name || cb.alias}
-                            </Badge>
-                          ))}
-                        </div>
-                      ) : (
-                        <span className="text-zinc-600 text-xs">{"\u2014"}</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-zinc-400 text-sm max-w-[400px] truncate">
-                      {app.description ?? <span className="text-zinc-600 italic">—</span>}
-                    </TableCell>
-                    <TableCell>
-                      <button
-                        onClick={() => setDeleteTarget(app)}
-                        className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                        title="Delete"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </TableCell>
+            <>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <SortableHead col="name" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>Name</SortableHead>
+                    <SortableHead col="app_type" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>Type</SortableHead>
+                    <SortableHead col="target_table" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>Target Table</SortableHead>
+                    <TableHead>Connectors</TableHead>
+                    <TableHead>Description</TableHead>
+                    <TableHead className="w-12"></TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {apps.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center text-zinc-500 py-8">
+                        No apps match your search
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    apps.map((app) => (
+                      <TableRow key={app.id}>
+                        <TableCell>
+                          <Link
+                            to={`/apps/${app.id}`}
+                            className="font-medium text-brand-400 hover:text-brand-300 transition-colors"
+                          >
+                            {app.name}
+                          </Link>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="info">
+                            {app.app_type}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="default" className="font-mono text-xs">
+                            {app.target_table}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          {app.connector_bindings && app.connector_bindings.length > 0 ? (
+                            <div className="flex flex-wrap gap-1">
+                              {app.connector_bindings.map((cb) => (
+                                <Badge key={cb.alias} variant="info" className="text-xs gap-1">
+                                  <Plug className="h-2.5 w-2.5" />
+                                  {cb.connector_name || cb.alias}
+                                </Badge>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-zinc-600 text-xs">{"\u2014"}</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-zinc-400 text-sm max-w-[400px] truncate">
+                          {app.description ?? <span className="text-zinc-600 italic">—</span>}
+                        </TableCell>
+                        <TableCell>
+                          <button
+                            onClick={() => setDeleteTarget(app)}
+                            className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                            title="Delete"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+              <PaginationBar page={listState.page} pageSize={listState.pageSize} total={meta.total} count={meta.count} onPageChange={listState.setPage} />
+            </>
           )}
         </CardContent>
       </Card>

@@ -9,7 +9,8 @@ from pathlib import Path
 import structlog
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
-from sqlalchemy import func, select
+import sqlalchemy as sa
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -171,10 +172,31 @@ async def _get_available_packages(db: AsyncSession) -> dict[str, list[str]]:
 
 @router.get("")
 async def list_modules(
+    search: str | None = Query(default=None),
+    sort_by: str = Query(default="name"),
+    sort_dir: str = Query(default="asc"),
+    limit: int = Query(default=50, le=500),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
     """List all registered Python modules with version/wheel counts and dep status."""
+    # Build search filter
+    search_filter = None
+    if search:
+        pattern = f"%{search}%"
+        search_filter = or_(
+            PythonModule.name.ilike(pattern),
+            PythonModule.description.ilike(pattern),
+        )
+
+    # Count total matching modules
+    count_stmt = select(sa.func.count()).select_from(PythonModule)
+    if search_filter is not None:
+        count_stmt = count_stmt.where(search_filter)
+    total = (await db.execute(count_stmt)).scalar() or 0
+
+    # Main query
     stmt = (
         select(
             PythonModule,
@@ -183,9 +205,21 @@ async def list_modules(
         )
         .outerjoin(PythonModuleVersion, PythonModule.id == PythonModuleVersion.module_id)
         .outerjoin(WheelFile, PythonModuleVersion.id == WheelFile.module_version_id)
-        .group_by(PythonModule.id)
-        .order_by(PythonModule.name)
     )
+    if search_filter is not None:
+        stmt = stmt.where(search_filter)
+
+    SORT_MAP = {
+        "name": PythonModule.name,
+        "is_approved": PythonModule.is_approved,
+        "created_at": PythonModule.created_at,
+    }
+    sort_col = SORT_MAP.get(sort_by, PythonModule.name)
+    stmt = stmt.group_by(PythonModule.id).order_by(
+        sort_col.desc() if sort_dir == "desc" else sort_col.asc()
+    )
+    stmt = stmt.limit(limit).offset(offset)
+
     result = await db.execute(stmt)
     rows = result.all()
 
@@ -248,7 +282,11 @@ async def list_modules(
         d["is_dependency_of"] = is_dep_of.get(mid_str, [])
         data.append(d)
 
-    return {"status": "success", "data": data}
+    return {
+        "status": "success",
+        "data": data,
+        "meta": {"limit": limit, "offset": offset, "count": len(data), "total": total},
+    }
 
 
 # ---------------------------------------------------------------------------

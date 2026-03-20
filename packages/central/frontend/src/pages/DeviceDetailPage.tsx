@@ -120,7 +120,8 @@ function AddAssignmentDialog({
   open,
   onClose,
 }: AddAssignmentDialogProps) {
-  const { data: apps } = useApps();
+  const { data: appsResp } = useApps();
+  const apps = appsResp?.data ?? [];
   const { data: credentials } = useCredentials();
   const [selectedAppId, setSelectedAppId] = useState("");
   const { data: appDetail } = useAppDetail(selectedAppId || undefined);
@@ -1743,12 +1744,13 @@ function SchemaConfigFields({
 
 function MonitoringCard({ deviceId, device }: { deviceId: string; device: DeviceType | undefined }) {
   const { data: monitoring, isLoading: monLoading } = useDeviceMonitoring(deviceId);
-  const { data: allApps } = useApps();
+  const { data: allAppsResp } = useApps();
+  const allApps = allAppsResp?.data ?? [];
   const updateMonitoring = useUpdateDeviceMonitoring();
 
   // Only apps targeting availability_latency can be used for avail/latency monitoring
   const monitoringApps = useMemo(
-    () => (allApps ?? []).filter((a) => a.target_table === "availability_latency"),
+    () => allApps.filter((a) => a.target_table === "availability_latency"),
     [allApps],
   );
 

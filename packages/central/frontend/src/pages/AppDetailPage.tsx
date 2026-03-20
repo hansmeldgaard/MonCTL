@@ -101,7 +101,8 @@ export function AppDetailPage() {
   // Connector binding state
   const addConnector = useAddAppConnector();
   const deleteConnector = useDeleteAppConnector();
-  const { data: connectorsList } = useConnectors();
+  const { data: connectorsResp } = useConnectors();
+  const connectorsList = connectorsResp?.data ?? [];
   const [connBindOpen, setConnBindOpen] = useState(false);
   const [connBindAlias, setConnBindAlias] = useState("");
   const [connBindConnectorId, setConnBindConnectorId] = useState("");
@@ -834,7 +835,8 @@ function NewVersionCodeForm({
 // ── Alerts Tab ──────────────────────────────────────────
 
 function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string; versions: Array<{ id: string; version: string; is_latest: boolean }> } }) {
-  const { data: definitions, isLoading } = useAlertDefinitions(appId);
+  const { data: definitionsResp, isLoading } = useAlertDefinitions(appId);
+  const definitions = definitionsResp?.data ?? [];
   const { data: metrics } = useAlertMetrics(appId);
   const createDef = useCreateAlertDefinition();
   const updateDef = useUpdateAlertDefinition();

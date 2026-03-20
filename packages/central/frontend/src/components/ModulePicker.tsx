@@ -11,7 +11,8 @@ interface ModulePickerProps {
 }
 
 export function ModulePicker({ value, onChange }: ModulePickerProps) {
-  const { data: modules } = usePythonModules();
+  const { data: modulesResp } = usePythonModules();
+  const modules = modulesResp?.data ?? [];
   const [selectedModuleId, setSelectedModuleId] = useState("");
   const { data: moduleDetail } = usePythonModuleDetail(selectedModuleId || undefined);
   const [selectedVersion, setSelectedVersion] = useState("");

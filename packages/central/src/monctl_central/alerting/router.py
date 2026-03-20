@@ -6,7 +6,8 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+import sqlalchemy as sa
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -132,14 +133,47 @@ _VALID_SEVERITIES = {"info", "warning", "critical", "emergency", "recovery"}
 @router.get("/definitions")
 async def list_alert_definitions(
     app_id: str | None = Query(None),
+    search: str | None = Query(default=None),
+    sort_by: str = Query(default="name"),
+    sort_dir: str = Query(default="asc"),
+    limit: int = Query(default=50, le=500),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
     """List all alert definitions, optionally filtered by app_id."""
-    stmt = select(AppAlertDefinition)
+    # Build filters
+    filters = []
     if app_id:
-        stmt = stmt.where(AppAlertDefinition.app_id == uuid.UUID(app_id))
-    stmt = stmt.order_by(AppAlertDefinition.name)
+        filters.append(AppAlertDefinition.app_id == uuid.UUID(app_id))
+    if search:
+        pattern = f"%{search}%"
+        filters.append(or_(
+            AppAlertDefinition.name.ilike(pattern),
+            AppAlertDefinition.description.ilike(pattern),
+            AppAlertDefinition.expression.ilike(pattern),
+        ))
+
+    # Count total
+    count_stmt = select(sa.func.count()).select_from(AppAlertDefinition)
+    for f in filters:
+        count_stmt = count_stmt.where(f)
+    total = (await db.execute(count_stmt)).scalar() or 0
+
+    # Main query
+    stmt = select(AppAlertDefinition)
+    for f in filters:
+        stmt = stmt.where(f)
+
+    SORT_MAP = {
+        "name": AppAlertDefinition.name,
+        "severity": AppAlertDefinition.severity,
+        "enabled": AppAlertDefinition.enabled,
+        "created_at": AppAlertDefinition.created_at,
+    }
+    sort_col = SORT_MAP.get(sort_by, AppAlertDefinition.name)
+    stmt = stmt.order_by(sort_col.desc() if sort_dir == "desc" else sort_col.asc())
+    stmt = stmt.limit(limit).offset(offset)
 
     definitions = (await db.execute(stmt)).scalars().all()
 
@@ -161,6 +195,7 @@ async def list_alert_definitions(
     return {
         "status": "success",
         "data": [_fmt_definition(d, counts) for d in definitions],
+        "meta": {"limit": limit, "offset": offset, "count": len(definitions), "total": total},
     }
 
 

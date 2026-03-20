@@ -126,6 +126,22 @@ export interface DeviceBulkPatchResult {
   skipped: number;
 }
 
+export interface ListParams {
+  limit?: number;
+  offset?: number;
+  sort_by?: string;
+  sort_dir?: "asc" | "desc";
+  search?: string;
+}
+
+export interface BulkUpdateAssignmentsRequest {
+  assignment_ids: string[];
+  schedule_type?: string | null;
+  schedule_value?: string | null;
+  credential_id?: string | null;
+  enabled?: boolean | null;
+}
+
 export interface DeviceListParams {
   limit?: number;
   offset?: number;

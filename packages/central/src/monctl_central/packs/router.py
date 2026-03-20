@@ -5,9 +5,10 @@ from __future__ import annotations
 import re
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import select
+import sqlalchemy as sa
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -97,17 +98,53 @@ async def list_available_entities(
 # ── List packs ──────────────────────────────────────────────
 
 
+SORT_MAP = {
+    "name": Pack.name,
+    "pack_uid": Pack.pack_uid,
+    "version": Pack.current_version,
+    "created_at": Pack.installed_at,
+}
+
+
 @router.get("")
 async def list_packs(
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
+    search: str | None = Query(default=None),
+    sort_by: str = Query(default="name"),
+    sort_dir: str = Query(default="asc"),
+    limit: int = Query(default=50, le=500),
+    offset: int = Query(default=0, ge=0),
 ):
-    packs = (await db.execute(select(Pack).order_by(Pack.name))).scalars().all()
-    result = []
+    base_stmt = select(Pack)
+
+    if search:
+        term = f"%{search}%"
+        base_stmt = base_stmt.where(or_(
+            Pack.name.ilike(term),
+            Pack.pack_uid.ilike(term),
+            Pack.description.ilike(term),
+        ))
+
+    sort_col = SORT_MAP.get(sort_by, Pack.name)
+    base_stmt = base_stmt.order_by(sort_col.desc() if sort_dir == "desc" else sort_col.asc())
+
+    count_stmt = select(sa.func.count()).select_from(base_stmt.subquery())
+    total = (await db.execute(count_stmt)).scalar() or 0
+
+    stmt = base_stmt.offset(offset).limit(limit)
+    packs = (await db.execute(stmt)).scalars().all()
+
+    data = []
     for p in packs:
         counts = await get_entity_counts(p.id, db)
-        result.append(_fmt_pack(p, counts))
-    return {"status": "success", "data": result}
+        data.append(_fmt_pack(p, counts))
+
+    return {
+        "status": "success",
+        "data": data,
+        "meta": {"limit": limit, "offset": offset, "count": len(data), "total": total},
+    }
 
 
 # ── Get pack detail ─────────────────────────────────────────

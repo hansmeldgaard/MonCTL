@@ -1122,7 +1122,7 @@ class ClickHouseClient:
         data = [[e.get(col) for col in _EVENTS_INSERT_COLUMNS] for e in events]
         client.insert("events", data, column_names=_EVENTS_INSERT_COLUMNS)
 
-    def query_events(
+    def _build_event_filters(
         self,
         *,
         state: str | None = None,
@@ -1131,10 +1131,9 @@ class ClickHouseClient:
         tenant_id: str | None = None,
         from_ts: datetime | None = None,
         to_ts: datetime | None = None,
-        limit: int = 200,
-    ) -> list[dict]:
-        """Query events with optional filters."""
-        sql = "SELECT * FROM events"
+        search: str | None = None,
+    ) -> tuple[list[str], dict[str, Any]]:
+        """Build WHERE clauses and params for event queries."""
         wheres: list[str] = []
         params: dict[str, Any] = {}
 
@@ -1156,11 +1155,68 @@ class ClickHouseClient:
         if to_ts:
             wheres.append("occurred_at <= {to_ts:DateTime64(3)}")
             params["to_ts"] = to_ts.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        if search:
+            wheres.append("message ILIKE {search_pattern:String}")
+            params["search_pattern"] = f"%{search}%"
 
+        return wheres, params
+
+    def count_events(
+        self,
+        *,
+        state: str | None = None,
+        severity: str | None = None,
+        device_id: str | None = None,
+        tenant_id: str | None = None,
+        from_ts: datetime | None = None,
+        to_ts: datetime | None = None,
+        search: str | None = None,
+    ) -> int:
+        """Count events matching the given filters."""
+        wheres, params = self._build_event_filters(
+            state=state, severity=severity, device_id=device_id,
+            tenant_id=tenant_id, from_ts=from_ts, to_ts=to_ts, search=search,
+        )
+        sql = "SELECT count() FROM events"
         if wheres:
             sql += " WHERE " + " AND ".join(wheres)
-        sql += " ORDER BY occurred_at DESC"
-        sql += f" LIMIT {limit}"
+        try:
+            client = self._get_client()
+            result = client.query(sql, parameters=params)
+            return result.result_rows[0][0] if result.result_rows else 0
+        except Exception:
+            return 0
+
+    def query_events(
+        self,
+        *,
+        state: str | None = None,
+        severity: str | None = None,
+        device_id: str | None = None,
+        tenant_id: str | None = None,
+        from_ts: datetime | None = None,
+        to_ts: datetime | None = None,
+        search: str | None = None,
+        sort_by: str = "occurred_at",
+        sort_dir: str = "desc",
+        limit: int = 200,
+        offset: int = 0,
+    ) -> list[dict]:
+        """Query events with optional filters."""
+        wheres, params = self._build_event_filters(
+            state=state, severity=severity, device_id=device_id,
+            tenant_id=tenant_id, from_ts=from_ts, to_ts=to_ts, search=search,
+        )
+
+        sql = "SELECT * FROM events"
+        if wheres:
+            sql += " WHERE " + " AND ".join(wheres)
+
+        VALID_SORT = {"occurred_at", "severity", "source", "message"}
+        sort_col = sort_by if sort_by in VALID_SORT else "occurred_at"
+        sort_direction = "DESC" if sort_dir == "desc" else "ASC"
+        sql += f" ORDER BY {sort_col} {sort_direction}"
+        sql += f" LIMIT {limit} OFFSET {offset}"
 
         try:
             client = self._get_client()

@@ -5,9 +5,10 @@ from __future__ import annotations
 import re
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+import sqlalchemy as sa
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from monctl_central.dependencies import apply_tenant_filter, get_db, require_auth
@@ -171,12 +172,40 @@ class CreateAssignmentRequest(BaseModel):
 async def list_apps(
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
+    search: str | None = Query(default=None),
+    sort_by: str = Query(default="name"),
+    sort_dir: str = Query(default="asc"),
+    limit: int = Query(default=50, le=500),
+    offset: int = Query(default=0, ge=0),
 ):
     """List all apps with connector bindings."""
     from sqlalchemy.orm import selectinload
     from monctl_central.storage.models import AppConnectorBinding
 
     stmt = select(App).options(selectinload(App.connector_bindings))
+
+    if search:
+        pattern = f"%{search}%"
+        stmt = stmt.where(or_(
+            App.name.ilike(pattern),
+            App.description.ilike(pattern),
+            App.app_type.ilike(pattern),
+            App.target_table.ilike(pattern),
+        ))
+
+    APPS_SORT_MAP = {
+        "name": App.name,
+        "app_type": App.app_type,
+        "target_table": App.target_table,
+        "created_at": App.created_at,
+    }
+    sort_col = APPS_SORT_MAP.get(sort_by, App.name)
+    stmt = stmt.order_by(sort_col.desc() if sort_dir == "desc" else sort_col.asc())
+
+    count_stmt = select(sa.func.count()).select_from(stmt.subquery())
+    total = (await db.execute(count_stmt)).scalar() or 0
+    stmt = stmt.limit(limit).offset(offset)
+
     result = await db.execute(stmt)
     apps = result.scalars().all()
 
@@ -192,26 +221,29 @@ async def list_apps(
         )).all()
         connector_names = {r.id: r.name for r in cn_rows}
 
+    apps_list = [
+        {
+            "id": str(a.id),
+            "name": a.name,
+            "description": a.description,
+            "app_type": a.app_type,
+            "target_table": a.target_table,
+            "connector_bindings": [
+                {
+                    "alias": b.alias,
+                    "connector_id": str(b.connector_id),
+                    "connector_name": connector_names.get(b.connector_id, ""),
+                }
+                for b in a.connector_bindings
+            ],
+        }
+        for a in apps
+    ]
+
     return {
         "status": "success",
-        "data": [
-            {
-                "id": str(a.id),
-                "name": a.name,
-                "description": a.description,
-                "app_type": a.app_type,
-                "target_table": a.target_table,
-                "connector_bindings": [
-                    {
-                        "alias": b.alias,
-                        "connector_id": str(b.connector_id),
-                        "connector_name": connector_names.get(b.connector_id, ""),
-                    }
-                    for b in a.connector_bindings
-                ],
-            }
-            for a in apps
-        ],
+        "data": apps_list,
+        "meta": {"limit": limit, "offset": offset, "count": len(apps_list), "total": total},
     }
 
 
@@ -268,6 +300,11 @@ async def list_assignments(
     collector_id: str | None = None,
     device_id: str | None = None,
     app_id_filter: str | None = None,
+    search: str | None = Query(default=None),
+    sort_by: str = Query(default="app_name"),
+    sort_dir: str = Query(default="asc"),
+    limit: int = Query(default=50, le=500),
+    offset: int = Query(default=0, ge=0),
 ):
     """List all app assignments with app, device, and schedule details."""
     from sqlalchemy.orm import selectinload
@@ -290,6 +327,29 @@ async def list_assignments(
     if app_id_filter:
         stmt = stmt.where(AppAssignment.app_id == uuid.UUID(app_id_filter))
     stmt = apply_tenant_filter(stmt, auth, DeviceModel.tenant_id)
+
+    if search:
+        pattern = f"%{search}%"
+        stmt = stmt.where(or_(
+            App.name.ilike(pattern),
+            DeviceModel.name.ilike(pattern),
+            DeviceModel.address.ilike(pattern),
+        ))
+
+    ASSIGNMENTS_SORT_MAP = {
+        "app_name": App.name,
+        "device_name": DeviceModel.name,
+        "device_address": DeviceModel.address,
+        "schedule": AppAssignment.schedule_value,
+        "enabled": AppAssignment.enabled,
+        "created_at": AppAssignment.created_at,
+    }
+    sort_col = ASSIGNMENTS_SORT_MAP.get(sort_by, App.name)
+    stmt = stmt.order_by(sort_col.desc() if sort_dir == "desc" else sort_col.asc())
+
+    count_stmt = select(sa.func.count()).select_from(stmt.subquery())
+    total = (await db.execute(count_stmt)).scalar() or 0
+    stmt = stmt.limit(limit).offset(offset)
 
     result = await db.execute(stmt)
     rows = result.all()
@@ -402,8 +462,77 @@ async def list_assignments(
             }
             for row in rows
         ],
-        "meta": {"count": len(rows)},
+        "meta": {"limit": limit, "offset": offset, "count": len(rows), "total": total},
     }
+
+
+class BulkUpdateAssignmentsRequest(BaseModel):
+    assignment_ids: list[str]
+    schedule_type: str | None = None
+    schedule_value: str | None = None
+    credential_id: str | None = None
+    enabled: bool | None = None
+
+
+@router.put("/assignments/bulk-update")
+async def bulk_update_assignments(
+    request: BulkUpdateAssignmentsRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Bulk update schedule, credential, and/or enabled state for multiple assignments."""
+    from monctl_central.storage.models import Collector, Device
+    from sqlalchemy import update as sa_update
+    from monctl_common.utils import utc_now
+
+    if not request.assignment_ids:
+        raise HTTPException(status_code=400, detail="No assignment IDs provided")
+    if len(request.assignment_ids) > 200:
+        raise HTTPException(status_code=400, detail="Max 200 assignments per bulk update")
+
+    uuids = [uuid.UUID(aid) for aid in request.assignment_ids]
+    stmt = select(AppAssignment).where(AppAssignment.id.in_(uuids))
+    assignments = (await db.execute(stmt)).scalars().all()
+
+    if len(assignments) != len(uuids):
+        raise HTTPException(status_code=404, detail="One or more assignments not found")
+
+    collector_ids_to_bump: set[uuid.UUID] = set()
+    group_ids_to_bump: set[uuid.UUID] = set()
+
+    for a in assignments:
+        if request.schedule_type is not None:
+            a.schedule_type = request.schedule_type
+        if request.schedule_value is not None:
+            a.schedule_value = request.schedule_value
+        if request.credential_id is not None:
+            a.credential_id = uuid.UUID(request.credential_id) if request.credential_id else None
+        if request.enabled is not None:
+            a.enabled = request.enabled
+
+        if a.collector_id:
+            collector_ids_to_bump.add(a.collector_id)
+        elif a.device_id:
+            device = await db.get(Device, a.device_id)
+            if device and device.collector_group_id:
+                group_ids_to_bump.add(device.collector_group_id)
+
+    await db.flush()
+
+    if collector_ids_to_bump:
+        await db.execute(
+            sa_update(Collector)
+            .where(Collector.id.in_(collector_ids_to_bump))
+            .values(config_version=Collector.config_version + 1, updated_at=utc_now())
+        )
+    if group_ids_to_bump:
+        await db.execute(
+            sa_update(Collector)
+            .where(Collector.group_id.in_(group_ids_to_bump))
+            .values(config_version=Collector.config_version + 1, updated_at=utc_now())
+        )
+
+    return {"status": "success", "data": {"updated": len(assignments)}}
 
 
 @router.get("/{app_id}")

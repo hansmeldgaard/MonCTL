@@ -96,42 +96,80 @@ async def list_events(
     state: str | None = Query(None),
     severity: str | None = Query(None),
     device_id: str | None = Query(None),
+    search: str | None = Query(None),
+    sort_by: str = Query(default="occurred_at"),
+    sort_dir: str = Query(default="desc"),
     limit: int = Query(200, le=1000),
+    offset: int = Query(0, ge=0),
     ch: ClickHouseClient = Depends(get_clickhouse),
     auth: dict = Depends(require_auth),
 ):
+    total = await asyncio.to_thread(
+        ch.count_events, state=state, severity=severity,
+        device_id=device_id, search=search,
+    )
     rows = await asyncio.to_thread(
         ch.query_events, state=state, severity=severity,
-        device_id=device_id, limit=limit,
+        device_id=device_id, limit=limit, search=search,
+        sort_by=sort_by, sort_dir=sort_dir, offset=offset,
     )
-    return {"status": "success", "data": [_fmt_event(r) for r in rows]}
+    return {
+        "status": "success",
+        "data": [_fmt_event(r) for r in rows],
+        "meta": {"limit": limit, "offset": offset, "count": len(rows), "total": total},
+    }
 
 
 @router.get("/active")
 async def list_active_events(
     severity: str | None = Query(None),
     device_id: str | None = Query(None),
+    search: str | None = Query(None),
+    sort_by: str = Query(default="occurred_at"),
+    sort_dir: str = Query(default="desc"),
     limit: int = Query(200, le=1000),
+    offset: int = Query(0, ge=0),
     ch: ClickHouseClient = Depends(get_clickhouse),
     auth: dict = Depends(require_auth),
 ):
+    total = await asyncio.to_thread(
+        ch.count_events, state="active", severity=severity,
+        device_id=device_id, search=search,
+    )
     rows = await asyncio.to_thread(
         ch.query_events, state="active", severity=severity,
-        device_id=device_id, limit=limit,
+        device_id=device_id, limit=limit, search=search,
+        sort_by=sort_by, sort_dir=sort_dir, offset=offset,
     )
-    return {"status": "success", "data": [_fmt_event(r) for r in rows]}
+    return {
+        "status": "success",
+        "data": [_fmt_event(r) for r in rows],
+        "meta": {"limit": limit, "offset": offset, "count": len(rows), "total": total},
+    }
 
 
 @router.get("/cleared")
 async def list_cleared_events(
+    search: str | None = Query(None),
+    sort_by: str = Query(default="occurred_at"),
+    sort_dir: str = Query(default="desc"),
     limit: int = Query(200, le=1000),
+    offset: int = Query(0, ge=0),
     ch: ClickHouseClient = Depends(get_clickhouse),
     auth: dict = Depends(require_auth),
 ):
-    rows = await asyncio.to_thread(
-        ch.query_events, state="cleared", limit=limit,
+    total = await asyncio.to_thread(
+        ch.count_events, state="cleared", search=search,
     )
-    return {"status": "success", "data": [_fmt_event(r) for r in rows]}
+    rows = await asyncio.to_thread(
+        ch.query_events, state="cleared", limit=limit, search=search,
+        sort_by=sort_by, sort_dir=sort_dir, offset=offset,
+    )
+    return {
+        "status": "success",
+        "data": [_fmt_event(r) for r in rows],
+        "meta": {"limit": limit, "offset": offset, "count": len(rows), "total": total},
+    }
 
 
 # ── Event actions ─────────────────────────────────────────

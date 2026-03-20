@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Loader2, Plug, Plus, Trash2 } from "lucide-react";
+import { Loader2, Plug, Plus, Search, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
+import { ClearableInput } from "@/components/ui/clearable-input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import {
@@ -16,10 +17,16 @@ import {
 } from "@/components/ui/table.tsx";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import { useConnectors, useCreateConnector, useDeleteConnector } from "@/api/hooks.ts";
+import { useListState } from "@/hooks/useListState.ts";
+import { SortableHead } from "@/components/SortableHead.tsx";
+import { PaginationBar } from "@/components/PaginationBar.tsx";
 import type { ConnectorSummary } from "@/types/api.ts";
 
 export function ConnectorsPage() {
-  const { data: connectors, isLoading } = useConnectors();
+  const listState = useListState();
+  const { data: response, isLoading } = useConnectors(listState.params);
+  const connectors = response?.data ?? [];
+  const meta = (response as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
   const createConnector = useCreateConnector();
   const deleteConnector = useDeleteConnector();
   const navigate = useNavigate();
@@ -79,10 +86,22 @@ export function ConnectorsPage() {
             Manage connectors and their versions.
           </p>
         </div>
-        <Button size="sm" onClick={() => { setAddName(""); setAddDesc(""); setAddType(""); setAddError(null); setAddOpen(true); }} className="gap-1.5">
-          <Plus className="h-4 w-4" />
-          New Connector
-        </Button>
+        <div className="flex items-center gap-3">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+            <ClearableInput
+              placeholder="Search connectors..."
+              className="pl-9 w-64"
+              value={listState.search}
+              onChange={(e) => listState.setSearch(e.target.value)}
+              onClear={() => listState.setSearch("")}
+            />
+          </div>
+          <Button size="sm" onClick={() => { setAddName(""); setAddDesc(""); setAddType(""); setAddError(null); setAddOpen(true); }} className="gap-1.5">
+            <Plus className="h-4 w-4" />
+            New Connector
+          </Button>
+        </div>
       </div>
 
       <Card>
@@ -90,75 +109,86 @@ export function ConnectorsPage() {
           <CardTitle className="flex items-center gap-2">
             <Plug className="h-4 w-4" />
             Connectors
-            <Badge variant="default" className="ml-auto">{connectors?.length ?? 0}</Badge>
+            <Badge variant="default" className="ml-auto">{meta.total}</Badge>
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {!connectors || connectors.length === 0 ? (
+          {connectors.length === 0 && !listState.search ? (
             <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
               <Plug className="mb-2 h-8 w-8 text-zinc-600" />
               <p className="text-sm">No connectors registered</p>
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Description</TableHead>
-                  <TableHead>Versions</TableHead>
-                  <TableHead>Latest Version</TableHead>
-                  <TableHead>Built-in</TableHead>
-                  <TableHead className="w-12"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {connectors.map((c) => (
-                  <TableRow key={c.id}>
-                    <TableCell>
-                      <Link
-                        to={`/connectors/${c.id}`}
-                        className="font-medium text-brand-400 hover:text-brand-300 transition-colors"
-                      >
-                        {c.name}
-                      </Link>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="info">
-                        {c.connector_type}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-zinc-400 text-sm max-w-[400px] truncate">
-                      {c.description ?? <span className="text-zinc-600 italic">—</span>}
-                    </TableCell>
-                    <TableCell className="text-zinc-400 text-sm">
-                      {c.version_count}
-                    </TableCell>
-                    <TableCell>
-                      {c.latest_version ? (
-                        <Badge variant="default" className="font-mono text-xs">{c.latest_version}</Badge>
-                      ) : (
-                        <span className="text-zinc-600 italic text-sm">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {c.is_builtin && (
-                        <Badge variant="success">built-in</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <button
-                        onClick={() => setDeleteTarget(c)}
-                        className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                        title="Delete"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </TableCell>
+            <>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <SortableHead col="name" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>Name</SortableHead>
+                    <SortableHead col="connector_type" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>Type</SortableHead>
+                    <TableHead>Description</TableHead>
+                    <TableHead>Versions</TableHead>
+                    <TableHead>Latest Version</TableHead>
+                    <TableHead>Built-in</TableHead>
+                    <TableHead className="w-12"></TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {connectors.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={7} className="text-center text-zinc-500 py-8">
+                        No connectors match your search
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    connectors.map((c) => (
+                      <TableRow key={c.id}>
+                        <TableCell>
+                          <Link
+                            to={`/connectors/${c.id}`}
+                            className="font-medium text-brand-400 hover:text-brand-300 transition-colors"
+                          >
+                            {c.name}
+                          </Link>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="info">
+                            {c.connector_type}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-zinc-400 text-sm max-w-[400px] truncate">
+                          {c.description ?? <span className="text-zinc-600 italic">—</span>}
+                        </TableCell>
+                        <TableCell className="text-zinc-400 text-sm">
+                          {c.version_count}
+                        </TableCell>
+                        <TableCell>
+                          {c.latest_version ? (
+                            <Badge variant="default" className="font-mono text-xs">{c.latest_version}</Badge>
+                          ) : (
+                            <span className="text-zinc-600 italic text-sm">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {c.is_builtin && (
+                            <Badge variant="success">built-in</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <button
+                            onClick={() => setDeleteTarget(c)}
+                            className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                            title="Delete"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+              <PaginationBar page={listState.page} pageSize={listState.pageSize} total={meta.total} count={meta.count} onPageChange={listState.setPage} />
+            </>
           )}
         </CardContent>
       </Card>
