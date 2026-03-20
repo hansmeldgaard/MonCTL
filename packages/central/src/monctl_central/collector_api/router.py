@@ -203,19 +203,40 @@ async def get_jobs(
     # Fetch enabled assignments with their app, app_version, and device
     from sqlalchemy.orm import selectinload
 
+    _base_opts = (
+        selectinload(AppAssignment.connector_bindings),
+    )
+    _enabled_device_filter = [
+        AppAssignment.enabled == True,  # noqa: E712
+        or_(
+            AppAssignment.device_id.is_(None),
+            Device.is_enabled == True,  # noqa: E712
+        ),
+    ]
+
+    # 1. Fetch assignments pinned to THIS collector (always included, no partitioning)
+    pinned_rows = []
+    if collector_id:
+        pinned_stmt = (
+            select(AppAssignment, App, AppVersion, Device)
+            .join(App, AppAssignment.app_id == App.id)
+            .join(AppVersion, AppAssignment.app_version_id == AppVersion.id)
+            .outerjoin(Device, AppAssignment.device_id == Device.id)
+            .options(*_base_opts)
+            .where(AppAssignment.collector_id == uuid.UUID(collector_id), *_enabled_device_filter)
+        )
+        if since_dt is not None:
+            pinned_stmt = pinned_stmt.where(AppAssignment.updated_at > since_dt)
+        pinned_rows = list((await db.execute(pinned_stmt)).all())
+
+    # 2. Fetch unpinned (group-level) assignments for partitioning
     stmt = (
         select(AppAssignment, App, AppVersion, Device)
         .join(App, AppAssignment.app_id == App.id)
         .join(AppVersion, AppAssignment.app_version_id == AppVersion.id)
         .outerjoin(Device, AppAssignment.device_id == Device.id)
-        .options(selectinload(AppAssignment.connector_bindings))
-        .where(AppAssignment.enabled == True)  # noqa: E712
-        .where(
-            or_(
-                AppAssignment.device_id.is_(None),
-                Device.is_enabled == True,  # noqa: E712
-            )
-        )
+        .options(*_base_opts)
+        .where(AppAssignment.collector_id.is_(None), *_enabled_device_filter)
     )
 
     # Filter by collector group: only jobs for devices in this group
@@ -226,12 +247,10 @@ async def get_jobs(
         stmt = stmt.where(AppAssignment.updated_at > since_dt)
 
     result = await db.execute(stmt)
-    rows = result.all()
+    rows = list(result.all())
 
     # ── Server-side weighted job partitioning ────────────────────────────
-    # When a collector belongs to a group with multiple active members,
-    # partition jobs using weighted consistent hashing so collectors with
-    # more available capacity receive proportionally more jobs.
+    # Partitioning applies ONLY to unpinned (group-level) assignments.
     if group_id is not None and coll is not None:
         group_stmt = (
             select(Collector)
@@ -259,6 +278,9 @@ async def get_jobs(
                     total_jobs=total_before,
                     assigned_jobs=len(rows),
                 )
+
+    # Combine: pinned always included + group-level after partitioning
+    rows = pinned_rows + rows
 
     # Pre-load latest versions for apps that have use_latest assignments
     latest_versions: dict[uuid.UUID, AppVersion] = {}

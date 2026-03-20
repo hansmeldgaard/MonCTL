@@ -618,6 +618,15 @@ async def create_assignment(
             )
         device_group_id = device.collector_group_id
 
+    # Validate pinned collector belongs to the device's collector group
+    if request.collector_id and request.device_id:
+        pinned = await db.get(Collector, uuid.UUID(request.collector_id))
+        if not pinned:
+            raise HTTPException(status_code=404, detail=f"Collector {request.collector_id} not found")
+        dev = await db.get(Device, uuid.UUID(request.device_id))
+        if dev and dev.collector_group_id and pinned.group_id != dev.collector_group_id:
+            raise HTTPException(status_code=400, detail="Pinned collector must be a member of the device's collector group")
+
     assignment = AppAssignment(
         app_id=uuid.UUID(request.app_id),
         app_version_id=uuid.UUID(request.app_version_id),
@@ -734,6 +743,8 @@ class UpdateAssignmentRequest(BaseModel):
     enabled: bool | None = None
     app_version_id: str | None = None
     use_latest: bool | None = None
+    collector_id: str | None = None  # "" = unpin, UUID = pin, None = don't change
+    credential_id: str | None = None
     connector_bindings: list[ConnectorBindingInput] | None = None
 
 
@@ -765,6 +776,34 @@ async def update_assignment(
         assignment.app_version_id = uuid.UUID(request.app_version_id)
     if request.use_latest is not None:
         assignment.use_latest = request.use_latest
+    if request.credential_id is not None:
+        assignment.credential_id = uuid.UUID(request.credential_id) if request.credential_id else None
+    if request.collector_id is not None:
+        old_collector_id = assignment.collector_id
+        if request.collector_id == "":
+            # Explicit unpin
+            assignment.collector_id = None
+        else:
+            pinned = await db.get(Collector, uuid.UUID(request.collector_id))
+            if not pinned:
+                raise HTTPException(status_code=404, detail=f"Collector {request.collector_id} not found")
+            if assignment.device_id:
+                device = await db.get(Device, assignment.device_id)
+                if device and device.collector_group_id and pinned.group_id != device.collector_group_id:
+                    raise HTTPException(status_code=400, detail="Pinned collector must be in the device's collector group")
+            assignment.collector_id = pinned.id
+        # Bump old and new collectors on pin change
+        if old_collector_id != assignment.collector_id:
+            if old_collector_id:
+                await db.execute(
+                    update(Collector).where(Collector.id == old_collector_id)
+                    .values(config_version=Collector.config_version + 1, updated_at=utc_now())
+                )
+            if assignment.collector_id:
+                await db.execute(
+                    update(Collector).where(Collector.id == assignment.collector_id)
+                    .values(config_version=Collector.config_version + 1, updated_at=utc_now())
+                )
     assignment.updated_at = utc_now()
 
     # Replace connector bindings if provided

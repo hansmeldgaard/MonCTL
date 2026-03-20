@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -529,12 +529,15 @@ async def get_collector_config(
 
 @router.get("")
 async def list_collectors(
+    group_id: str | None = Query(default=None, description="Filter by collector group UUID"),
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
     """List all collectors with group and IP information."""
     from sqlalchemy.orm import selectinload
     stmt = select(Collector).options(selectinload(Collector.group))
+    if group_id:
+        stmt = stmt.where(Collector.group_id == uuid.UUID(group_id))
     result = await db.execute(stmt)
     collectors = result.scalars().all()
 

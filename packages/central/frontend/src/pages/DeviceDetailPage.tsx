@@ -23,6 +23,7 @@ import {
   Settings2,
   Tag,
   Pencil,
+  Pin,
   Trash2,
   Wrench,
   X,
@@ -51,6 +52,7 @@ import { TimeRangePicker, rangeToTimestamps } from "@/components/TimeRangePicker
 import type { TimeRangeValue } from "@/components/TimeRangePicker.tsx";
 import {
   useCollectorGroups,
+  useCollectors,
   useCreateAssignment,
   useCredentials,
   useCredentialTypes,
@@ -127,6 +129,11 @@ function AddAssignmentDialog({
   const [versionMode, setVersionMode] = useState<"latest" | "pinned">("latest");
   const [selectedVersionId, setSelectedVersionId] = useState("");
   const [selectedCredentialId, setSelectedCredentialId] = useState("");
+  const [pinToCollector, setPinToCollector] = useState(false);
+  const [pinnedCollectorId, setPinnedCollectorId] = useState("");
+  const { data: groupCollectors } = useCollectors(
+    pinToCollector && deviceCollectorGroupId ? { group_id: deviceCollectorGroupId } : undefined
+  );
   const [configText, setConfigText] = useState("{}");
   const [parsedConfig, setParsedConfig] = useState<Record<string, unknown>>({});
   const [configError, setConfigError] = useState<string | null>(null);
@@ -148,6 +155,8 @@ function AddAssignmentDialog({
     setVersionMode("latest");
     setSelectedVersionId("");
     setSelectedCredentialId("");
+    setPinToCollector(false);
+    setPinnedCollectorId("");
     setScheduleType("interval");
     setScheduleValue("60");
     setConfigText("{}");
@@ -207,7 +216,7 @@ function AddAssignmentDialog({
       await createAssignment.mutateAsync({
         app_id: selectedAppId,
         app_version_id: versionId,
-        collector_id: null,
+        collector_id: pinToCollector && pinnedCollectorId ? pinnedCollectorId : null,
         device_id: deviceId,
         schedule_type: scheduleType,
         schedule_value: scheduleValue,
@@ -317,6 +326,37 @@ function AddAssignmentDialog({
             ))}
           </Select>
         </div>
+
+        {/* Pin to collector */}
+        {deviceCollectorGroupId && (
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="pin-collector"
+                checked={pinToCollector}
+                onChange={(e) => { setPinToCollector(e.target.checked); if (!e.target.checked) setPinnedCollectorId(""); }}
+                className="accent-brand-500 cursor-pointer"
+              />
+              <Label htmlFor="pin-collector" className="text-sm text-zinc-400 font-normal cursor-pointer">
+                Pin to a specific collector
+              </Label>
+            </div>
+            {pinToCollector && (
+              <>
+                <Select value={pinnedCollectorId} onChange={(e) => setPinnedCollectorId(e.target.value)}>
+                  <option value="">Select collector...</option>
+                  {(groupCollectors ?? []).map((c: { id: string; name: string; status: string }) => (
+                    <option key={c.id} value={c.id}>{c.name}{c.status !== "ACTIVE" ? ` (${c.status})` : ""}</option>
+                  ))}
+                </Select>
+                <p className="text-xs text-zinc-500">
+                  This assignment will only run on the selected collector. If the collector goes down, the assignment pauses until it recovers.
+                </p>
+              </>
+            )}
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">
@@ -433,6 +473,8 @@ function EditAssignmentDialog({ assignment, open, onClose }: EditAssignmentDialo
   const [enabled, setEnabled] = useState(true);
   const [versionMode, setVersionMode] = useState<"latest" | "pinned">("latest");
   const [selectedVersionId, setSelectedVersionId] = useState("");
+  const [pinToCollector, setPinToCollector] = useState(false);
+  const [pinnedCollectorId, setPinnedCollectorId] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -444,6 +486,8 @@ function EditAssignmentDialog({ assignment, open, onClose }: EditAssignmentDialo
       setEnabled(assignment.enabled);
       setVersionMode(assignment.use_latest ? "latest" : "pinned");
       setSelectedVersionId(assignment.app_version_id);
+      setPinToCollector(!!assignment.collector_id);
+      setPinnedCollectorId(assignment.collector_id ?? "");
       setConfigError(null);
       setFormError(null);
     }
@@ -487,6 +531,9 @@ function EditAssignmentDialog({ assignment, open, onClose }: EditAssignmentDialo
           enabled,
           app_version_id: versionId,
           use_latest: versionMode === "latest",
+          collector_id: pinToCollector && pinnedCollectorId
+            ? pinnedCollectorId
+            : (assignment.collector_id ? "" : undefined),
         },
       });
       onClose();
@@ -2000,6 +2047,7 @@ function AssignmentsTab({ deviceId }: { deviceId: string }) {
             <TableHead className="text-xs py-1">Role</TableHead>
             <TableHead className="text-xs py-1">Interval</TableHead>
             <TableHead className="text-xs py-1">Credential(s)</TableHead>
+            <TableHead className="text-xs py-1">Collector</TableHead>
             <TableHead className="text-xs py-1">Enabled</TableHead>
             <TableHead className="text-xs py-1 text-right">Actions</TableHead>
           </TableRow>
@@ -2026,6 +2074,16 @@ function AssignmentsTab({ deviceId }: { deviceId: string }) {
                   credentialOverrides={a.credential_overrides}
                   deviceDefaultCredentialName={a.device_default_credential_name}
                 />
+              </TableCell>
+              <TableCell className="py-1.5">
+                {a.collector_id ? (
+                  <span className="inline-flex items-center gap-1 text-[10px] text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded px-1.5 py-0.5">
+                    <Pin className="h-2.5 w-2.5" />
+                    {(a as any).collector_name ?? "pinned"}
+                  </span>
+                ) : (
+                  <span className="text-zinc-600 text-xs">group</span>
+                )}
               </TableCell>
               <TableCell className="py-1.5">
                 <Badge variant={a.enabled ? "success" : "default"} className="text-[10px]">

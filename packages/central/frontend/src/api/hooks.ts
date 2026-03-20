@@ -160,10 +160,11 @@ export function useLatestResults() {
 
 // ── Collectors ───────────────────────────────────────────
 
-export function useCollectors() {
+export function useCollectors(params?: { group_id?: string }) {
+  const qp = params?.group_id ? `?group_id=${params.group_id}` : "";
   return useQuery({
-    queryKey: ["collectors"],
-    queryFn: () => apiGet<Collector[]>("/collectors"),
+    queryKey: ["collectors", params?.group_id ?? null],
+    queryFn: () => apiGet<Collector[]>(`/collectors${qp}`),
     select: (res) => res.data,
     refetchInterval: POLL_LIST,
   });
@@ -918,6 +919,8 @@ export function useUpdateAssignment() {
         enabled?: boolean;
         app_version_id?: string;
         use_latest?: boolean;
+        collector_id?: string | null;
+        credential_id?: string | null;
         connector_bindings?: { alias: string; connector_id: string; connector_version_id: string; credential_id?: string | null; use_latest?: boolean; settings?: Record<string, unknown> }[];
       };
     }) => apiPut<{ id: string }>(`/apps/assignments/${id}`, data),
