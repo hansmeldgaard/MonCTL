@@ -1557,6 +1557,14 @@ async def push_app_cache(
     """Collectors push dirty cache entries to central."""
     group_id = await _resolve_collector_group(db, auth, collector_id, node_id)
 
+    # Resolve app names → UUIDs (collectors use app name, DB uses UUID)
+    app_names = {e.app_id for e in req.entries}
+    app_name_to_id: dict[str, uuid.UUID] = {}
+    if app_names:
+        stmt = select(App.id, App.name).where(App.name.in_(app_names))
+        rows = (await db.execute(stmt)).all()
+        app_name_to_id = {r.name: r.id for r in rows}
+
     accepted = 0
     rejected = 0
 
@@ -1567,24 +1575,41 @@ async def push_app_cache(
             rejected += 1
             continue
 
-        stmt = pg_insert(AppCache).values(
+        # Resolve app_id: try as name first, then as UUID
+        resolved_app_id = app_name_to_id.get(entry.app_id)
+        if resolved_app_id is None:
+            try:
+                resolved_app_id = uuid.UUID(entry.app_id)
+            except ValueError:
+                logger.warning("app_cache_push_unknown_app", app_id=entry.app_id)
+                rejected += 1
+                continue
+
+        try:
+            resolved_device_id = uuid.UUID(entry.device_id)
+        except ValueError:
+            rejected += 1
+            continue
+
+        ins = pg_insert(AppCache).values(
             collector_group_id=group_id,
-            app_id=uuid.UUID(entry.app_id),
-            device_id=uuid.UUID(entry.device_id),
+            app_id=resolved_app_id,
+            device_id=resolved_device_id,
             cache_key=entry.cache_key,
             cache_value=entry.cache_value,
             ttl_seconds=entry.ttl_seconds,
             updated_at=entry_updated_at,
         )
-        stmt = stmt.on_conflict_on_constraint("uq_app_cache_entry").do_update(
+        upsert = ins.on_conflict_do_update(
+            constraint="uq_app_cache_entry",
             set_={
-                "cache_value": stmt.excluded.cache_value,
-                "ttl_seconds": stmt.excluded.ttl_seconds,
-                "updated_at": stmt.excluded.updated_at,
+                "cache_value": ins.excluded.cache_value,
+                "ttl_seconds": ins.excluded.ttl_seconds,
+                "updated_at": ins.excluded.updated_at,
             },
-            where=AppCache.updated_at < stmt.excluded.updated_at,
+            where=AppCache.updated_at < ins.excluded.updated_at,
         )
-        result = await db.execute(stmt)
+        await db.execute(upsert)
         accepted += 1
 
     await db.flush()
@@ -1623,6 +1648,15 @@ async def pull_app_cache(
 
     rows = (await db.execute(stmt)).scalars().all()
 
+    # Resolve app UUIDs → names (collectors use app name as key)
+    app_ids = {row.app_id for row in rows}
+    app_id_to_name: dict[uuid.UUID, str] = {}
+    if app_ids:
+        name_rows = (await db.execute(
+            select(App.id, App.name).where(App.id.in_(app_ids))
+        )).all()
+        app_id_to_name = {r.id: r.name for r in name_rows}
+
     now = datetime.now(timezone.utc)
     entries = []
     for row in rows[:limit]:
@@ -1630,8 +1664,12 @@ async def pull_app_cache(
         if row.ttl_seconds is not None:
             if row.updated_at.timestamp() + row.ttl_seconds < now.timestamp():
                 continue
+        # Use app name (not UUID) so collectors can match their local cache keys
+        app_name = app_id_to_name.get(row.app_id)
+        if app_name is None:
+            continue  # Skip entries for deleted apps
         entries.append({
-            "app_id": str(row.app_id),
+            "app_id": app_name,
             "device_id": str(row.device_id),
             "cache_key": row.cache_key,
             "cache_value": row.cache_value,
