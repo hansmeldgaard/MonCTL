@@ -1557,7 +1557,6 @@ async def push_app_cache(
     """Collectors push dirty cache entries to central."""
     group_id = await _resolve_collector_group(db, auth, collector_id, node_id)
 
-    group_id = collector.group_id
     accepted = 0
     rejected = 0
 
