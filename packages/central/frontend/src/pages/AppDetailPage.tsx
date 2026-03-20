@@ -32,6 +32,9 @@ import {
   useDeleteAlertDefinition,
   useUpdateAlertDefinition,
   useInvertAlertDefinition,
+  useAddAppConnector,
+  useDeleteAppConnector,
+  useConnectors,
 } from "@/api/hooks.ts";
 import { apiGet } from "@/api/client.ts";
 import type { AppAlertDefinition, DisplayTemplate } from "@/types/api.ts";
@@ -94,6 +97,15 @@ export function AppDetailPage() {
   // Delete version state
   const [deleteVersionTarget, setDeleteVersionTarget] = useState<{ id: string; version: string } | null>(null);
   const [deleteVersionError, setDeleteVersionError] = useState<string | null>(null);
+
+  // Connector binding state
+  const addConnector = useAddAppConnector();
+  const deleteConnector = useDeleteAppConnector();
+  const { data: connectorsList } = useConnectors();
+  const [connBindOpen, setConnBindOpen] = useState(false);
+  const [connBindAlias, setConnBindAlias] = useState("");
+  const [connBindConnectorId, setConnBindConnectorId] = useState("");
+  const [connBindError, setConnBindError] = useState<string | null>(null);
 
   async function handleEditApp(e: React.FormEvent) {
     e.preventDefault();
@@ -311,14 +323,17 @@ export function AppDetailPage() {
           </Card>
 
           {/* Required Connectors */}
-          {app.connector_bindings && app.connector_bindings.length > 0 && (
-            <Card className="mt-4">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Plug className="h-4 w-4" /> Required Connectors
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
+          <Card className="mt-4">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Plug className="h-4 w-4" /> Required Connectors
+                <Button size="sm" variant="secondary" className="ml-auto gap-1.5" onClick={() => { setConnBindAlias(""); setConnBindConnectorId(""); setConnBindError(null); setConnBindOpen(true); }}>
+                  <Plus className="h-3 w-3" /> Add Connector
+                </Button>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {app.connector_bindings && app.connector_bindings.length > 0 ? (
                 <div className="space-y-2">
                   {app.connector_bindings.map((cb) => (
                     <div key={cb.alias} className="flex items-center justify-between rounded-md bg-zinc-800/50 px-4 py-3">
@@ -337,12 +352,56 @@ export function AppDetailPage() {
                         ) : (
                           <Badge variant="default" className="text-xs">pinned</Badge>
                         )}
+                        <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-zinc-500 hover:text-red-400" onClick={() => { if (id) deleteConnector.mutate({ appId: id, alias: cb.alias }); }}>
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
                       </div>
                     </div>
                   ))}
                 </div>
-              </CardContent>
-            </Card>
+              ) : (
+                <p className="text-sm text-zinc-500">No connectors bound. Click "Add Connector" to bind one.</p>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Add Connector Binding Dialog */}
+          {connBindOpen && (
+            <Dialog open onClose={() => setConnBindOpen(false)} title="Add Connector Binding">
+              <div className="space-y-4">
+                <div>
+                  <Label>Alias</Label>
+                  <Input placeholder='e.g. "snmp"' value={connBindAlias} onChange={e => setConnBindAlias(e.target.value)} />
+                  <p className="text-xs text-zinc-500 mt-1">The alias your app code uses to reference this connector (e.g. context.connectors["snmp"])</p>
+                </div>
+                <div>
+                  <Label>Connector</Label>
+                  <select className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100" value={connBindConnectorId} onChange={e => setConnBindConnectorId(e.target.value)}>
+                    <option value="">Select a connector...</option>
+                    {connectorsList?.map(c => (
+                      <option key={c.id} value={c.id}>{c.name} — {c.description}</option>
+                    ))}
+                  </select>
+                </div>
+                {connBindError && <p className="text-sm text-red-400">{connBindError}</p>}
+              </div>
+              <DialogFooter>
+                <Button variant="secondary" onClick={() => setConnBindOpen(false)}>Cancel</Button>
+                <Button onClick={() => {
+                  if (!connBindAlias.trim() || !connBindConnectorId) {
+                    setConnBindError("Alias and connector are required");
+                    return;
+                  }
+                  if (!id) return;
+                  addConnector.mutate({ appId: id, data: { alias: connBindAlias.trim(), connector_id: connBindConnectorId, use_latest: true } }, {
+                    onSuccess: () => setConnBindOpen(false),
+                    onError: (err: unknown) => setConnBindError(err instanceof Error ? err.message : String(err)),
+                  });
+                }} disabled={addConnector.isPending}>
+                  {addConnector.isPending ? "Adding..." : "Add"}
+                </Button>
+              </DialogFooter>
+            </Dialog>
           )}
         </TabsContent>
 

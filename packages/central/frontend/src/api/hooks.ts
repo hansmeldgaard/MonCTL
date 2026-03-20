@@ -1484,6 +1484,32 @@ export function useDeleteApp() {
   });
 }
 
+// ── App connector binding hooks ──────────────────────────────────────────
+
+export function useAddAppConnector() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ appId, data }: {
+      appId: string;
+      data: { alias: string; connector_id: string; use_latest?: boolean; connector_version_id?: string | null; settings?: Record<string, unknown> };
+    }) => apiPost(`/apps/${appId}/connectors`, data),
+    onSuccess: (_res, { appId }) => {
+      qc.invalidateQueries({ queryKey: ["app-detail", appId] });
+    },
+  });
+}
+
+export function useDeleteAppConnector() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ appId, alias }: { appId: string; alias: string }) =>
+      apiDelete(`/apps/${appId}/connectors/${alias}`),
+    onSuccess: (_res, { appId }) => {
+      qc.invalidateQueries({ queryKey: ["app-detail", appId] });
+    },
+  });
+}
+
 export function useCreateAppVersion() {
   const qc = useQueryClient();
   return useMutation({
