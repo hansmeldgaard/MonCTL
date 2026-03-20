@@ -924,6 +924,31 @@ class ClickHouseClient:
         data = [[r.get(col) for col in _CONFIG_INSERT_COLUMNS] for r in results]
         client.insert("config", data, column_names=_CONFIG_INSERT_COLUMNS)
 
+    def get_config_hashes(self, device_id: str, app_id: str) -> dict[tuple[str, str, str], str]:
+        """Return current config_hash values from config_latest for a device+app.
+
+        Returns: dict mapping (component_type, component, config_key) -> config_hash
+        """
+        sql = (
+            "SELECT component_type, component, config_key, config_hash "
+            "FROM config_latest FINAL "
+            "WHERE device_id = {device_id:UUID} AND app_id = {app_id:UUID}"
+        )
+        try:
+            client = self._get_client()
+            result = client.query(sql, parameters={
+                "device_id": device_id,
+                "app_id": app_id,
+            })
+            return {
+                (row["component_type"], row["component"], row["config_key"]): row["config_hash"]
+                for row in result.named_results()
+            }
+        except Exception as exc:
+            if self._is_table_missing_error(exc) or self._is_connection_error(exc):
+                return {}
+            raise
+
     def insert_by_table(self, table: str, results: list[dict]) -> None:
         """Route inserts to the correct table by name."""
         inserters = {

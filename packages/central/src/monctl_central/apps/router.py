@@ -292,6 +292,7 @@ class CreateVersionRequest(BaseModel):
     entry_class: str | None = None
     set_latest: bool = False
     display_template: dict | None = None
+    volatile_keys: list[str] | None = None
 
 
 # --- Assignment routes must be registered BEFORE /{app_id} to avoid path conflict ---
@@ -577,7 +578,7 @@ async def get_app(
             "target_table": app.target_table,
             "config_schema": app.config_schema,
             "versions": [
-                {"id": str(v.id), "version": v.version, "is_latest": v.is_latest}
+                {"id": str(v.id), "version": v.version, "is_latest": v.is_latest, "volatile_keys": v.volatile_keys or []}
                 for v in sorted(app.versions, key=lambda v: v.published_at, reverse=True)
             ],
             "connector_bindings": [
@@ -1137,6 +1138,7 @@ async def get_app_version(
             "is_latest": version.is_latest,
             "published_at": version.published_at.isoformat() if version.published_at else None,
             "display_template": version.display_template,
+            "volatile_keys": version.volatile_keys or [],
         },
     }
 
@@ -1146,6 +1148,7 @@ class UpdateVersionRequest(BaseModel):
     requirements: list[str] | None = None
     entry_class: str | None = None
     display_template: dict | None = None
+    volatile_keys: list[str] | None = None
 
 
 @router.put("/{app_id}/versions/{version_id}")
@@ -1177,6 +1180,8 @@ async def update_app_version(
         version.entry_class = request.entry_class
     if request.display_template is not None:
         version.display_template = request.display_template
+    if request.volatile_keys is not None:
+        version.volatile_keys = request.volatile_keys
 
     await db.flush()
     return {
@@ -1254,6 +1259,7 @@ async def create_app_version(
         checksum_sha256=checksum,
         is_latest=should_be_latest,
         display_template=request.display_template,
+        volatile_keys=request.volatile_keys or [],
     )
     db.add(version)
 
