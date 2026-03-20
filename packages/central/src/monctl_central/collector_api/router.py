@@ -706,6 +706,7 @@ class CollectorResult(BaseModel):
     device_id: str | None = None
     timestamp: float                  # Unix timestamp
     metrics: list[dict] = []
+    config_data: dict | None = None   # Key-value config/inventory data for config-table apps
     status: str = "ok"               # "ok" | "warning" | "critical" | "unknown" | "error"
     reachable: bool = True
     error_message: str | None = None
@@ -1069,6 +1070,59 @@ async def submit_results(
                     "tenant_id": enrichment.get("tenant_id", "00000000-0000-0000-0000-000000000000"),
                     "tenant_name": enrichment.get("tenant_name", ""),
                 })
+        elif target_table == "config" and r.config_data:
+            # Config-table apps: each key-value pair becomes a separate ClickHouse row
+            import hashlib as _hashlib
+            _base = {
+                "assignment_id": str(assignment_id),
+                "collector_id": collector_uuid,
+                "app_id": enrichment.get("app_id", str(assignment_id)),
+                "device_id": device_id_resolved,
+                "component": "",
+                "component_type": enrichment.get("app_name", ""),
+                "state": state,
+                "executed_at": executed_at,
+                "collector_name": request.collector_node,
+                "device_name": enrichment.get("device_name", ""),
+                "app_name": enrichment.get("app_name", ""),
+                "tenant_id": enrichment.get("tenant_id", "00000000-0000-0000-0000-000000000000"),
+                "tenant_name": enrichment.get("tenant_name", ""),
+            }
+            for cfg_key, cfg_value in r.config_data.items():
+                val_str = str(cfg_value) if cfg_value is not None else ""
+                ch_rows.append({
+                    **_base,
+                    "_target_table": "config",
+                    "config_key": cfg_key,
+                    "config_value": val_str,
+                    "config_hash": _hashlib.md5(val_str.encode()).hexdigest(),
+                })
+            # Also insert an availability_latency row for status tracking
+            ch_rows.append({
+                "_target_table": "availability_latency",
+                "assignment_id": str(assignment_id),
+                "collector_id": collector_uuid,
+                "app_id": enrichment.get("app_id", str(assignment_id)),
+                "device_id": device_id_resolved,
+                "state": state,
+                "output": f"{len(r.config_data)} config keys collected",
+                "error_message": r.error_message or "",
+                "rtt_ms": 0.0,
+                "response_time_ms": (r.execution_time_ms or 0) / 1.0,
+                "reachable": 1 if r.reachable else 0,
+                "status_code": 0,
+                "metric_names": ["config_key_count"],
+                "metric_values": [float(len(r.config_data))],
+                "executed_at": executed_at,
+                "execution_time": (r.execution_time_ms / 1000.0) if r.execution_time_ms else 0.0,
+                "started_at": started_at_dt,
+                "collector_name": request.collector_node,
+                "device_name": enrichment.get("device_name", ""),
+                "app_name": enrichment.get("app_name", ""),
+                "role": enrichment.get("role", ""),
+                "tenant_id": enrichment.get("tenant_id", "00000000-0000-0000-0000-000000000000"),
+                "tenant_name": enrichment.get("tenant_name", ""),
+            })
         else:
             row = {
                 "_target_table": target_table,
@@ -1304,12 +1358,14 @@ async def pypi_simple_package(
 @router.get("/pypi/wheels/{filename}", tags=["collector-api"])
 async def pypi_serve_wheel(
     filename: str,
+    db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
-    """Serve a wheel file from disk."""
-    from fastapi.responses import FileResponse
+    """Serve a wheel file — first from disk, falling back to database."""
+    from fastapi.responses import FileResponse, Response
     from monctl_central.config import settings
     from monctl_central.python_modules.wheel_parser import normalize_package_name, parse_wheel_filename
+    from monctl_central.storage.models import WheelFile
 
     try:
         parts = parse_wheel_filename(filename)
@@ -1319,16 +1375,26 @@ async def pypi_serve_wheel(
             detail="Invalid wheel filename",
         )
 
+    # Try disk first
     normalized = normalize_package_name(parts["name"])
     wheel_path = Path(settings.wheel_storage_dir) / normalized / filename
+    if wheel_path.exists():
+        return FileResponse(
+            path=str(wheel_path),
+            media_type="application/octet-stream",
+            filename=filename,
+        )
 
-    if not wheel_path.exists():
+    # Fall back to database
+    stmt = select(WheelFile).where(WheelFile.filename == filename)
+    wf = (await db.execute(stmt)).scalar_one_or_none()
+    if wf is None or not wf.file_data:
         raise HTTPException(status_code=404, detail="Wheel file not found")
 
-    return FileResponse(
-        path=str(wheel_path),
+    return Response(
+        content=wf.file_data,
         media_type="application/octet-stream",
-        filename=filename,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
