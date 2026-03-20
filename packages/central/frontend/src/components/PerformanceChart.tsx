@@ -31,7 +31,7 @@ export function PerformanceChart({ data, selectedComponents, metricName, timezon
       if (!byTime.has(ts)) {
         byTime.set(ts, {
           time: new Date(ts).toLocaleTimeString("en-US", {
-            hour: "2-digit", minute: "2-digit", hour12: false, timeZone: timezone,
+            hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: timezone,
           }),
           _ts: ts,
         } as Record<string, number | string>);
@@ -97,12 +97,13 @@ export function PerformanceChart({ data, selectedComponents, metricName, timezon
             {selectedComponents.map((comp, i) => (
               <Line
                 key={comp}
-                type="monotone"
+                type="linear"
                 dataKey={comp}
                 name={comp}
                 stroke={COLORS[i % COLORS.length]}
                 strokeWidth={1.5}
                 dot={false}
+                activeDot={{ r: 3 }}
                 connectNulls
                 isAnimationActive={false}
               />
