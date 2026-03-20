@@ -258,7 +258,8 @@ export interface Assignment {
   id: string;
   app: AppInfo;
   device: DeviceInfo | null;
-  collector_id: string;
+  collector_id: string | null;
+  collector_name: string | null;
   schedule_type: string;
   schedule_value: number;
   schedule_human: string;
@@ -278,6 +279,7 @@ export interface DeviceAssignment {
   app: AppInfo;
   app_version_id: string;
   collector_id: string | null;
+  collector_name: string | null;
   schedule_type: string;
   schedule_value: string;
   schedule_human: string;

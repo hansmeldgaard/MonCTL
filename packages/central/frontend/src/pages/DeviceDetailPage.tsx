@@ -2291,7 +2291,7 @@ function AssignmentsTab({ deviceId }: { deviceId: string }) {
                 {a.collector_id ? (
                   <span className="inline-flex items-center gap-1 text-[10px] text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded px-1.5 py-0.5">
                     <Pin className="h-2.5 w-2.5" />
-                    {(a as any).collector_name ?? "pinned"}
+                    {a.collector_name ?? "pinned"}
                   </span>
                 ) : (
                   <span className="text-zinc-600 text-xs">group</span>

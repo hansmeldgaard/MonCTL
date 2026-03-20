@@ -314,7 +314,7 @@ async def list_assignments(
 ):
     """List all app assignments with app, device, and schedule details."""
     from sqlalchemy.orm import selectinload
-    from monctl_central.storage.models import App, AppVersion, Device
+    from monctl_central.storage.models import App, AppVersion, Collector, Device
 
     from monctl_central.storage.models import Device as DeviceModel
 
@@ -398,6 +398,14 @@ async def list_assignments(
         cred_rows = (await db.execute(cred_stmt)).all()
         cred_name_map = {r.id: r.name for r in cred_rows}
 
+    # Resolve collector names for pinned assignments
+    collector_ids = {row.AppAssignment.collector_id for row in rows if row.AppAssignment.collector_id}
+    collector_name_map: dict[uuid.UUID, str] = {}
+    if collector_ids:
+        coll_stmt = select(Collector.id, Collector.name).where(Collector.id.in_(collector_ids))
+        coll_rows = (await db.execute(coll_stmt)).all()
+        collector_name_map = {r.id: r.name for r in coll_rows}
+
     return {
         "status": "success",
         "data": [
@@ -420,6 +428,7 @@ async def list_assignments(
                     else None
                 ),
                 "collector_id": str(row.AppAssignment.collector_id) if row.AppAssignment.collector_id else None,
+                "collector_name": collector_name_map.get(row.AppAssignment.collector_id) if row.AppAssignment.collector_id else None,
                 "schedule_type": row.AppAssignment.schedule_type,
                 "schedule_value": row.AppAssignment.schedule_value,
                 "schedule_human": (
