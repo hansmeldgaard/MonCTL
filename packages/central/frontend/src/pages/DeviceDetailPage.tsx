@@ -88,6 +88,8 @@ import {
   useCreateThresholdOverride,
   useUpdateThresholdOverride,
   useDeleteThresholdOverride,
+  useConfigChangelog,
+  useConfigDiff,
 } from "@/api/hooks.ts";
 import type { Device as DeviceType, DeviceAssignment, DeviceThresholdRow } from "@/types/api.ts";
 import { ConfigDataRenderer } from "@/components/ConfigDataRenderer.tsx";
@@ -1118,6 +1120,21 @@ function PerformanceTab({ deviceId }: { deviceId: string }) {
 
 function ConfigurationTab({ deviceId }: { deviceId: string }) {
   const { data: configRows, isLoading } = useDeviceConfigData(deviceId);
+  const [view, setView] = useState<"current" | "changes">("current");
+  const [changelogPage, setChangelogPage] = useState(0);
+  const PAGE_SIZE = 50;
+  const { data: changelogResp } = useConfigChangelog(deviceId, {
+    limit: PAGE_SIZE,
+    offset: changelogPage * PAGE_SIZE,
+  });
+  const changelog = changelogResp?.data ?? [];
+  const changelogMeta = (changelogResp as unknown as Record<string, unknown>)?.meta as
+    | { total?: number; count?: number }
+    | undefined;
+
+  const [diffKey, setDiffKey] = useState<string | null>(null);
+  const { data: diffResp } = useConfigDiff(deviceId, diffKey ?? "", undefined, 20);
+  const diffRows = diffResp?.data ?? [];
 
   if (isLoading) {
     return (
@@ -1127,7 +1144,7 @@ function ConfigurationTab({ deviceId }: { deviceId: string }) {
     );
   }
 
-  if (!configRows || configRows.length === 0) {
+  if ((!configRows || configRows.length === 0) && changelog.length === 0) {
     return (
       <div className="space-y-4">
         <Card>
@@ -1143,9 +1160,9 @@ function ConfigurationTab({ deviceId }: { deviceId: string }) {
     );
   }
 
-  // Group by app_id → component_type → component, collect latest key/value pairs
+  // Group by app_id for current snapshot view
   const grouped = new Map<string, { appName: string; data: Record<string, string> }>();
-  for (const row of configRows) {
+  for (const row of (configRows ?? [])) {
     const appId = String(row.app_id ?? "unknown");
     const key = String(row.config_key ?? "");
     const value = String(row.config_value ?? "");
@@ -1154,7 +1171,6 @@ function ConfigurationTab({ deviceId }: { deviceId: string }) {
       grouped.set(appId, { appName, data: {} });
     }
     const entry = grouped.get(appId)!;
-    // Keep the latest value (results are newest-first)
     if (!(key in entry.data)) {
       entry.data[key] = value;
     }
@@ -1162,19 +1178,179 @@ function ConfigurationTab({ deviceId }: { deviceId: string }) {
 
   return (
     <div className="space-y-4">
-      {[...grouped.entries()].map(([appId, { appName, data }]) => (
-        <Card key={appId}>
+      {/* View toggle */}
+      <div className="flex items-center gap-2">
+        <Button
+          variant={view === "current" ? "default" : "outline"}
+          size="sm"
+          onClick={() => setView("current")}
+        >
+          <Wrench className="h-3.5 w-3.5 mr-1" />
+          Current
+        </Button>
+        <Button
+          variant={view === "changes" ? "default" : "outline"}
+          size="sm"
+          onClick={() => setView("changes")}
+        >
+          <Clock className="h-3.5 w-3.5 mr-1" />
+          Changes
+          {changelogMeta?.total ? (
+            <Badge variant="default" className="ml-1.5 text-[10px] px-1.5 py-0">
+              {changelogMeta.total}
+            </Badge>
+          ) : null}
+        </Button>
+      </div>
+
+      {view === "current" && (
+        <>
+          {[...grouped.entries()].map(([appId, { appName, data }]) => (
+            <Card key={appId}>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-sm">
+                  <Wrench className="h-4 w-4" />
+                  {appName}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ConfigDataRenderer template={null} data={data} />
+              </CardContent>
+            </Card>
+          ))}
+        </>
+      )}
+
+      {view === "changes" && (
+        <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-sm">
-              <Wrench className="h-4 w-4" />
-              {appName}
-            </CardTitle>
+            <CardTitle className="text-sm">Config Change History</CardTitle>
           </CardHeader>
           <CardContent>
-            <ConfigDataRenderer template={null} data={data} />
+            {changelog.length === 0 ? (
+              <p className="text-sm text-zinc-500">No config changes recorded yet.</p>
+            ) : (
+              <>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Time</TableHead>
+                      <TableHead>App</TableHead>
+                      <TableHead>Key</TableHead>
+                      <TableHead>Value</TableHead>
+                      <TableHead className="w-16">Diff</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {changelog.map((row, i) => (
+                      <TableRow key={`${row.executed_at}-${row.config_key}-${i}`}>
+                        <TableCell className="text-xs text-zinc-400 whitespace-nowrap">
+                          {formatDate(row.executed_at)}
+                        </TableCell>
+                        <TableCell className="text-xs">{row.app_name}</TableCell>
+                        <TableCell className="text-xs font-mono">{row.config_key}</TableCell>
+                        <TableCell className="text-xs font-mono max-w-[300px] truncate" title={row.config_value}>
+                          {row.config_value}
+                        </TableCell>
+                        <TableCell>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 px-2 text-xs"
+                            onClick={() => setDiffKey(row.config_key)}
+                          >
+                            <FileText className="h-3 w-3" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                {/* Pagination */}
+                {(changelogMeta?.total ?? 0) > PAGE_SIZE && (
+                  <div className="flex items-center justify-between mt-3 text-xs text-zinc-400">
+                    <span>
+                      {changelogPage * PAGE_SIZE + 1}–
+                      {Math.min((changelogPage + 1) * PAGE_SIZE, changelogMeta?.total ?? 0)} of{" "}
+                      {changelogMeta?.total}
+                    </span>
+                    <div className="flex gap-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-6 px-2 text-xs"
+                        disabled={changelogPage === 0}
+                        onClick={() => setChangelogPage((p) => p - 1)}
+                      >
+                        Prev
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-6 px-2 text-xs"
+                        disabled={
+                          (changelogPage + 1) * PAGE_SIZE >= (changelogMeta?.total ?? 0)
+                        }
+                        onClick={() => setChangelogPage((p) => p + 1)}
+                      >
+                        Next
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
           </CardContent>
         </Card>
-      ))}
+      )}
+
+      {/* Diff dialog */}
+      {diffKey && (
+        <Dialog open onClose={() => setDiffKey(null)} title={`History: ${diffKey}`}>
+          <div className="max-h-[60vh] overflow-auto">
+            {diffRows.length === 0 ? (
+              <p className="text-sm text-zinc-500 p-4">No history found.</p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Time</TableHead>
+                    <TableHead>Value</TableHead>
+                    <TableHead className="w-20">Hash</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {diffRows.map((row, i) => {
+                    const prevRow = diffRows[i + 1];
+                    const changed = !prevRow || prevRow.config_hash !== row.config_hash;
+                    return (
+                      <TableRow
+                        key={`${row.executed_at}-${i}`}
+                        className={changed ? "bg-amber-500/10" : ""}
+                      >
+                        <TableCell className="text-xs text-zinc-400 whitespace-nowrap">
+                          {formatDate(row.executed_at)}
+                        </TableCell>
+                        <TableCell className="text-xs font-mono max-w-[400px] whitespace-pre-wrap break-all">
+                          {row.config_value}
+                        </TableCell>
+                        <TableCell className="text-xs font-mono text-zinc-500">
+                          {row.config_hash.slice(0, 8)}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setDiffKey(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </Dialog>
+      )}
     </div>
   );
 }

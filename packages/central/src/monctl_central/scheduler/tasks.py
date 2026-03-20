@@ -305,6 +305,7 @@ class SchedulerRunner:
         raw_days = 7
         hourly_days = 90
         daily_days = 730
+        config_days = 90
 
         try:
             async with self._session_factory() as session:
@@ -312,6 +313,7 @@ class SchedulerRunner:
                     ("interface_raw_retention_days", 7),
                     ("interface_hourly_retention_days", 90),
                     ("interface_daily_retention_days", 730),
+                    ("config_retention_days", 90),
                 ]:
                     setting = await session.get(SystemSetting, key)
                     val = int(setting.value) if setting else default
@@ -319,6 +321,8 @@ class SchedulerRunner:
                         raw_days = val
                     elif key == "interface_hourly_retention_days":
                         hourly_days = val
+                    elif key == "config_retention_days":
+                        config_days = val
                     else:
                         daily_days = val
         except Exception:
@@ -328,6 +332,7 @@ class SchedulerRunner:
             f"ALTER TABLE interface DELETE WHERE executed_at < now() - INTERVAL {raw_days} DAY",
             f"ALTER TABLE interface_hourly DELETE WHERE hour < now() - INTERVAL {hourly_days} DAY",
             f"ALTER TABLE interface_daily DELETE WHERE day < today() - INTERVAL {daily_days} DAY",
+            f"ALTER TABLE config DELETE WHERE executed_at < now() - INTERVAL {config_days} DAY",
         ]
 
         for sql in cleanup_sqls:

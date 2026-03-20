@@ -1095,3 +1095,24 @@ export interface DockerOverviewResponse {
   configured: boolean;
   hosts: DockerOverviewHost[];
 }
+
+// ── Config History ─────────────────────────────────────────
+
+export interface ConfigChangeEntry {
+  device_id: string;
+  device_name: string;
+  app_id: string;
+  app_name: string;
+  component_type: string;
+  component: string;
+  config_key: string;
+  config_value: string;
+  config_hash: string;
+  executed_at: string;
+}
+
+export interface ConfigChangeTimestamp {
+  change_time: string;
+  change_count: number;
+  changed_keys: string[];
+}

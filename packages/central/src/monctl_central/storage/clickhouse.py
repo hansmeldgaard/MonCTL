@@ -1136,6 +1136,224 @@ class ClickHouseClient:
             raise
 
     # ------------------------------------------------------------------
+    # Config history methods
+    # ------------------------------------------------------------------
+
+    def query_config_changelog(
+        self,
+        device_id: str,
+        *,
+        app_id: str | None = None,
+        config_key: str | None = None,
+        from_ts: datetime | None = None,
+        to_ts: datetime | None = None,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> list[dict]:
+        """Return config changes for a device, ordered by time descending.
+
+        Each row represents a config write — Phase 2 suppression means
+        only actual changes (or volatile keys) are stored.
+        """
+        sql = (
+            "SELECT device_id, device_name, app_id, app_name, "
+            "component_type, component, config_key, config_value, "
+            "config_hash, executed_at "
+            "FROM config "
+            "WHERE device_id = {device_id:UUID}"
+        )
+        params: dict[str, Any] = {"device_id": device_id}
+
+        if app_id:
+            sql += " AND app_id = {app_id:UUID}"
+            params["app_id"] = app_id
+        if config_key:
+            sql += " AND config_key = {config_key:String}"
+            params["config_key"] = config_key
+        if from_ts:
+            sql += " AND executed_at >= {from_ts:DateTime64(3)}"
+            params["from_ts"] = from_ts.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        if to_ts:
+            sql += " AND executed_at <= {to_ts:DateTime64(3)}"
+            params["to_ts"] = to_ts.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+        sql += " ORDER BY executed_at DESC"
+        sql += f" LIMIT {limit} OFFSET {offset}"
+
+        try:
+            client = self._get_client()
+            result = client.query(sql, parameters=params)
+            return list(result.named_results())
+        except Exception as exc:
+            if self._is_table_missing_error(exc):
+                return []
+            if self._is_connection_error(exc):
+                client = self._reconnect()
+                result = client.query(sql, parameters=params)
+                return list(result.named_results())
+            raise
+
+    def count_config_changelog(
+        self,
+        device_id: str,
+        *,
+        app_id: str | None = None,
+        config_key: str | None = None,
+        from_ts: datetime | None = None,
+        to_ts: datetime | None = None,
+    ) -> int:
+        """Count config change rows for pagination."""
+        sql = "SELECT count() AS cnt FROM config WHERE device_id = {device_id:UUID}"
+        params: dict[str, Any] = {"device_id": device_id}
+
+        if app_id:
+            sql += " AND app_id = {app_id:UUID}"
+            params["app_id"] = app_id
+        if config_key:
+            sql += " AND config_key = {config_key:String}"
+            params["config_key"] = config_key
+        if from_ts:
+            sql += " AND executed_at >= {from_ts:DateTime64(3)}"
+            params["from_ts"] = from_ts.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        if to_ts:
+            sql += " AND executed_at <= {to_ts:DateTime64(3)}"
+            params["to_ts"] = to_ts.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+        try:
+            client = self._get_client()
+            result = client.query(sql, parameters=params)
+            rows = list(result.named_results())
+            return rows[0]["cnt"] if rows else 0
+        except Exception as exc:
+            if self._is_table_missing_error(exc):
+                return 0
+            if self._is_connection_error(exc):
+                client = self._reconnect()
+                result = client.query(sql, parameters=params)
+                rows = list(result.named_results())
+                return rows[0]["cnt"] if rows else 0
+            raise
+
+    def query_config_snapshot(
+        self,
+        device_id: str,
+        *,
+        app_id: str | None = None,
+    ) -> list[dict]:
+        """Return the current config snapshot from config_latest FINAL."""
+        sql = (
+            "SELECT device_id, device_name, app_id, app_name, "
+            "component_type, component, config_key, config_value, "
+            "config_hash, executed_at "
+            "FROM config_latest FINAL "
+            "WHERE device_id = {device_id:UUID}"
+        )
+        params: dict[str, Any] = {"device_id": device_id}
+
+        if app_id:
+            sql += " AND app_id = {app_id:UUID}"
+            params["app_id"] = app_id
+
+        sql += " ORDER BY component_type, component, config_key"
+
+        try:
+            client = self._get_client()
+            result = client.query(sql, parameters=params)
+            return list(result.named_results())
+        except Exception as exc:
+            if self._is_table_missing_error(exc):
+                return []
+            if self._is_connection_error(exc):
+                client = self._reconnect()
+                result = client.query(sql, parameters=params)
+                return list(result.named_results())
+            raise
+
+    def query_config_change_timestamps(
+        self,
+        device_id: str,
+        *,
+        app_id: str | None = None,
+        from_ts: datetime | None = None,
+        to_ts: datetime | None = None,
+    ) -> list[dict]:
+        """Return distinct timestamps where config changes occurred.
+
+        Useful for building a timeline of changes.
+        """
+        sql = (
+            "SELECT toStartOfMinute(executed_at) AS change_time, "
+            "count() AS change_count, "
+            "groupUniqArray(config_key) AS changed_keys "
+            "FROM config "
+            "WHERE device_id = {device_id:UUID}"
+        )
+        params: dict[str, Any] = {"device_id": device_id}
+
+        if app_id:
+            sql += " AND app_id = {app_id:UUID}"
+            params["app_id"] = app_id
+        if from_ts:
+            sql += " AND executed_at >= {from_ts:DateTime64(3)}"
+            params["from_ts"] = from_ts.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        if to_ts:
+            sql += " AND executed_at <= {to_ts:DateTime64(3)}"
+            params["to_ts"] = to_ts.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+        sql += " GROUP BY change_time ORDER BY change_time DESC LIMIT 500"
+
+        try:
+            client = self._get_client()
+            result = client.query(sql, parameters=params)
+            return list(result.named_results())
+        except Exception as exc:
+            if self._is_table_missing_error(exc):
+                return []
+            if self._is_connection_error(exc):
+                client = self._reconnect()
+                result = client.query(sql, parameters=params)
+                return list(result.named_results())
+            raise
+
+    def query_config_diff(
+        self,
+        device_id: str,
+        config_key: str,
+        *,
+        app_id: str | None = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        """Return history for a specific config key, for building diffs."""
+        sql = (
+            "SELECT device_id, app_id, app_name, "
+            "component_type, component, config_key, config_value, "
+            "config_hash, executed_at "
+            "FROM config "
+            "WHERE device_id = {device_id:UUID} "
+            "AND config_key = {config_key:String}"
+        )
+        params: dict[str, Any] = {"device_id": device_id, "config_key": config_key}
+
+        if app_id:
+            sql += " AND app_id = {app_id:UUID}"
+            params["app_id"] = app_id
+
+        sql += f" ORDER BY executed_at DESC LIMIT {limit}"
+
+        try:
+            client = self._get_client()
+            result = client.query(sql, parameters=params)
+            return list(result.named_results())
+        except Exception as exc:
+            if self._is_table_missing_error(exc):
+                return []
+            if self._is_connection_error(exc):
+                client = self._reconnect()
+                result = client.query(sql, parameters=params)
+                return list(result.named_results())
+            raise
+
+    # ------------------------------------------------------------------
     # Events methods
     # ------------------------------------------------------------------
 

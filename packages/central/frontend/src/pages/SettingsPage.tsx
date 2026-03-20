@@ -488,6 +488,7 @@ function DataRetentionTab() {
   const [ifaceRawRetention, setIfaceRawRetention] = useState("7");
   const [ifaceHourlyRetention, setIfaceHourlyRetention] = useState("90");
   const [ifaceDailyRetention, setIfaceDailyRetention] = useState("730");
+  const [configRetention, setConfigRetention] = useState("90");
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
@@ -499,6 +500,7 @@ function DataRetentionTab() {
       setIfaceRawRetention(settings.interface_raw_retention_days ?? "7");
       setIfaceHourlyRetention(settings.interface_hourly_retention_days ?? "90");
       setIfaceDailyRetention(settings.interface_daily_retention_days ?? "730");
+      setConfigRetention(settings.config_retention_days ?? "90");
     }
   }, [settings]);
 
@@ -509,7 +511,8 @@ function DataRetentionTab() {
     ifaceMetaRefresh !== (settings.interface_metadata_refresh_seconds ?? "3600") ||
     ifaceRawRetention !== (settings.interface_raw_retention_days ?? "7") ||
     ifaceHourlyRetention !== (settings.interface_hourly_retention_days ?? "90") ||
-    ifaceDailyRetention !== (settings.interface_daily_retention_days ?? "730")
+    ifaceDailyRetention !== (settings.interface_daily_retention_days ?? "730") ||
+    configRetention !== (settings.config_retention_days ?? "90")
   );
 
   async function handleSave() {
@@ -522,6 +525,7 @@ function DataRetentionTab() {
         interface_raw_retention_days: ifaceRawRetention,
         interface_hourly_retention_days: ifaceHourlyRetention,
         interface_daily_retention_days: ifaceDailyRetention,
+        config_retention_days: configRetention,
       },
     });
     setSaved(true);
@@ -622,15 +626,37 @@ function DataRetentionTab() {
             </Select>
             <p className="text-xs text-zinc-600">Daily aggregated data for long-term trends.</p>
           </div>
-          <div className="flex items-center gap-3 pt-2">
-            <Button size="sm" onClick={handleSave} disabled={!modified || updateSettings.isPending}>
-              {updateSettings.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-              Save
-            </Button>
-            {saved && <span className="text-sm text-emerald-400">Saved!</span>}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Database className="h-4 w-4" />
+            Config Data Retention
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-1.5">
+            <label className="text-sm text-zinc-400">Config Change History</label>
+            <Select value={configRetention} onChange={(e) => setConfigRetention(e.target.value)} className="max-w-48">
+              <option value="30">30 days</option>
+              <option value="60">60 days</option>
+              <option value="90">90 days (default)</option>
+              <option value="180">180 days</option>
+              <option value="365">1 year</option>
+              <option value="730">2 years</option>
+            </Select>
+            <p className="text-xs text-zinc-600">How long to keep configuration change history in ClickHouse.</p>
           </div>
         </CardContent>
       </Card>
+      <div className="flex items-center gap-3 pt-2">
+        <Button size="sm" onClick={handleSave} disabled={!modified || updateSettings.isPending}>
+          {updateSettings.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+          Save
+        </Button>
+        {saved && <span className="text-sm text-emerald-400">Saved!</span>}
+      </div>
     </div>
   );
 }

@@ -68,6 +68,8 @@ import type {
   DockerImagesResponse,
   ListParams,
   BulkUpdateAssignmentsRequest,
+  ConfigChangeEntry,
+  ConfigChangeTimestamp,
 } from "@/types/api.ts";
 
 function buildListQs(params: ListParams): string {
@@ -2305,5 +2307,80 @@ export function useDockerImages(hostLabel: string) {
     queryKey: ["docker-infra", "images", hostLabel],
     queryFn: () => apiGet<DockerImagesResponse>(`/docker-infra/hosts/${hostLabel}/images`),
     enabled: !!hostLabel,
+  });
+}
+
+// ── Config History ───────────────────────────────────────────────────────────
+
+export function useConfigChangelog(
+  deviceId: string,
+  params: {
+    app_id?: string;
+    config_key?: string;
+    from_ts?: string;
+    to_ts?: string;
+    limit?: number;
+    offset?: number;
+  } = {}
+) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== "") qs.set(k, String(v));
+  }
+  const q = qs.toString();
+  return useQuery({
+    queryKey: ["config-changelog", deviceId, params],
+    queryFn: () =>
+      apiGet<ConfigChangeEntry[]>(
+        `/devices/${deviceId}/config/changelog${q ? `?${q}` : ""}`
+      ),
+    enabled: !!deviceId,
+  });
+}
+
+export function useConfigSnapshot(deviceId: string, appId?: string) {
+  const qs = appId ? `?app_id=${appId}` : "";
+  return useQuery({
+    queryKey: ["config-snapshot", deviceId, appId],
+    queryFn: () =>
+      apiGet<ConfigChangeEntry[]>(`/devices/${deviceId}/config/snapshot${qs}`),
+    enabled: !!deviceId,
+  });
+}
+
+export function useConfigDiff(
+  deviceId: string,
+  configKey: string,
+  appId?: string,
+  limit = 20
+) {
+  const qs = new URLSearchParams({ config_key: configKey, limit: String(limit) });
+  if (appId) qs.set("app_id", appId);
+  return useQuery({
+    queryKey: ["config-diff", deviceId, configKey, appId],
+    queryFn: () =>
+      apiGet<ConfigChangeEntry[]>(
+        `/devices/${deviceId}/config/diff?${qs.toString()}`
+      ),
+    enabled: !!deviceId && !!configKey,
+  });
+}
+
+export function useConfigChangeTimestamps(
+  deviceId: string,
+  params: { app_id?: string; from_ts?: string; to_ts?: string } = {}
+) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== "") qs.set(k, String(v));
+  }
+  const q = qs.toString();
+  return useQuery({
+    queryKey: ["config-change-timestamps", deviceId, params],
+    queryFn: () =>
+      apiGet<ConfigChangeTimestamp[]>(
+        `/devices/${deviceId}/config/change-timestamps${q ? `?${q}` : ""}`
+      ),
+    enabled: !!deviceId,
   });
 }

@@ -31,6 +31,7 @@ from monctl_central.connectors.router import router as connectors_router
 from monctl_central.events.router import router as events_router
 from monctl_central.packs.router import router as packs_router
 from monctl_central.system.router import router as system_router
+from monctl_central.config_history.router import router as config_history_router
 from monctl_central.docker_infra.router import router as docker_infra_router
 
 api_router = APIRouter()
@@ -62,4 +63,5 @@ api_router.include_router(connectors_router, prefix="/connectors", tags=["connec
 api_router.include_router(events_router, prefix="/events", tags=["events"])
 api_router.include_router(packs_router, prefix="/packs", tags=["packs"])
 api_router.include_router(system_router, prefix="/system", tags=["system"])
+api_router.include_router(config_history_router, tags=["config-history"])
 api_router.include_router(docker_infra_router, prefix="/docker-infra", tags=["docker-infra"])
