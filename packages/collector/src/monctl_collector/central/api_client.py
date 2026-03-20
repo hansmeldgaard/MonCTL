@@ -10,6 +10,7 @@ import json
 import time
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import quote
 
 import aiohttp
 import structlog
@@ -166,7 +167,7 @@ class CentralAPIClient:
         Returns: {"name": ..., "type": ..., "data": {...}}
         """
         async with self._session.get(
-            self._url(f"/credentials/{credential_name}")
+            self._url(f"/credentials/{quote(credential_name, safe='')}")
         ) as resp:
             resp.raise_for_status()
             return (await resp.json())
