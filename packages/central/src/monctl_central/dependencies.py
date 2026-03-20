@@ -385,18 +385,32 @@ async def require_collector_auth(
 
     Accepts (in priority order):
       1. Shared secret:  Authorization: Bearer <MONCTL_COLLECTOR_API_KEY env var>
-      2. Management API key (from DB, as per require_auth)
-      3. JWT cookie (admin session)
+      2. HTTP Basic Auth with password = shared secret (for pip/PyPI)
+      3. Management API key (from DB, as per require_auth)
+      4. JWT cookie (admin session)
 
     Configure on central: MONCTL_COLLECTOR_API_KEY=<some secret>
     Configure on collector: CENTRAL_API_KEY=<same secret>
     """
+    import base64
     import os
 
     shared_secret = os.environ.get("MONCTL_COLLECTOR_API_KEY", "")
 
     if credentials and shared_secret and credentials.credentials == shared_secret:
         return {"auth_type": "collector_shared_secret", "tenant_ids": None}
+
+    # Check HTTP Basic Auth (pip sends credentials this way)
+    if shared_secret:
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.lower().startswith("basic "):
+            try:
+                decoded = base64.b64decode(auth_header[6:]).decode()
+                _, password = decoded.split(":", 1)
+                if password == shared_secret:
+                    return {"auth_type": "collector_shared_secret", "tenant_ids": None}
+            except Exception:
+                pass
 
     # Fall back to regular auth (JWT cookie or management API key)
     return await require_auth(request, credentials, db)
