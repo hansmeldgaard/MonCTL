@@ -190,6 +190,21 @@ function AddAssignmentDialog({
       }
     }
 
+    // Validate schedule value
+    if (scheduleType === "interval") {
+      const n = Number(scheduleValue);
+      if (!scheduleValue || isNaN(n) || n < 1 || !Number.isInteger(n)) {
+        setFormError("Interval must be a positive integer (seconds).");
+        return;
+      }
+    } else if (scheduleType === "cron") {
+      const parts = scheduleValue.trim().split(/\s+/);
+      if (parts.length < 5) {
+        setFormError("Cron expression must have at least 5 fields: min hour day month weekday");
+        return;
+      }
+    }
+
     if (!selectedAppId) {
       setFormError("App is required.");
       return;
@@ -464,6 +479,7 @@ interface EditAssignmentDialogProps {
 function EditAssignmentDialog({ assignment, open, onClose }: EditAssignmentDialogProps) {
   const updateAssignment = useUpdateAssignment();
   const { data: appDetail } = useAppDetail(assignment?.app.id);
+  const { data: credentials } = useCredentials();
 
   const [scheduleType, setScheduleType] = useState("interval");
   const [scheduleValue, setScheduleValue] = useState("60");
@@ -473,6 +489,7 @@ function EditAssignmentDialog({ assignment, open, onClose }: EditAssignmentDialo
   const [enabled, setEnabled] = useState(true);
   const [versionMode, setVersionMode] = useState<"latest" | "pinned">("latest");
   const [selectedVersionId, setSelectedVersionId] = useState("");
+  const [selectedCredentialId, setSelectedCredentialId] = useState("");
   const [pinToCollector, setPinToCollector] = useState(false);
   const [pinnedCollectorId, setPinnedCollectorId] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
@@ -486,6 +503,7 @@ function EditAssignmentDialog({ assignment, open, onClose }: EditAssignmentDialo
       setEnabled(assignment.enabled);
       setVersionMode(assignment.use_latest ? "latest" : "pinned");
       setSelectedVersionId(assignment.app_version_id);
+      setSelectedCredentialId(assignment.credential_id ?? "");
       setPinToCollector(!!assignment.collector_id);
       setPinnedCollectorId(assignment.collector_id ?? "");
       setConfigError(null);
@@ -514,6 +532,21 @@ function EditAssignmentDialog({ assignment, open, onClose }: EditAssignmentDialo
       }
     }
 
+    // Validate schedule value
+    if (scheduleType === "interval") {
+      const n = Number(scheduleValue);
+      if (!scheduleValue || isNaN(n) || n < 1 || !Number.isInteger(n)) {
+        setFormError("Interval must be a positive integer (seconds).");
+        return;
+      }
+    } else if (scheduleType === "cron") {
+      const parts = scheduleValue.trim().split(/\s+/);
+      if (parts.length < 5) {
+        setFormError("Cron expression must have at least 5 fields: min hour day month weekday");
+        return;
+      }
+    }
+
     const latestVersion = appDetail?.versions?.find((v) => v.is_latest);
     const versionId = versionMode === "latest" ? latestVersion?.id : selectedVersionId;
     if (!versionId) {
@@ -531,6 +564,7 @@ function EditAssignmentDialog({ assignment, open, onClose }: EditAssignmentDialo
           enabled,
           app_version_id: versionId,
           use_latest: versionMode === "latest",
+          credential_id: selectedCredentialId || null,
           collector_id: pinToCollector && pinnedCollectorId
             ? pinnedCollectorId
             : (assignment.collector_id ? "" : undefined),
@@ -636,6 +670,17 @@ function EditAssignmentDialog({ assignment, open, onClose }: EditAssignmentDialo
                 : "Standard cron: min hour day month weekday"}
             </p>
           </div>
+        </div>
+
+        {/* Credential */}
+        <div className="space-y-1.5">
+          <Label htmlFor="ea-credential">Credential <span className="font-normal text-zinc-500">(optional)</span></Label>
+          <Select id="ea-credential" value={selectedCredentialId} onChange={(e) => setSelectedCredentialId(e.target.value)}>
+            <option value="">Device default</option>
+            {(credentials ?? []).map((c) => (
+              <option key={c.id} value={c.id}>{c.name} ({c.credential_type})</option>
+            ))}
+          </Select>
         </div>
 
         {/* Config */}
