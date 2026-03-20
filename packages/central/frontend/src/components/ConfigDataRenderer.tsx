@@ -78,6 +78,10 @@ function TemplateRenderer({
   );
 }
 
+/**
+ * Detect if keys follow the `type::entity::field` pattern (e.g. "fan::0/FT0::serial_number").
+ * If so, render grouped tables. Otherwise fall back to flat key/value.
+ */
 function ConfigKeyValueTable({
   data,
   className,
@@ -85,7 +89,7 @@ function ConfigKeyValueTable({
   data: Record<string, string>;
   className?: string;
 }) {
-  const entries = Object.entries(data).sort(([a], [b]) => a.localeCompare(b));
+  const entries = Object.entries(data);
 
   if (entries.length === 0) {
     return (
@@ -93,6 +97,32 @@ function ConfigKeyValueTable({
     );
   }
 
+  // Try to parse as type::entity::field
+  const structured = new Map<string, Map<string, Map<string, string>>>();
+  let structuredCount = 0;
+  const flat: [string, string][] = [];
+
+  for (const [key, value] of entries) {
+    const parts = key.split("::");
+    if (parts.length === 3) {
+      const [group, entity, field] = parts;
+      if (!structured.has(group)) structured.set(group, new Map());
+      const entityMap = structured.get(group)!;
+      if (!entityMap.has(entity)) entityMap.set(entity, new Map());
+      entityMap.get(entity)!.set(field, value);
+      structuredCount++;
+    } else {
+      flat.push([key, value]);
+    }
+  }
+
+  // If most keys are structured, use grouped view
+  if (structuredCount > entries.length * 0.5 && structured.size > 0) {
+    return <GroupedConfigView groups={structured} flat={flat} className={className} />;
+  }
+
+  // Fallback: flat key/value table
+  const sorted = entries.sort(([a], [b]) => a.localeCompare(b));
   return (
     <div className={className}>
       <Table>
@@ -103,7 +133,7 @@ function ConfigKeyValueTable({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {entries.map(([key, value]) => (
+          {sorted.map(([key, value]) => (
             <TableRow key={key}>
               <TableCell className="font-mono text-xs text-zinc-400">{key}</TableCell>
               <TableCell className="font-mono text-sm text-zinc-200">{value}</TableCell>
@@ -111,6 +141,116 @@ function ConfigKeyValueTable({
           ))}
         </TableBody>
       </Table>
+    </div>
+  );
+}
+
+const GROUP_ORDER = ["chassis", "module", "psu", "fan"];
+const GROUP_LABELS: Record<string, string> = {
+  chassis: "Chassis",
+  module: "Modules",
+  psu: "Power Supplies",
+  fan: "Fans",
+};
+
+function GroupedConfigView({
+  groups,
+  flat,
+  className,
+}: {
+  groups: Map<string, Map<string, Map<string, string>>>;
+  flat: [string, string][];
+  className?: string;
+}) {
+  // Sort groups: known order first, then alphabetical for unknown
+  const sortedGroups = [...groups.entries()].sort(([a], [b]) => {
+    const ai = GROUP_ORDER.indexOf(a.toLowerCase());
+    const bi = GROUP_ORDER.indexOf(b.toLowerCase());
+    if (ai !== -1 && bi !== -1) return ai - bi;
+    if (ai !== -1) return -1;
+    if (bi !== -1) return 1;
+    return a.localeCompare(b);
+  });
+
+  return (
+    <div className={`space-y-6 ${className ?? ""}`}>
+      {sortedGroups.map(([groupName, entities]) => {
+        // Collect all unique fields across entities in this group
+        const allFields = new Set<string>();
+        for (const fields of entities.values()) {
+          for (const f of fields.keys()) allFields.add(f);
+        }
+        // Sort fields in a sensible order
+        const fieldOrder = ["description", "manufacturer", "model", "serial_number", "hardware_revision", "firmware_revision", "software_revision"];
+        const sortedFields = [...allFields].sort((a, b) => {
+          const ai = fieldOrder.indexOf(a);
+          const bi = fieldOrder.indexOf(b);
+          if (ai !== -1 && bi !== -1) return ai - bi;
+          if (ai !== -1) return -1;
+          if (bi !== -1) return 1;
+          return a.localeCompare(b);
+        });
+
+        // Sort entities naturally
+        const sortedEntities = [...entities.entries()].sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }));
+
+        return (
+          <div key={groupName}>
+            <h3 className="text-sm font-medium text-zinc-300 mb-2">
+              {GROUP_LABELS[groupName.toLowerCase()] ?? groupName}
+            </h3>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-xs whitespace-nowrap">Entity</TableHead>
+                    {sortedFields.map((f) => (
+                      <TableHead key={f} className="text-xs whitespace-nowrap">
+                        {f.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                      </TableHead>
+                    ))}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {sortedEntities.map(([entityName, fields]) => (
+                    <TableRow key={entityName}>
+                      <TableCell className="font-mono text-xs text-zinc-300 whitespace-nowrap">{entityName}</TableCell>
+                      {sortedFields.map((f) => (
+                        <TableCell key={f} className="font-mono text-xs text-zinc-400 max-w-[200px] truncate" title={fields.get(f) ?? ""}>
+                          {fields.get(f) ?? "\u2014"}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+        );
+      })}
+
+      {/* Flat entries that didn't match the pattern */}
+      {flat.length > 0 && (
+        <div>
+          <h3 className="text-sm font-medium text-zinc-300 mb-2">Other</h3>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="text-xs">Key</TableHead>
+                <TableHead className="text-xs">Value</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {flat.sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => (
+                <TableRow key={key}>
+                  <TableCell className="font-mono text-xs text-zinc-400">{key}</TableCell>
+                  <TableCell className="font-mono text-xs text-zinc-200">{value}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
     </div>
   );
 }
