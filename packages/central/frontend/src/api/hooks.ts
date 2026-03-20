@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiDelete, apiGet, apiGetRaw, apiPatch, apiPost, apiPostFormData, apiPut } from "@/api/client.ts";
 import type {
   AlertInstance,
@@ -104,6 +104,7 @@ export function useDevices(params: DeviceListParams = {}) {
   return useQuery({
     queryKey: ["devices", params],
     queryFn: () => apiGet<Device[]>(`/devices${qs ? `?${qs}` : ""}`),
+    placeholderData: keepPreviousData,
     refetchInterval: POLL_LIST,
   });
 }
@@ -187,6 +188,7 @@ export function useAssignments(params: ListParams = {}) {
   return useQuery({
     queryKey: ["assignments", params],
     queryFn: () => apiGet<Assignment[]>(`/apps/assignments${buildListQs(params)}`),
+    placeholderData: keepPreviousData,
     refetchInterval: POLL_LIST,
   });
 }
@@ -259,6 +261,7 @@ export function useAlertRules(params: ListParams = {}) {
   return useQuery({
     queryKey: ["alert-definitions", params],
     queryFn: () => apiGet<AppAlertDefinition[]>(`/alerts/definitions${buildListQs(params)}`),
+    placeholderData: keepPreviousData,
     refetchInterval: POLL_LIST,
   });
 }
@@ -966,6 +969,7 @@ export function useApps(params: ListParams = {}) {
   return useQuery({
     queryKey: ["apps", params],
     queryFn: () => apiGet<AppSummary[]>(`/apps${buildListQs(params)}`),
+    placeholderData: keepPreviousData,
     refetchInterval: POLL_LIST,
   });
 }
@@ -1598,6 +1602,7 @@ export function usePythonModules(params: ListParams = {}) {
   return useQuery({
     queryKey: ["python-modules", params],
     queryFn: () => apiGet<PythonModuleSummary[]>(`/python-modules${buildListQs(params)}`),
+    placeholderData: keepPreviousData,
     refetchInterval: POLL_LIST,
   });
 }
@@ -1815,6 +1820,7 @@ export function useTemplates(params: ListParams = {}) {
   return useQuery({
     queryKey: ["templates", params],
     queryFn: () => apiGet<Template[]>(`/templates${buildListQs(params)}`),
+    placeholderData: keepPreviousData,
     refetchInterval: POLL_LIST,
   });
 }
@@ -1953,6 +1959,7 @@ export function useConnectors(params: ListParams = {}) {
   return useQuery({
     queryKey: ["connectors", params],
     queryFn: () => apiGet<ConnectorSummary[]>(`/connectors${buildListQs(params)}`),
+    placeholderData: keepPreviousData,
     refetchInterval: POLL_LIST,
   });
 }
@@ -2054,6 +2061,7 @@ export function useActiveEvents(params: ListParams = {}) {
   return useQuery({
     queryKey: ["events-active", params],
     queryFn: () => apiGet<MonitoringEvent[]>(`/events/active${buildListQs(params)}`),
+    placeholderData: keepPreviousData,
     refetchInterval: POLL_LIST,
   });
 }
@@ -2062,6 +2070,7 @@ export function useClearedEvents(params: ListParams = {}) {
   return useQuery({
     queryKey: ["events-cleared", params],
     queryFn: () => apiGet<MonitoringEvent[]>(`/events/cleared${buildListQs(params)}`),
+    placeholderData: keepPreviousData,
     refetchInterval: POLL_LIST,
   });
 }
@@ -2147,6 +2156,7 @@ export function usePacks(params: ListParams = {}) {
   return useQuery({
     queryKey: ["packs", params],
     queryFn: () => apiGet<Pack[]>(`/packs${buildListQs(params)}`),
+    placeholderData: keepPreviousData,
     refetchInterval: POLL_LIST,
   });
 }
