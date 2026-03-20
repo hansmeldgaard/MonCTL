@@ -970,6 +970,7 @@ export function useCreateAssignment() {
       config: Record<string, unknown>;
       resource_limits?: Record<string, unknown>;
       use_latest?: boolean;
+      credential_id?: string | null;
       connector_bindings?: { alias: string; connector_id: string; connector_version_id?: string | null; credential_id?: string | null; use_latest?: boolean; settings?: Record<string, unknown> }[];
     }) => apiPost<{ id: string }>("/apps/assignments", data),
     onSuccess: () => {

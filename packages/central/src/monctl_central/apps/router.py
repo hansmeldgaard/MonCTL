@@ -160,6 +160,7 @@ class CreateAssignmentRequest(BaseModel):
     resource_limits: dict = Field(default_factory=lambda: {"timeout_seconds": 30, "memory_mb": 256})
     role: str | None = Field(default=None, description="Optional role: 'availability' or 'latency'")
     use_latest: bool = Field(default=False, description="Follow latest app version dynamically")
+    credential_id: str | None = Field(default=None, description="Optional credential UUID for this assignment")
     connector_bindings: list[ConnectorBindingInput] = Field(
         default_factory=list,
         description="Optional connector bindings to attach to this assignment",
@@ -629,6 +630,7 @@ async def create_assignment(
         resource_limits=request.resource_limits,
         role=request.role,
         use_latest=request.use_latest,
+        credential_id=uuid.UUID(request.credential_id) if request.credential_id else None,
     )
     db.add(assignment)
     await db.flush()

@@ -117,6 +117,7 @@ function AddAssignmentDialog({
   onClose,
 }: AddAssignmentDialogProps) {
   const { data: apps } = useApps();
+  const { data: credentials } = useCredentials();
   const [selectedAppId, setSelectedAppId] = useState("");
   const { data: appDetail } = useAppDetail(selectedAppId || undefined);
   const createAssignment = useCreateAssignment();
@@ -125,6 +126,7 @@ function AddAssignmentDialog({
   const [scheduleValue, setScheduleValue] = useState("60");
   const [versionMode, setVersionMode] = useState<"latest" | "pinned">("latest");
   const [selectedVersionId, setSelectedVersionId] = useState("");
+  const [selectedCredentialId, setSelectedCredentialId] = useState("");
   const [configText, setConfigText] = useState("{}");
   const [parsedConfig, setParsedConfig] = useState<Record<string, unknown>>({});
   const [configError, setConfigError] = useState<string | null>(null);
@@ -145,6 +147,7 @@ function AddAssignmentDialog({
     setSelectedAppId(apps?.[0]?.id ?? "");
     setVersionMode("latest");
     setSelectedVersionId("");
+    setSelectedCredentialId("");
     setScheduleType("interval");
     setScheduleValue("60");
     setConfigText("{}");
@@ -210,6 +213,7 @@ function AddAssignmentDialog({
         schedule_value: scheduleValue,
         config,
         use_latest: versionMode === "latest",
+        credential_id: selectedCredentialId || null,
       });
       reset();
       onClose();
@@ -301,6 +305,17 @@ function AddAssignmentDialog({
               This device is not assigned to a collector group. Assign it to a group in Settings before adding apps.
             </p>
           )}
+        </div>
+
+        {/* Credential */}
+        <div className="space-y-1.5">
+          <Label htmlFor="aa-credential">Credential <span className="font-normal text-zinc-500">(optional)</span></Label>
+          <Select id="aa-credential" value={selectedCredentialId} onChange={(e) => setSelectedCredentialId(e.target.value)}>
+            <option value="">Device default</option>
+            {(credentials ?? []).map((c) => (
+              <option key={c.id} value={c.id}>{c.name} ({c.credential_type})</option>
+            ))}
+          </Select>
         </div>
 
         <div className="grid grid-cols-2 gap-3">
