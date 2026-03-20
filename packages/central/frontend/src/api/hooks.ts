@@ -72,11 +72,9 @@ import type {
 
 function buildListQs(params: ListParams): string {
   const qs = new URLSearchParams();
-  if (params.search) qs.set("search", params.search);
-  if (params.sort_by) qs.set("sort_by", params.sort_by);
-  if (params.sort_dir) qs.set("sort_dir", params.sort_dir);
-  if (params.limit) qs.set("limit", String(params.limit));
-  if (params.offset !== undefined) qs.set("offset", String(params.offset));
+  for (const [key, val] of Object.entries(params)) {
+    if (val !== undefined && val !== "") qs.set(key, String(val));
+  }
   const s = qs.toString();
   return s ? `?${s}` : "";
 }

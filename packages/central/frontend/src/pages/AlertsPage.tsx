@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Bell, Clock, Loader2, RefreshCw, Search, ShieldCheck } from "lucide-react";
+import { Bell, Clock, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
@@ -21,9 +21,8 @@ import {
 import { timeAgo, formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 import { useListState } from "@/hooks/useListState.ts";
-import { SortableHead } from "@/components/SortableHead.tsx";
+import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
-import { ClearableInput } from "@/components/ui/clearable-input.tsx";
 import type { AlertInstance, AppAlertDefinition } from "@/types/api.ts";
 
 type Tab = "active" | "history" | "definitions";
@@ -47,7 +46,13 @@ const severityVariant = (severity: string) => {
 export function AlertsPage() {
   const [tab, setTab] = useState<Tab>("active");
   const { data: alerts, isLoading: alertsLoading } = useActiveAlerts();
-  const defsListState = useListState();
+  const defsListState = useListState({
+    columns: [
+      { key: "name", label: "Name" },
+      { key: "severity", label: "Severity" },
+      { key: "expression", label: "Expression", sortable: false },
+    ],
+  });
   const { data: defsResponse, isLoading: defsLoading } = useAlertRules(defsListState.params);
   const definitions = defsResponse?.data ?? [];
   const defsMeta = (defsResponse as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
@@ -327,32 +332,14 @@ function DefinitionsTab({
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="mb-4">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
-            <ClearableInput
-              placeholder="Search definitions..."
-              className="pl-9 w-64"
-              value={listState.search}
-              onChange={(e) => listState.setSearch(e.target.value)}
-              onClear={() => listState.setSearch("")}
-            />
-          </div>
-        </div>
         <Table>
           <TableHeader>
             <TableRow>
-              <SortableHead col="name" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>
-                Name
-              </SortableHead>
-              <TableHead>Expression</TableHead>
+              <FilterableSortHead col="name" label="Name" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.name} onFilterChange={(v) => listState.setFilter("name", v)} />
+              <FilterableSortHead col="expression" label="Expression" sortable={false} sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.expression} onFilterChange={(v) => listState.setFilter("expression", v)} />
               <TableHead>Window</TableHead>
-              <SortableHead col="severity" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>
-                Severity
-              </SortableHead>
-              <SortableHead col="enabled" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>
-                Enabled
-              </SortableHead>
+              <FilterableSortHead col="severity" label="Severity" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.severity} onFilterChange={(v) => listState.setFilter("severity", v)} />
+              <FilterableSortHead col="enabled" label="Enabled" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterable={false} />
               <TableHead>Instances</TableHead>
               <TableHead>Firing</TableHead>
               <TableHead className="w-12"></TableHead>
@@ -362,7 +349,7 @@ function DefinitionsTab({
             {definitions.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={8} className="text-center text-zinc-500 py-8">
-                  {listState.search ? "No definitions match your search" : "No alert definitions configured"}
+                  {listState.hasActiveFilters ? "No definitions match your filters" : "No alert definitions configured"}
                 </TableCell>
               </TableRow>
             ) : (

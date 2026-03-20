@@ -10,7 +10,7 @@ import structlog
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
 import sqlalchemy as sa
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -172,7 +172,8 @@ async def _get_available_packages(db: AsyncSession) -> dict[str, list[str]]:
 
 @router.get("")
 async def list_modules(
-    search: str | None = Query(default=None),
+    name: str | None = Query(default=None),
+    description: str | None = Query(default=None),
     sort_by: str = Query(default="name"),
     sort_dir: str = Query(default="asc"),
     limit: int = Query(default=50, le=500),
@@ -181,19 +182,12 @@ async def list_modules(
     auth: dict = Depends(require_auth),
 ):
     """List all registered Python modules with version/wheel counts and dep status."""
-    # Build search filter
-    search_filter = None
-    if search:
-        pattern = f"%{search}%"
-        search_filter = or_(
-            PythonModule.name.ilike(pattern),
-            PythonModule.description.ilike(pattern),
-        )
-
     # Count total matching modules
     count_stmt = select(sa.func.count()).select_from(PythonModule)
-    if search_filter is not None:
-        count_stmt = count_stmt.where(search_filter)
+    if name:
+        count_stmt = count_stmt.where(PythonModule.name.ilike(f"%{name}%"))
+    if description:
+        count_stmt = count_stmt.where(PythonModule.description.ilike(f"%{description}%"))
     total = (await db.execute(count_stmt)).scalar() or 0
 
     # Main query
@@ -206,8 +200,10 @@ async def list_modules(
         .outerjoin(PythonModuleVersion, PythonModule.id == PythonModuleVersion.module_id)
         .outerjoin(WheelFile, PythonModuleVersion.id == WheelFile.module_version_id)
     )
-    if search_filter is not None:
-        stmt = stmt.where(search_filter)
+    if name:
+        stmt = stmt.where(PythonModule.name.ilike(f"%{name}%"))
+    if description:
+        stmt = stmt.where(PythonModule.description.ilike(f"%{description}%"))
 
     SORT_MAP = {
         "name": PythonModule.name,

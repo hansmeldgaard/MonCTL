@@ -96,7 +96,8 @@ async def list_events(
     state: str | None = Query(None),
     severity: str | None = Query(None),
     device_id: str | None = Query(None),
-    search: str | None = Query(None),
+    message: str | None = Query(default=None),
+    source: str | None = Query(default=None),
     sort_by: str = Query(default="occurred_at"),
     sort_dir: str = Query(default="desc"),
     limit: int = Query(200, le=1000),
@@ -106,11 +107,11 @@ async def list_events(
 ):
     total = await asyncio.to_thread(
         ch.count_events, state=state, severity=severity,
-        device_id=device_id, search=search,
+        device_id=device_id, message=message, source=source,
     )
     rows = await asyncio.to_thread(
         ch.query_events, state=state, severity=severity,
-        device_id=device_id, limit=limit, search=search,
+        device_id=device_id, limit=limit, message=message, source=source,
         sort_by=sort_by, sort_dir=sort_dir, offset=offset,
     )
     return {
@@ -124,7 +125,8 @@ async def list_events(
 async def list_active_events(
     severity: str | None = Query(None),
     device_id: str | None = Query(None),
-    search: str | None = Query(None),
+    message: str | None = Query(default=None),
+    source: str | None = Query(default=None),
     sort_by: str = Query(default="occurred_at"),
     sort_dir: str = Query(default="desc"),
     limit: int = Query(200, le=1000),
@@ -134,11 +136,11 @@ async def list_active_events(
 ):
     total = await asyncio.to_thread(
         ch.count_events, state="active", severity=severity,
-        device_id=device_id, search=search,
+        device_id=device_id, message=message, source=source,
     )
     rows = await asyncio.to_thread(
         ch.query_events, state="active", severity=severity,
-        device_id=device_id, limit=limit, search=search,
+        device_id=device_id, limit=limit, message=message, source=source,
         sort_by=sort_by, sort_dir=sort_dir, offset=offset,
     )
     return {
@@ -150,7 +152,8 @@ async def list_active_events(
 
 @router.get("/cleared")
 async def list_cleared_events(
-    search: str | None = Query(None),
+    message: str | None = Query(default=None),
+    source: str | None = Query(default=None),
     sort_by: str = Query(default="occurred_at"),
     sort_dir: str = Query(default="desc"),
     limit: int = Query(200, le=1000),
@@ -159,10 +162,10 @@ async def list_cleared_events(
     auth: dict = Depends(require_auth),
 ):
     total = await asyncio.to_thread(
-        ch.count_events, state="cleared", search=search,
+        ch.count_events, state="cleared", message=message, source=source,
     )
     rows = await asyncio.to_thread(
-        ch.query_events, state="cleared", limit=limit, search=search,
+        ch.query_events, state="cleared", limit=limit, message=message, source=source,
         sort_by=sort_by, sort_dir=sort_dir, offset=offset,
     )
     return {

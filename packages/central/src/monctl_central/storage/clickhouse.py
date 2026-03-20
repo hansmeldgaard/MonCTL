@@ -1131,7 +1131,8 @@ class ClickHouseClient:
         tenant_id: str | None = None,
         from_ts: datetime | None = None,
         to_ts: datetime | None = None,
-        search: str | None = None,
+        message: str | None = None,
+        source: str | None = None,
     ) -> tuple[list[str], dict[str, Any]]:
         """Build WHERE clauses and params for event queries."""
         wheres: list[str] = []
@@ -1155,9 +1156,12 @@ class ClickHouseClient:
         if to_ts:
             wheres.append("occurred_at <= {to_ts:DateTime64(3)}")
             params["to_ts"] = to_ts.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        if search:
-            wheres.append("message ILIKE {search_pattern:String}")
-            params["search_pattern"] = f"%{search}%"
+        if message:
+            wheres.append("message ILIKE {message_pattern:String}")
+            params["message_pattern"] = f"%{message}%"
+        if source:
+            wheres.append("source ILIKE {source_pattern:String}")
+            params["source_pattern"] = f"%{source}%"
 
         return wheres, params
 
@@ -1170,12 +1174,14 @@ class ClickHouseClient:
         tenant_id: str | None = None,
         from_ts: datetime | None = None,
         to_ts: datetime | None = None,
-        search: str | None = None,
+        message: str | None = None,
+        source: str | None = None,
     ) -> int:
         """Count events matching the given filters."""
         wheres, params = self._build_event_filters(
             state=state, severity=severity, device_id=device_id,
-            tenant_id=tenant_id, from_ts=from_ts, to_ts=to_ts, search=search,
+            tenant_id=tenant_id, from_ts=from_ts, to_ts=to_ts,
+            message=message, source=source,
         )
         sql = "SELECT count() FROM events"
         if wheres:
@@ -1196,7 +1202,8 @@ class ClickHouseClient:
         tenant_id: str | None = None,
         from_ts: datetime | None = None,
         to_ts: datetime | None = None,
-        search: str | None = None,
+        message: str | None = None,
+        source: str | None = None,
         sort_by: str = "occurred_at",
         sort_dir: str = "desc",
         limit: int = 200,
@@ -1205,7 +1212,8 @@ class ClickHouseClient:
         """Query events with optional filters."""
         wheres, params = self._build_event_filters(
             state=state, severity=severity, device_id=device_id,
-            tenant_id=tenant_id, from_ts=from_ts, to_ts=to_ts, search=search,
+            tenant_id=tenant_id, from_ts=from_ts, to_ts=to_ts,
+            message=message, source=source,
         )
 
         sql = "SELECT * FROM events"

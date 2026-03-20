@@ -1,10 +1,9 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Loader2, Plug, Plus, Search, Trash2 } from "lucide-react";
+import { Loader2, Plug, Plus, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
-import { ClearableInput } from "@/components/ui/clearable-input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import {
@@ -18,12 +17,18 @@ import {
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import { useConnectors, useCreateConnector, useDeleteConnector } from "@/api/hooks.ts";
 import { useListState } from "@/hooks/useListState.ts";
-import { SortableHead } from "@/components/SortableHead.tsx";
+import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
 import type { ConnectorSummary } from "@/types/api.ts";
 
 export function ConnectorsPage() {
-  const listState = useListState();
+  const listState = useListState({
+    columns: [
+      { key: "name", label: "Name" },
+      { key: "connector_type", label: "Type" },
+      { key: "description", label: "Description", sortable: false },
+    ],
+  });
   const { data: response, isLoading } = useConnectors(listState.params);
   const connectors = response?.data ?? [];
   const meta = (response as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
@@ -86,22 +91,10 @@ export function ConnectorsPage() {
             Manage connectors and their versions.
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
-            <ClearableInput
-              placeholder="Search connectors..."
-              className="pl-9 w-64"
-              value={listState.search}
-              onChange={(e) => listState.setSearch(e.target.value)}
-              onClear={() => listState.setSearch("")}
-            />
-          </div>
-          <Button size="sm" onClick={() => { setAddName(""); setAddDesc(""); setAddType(""); setAddError(null); setAddOpen(true); }} className="gap-1.5">
-            <Plus className="h-4 w-4" />
-            New Connector
-          </Button>
-        </div>
+        <Button size="sm" onClick={() => { setAddName(""); setAddDesc(""); setAddType(""); setAddError(null); setAddOpen(true); }} className="gap-1.5">
+          <Plus className="h-4 w-4" />
+          New Connector
+        </Button>
       </div>
 
       <Card>
@@ -113,7 +106,7 @@ export function ConnectorsPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {connectors.length === 0 && !listState.search ? (
+          {connectors.length === 0 && !listState.hasActiveFilters ? (
             <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
               <Plug className="mb-2 h-8 w-8 text-zinc-600" />
               <p className="text-sm">No connectors registered</p>
@@ -123,9 +116,9 @@ export function ConnectorsPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <SortableHead col="name" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>Name</SortableHead>
-                    <SortableHead col="connector_type" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>Type</SortableHead>
-                    <TableHead>Description</TableHead>
+                    <FilterableSortHead col="name" label="Name" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.name} onFilterChange={(v) => listState.setFilter("name", v)} />
+                    <FilterableSortHead col="connector_type" label="Type" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.connector_type} onFilterChange={(v) => listState.setFilter("connector_type", v)} />
+                    <FilterableSortHead col="description" label="Description" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} sortable={false} filterValue={listState.filters.description} onFilterChange={(v) => listState.setFilter("description", v)} />
                     <TableHead>Versions</TableHead>
                     <TableHead>Latest Version</TableHead>
                     <TableHead>Built-in</TableHead>
@@ -136,7 +129,7 @@ export function ConnectorsPage() {
                   {connectors.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={7} className="text-center text-zinc-500 py-8">
-                        No connectors match your search
+                        No connectors match your filters
                       </TableCell>
                     </TableRow>
                   ) : (

@@ -1,6 +1,6 @@
 import { useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { Boxes, Download, Loader2, Plus, Search, Trash2, Upload } from "lucide-react";
+import { Boxes, Download, Loader2, Plus, Trash2, Upload } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
@@ -20,9 +20,8 @@ import { CreatePackDialog } from "@/components/CreatePackDialog.tsx";
 import { formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 import { useListState } from "@/hooks/useListState.ts";
-import { SortableHead } from "@/components/SortableHead.tsx";
+import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
-import { ClearableInput } from "@/components/ui/clearable-input.tsx";
 
 const SECTION_LABELS: Record<string, string> = {
   apps: "Apps",
@@ -38,7 +37,13 @@ const SECTION_LABELS: Record<string, string> = {
 export function PacksPage() {
   const tz = useTimezone();
   const navigate = useNavigate();
-  const listState = useListState();
+  const listState = useListState({
+    columns: [
+      { key: "name", label: "Name" },
+      { key: "pack_uid", label: "Pack UID" },
+      { key: "description", label: "Description", sortable: false },
+    ],
+  });
   const { data: response, isLoading } = usePacks(listState.params);
   const packs = response?.data ?? [];
   const meta = (response as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
@@ -147,16 +152,6 @@ export function PacksPage() {
           <p className="text-sm text-zinc-500">Import, export, and manage monitoring configuration bundles.</p>
         </div>
         <div className="flex items-center gap-2">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
-            <ClearableInput
-              placeholder="Search packs..."
-              className="pl-9 w-64"
-              value={listState.search}
-              onChange={(e) => listState.setSearch(e.target.value)}
-              onClear={() => listState.setSearch("")}
-            />
-          </div>
           <input ref={fileInputRef} type="file" accept=".json" className="hidden" onChange={handleFileUpload} />
           <Button size="sm" variant="secondary" onClick={() => setCreateOpen(true)} className="gap-1.5">
             <Plus className="h-4 w-4" /> Create Pack
@@ -179,12 +174,33 @@ export function PacksPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <SortableHead col="name" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>Name</SortableHead>
-                  <SortableHead col="pack_uid" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>UID</SortableHead>
-                  <SortableHead col="current_version" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>Version</SortableHead>
-                  <TableHead>Author</TableHead>
+                  <FilterableSortHead
+                    col="name" label="Name"
+                    sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
+                    filterValue={listState.filters.name} onFilterChange={(v) => listState.setFilter("name", v)}
+                  />
+                  <FilterableSortHead
+                    col="pack_uid" label="UID"
+                    sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
+                    filterValue={listState.filters.pack_uid} onFilterChange={(v) => listState.setFilter("pack_uid", v)}
+                  />
+                  <FilterableSortHead
+                    col="current_version" label="Version"
+                    sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
+                    filterable={false}
+                  />
+                  <FilterableSortHead
+                    col="description" label="Description"
+                    sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
+                    sortable={false}
+                    filterValue={listState.filters.description} onFilterChange={(v) => listState.setFilter("description", v)}
+                  />
                   <TableHead>Entities</TableHead>
-                  <SortableHead col="installed_at" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>Installed</SortableHead>
+                  <FilterableSortHead
+                    col="installed_at" label="Installed"
+                    sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
+                    filterable={false}
+                  />
                   <TableHead className="w-24"></TableHead>
                 </TableRow>
               </TableHeader>
@@ -194,7 +210,7 @@ export function PacksPage() {
                     <TableCell className="font-medium text-zinc-100">{p.name}</TableCell>
                     <TableCell><Badge variant="info">{p.pack_uid}</Badge></TableCell>
                     <TableCell><Badge variant="default">v{p.current_version}</Badge></TableCell>
-                    <TableCell className="text-zinc-400">{p.author ?? "—"}</TableCell>
+                    <TableCell className="text-zinc-400 max-w-[300px] truncate">{p.description ?? "—"}</TableCell>
                     <TableCell className="text-zinc-400">{totalEntities(p)}</TableCell>
                     <TableCell className="text-zinc-500">{formatDate(p.installed_at, tz)}</TableCell>
                     <TableCell>

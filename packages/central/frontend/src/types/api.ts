@@ -131,7 +131,7 @@ export interface ListParams {
   offset?: number;
   sort_by?: string;
   sort_dir?: "asc" | "desc";
-  search?: string;
+  [key: string]: string | number | undefined;
 }
 
 export interface BulkUpdateAssignmentsRequest {

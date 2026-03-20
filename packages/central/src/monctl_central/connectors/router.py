@@ -8,7 +8,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 import sqlalchemy as sa
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -107,7 +107,9 @@ SORT_MAP = {
 async def list_connectors(
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
-    search: str | None = Query(default=None),
+    name: str | None = Query(default=None),
+    connector_type: str | None = Query(default=None),
+    description: str | None = Query(default=None),
     sort_by: str = Query(default="name"),
     sort_dir: str = Query(default="asc"),
     limit: int = Query(default=50, le=500),
@@ -116,13 +118,12 @@ async def list_connectors(
     """List all connectors with version_count and latest_version."""
     base_stmt = select(Connector)
 
-    if search:
-        term = f"%{search}%"
-        base_stmt = base_stmt.where(or_(
-            Connector.name.ilike(term),
-            Connector.description.ilike(term),
-            Connector.connector_type.ilike(term),
-        ))
+    if name:
+        base_stmt = base_stmt.where(Connector.name.ilike(f"%{name}%"))
+    if connector_type:
+        base_stmt = base_stmt.where(Connector.connector_type.ilike(f"%{connector_type}%"))
+    if description:
+        base_stmt = base_stmt.where(Connector.description.ilike(f"%{description}%"))
 
     sort_col = SORT_MAP.get(sort_by, Connector.name)
     base_stmt = base_stmt.order_by(sort_col.desc() if sort_dir == "desc" else sort_col.asc())

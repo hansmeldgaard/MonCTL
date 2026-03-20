@@ -7,7 +7,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 import sqlalchemy as sa
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -133,7 +133,9 @@ _VALID_SEVERITIES = {"info", "warning", "critical", "emergency", "recovery"}
 @router.get("/definitions")
 async def list_alert_definitions(
     app_id: str | None = Query(None),
-    search: str | None = Query(default=None),
+    name: str | None = Query(default=None),
+    severity: str | None = Query(default=None),
+    expression: str | None = Query(default=None),
     sort_by: str = Query(default="name"),
     sort_dir: str = Query(default="asc"),
     limit: int = Query(default=50, le=500),
@@ -146,13 +148,12 @@ async def list_alert_definitions(
     filters = []
     if app_id:
         filters.append(AppAlertDefinition.app_id == uuid.UUID(app_id))
-    if search:
-        pattern = f"%{search}%"
-        filters.append(or_(
-            AppAlertDefinition.name.ilike(pattern),
-            AppAlertDefinition.description.ilike(pattern),
-            AppAlertDefinition.expression.ilike(pattern),
-        ))
+    if name:
+        filters.append(AppAlertDefinition.name.ilike(f"%{name}%"))
+    if severity:
+        filters.append(AppAlertDefinition.severity == severity)
+    if expression:
+        filters.append(AppAlertDefinition.expression.ilike(f"%{expression}%"))
 
     # Count total
     count_stmt = select(sa.func.count()).select_from(AppAlertDefinition)

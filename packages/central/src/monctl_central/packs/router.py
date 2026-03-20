@@ -8,7 +8,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 import sqlalchemy as sa
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -110,7 +110,9 @@ SORT_MAP = {
 async def list_packs(
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
-    search: str | None = Query(default=None),
+    name: str | None = Query(default=None),
+    pack_uid: str | None = Query(default=None),
+    description: str | None = Query(default=None),
     sort_by: str = Query(default="name"),
     sort_dir: str = Query(default="asc"),
     limit: int = Query(default=50, le=500),
@@ -118,13 +120,12 @@ async def list_packs(
 ):
     base_stmt = select(Pack)
 
-    if search:
-        term = f"%{search}%"
-        base_stmt = base_stmt.where(or_(
-            Pack.name.ilike(term),
-            Pack.pack_uid.ilike(term),
-            Pack.description.ilike(term),
-        ))
+    if name:
+        base_stmt = base_stmt.where(Pack.name.ilike(f"%{name}%"))
+    if pack_uid:
+        base_stmt = base_stmt.where(Pack.pack_uid.ilike(f"%{pack_uid}%"))
+    if description:
+        base_stmt = base_stmt.where(Pack.description.ilike(f"%{description}%"))
 
     sort_col = SORT_MAP.get(sort_by, Pack.name)
     base_stmt = base_stmt.order_by(sort_col.desc() if sort_dir == "desc" else sort_col.asc())

@@ -5,7 +5,6 @@ import {
   Clock,
   Loader2,
   Plus,
-  Search,
   Settings2,
   Trash2,
   Zap,
@@ -38,9 +37,8 @@ import {
 import { timeAgo, formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 import { useListState } from "@/hooks/useListState.ts";
-import { SortableHead } from "@/components/SortableHead.tsx";
+import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
-import { ClearableInput } from "@/components/ui/clearable-input.tsx";
 import type { MonitoringEvent, EventPolicy } from "@/types/api.ts";
 
 type Tab = "active" | "cleared" | "policies";
@@ -61,8 +59,22 @@ const severityVariant = (severity: string) => {
 
 export function EventsPage() {
   const [tab, setTab] = useState<Tab>("active");
-  const activeListState = useListState({ defaultSortBy: "occurred_at", defaultSortDir: "desc" });
-  const clearedListState = useListState({ defaultSortBy: "occurred_at", defaultSortDir: "desc" });
+  const activeListState = useListState({
+    columns: [
+      { key: "source", label: "Source" },
+      { key: "message", label: "Message" },
+    ],
+    defaultSortBy: "occurred_at",
+    defaultSortDir: "desc",
+  });
+  const clearedListState = useListState({
+    columns: [
+      { key: "source", label: "Source" },
+      { key: "message", label: "Message" },
+    ],
+    defaultSortBy: "occurred_at",
+    defaultSortDir: "desc",
+  });
   const { data: activeResponse, isLoading: activeLoading } = useActiveEvents(activeListState.params);
   const activeEvents = activeResponse?.data ?? [];
   const activeMeta = (activeResponse as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
@@ -198,18 +210,6 @@ function ActiveEventsTab({
         </div>
       </CardHeader>
       <CardContent>
-        <div className="mb-4">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
-            <ClearableInput
-              placeholder="Search events..."
-              className="pl-9 w-64"
-              value={listState.search}
-              onChange={(e) => listState.setSearch(e.target.value)}
-              onClear={() => listState.setSearch("")}
-            />
-          </div>
-        </div>
         <Table>
           <TableHeader>
             <TableRow>
@@ -221,27 +221,19 @@ function ActiveEventsTab({
                   className="rounded border-zinc-700"
                 />
               </TableHead>
-              <SortableHead col="severity" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>
-                Severity
-              </SortableHead>
-              <SortableHead col="source" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>
-                Source
-              </SortableHead>
+              <FilterableSortHead col="severity" label="Severity" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterable={false} />
+              <FilterableSortHead col="source" label="Source" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.source} onFilterChange={(v) => listState.setFilter("source", v)} />
               <TableHead>Policy</TableHead>
-              <SortableHead col="message" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>
-                Message
-              </SortableHead>
+              <FilterableSortHead col="message" label="Message" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.message} onFilterChange={(v) => listState.setFilter("message", v)} />
               <TableHead>Device</TableHead>
-              <SortableHead col="occurred_at" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>
-                Occurred
-              </SortableHead>
+              <FilterableSortHead col="occurred_at" label="Occurred" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterable={false} />
             </TableRow>
           </TableHeader>
           <TableBody>
             {events.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={7} className="text-center text-zinc-500 py-8">
-                  {listState.search ? "No events match your search" : "No active events"}
+                  {listState.hasActiveFilters ? "No events match your filters" : "No active events"}
                 </TableCell>
               </TableRow>
             ) : (
@@ -312,34 +304,14 @@ function ClearedEventsTab({
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="mb-4">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
-            <ClearableInput
-              placeholder="Search cleared events..."
-              className="pl-9 w-64"
-              value={listState.search}
-              onChange={(e) => listState.setSearch(e.target.value)}
-              onClear={() => listState.setSearch("")}
-            />
-          </div>
-        </div>
         <Table>
           <TableHeader>
             <TableRow>
-              <SortableHead col="severity" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>
-                Severity
-              </SortableHead>
-              <SortableHead col="source" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>
-                Source
-              </SortableHead>
-              <SortableHead col="message" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>
-                Message
-              </SortableHead>
+              <FilterableSortHead col="severity" label="Severity" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterable={false} />
+              <FilterableSortHead col="source" label="Source" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.source} onFilterChange={(v) => listState.setFilter("source", v)} />
+              <FilterableSortHead col="message" label="Message" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.message} onFilterChange={(v) => listState.setFilter("message", v)} />
               <TableHead>Device</TableHead>
-              <SortableHead col="occurred_at" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>
-                Occurred
-              </SortableHead>
+              <FilterableSortHead col="occurred_at" label="Occurred" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterable={false} />
               <TableHead>Cleared At</TableHead>
               <TableHead>Cleared By</TableHead>
             </TableRow>
@@ -348,7 +320,7 @@ function ClearedEventsTab({
             {events.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={7} className="text-center text-zinc-500 py-8">
-                  {listState.search ? "No events match your search" : "No cleared events"}
+                  {listState.hasActiveFilters ? "No events match your filters" : "No cleared events"}
                 </TableCell>
               </TableRow>
             ) : (

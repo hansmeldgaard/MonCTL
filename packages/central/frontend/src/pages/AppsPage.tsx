@@ -1,10 +1,9 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { AppWindow, Loader2, Plug, Plus, Search, Trash2 } from "lucide-react";
+import { AppWindow, Loader2, Plug, Plus, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
-import { ClearableInput } from "@/components/ui/clearable-input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { Select } from "@/components/ui/select.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
@@ -19,12 +18,19 @@ import {
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import { useApps, useCreateApp, useDeleteApp } from "@/api/hooks.ts";
 import { useListState } from "@/hooks/useListState.ts";
-import { SortableHead } from "@/components/SortableHead.tsx";
+import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
 import type { AppSummary } from "@/types/api.ts";
 
 export function AppsPage() {
-  const listState = useListState();
+  const listState = useListState({
+    columns: [
+      { key: "name", label: "Name" },
+      { key: "app_type", label: "Type" },
+      { key: "target_table", label: "Target Table" },
+      { key: "description", label: "Description", sortable: false },
+    ],
+  });
   const { data: response, isLoading } = useApps(listState.params);
   const apps = response?.data ?? [];
   const meta = (response as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
@@ -98,22 +104,10 @@ export function AppsPage() {
             Manage monitoring apps and their versions.
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
-            <ClearableInput
-              placeholder="Search apps..."
-              className="pl-9 w-64"
-              value={listState.search}
-              onChange={(e) => listState.setSearch(e.target.value)}
-              onClear={() => listState.setSearch("")}
-            />
-          </div>
-          <Button size="sm" onClick={() => { setAddName(""); setAddDesc(""); setAddType("script"); setAddTargetTable("availability_latency"); setAddConfigSchema(""); setAddError(null); setAddOpen(true); }} className="gap-1.5">
-            <Plus className="h-4 w-4" />
-            New App
-          </Button>
-        </div>
+        <Button size="sm" onClick={() => { setAddName(""); setAddDesc(""); setAddType("script"); setAddTargetTable("availability_latency"); setAddConfigSchema(""); setAddError(null); setAddOpen(true); }} className="gap-1.5">
+          <Plus className="h-4 w-4" />
+          New App
+        </Button>
       </div>
 
       <Card>
@@ -125,7 +119,7 @@ export function AppsPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {apps.length === 0 && !listState.search ? (
+          {apps.length === 0 && !listState.hasActiveFilters ? (
             <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
               <AppWindow className="mb-2 h-8 w-8 text-zinc-600" />
               <p className="text-sm">No apps registered</p>
@@ -135,11 +129,11 @@ export function AppsPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <SortableHead col="name" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>Name</SortableHead>
-                    <SortableHead col="app_type" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>Type</SortableHead>
-                    <SortableHead col="target_table" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>Target Table</SortableHead>
+                    <FilterableSortHead col="name" label="Name" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.name} onFilterChange={(v) => listState.setFilter("name", v)} />
+                    <FilterableSortHead col="app_type" label="Type" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.app_type} onFilterChange={(v) => listState.setFilter("app_type", v)} />
+                    <FilterableSortHead col="target_table" label="Target Table" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.target_table} onFilterChange={(v) => listState.setFilter("target_table", v)} />
                     <TableHead>Connectors</TableHead>
-                    <TableHead>Description</TableHead>
+                    <FilterableSortHead col="description" label="Description" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} sortable={false} filterValue={listState.filters.description} onFilterChange={(v) => listState.setFilter("description", v)} />
                     <TableHead className="w-12"></TableHead>
                   </TableRow>
                 </TableHeader>
@@ -147,7 +141,7 @@ export function AppsPage() {
                   {apps.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={6} className="text-center text-zinc-500 py-8">
-                        No apps match your search
+                        No apps match your filters
                       </TableCell>
                     </TableRow>
                   ) : (

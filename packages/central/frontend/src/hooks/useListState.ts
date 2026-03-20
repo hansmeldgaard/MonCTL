@@ -1,29 +1,64 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import type { ListParams } from "@/types/api.ts";
 
+export interface ColumnDef {
+  key: string;
+  label: string;
+  sortable?: boolean;
+  filterable?: boolean;
+}
+
 interface UseListStateOptions {
+  columns: ColumnDef[];
   defaultSortBy?: string;
   defaultSortDir?: "asc" | "desc";
   defaultPageSize?: number;
+  debounceMs?: number;
 }
 
-export function useListState(options: UseListStateOptions = {}) {
+export function useListState(options: UseListStateOptions) {
   const {
-    defaultSortBy = "name",
+    columns,
+    defaultSortBy = columns[0]?.key ?? "name",
     defaultSortDir = "asc",
     defaultPageSize = 50,
+    debounceMs = 300,
   } = options;
 
-  const [search, setSearchRaw] = useState("");
   const [sortBy, setSortBy] = useState(defaultSortBy);
   const [sortDir, setSortDir] = useState<"asc" | "desc">(defaultSortDir);
   const [page, setPage] = useState(0);
   const [pageSize] = useState(defaultPageSize);
 
-  const setSearch = useCallback((value: string) => {
-    setSearchRaw(value);
-    setPage(0);
+  // Per-column filter values (immediate — drives Input value)
+  const filterableKeys = columns.filter((c) => c.filterable !== false).map((c) => c.key);
+  const [filters, setFilters] = useState<Record<string, string>>(
+    () => Object.fromEntries(filterableKeys.map((k) => [k, ""]))
+  );
+
+  // Debounced filter values (sent to API)
+  const [debouncedFilters, setDebouncedFilters] = useState<Record<string, string>>(
+    () => Object.fromEntries(filterableKeys.map((k) => [k, ""]))
+  );
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedFilters(filters);
+      setPage(0);
+    }, debounceMs);
+    return () => clearTimeout(timer);
+  }, [filters, debounceMs]);
+
+  const setFilter = useCallback((key: string, value: string) => {
+    setFilters((prev) => ({ ...prev, [key]: value }));
   }, []);
+
+  const clearFilters = useCallback(() => {
+    const empty = Object.fromEntries(filterableKeys.map((k) => [k, ""]));
+    setFilters(empty);
+  }, [filterableKeys.join(",")]);
+
+  const hasActiveFilters = Object.values(filters).some((v) => v !== "");
 
   const handleSort = useCallback((col: string) => {
     setSortBy((prev) => {
@@ -37,17 +72,25 @@ export function useListState(options: UseListStateOptions = {}) {
     setPage(0);
   }, []);
 
-  const params: ListParams = useMemo(() => ({
-    search: search || undefined,
-    sort_by: sortBy,
-    sort_dir: sortDir,
-    limit: pageSize,
-    offset: page * pageSize,
-  }), [search, sortBy, sortDir, page, pageSize]);
+  const params: ListParams = useMemo(() => {
+    const p: ListParams = {
+      sort_by: sortBy,
+      sort_dir: sortDir,
+      limit: pageSize,
+      offset: page * pageSize,
+    };
+    for (const [key, val] of Object.entries(debouncedFilters)) {
+      if (val) p[key] = val;
+    }
+    return p;
+  }, [sortBy, sortDir, page, pageSize, debouncedFilters]);
 
   return {
-    search,
-    setSearch,
+    columns,
+    filters,
+    setFilter,
+    clearFilters,
+    hasActiveFilters,
     sortBy,
     sortDir,
     handleSort,

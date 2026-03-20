@@ -1,13 +1,12 @@
 import { useState, useRef, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { ChevronDown, ListChecks, Loader2, Search } from "lucide-react";
+import { ChevronDown, ListChecks, Loader2 } from "lucide-react";
 import { CredentialCell } from "@/components/CredentialCell.tsx";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Select } from "@/components/ui/select.tsx";
-import { ClearableInput } from "@/components/ui/clearable-input.tsx";
 import {
   Table,
   TableBody,
@@ -20,13 +19,20 @@ import { useAssignments, useBulkUpdateAssignments, useCredentials } from "@/api/
 import { formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 import { useListState } from "@/hooks/useListState.ts";
-import { SortableHead } from "@/components/SortableHead.tsx";
+import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
 import type { BulkUpdateAssignmentsRequest } from "@/types/api.ts";
 
 export function AssignmentsPage() {
   const tz = useTimezone();
-  const listState = useListState({ defaultSortBy: "app_name" });
+  const listState = useListState({
+    columns: [
+      { key: "app_name", label: "App" },
+      { key: "device_name", label: "Device" },
+      { key: "device_address", label: "Device Address", sortable: false },
+    ],
+    defaultSortBy: "app_name",
+  });
   const { data: response, isLoading } = useAssignments(listState.params);
   const assignments = response?.data ?? [];
   const meta = (response as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
@@ -112,16 +118,9 @@ export function AssignmentsPage() {
     <div className="space-y-4">
       {/* Toolbar */}
       <div className="flex items-center gap-3">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
-          <ClearableInput
-            placeholder="Search apps, devices..."
-            className="pl-9"
-            value={listState.search}
-            onChange={(e) => listState.setSearch(e.target.value)}
-            onClear={() => listState.setSearch("")}
-          />
-        </div>
+        <span className="text-sm text-zinc-500 flex-1">
+          {meta.total} assignment{meta.total !== 1 ? "s" : ""}
+        </span>
 
         {someSelected && (
           <>
@@ -209,10 +208,6 @@ export function AssignmentsPage() {
             </div>
           </>
         )}
-
-        <span className="text-sm text-zinc-500 ml-auto">
-          {meta.total} assignment{meta.total !== 1 ? "s" : ""}
-        </span>
       </div>
 
       <Card>
@@ -235,30 +230,48 @@ export function AssignmentsPage() {
                     className="accent-brand-500 cursor-pointer"
                   />
                 </TableHead>
-                <SortableHead col="app_name" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>
-                  App
-                </SortableHead>
-                <SortableHead col="device_name" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>
-                  Device
-                </SortableHead>
-                <TableHead>Device Address</TableHead>
-                <SortableHead col="schedule" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>
-                  Schedule
-                </SortableHead>
+                <FilterableSortHead
+                  col="app_name" label="App"
+                  sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
+                  filterValue={listState.filters.app_name}
+                  onFilterChange={(v) => listState.setFilter("app_name", v)}
+                />
+                <FilterableSortHead
+                  col="device_name" label="Device"
+                  sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
+                  filterValue={listState.filters.device_name}
+                  onFilterChange={(v) => listState.setFilter("device_name", v)}
+                />
+                <FilterableSortHead
+                  col="device_address" label="Device Address"
+                  sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
+                  sortable={false}
+                  filterValue={listState.filters.device_address}
+                  onFilterChange={(v) => listState.setFilter("device_address", v)}
+                />
+                <FilterableSortHead
+                  col="schedule" label="Schedule"
+                  sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
+                  filterable={false}
+                />
                 <TableHead>Credential(s)</TableHead>
-                <SortableHead col="enabled" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>
-                  Enabled
-                </SortableHead>
-                <SortableHead col="created_at" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>
-                  Created
-                </SortableHead>
+                <FilterableSortHead
+                  col="enabled" label="Enabled"
+                  sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
+                  filterable={false}
+                />
+                <FilterableSortHead
+                  col="created_at" label="Created"
+                  sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
+                  filterable={false}
+                />
               </TableRow>
             </TableHeader>
             <TableBody>
               {assignments.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={8} className="text-center py-8 text-zinc-500 text-sm">
-                    {listState.search ? "No assignments match your search" : "No assignments configured"}
+                    {listState.hasActiveFilters ? "No assignments match your filters" : "No assignments configured"}
                   </TableCell>
                 </TableRow>
               ) : assignments.map((assignment) => (

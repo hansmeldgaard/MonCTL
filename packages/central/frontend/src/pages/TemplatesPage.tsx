@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FileText, Loader2, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { FileText, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
@@ -19,13 +19,17 @@ import type { Template } from "@/types/api.ts";
 import { formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 import { useListState } from "@/hooks/useListState.ts";
-import { SortableHead } from "@/components/SortableHead.tsx";
+import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
-import { ClearableInput } from "@/components/ui/clearable-input.tsx";
 
 export function TemplatesPage() {
   const tz = useTimezone();
-  const listState = useListState();
+  const listState = useListState({
+    columns: [
+      { key: "name", label: "Name" },
+      { key: "description", label: "Description", sortable: false },
+    ],
+  });
   const { data: response, isLoading } = useTemplates(listState.params);
   const templates = response?.data ?? [];
   const meta = (response as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
@@ -102,26 +106,14 @@ export function TemplatesPage() {
           <h1 className="text-lg font-semibold text-zinc-100">Templates</h1>
           <p className="text-sm text-zinc-500">Reusable monitoring configurations for bulk device setup.</p>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
-            <ClearableInput
-              placeholder="Search templates..."
-              className="pl-9 w-64"
-              value={listState.search}
-              onChange={(e) => listState.setSearch(e.target.value)}
-              onClear={() => listState.setSearch("")}
-            />
-          </div>
-          <Button size="sm" onClick={() => { setAddName(""); setAddDesc(""); setAddConfig("{}"); setAddError(null); setAddOpen(true); }} className="gap-1.5">
-            <Plus className="h-4 w-4" /> New Template
-          </Button>
-        </div>
+        <Button size="sm" onClick={() => { setAddName(""); setAddDesc(""); setAddConfig("{}"); setAddError(null); setAddOpen(true); }} className="gap-1.5">
+          <Plus className="h-4 w-4" /> New Template
+        </Button>
       </div>
 
       <Card>
         <CardContent className="pt-6">
-          {!templates || templates.length === 0 ? (
+          {templates.length === 0 && !listState.hasActiveFilters ? (
             <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
               <FileText className="mb-2 h-8 w-8 text-zinc-600" />
               <p className="text-sm">No templates defined</p>
@@ -130,15 +122,21 @@ export function TemplatesPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <SortableHead col="name" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>Name</SortableHead>
-                  <TableHead>Description</TableHead>
+                  <FilterableSortHead col="name" label="Name" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.name} onFilterChange={(v) => listState.setFilter("name", v)} />
+                  <FilterableSortHead col="description" label="Description" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} sortable={false} filterValue={listState.filters.description} onFilterChange={(v) => listState.setFilter("description", v)} />
                   <TableHead>Apps</TableHead>
-                  <SortableHead col="created_at" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}>Created</SortableHead>
+                  <FilterableSortHead col="created_at" label="Created" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterable={false} />
                   <TableHead className="w-20"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {templates.map((t) => (
+                {templates.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center text-zinc-500 py-8">
+                      No templates match your filters
+                    </TableCell>
+                  </TableRow>
+                ) : templates.map((t) => (
                   <TableRow key={t.id}>
                     <TableCell className="font-medium text-zinc-100">{t.name}</TableCell>
                     <TableCell className="text-zinc-400 max-w-[300px] truncate">{t.description ?? "—"}</TableCell>

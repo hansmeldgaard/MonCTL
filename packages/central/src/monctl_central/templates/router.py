@@ -7,7 +7,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 import sqlalchemy as sa
-from sqlalchemy import select, desc, or_
+from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from monctl_central.dependencies import get_db, require_auth
@@ -41,7 +41,8 @@ SORT_MAP = {"name": Template.name, "created_at": Template.created_at}
 async def list_templates(
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
-    search: str | None = Query(default=None),
+    name: str | None = Query(default=None),
+    description: str | None = Query(default=None),
     sort_by: str = Query(default="name"),
     sort_dir: str = Query(default="asc"),
     limit: int = Query(default=50, le=500),
@@ -50,12 +51,10 @@ async def list_templates(
     """List all templates."""
     base_stmt = select(Template)
 
-    if search:
-        term = f"%{search}%"
-        base_stmt = base_stmt.where(or_(
-            Template.name.ilike(term),
-            Template.description.ilike(term),
-        ))
+    if name:
+        base_stmt = base_stmt.where(Template.name.ilike(f"%{name}%"))
+    if description:
+        base_stmt = base_stmt.where(Template.description.ilike(f"%{description}%"))
 
     sort_col = SORT_MAP.get(sort_by, Template.name)
     base_stmt = base_stmt.order_by(sort_col.desc() if sort_dir == "desc" else sort_col.asc())

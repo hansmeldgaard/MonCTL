@@ -8,7 +8,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 import sqlalchemy as sa
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from monctl_central.dependencies import apply_tenant_filter, get_db, require_auth
@@ -172,7 +172,10 @@ class CreateAssignmentRequest(BaseModel):
 async def list_apps(
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
-    search: str | None = Query(default=None),
+    name: str | None = Query(default=None),
+    app_type: str | None = Query(default=None),
+    target_table: str | None = Query(default=None),
+    description: str | None = Query(default=None),
     sort_by: str = Query(default="name"),
     sort_dir: str = Query(default="asc"),
     limit: int = Query(default=50, le=500),
@@ -184,14 +187,14 @@ async def list_apps(
 
     stmt = select(App).options(selectinload(App.connector_bindings))
 
-    if search:
-        pattern = f"%{search}%"
-        stmt = stmt.where(or_(
-            App.name.ilike(pattern),
-            App.description.ilike(pattern),
-            App.app_type.ilike(pattern),
-            App.target_table.ilike(pattern),
-        ))
+    if name:
+        stmt = stmt.where(App.name.ilike(f"%{name}%"))
+    if app_type:
+        stmt = stmt.where(App.app_type.ilike(f"%{app_type}%"))
+    if target_table:
+        stmt = stmt.where(App.target_table.ilike(f"%{target_table}%"))
+    if description:
+        stmt = stmt.where(App.description.ilike(f"%{description}%"))
 
     APPS_SORT_MAP = {
         "name": App.name,
@@ -300,7 +303,9 @@ async def list_assignments(
     collector_id: str | None = None,
     device_id: str | None = None,
     app_id_filter: str | None = None,
-    search: str | None = Query(default=None),
+    app_name: str | None = Query(default=None),
+    device_name: str | None = Query(default=None),
+    device_address: str | None = Query(default=None),
     sort_by: str = Query(default="app_name"),
     sort_dir: str = Query(default="asc"),
     limit: int = Query(default=50, le=500),
@@ -328,13 +333,12 @@ async def list_assignments(
         stmt = stmt.where(AppAssignment.app_id == uuid.UUID(app_id_filter))
     stmt = apply_tenant_filter(stmt, auth, DeviceModel.tenant_id)
 
-    if search:
-        pattern = f"%{search}%"
-        stmt = stmt.where(or_(
-            App.name.ilike(pattern),
-            DeviceModel.name.ilike(pattern),
-            DeviceModel.address.ilike(pattern),
-        ))
+    if app_name:
+        stmt = stmt.where(App.name.ilike(f"%{app_name}%"))
+    if device_name:
+        stmt = stmt.where(DeviceModel.name.ilike(f"%{device_name}%"))
+    if device_address:
+        stmt = stmt.where(DeviceModel.address.ilike(f"%{device_address}%"))
 
     ASSIGNMENTS_SORT_MAP = {
         "app_name": App.name,
