@@ -19,6 +19,7 @@ class ConnectorBinding:
     credential_name: str | None = None # credential name (resolved by CredentialManager)
     use_latest: bool = False
     settings: dict = field(default_factory=dict)
+    connector_checksum: str = ""       # sha256 from central for cache invalidation
 
 
 @dataclass
@@ -40,6 +41,7 @@ class JobDefinition:
     max_execution_time: int = 120
     enabled: bool = True
     updated_at: str = ""
+    app_checksum: str = ""             # sha256 from central for cache invalidation
     connector_bindings: list[ConnectorBinding] = field(default_factory=list)
 
 

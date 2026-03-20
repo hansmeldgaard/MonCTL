@@ -345,6 +345,26 @@ async def get_jobs(
     for cv in latest_cv_result.scalars().all():
         latest_connector_versions[cv.connector_id] = cv.id
 
+    # Pre-load connector version checksums for cache invalidation
+    all_cv_ids: set[uuid.UUID] = set()
+    for row in rows:
+        for acb in app_bindings_map.get(row.App.id, []):
+            vid = acb.connector_version_id
+            if acb.use_latest:
+                vid = latest_connector_versions.get(acb.connector_id, vid)
+            if vid:
+                all_cv_ids.add(vid)
+        for b in (row.AppAssignment.connector_bindings or []):
+            if b.connector_version_id:
+                all_cv_ids.add(b.connector_version_id)
+    cv_checksum_map: dict[uuid.UUID, str] = {}
+    if all_cv_ids:
+        cv_stmt = select(ConnectorVersion.id, ConnectorVersion.checksum).where(
+            ConnectorVersion.id.in_(all_cv_ids)
+        )
+        cv_rows = (await db.execute(cv_stmt)).all()
+        cv_checksum_map = {r.id: r.checksum or "" for r in cv_rows}
+
     # Collect all credential IDs we might need names for
     all_cred_ids: set[uuid.UUID] = set()
     for row in rows:
@@ -443,6 +463,7 @@ async def get_jobs(
                     "credential_name": cred_name_map.get(cred_id) if cred_id else None,
                     "use_latest": acb.use_latest,
                     "settings": acb.settings or {},
+                    "connector_checksum": cv_checksum_map.get(version_id, "") if version_id else "",
                 })
         else:
             # Fallback: legacy assignment connector bindings (for apps not yet migrated)
@@ -454,6 +475,7 @@ async def get_jobs(
                     "credential_name": cred_name_map.get(b.credential_id) if b.credential_id else None,
                     "use_latest": b.use_latest,
                     "settings": b.settings or {},
+                    "connector_checksum": cv_checksum_map.get(b.connector_version_id, "") if b.connector_version_id else "",
                 })
 
         jobs.append({
@@ -462,6 +484,7 @@ async def get_jobs(
             "device_host": device_host,
             "app_id": app.name,
             "app_version": app_version.version,
+            "app_checksum": app_version.checksum_sha256 or "",
             "credential_names": credential_names,  # collector fetches each via /credentials/{name}
             "interval": interval,
             "parameters": params,

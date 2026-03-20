@@ -155,6 +155,7 @@ class PollEngine:
                     credential_name=b.get("credential_name"),
                     use_latest=b.get("use_latest", False),
                     settings=b.get("settings", {}),
+                    connector_checksum=b.get("connector_checksum", ""),
                 )
                 for b in j.get("connector_bindings", [])
             ]
@@ -169,6 +170,7 @@ class PollEngine:
                 parameters=j.get("parameters", {}),
                 role=j.get("role") or None,
                 max_execution_time=j.get("max_execution_time", 120),
+                app_checksum=j.get("app_checksum", ""),
                 connector_bindings=bindings,
             )
             profile = JobProfile(
@@ -248,7 +250,9 @@ class PollEngine:
             connectors: dict = {}
             try:
                 # Ensure app is loaded (may trigger download + venv create)
-                cls = await self._apps.ensure_app(job.app_id, job.app_version)
+                cls = await self._apps.ensure_app(
+                    job.app_id, job.app_version, job.app_checksum,
+                )
 
                 # Resolve credentials
                 cred_data: dict = {}
@@ -262,6 +266,7 @@ class PollEngine:
                 for binding in job.connector_bindings:
                     conn_cls = await self._apps.ensure_connector(
                         binding.connector_id, binding.connector_version_id,
+                        expected_checksum=binding.connector_checksum,
                     )
                     conn_cred: dict = {}
                     if binding.credential_name:

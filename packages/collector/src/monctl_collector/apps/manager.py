@@ -83,18 +83,39 @@ class AppManager:
         # Lock per venv hash to prevent concurrent venv creation
         self._venv_locks: dict[str, asyncio.Lock] = {}
 
-    async def ensure_app(self, app_id: str, version: str) -> type["BasePoller"]:
+    async def ensure_app(
+        self, app_id: str, version: str, expected_checksum: str = "",
+    ) -> type["BasePoller"]:
         """Return the loaded class for (app_id, version), fetching/installing if needed.
 
         This is the main entry point for poll-workers.
+        If expected_checksum is provided and differs from the stored checksum,
+        the app is re-downloaded and reloaded (cache invalidation).
         """
         key = (app_id, version)
+
+        # Check in-memory cache — invalidate if checksum changed
+        if key in self._loaded and expected_checksum:
+            stored = self._get_stored_checksum(app_id, version)
+            if stored and stored != expected_checksum:
+                logger.info(
+                    "app_checksum_changed", app_id=app_id, version=version,
+                    old=stored[:12], new=expected_checksum[:12],
+                )
+                self._loaded.pop(key, None)
+
         if key in self._loaded:
             return self._loaded[key]
 
         meta_path = self._apps_dir / app_id / version / "metadata.json"
 
-        if not meta_path.exists():
+        needs_fetch = not meta_path.exists()
+        if not needs_fetch and expected_checksum:
+            stored = self._get_stored_checksum(app_id, version)
+            if stored and stored != expected_checksum:
+                needs_fetch = True
+
+        if needs_fetch:
             logger.info("fetching_app", app_id=app_id, version=version)
             await self._fetch_and_install(app_id, version)
 
@@ -105,6 +126,32 @@ class AppManager:
     async def invalidate(self, app_id: str, version: str) -> None:
         """Force re-fetch on next ensure_app call (called when central reports new version)."""
         self._loaded.pop((app_id, version), None)
+
+    async def invalidate_connector(self, connector_id: str, version_id: str) -> None:
+        """Force re-fetch on next ensure_connector call."""
+        self._loaded_connectors.pop((connector_id, version_id), None)
+
+    def _get_stored_checksum(self, app_id: str, version: str) -> str:
+        """Read checksum from on-disk metadata.json for an app."""
+        meta_path = self._apps_dir / app_id / version / "metadata.json"
+        if not meta_path.exists():
+            return ""
+        try:
+            meta = json.loads(meta_path.read_text())
+            return meta.get("checksum", "")
+        except Exception:
+            return ""
+
+    def _get_stored_connector_checksum(self, connector_id: str, version_id: str) -> str:
+        """Read checksum from on-disk metadata.json for a connector."""
+        meta_path = self._apps_dir / "_connectors" / connector_id / version_id / "metadata.json"
+        if not meta_path.exists():
+            return ""
+        try:
+            meta = json.loads(meta_path.read_text())
+            return meta.get("checksum", "")
+        except Exception:
+            return ""
 
     # ── Private: fetch + install ──────────────────────────────────────────────
 
@@ -153,12 +200,30 @@ class AppManager:
 
         Multiple coroutines requesting the same venv hash concurrently are
         serialised by an asyncio.Lock to avoid duplicate pip installs.
+        Includes a health check on first load to self-heal corrupt venvs.
         """
         venv_dir = self._venvs_dir / venv_hash / "venv"
         marker = self._venvs_dir / venv_hash / "requirements.json"
 
         if venv_dir.exists() and marker.exists():
-            return venv_dir  # Already installed
+            # Health check: verify the venv's Python is functional
+            python_exe = venv_dir / "bin" / "python"
+            if python_exe.exists():
+                try:
+                    result = await asyncio.to_thread(
+                        subprocess.run,
+                        [str(python_exe), "-c", "import pip"],
+                        capture_output=True, timeout=10,
+                    )
+                    if result.returncode == 0:
+                        return venv_dir  # Healthy
+                except Exception:
+                    pass
+            # Corrupt venv — remove and recreate
+            logger.warning("venv_corrupt_self_healing", venv_hash=venv_hash)
+            import shutil
+            await asyncio.to_thread(shutil.rmtree, venv_dir, True)
+            marker.unlink(missing_ok=True)
 
         if venv_hash not in self._venv_locks:
             self._venv_locks[venv_hash] = asyncio.Lock()
@@ -286,20 +351,41 @@ class AppManager:
 
     # ── Connector loading ──────────────────────────────────────────────────────
 
-    async def ensure_connector(self, connector_id: str, version_id: str) -> type:
+    async def ensure_connector(
+        self, connector_id: str, version_id: str, expected_checksum: str = "",
+    ) -> type:
         """Return the loaded connector class, fetching/installing if needed.
 
         Works like ensure_app but for connectors. Uses the same venv sharing
         mechanism so connectors with identical requirements share a venv.
+        If expected_checksum is provided and differs from stored, re-downloads.
         """
         key = (connector_id, version_id)
+
+        # Check in-memory cache — invalidate if checksum changed
+        if key in self._loaded_connectors and expected_checksum:
+            stored = self._get_stored_connector_checksum(connector_id, version_id)
+            if stored and stored != expected_checksum:
+                logger.info(
+                    "connector_checksum_changed",
+                    connector_id=connector_id, version_id=version_id,
+                    old=stored[:12], new=expected_checksum[:12],
+                )
+                self._loaded_connectors.pop(key, None)
+
         if key in self._loaded_connectors:
             return self._loaded_connectors[key]
 
         conn_dir = self._apps_dir / "_connectors" / connector_id / version_id
         meta_path = conn_dir / "metadata.json"
 
-        if not meta_path.exists():
+        needs_fetch = not meta_path.exists()
+        if not needs_fetch and expected_checksum:
+            stored = self._get_stored_connector_checksum(connector_id, version_id)
+            if stored and stored != expected_checksum:
+                needs_fetch = True
+
+        if needs_fetch:
             logger.info("fetching_connector", connector_id=connector_id, version_id=version_id)
             await self._fetch_and_install_connector(connector_id, version_id)
 
