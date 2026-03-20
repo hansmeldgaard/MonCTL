@@ -204,7 +204,7 @@ class AppManager:
             index_url = self._cfg.pip_index_url
             # Inject auth credentials into the URL if we have a central API key
             # Format: https://__token__:<api_key>@host/api/v1/pypi/simple/
-            central_api_key = os.environ.get("MONCTL_COLLECTOR_API_KEY") or os.environ.get("CENTRAL_API_KEY")
+            central_api_key = os.environ.get("MONCTL_COLLECTOR_API_KEY") or os.environ.get("MONCTL_CENTRAL_API_KEY") or os.environ.get("CENTRAL_API_KEY")
             if central_api_key and "://" in index_url:
                 parsed = urlparse(index_url)
                 if not parsed.username:
