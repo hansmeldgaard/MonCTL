@@ -28,6 +28,8 @@ import {
   Wrench,
   X,
 } from "lucide-react";
+import { InterfaceToggleCell } from "@/components/InterfaceToggleCell";
+import { InterfaceToggleBulkHead } from "@/components/InterfaceToggleBulkHead";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
@@ -1371,19 +1373,6 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
     bulkUpdate.mutate({ deviceId, data: { interface_ids: ids, alerting_enabled: enable } });
   };
 
-  const BulkToggleCell = ({ label, state, onToggle }: { label: string; state: boolean | "mixed"; onToggle: (enable: boolean) => void }) => (
-    <TableCell className="text-center">
-      {activeSelectedCount > 0 ? (
-        <input type="checkbox" checked={state === true}
-          ref={el => { if (el) el.indeterminate = state === "mixed"; }}
-          onChange={() => onToggle(state !== true)}
-          onClick={e => e.stopPropagation()}
-          className="accent-brand-500 cursor-pointer"
-          title={`${state === true ? "Disable" : "Enable"} ${label.toLowerCase()} for ${activeSelectedCount} selected`} />
-      ) : null}
-    </TableCell>
-  );
-
   const SortHead = ({ col, children }: { col: IfaceSortKey; children: React.ReactNode }) => (
     <TableHead className="cursor-pointer select-none" onClick={() => toggleSort(col)}>
       <span className="flex items-center gap-1">
@@ -1508,12 +1497,20 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
                 <SortHead col="in_errors">In Err</SortHead>
                 <SortHead col="out_errors">Out Err</SortHead>
                 <SortHead col="last_polled">Last Polled</SortHead>
-                <TableHead className="text-center w-14 text-xs">Poll</TableHead>
-                <TableHead className="text-center w-14 text-xs">Alert</TableHead>
-                <TableHead className="text-center text-xs">Traffic</TableHead>
-                <TableHead className="text-center text-xs">Errors</TableHead>
-                <TableHead className="text-center text-xs">Discards</TableHead>
-                <TableHead className="text-center text-xs">Status</TableHead>
+                <InterfaceToggleBulkHead
+                  activeSelectedCount={activeSelectedCount}
+                  state={{
+                    polling: selectedHavePolling(),
+                    alerting: selectedHaveAlerting(),
+                    traffic: selectedHaveMetric("traffic"),
+                    errors: selectedHaveMetric("errors"),
+                    discards: selectedHaveMetric("discards"),
+                    status: selectedHaveMetric("status"),
+                  }}
+                  onTogglePolling={bulkTogglePolling}
+                  onToggleAlerting={bulkToggleAlerting}
+                  onToggleMetric={(metric, enable) => bulkToggleMetric(metric, enable)}
+                />
               </TableRow>
               {/* Filter row */}
               <TableRow className="bg-zinc-900/50">
@@ -1542,12 +1539,7 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
                   )}
                 </TableCell>
                 <TableCell /><TableCell /><TableCell /><TableCell /><TableCell />
-                <BulkToggleCell label="Poll" state={selectedHavePolling()} onToggle={bulkTogglePolling} />
-                <BulkToggleCell label="Alert" state={selectedHaveAlerting()} onToggle={bulkToggleAlerting} />
-                <BulkToggleCell label="Traffic" state={selectedHaveMetric("traffic")} onToggle={(e) => bulkToggleMetric("traffic", e)} />
-                <BulkToggleCell label="Errors" state={selectedHaveMetric("errors")} onToggle={(e) => bulkToggleMetric("errors", e)} />
-                <BulkToggleCell label="Discards" state={selectedHaveMetric("discards")} onToggle={(e) => bulkToggleMetric("discards", e)} />
-                <BulkToggleCell label="Status" state={selectedHaveMetric("status")} onToggle={(e) => bulkToggleMetric("status", e)} />
+                <TableCell /> {/* Toggles — no filter */}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -1593,22 +1585,19 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
                   </TableCell>
                   <TableCell className="text-zinc-500 text-xs">{timeAgo(iface.executed_at)}</TableCell>
                   <TableCell className="text-center" onClick={e => e.stopPropagation()}>
-                    <input type="checkbox" checked={pollingOn} onChange={() => updateSettings.mutate({ deviceId, interfaceId: iface.interface_id, data: { polling_enabled: !pollingOn } })} className="accent-brand-500 cursor-pointer" />
-                  </TableCell>
-                  <TableCell className="text-center" onClick={e => e.stopPropagation()}>
-                    <input type="checkbox" checked={alertingOn} onChange={() => updateSettings.mutate({ deviceId, interfaceId: iface.interface_id, data: { alerting_enabled: !alertingOn } })} className="accent-amber-500 cursor-pointer" />
-                  </TableCell>
-                  <TableCell className="text-center" onClick={e => e.stopPropagation()}>
-                    <input type="checkbox" checked={metrics.has("traffic")} onChange={() => toggleMetric("traffic")} className="accent-cyan-500 cursor-pointer" />
-                  </TableCell>
-                  <TableCell className="text-center" onClick={e => e.stopPropagation()}>
-                    <input type="checkbox" checked={metrics.has("errors")} onChange={() => toggleMetric("errors")} className="accent-amber-500 cursor-pointer" />
-                  </TableCell>
-                  <TableCell className="text-center" onClick={e => e.stopPropagation()}>
-                    <input type="checkbox" checked={metrics.has("discards")} onChange={() => toggleMetric("discards")} className="accent-orange-500 cursor-pointer" />
-                  </TableCell>
-                  <TableCell className="text-center" onClick={e => e.stopPropagation()}>
-                    <input type="checkbox" checked={metrics.has("status")} onChange={() => toggleMetric("status")} className="accent-emerald-500 cursor-pointer" />
+                    <InterfaceToggleCell
+                      state={{
+                        polling_enabled: pollingOn,
+                        alerting_enabled: alertingOn,
+                        traffic: metrics.has("traffic"),
+                        errors: metrics.has("errors"),
+                        discards: metrics.has("discards"),
+                        status: metrics.has("status"),
+                      }}
+                      onTogglePolling={() => updateSettings.mutate({ deviceId, interfaceId: iface.interface_id, data: { polling_enabled: !pollingOn } })}
+                      onToggleAlerting={() => updateSettings.mutate({ deviceId, interfaceId: iface.interface_id, data: { alerting_enabled: !alertingOn } })}
+                      onToggleMetric={toggleMetric}
+                    />
                   </TableCell>
                 </TableRow>
                 );
