@@ -148,6 +148,94 @@ async def config_diff(
     }
 
 
+@router.get("/devices/{device_id}/config/snapshot-at")
+async def config_snapshot_at_time(
+    device_id: str,
+    at_time: str = Query(..., description="ISO timestamp to snapshot at"),
+    app_id: Optional[str] = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Return the config state at a specific point in time."""
+    await _get_device_with_access(device_id, db, auth)
+    ch = get_clickhouse()
+
+    rows = ch.query_config_snapshot_at_time(device_id, at_time, app_id=app_id)
+    data = [_fmt_config_row(r) for r in rows]
+    return {
+        "status": "success",
+        "data": data,
+        "meta": {"count": len(data)},
+    }
+
+
+@router.get("/devices/{device_id}/config/compare")
+async def config_compare(
+    device_id: str,
+    time_a: str = Query(..., description="Earlier ISO timestamp"),
+    time_b: str = Query(..., description="Later ISO timestamp"),
+    app_id: Optional[str] = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Compare config state between two points in time.
+
+    Returns only keys that differ between snapshot A and snapshot B.
+    """
+    await _get_device_with_access(device_id, db, auth)
+    ch = get_clickhouse()
+
+    snapshot_a = ch.query_config_snapshot_at_time(device_id, time_a, app_id=app_id)
+    snapshot_b = ch.query_config_snapshot_at_time(device_id, time_b, app_id=app_id)
+
+    map_a = {
+        (r.get("component_type", ""), r.get("component", ""), r.get("config_key", "")): r.get("config_value", "")
+        for r in snapshot_a
+    }
+    map_b = {
+        (r.get("component_type", ""), r.get("component", ""), r.get("config_key", "")): r.get("config_value", "")
+        for r in snapshot_b
+    }
+
+    all_keys = sorted(set(map_a.keys()) | set(map_b.keys()))
+    changes = []
+    unchanged = []
+    for key in all_keys:
+        val_a = map_a.get(key)
+        val_b = map_b.get(key)
+        entry = {
+            "component_type": key[0],
+            "component": key[1],
+            "config_key": key[2],
+            "value_a": val_a,
+            "value_b": val_b,
+        }
+        if val_a == val_b:
+            entry["change_type"] = "unchanged"
+            unchanged.append(entry)
+        elif val_a is None:
+            entry["change_type"] = "added"
+            changes.append(entry)
+        elif val_b is None:
+            entry["change_type"] = "removed"
+            changes.append(entry)
+        else:
+            entry["change_type"] = "modified"
+            changes.append(entry)
+
+    return {
+        "status": "success",
+        "data": {
+            "time_a": time_a,
+            "time_b": time_b,
+            "changes": changes,
+            "unchanged": unchanged,
+            "total_keys_a": len(map_a),
+            "total_keys_b": len(map_b),
+        },
+    }
+
+
 @router.get("/devices/{device_id}/config/change-timestamps")
 async def config_change_timestamps(
     device_id: str,

@@ -1127,13 +1127,14 @@ export interface ConfigDiffEntry {
   config_key: string;
   value_a: string | null;
   value_b: string | null;
-  change_type: "added" | "removed" | "modified";
+  change_type: "added" | "removed" | "modified" | "unchanged";
 }
 
 export interface ConfigCompareResult {
   time_a: string;
   time_b: string;
   changes: ConfigDiffEntry[];
+  unchanged: ConfigDiffEntry[];
   total_keys_a: number;
   total_keys_b: number;
 }

@@ -1470,7 +1470,7 @@ function ConfigurationTab({ deviceId }: { deviceId: string }) {
                       <Select
                         value={compareTimeA ?? ""}
                         onChange={(e) => setCompareTimeA(e.target.value)}
-                        className="w-52 text-xs"
+                        className="min-w-[280px] text-xs"
                       >
                         {tsData.map((ts) => (
                           <option key={ts.change_time} value={ts.change_time}>
@@ -1485,7 +1485,7 @@ function ConfigurationTab({ deviceId }: { deviceId: string }) {
                       <Select
                         value={compareTimeB ?? ""}
                         onChange={(e) => setCompareTimeB(e.target.value)}
-                        className="w-52 text-xs"
+                        className="min-w-[280px] text-xs"
                       >
                         {tsData.map((ts) => (
                           <option key={ts.change_time} value={ts.change_time}>
@@ -1496,63 +1496,118 @@ function ConfigurationTab({ deviceId }: { deviceId: string }) {
                     </div>
                   </div>
 
-                  {compareResult && (
-                    <>
-                      <p className="text-xs text-zinc-500">
-                        {compareResult.changes.length} change{compareResult.changes.length !== 1 ? "s" : ""} —{" "}
-                        {compareResult.total_keys_b} keys total
-                      </p>
-                      {compareResult.changes.length === 0 ? (
-                        <p className="text-sm text-zinc-500 py-4 text-center">
-                          No differences between these two snapshots.
-                        </p>
-                      ) : (
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead>Component</TableHead>
-                              <TableHead>Key</TableHead>
-                              <TableHead>Before</TableHead>
-                              <TableHead>After</TableHead>
-                              <TableHead className="w-20">Change</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {compareResult.changes.map((d: ConfigDiffEntry, i: number) => (
-                              <TableRow key={`${d.component_type}-${d.component}-${d.config_key}-${i}`}>
-                                <TableCell className="text-xs font-mono text-zinc-500">
-                                  {d.component ? `${d.component_type}/${d.component}` : "—"}
-                                </TableCell>
-                                <TableCell className="text-xs font-mono">{d.config_key}</TableCell>
-                                <TableCell className="text-xs font-mono max-w-[200px] truncate">
-                                  {d.change_type === "added" ? (
-                                    <span className="text-zinc-600">—</span>
-                                  ) : (
-                                    <span className="text-red-400 line-through">{d.value_a}</span>
-                                  )}
-                                </TableCell>
-                                <TableCell className="text-xs font-mono max-w-[200px] truncate">
-                                  {d.change_type === "removed" ? (
-                                    <span className="text-zinc-600">—</span>
-                                  ) : (
-                                    <span className="text-emerald-400">{d.value_b}</span>
-                                  )}
-                                </TableCell>
-                                <TableCell>
-                                  <Badge variant={
-                                    d.change_type === "added" ? "success" :
-                                    d.change_type === "removed" ? "destructive" : "warning"
-                                  } className="text-[10px]">
-                                    {d.change_type}
-                                  </Badge>
-                                </TableCell>
+                  {compareResult && (() => {
+                    const added = compareResult.changes.filter((d) => d.change_type === "added");
+                    const removed = compareResult.changes.filter((d) => d.change_type === "removed");
+                    const modified = compareResult.changes.filter((d) => d.change_type === "modified");
+                    const unchangedList = compareResult.unchanged ?? [];
+
+                    const renderDiffRow = (d: ConfigDiffEntry, i: number) => {
+                      const rowBg =
+                        d.change_type === "added" ? "bg-emerald-950/20" :
+                        d.change_type === "removed" ? "bg-red-950/20" :
+                        d.change_type === "modified" ? "bg-amber-950/20" : "";
+                      const statusIcon =
+                        d.change_type === "added" ? "+" :
+                        d.change_type === "removed" ? "\u2212" :
+                        d.change_type === "modified" ? "~" : "=";
+                      const statusColor =
+                        d.change_type === "added" ? "text-emerald-400" :
+                        d.change_type === "removed" ? "text-red-400" :
+                        d.change_type === "modified" ? "text-amber-400" : "text-zinc-600";
+
+                      return (
+                        <TableRow key={`${d.component_type}-${d.component}-${d.config_key}-${i}`} className={rowBg}>
+                          <TableCell className={`text-sm font-bold w-8 text-center ${statusColor}`}>
+                            {statusIcon}
+                          </TableCell>
+                          <TableCell className="text-xs font-mono">{d.config_key}</TableCell>
+                          <TableCell className="text-xs font-mono max-w-[250px] truncate" title={d.value_a ?? ""}>
+                            {d.change_type === "added" ? (
+                              <span className="text-zinc-600">&mdash;</span>
+                            ) : (
+                              <span className={d.change_type === "removed" || d.change_type === "modified" ? "text-red-400" : "text-zinc-400"}>{d.value_a}</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-xs font-mono max-w-[250px] truncate" title={d.value_b ?? ""}>
+                            {d.change_type === "removed" ? (
+                              <span className="text-zinc-600">&mdash;</span>
+                            ) : (
+                              <span className={d.change_type === "added" || d.change_type === "modified" ? "text-emerald-400" : "text-zinc-400"}>{d.value_b}</span>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    };
+
+                    return (
+                      <>
+                        {/* Summary badges */}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {added.length > 0 && (
+                            <Badge variant="success" className="text-[10px]">+{added.length} added</Badge>
+                          )}
+                          {removed.length > 0 && (
+                            <Badge variant="destructive" className="text-[10px]">&minus;{removed.length} removed</Badge>
+                          )}
+                          {modified.length > 0 && (
+                            <Badge variant="warning" className="text-[10px]">~{modified.length} changed</Badge>
+                          )}
+                          {unchangedList.length > 0 && (
+                            <Badge variant="default" className="text-[10px]">{unchangedList.length} unchanged</Badge>
+                          )}
+                        </div>
+
+                        {compareResult.changes.length === 0 && unchangedList.length === 0 ? (
+                          <p className="text-sm text-zinc-500 py-4 text-center">
+                            No configuration data found for the selected timestamps.
+                          </p>
+                        ) : compareResult.changes.length === 0 ? (
+                          <p className="text-sm text-zinc-500 py-4 text-center">
+                            No differences between these two snapshots.
+                          </p>
+                        ) : (
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead className="w-8"></TableHead>
+                                <TableHead>Key</TableHead>
+                                <TableHead>Before</TableHead>
+                                <TableHead>After</TableHead>
                               </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      )}
-                    </>
-                  )}
+                            </TableHeader>
+                            <TableBody>
+                              {compareResult.changes.map(renderDiffRow)}
+                            </TableBody>
+                          </Table>
+                        )}
+
+                        {/* Unchanged keys in collapsible section */}
+                        {unchangedList.length > 0 && (
+                          <details className="mt-2">
+                            <summary className="text-xs text-zinc-500 cursor-pointer hover:text-zinc-300 select-none">
+                              {unchangedList.length} unchanged key{unchangedList.length !== 1 ? "s" : ""}
+                            </summary>
+                            <div className="mt-2">
+                              <Table>
+                                <TableHeader>
+                                  <TableRow>
+                                    <TableHead className="w-8"></TableHead>
+                                    <TableHead>Key</TableHead>
+                                    <TableHead>Before</TableHead>
+                                    <TableHead>After</TableHead>
+                                  </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                  {unchangedList.map(renderDiffRow)}
+                                </TableBody>
+                              </Table>
+                            </div>
+                          </details>
+                        )}
+                      </>
+                    );
+                  })()}
                 </div>
               )}
             </CardContent>
