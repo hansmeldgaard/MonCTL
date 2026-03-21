@@ -33,6 +33,7 @@ class SchedulerRunner:
         self._task: asyncio.Task | None = None
         self._last_hourly_rollup: datetime | None = None
         self._last_daily_rollup: datetime | None = None
+        self._last_os_check: datetime | None = None
 
     async def start(self) -> asyncio.Task:
         self._task = asyncio.create_task(self._run())
@@ -66,6 +67,8 @@ class SchedulerRunner:
                 # App cache TTL cleanup every 5 min (every 10th cycle)
                 if cycle % 10 == 0:
                     await self._cleanup_app_cache()
+                # OS update check (daily)
+                await self._check_os_updates()
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -179,6 +182,7 @@ class SchedulerRunner:
         ):
             try:
                 await self._hourly_rollup()
+                await self._perf_hourly_rollup()
                 self._last_hourly_rollup = now
             except Exception:
                 logger.exception("hourly_rollup_error")
@@ -190,6 +194,7 @@ class SchedulerRunner:
         ):
             try:
                 await self._daily_rollup()
+                await self._perf_daily_rollup()
                 await self._retention_cleanup()
                 # Alert history cleanup — reset old resolved instances to ok
                 from monctl_central.alerting.cleanup import cleanup_resolved_instances
@@ -248,6 +253,53 @@ class SchedulerRunner:
                 "monctl:scheduler:last_hourly_rollup", utc_now().isoformat()
             )
 
+    async def _perf_hourly_rollup(self) -> None:
+        """Aggregate raw performance data into performance_hourly."""
+        sql = """
+        INSERT INTO performance_hourly
+        SELECT
+            device_id,
+            app_id,
+            component_type,
+            component,
+            mn AS metric_name,
+            mt AS metric_type,
+            toStartOfHour(executed_at) AS hour,
+            min(mv) AS val_min,
+            max(mv) AS val_max,
+            avg(mv) AS val_avg,
+            quantile(0.95)(mv) AS val_p95,
+            toUInt16(count()) AS sample_count,
+            any(device_name) AS device_name,
+            any(app_name) AS app_name,
+            any(tenant_id) AS tenant_id,
+            any(tenant_name) AS tenant_name
+        FROM (
+            SELECT
+                device_id, app_id, component_type, component,
+                executed_at, device_name, app_name, tenant_id, tenant_name,
+                mn, mv, mt
+            FROM performance
+            ARRAY JOIN
+                metric_names AS mn,
+                metric_values AS mv,
+                arrayResize(metric_types, length(metric_names), 'gauge') AS mt
+            WHERE executed_at >= toStartOfHour(now() - INTERVAL 1 HOUR)
+              AND executed_at < toStartOfHour(now())
+        )
+        GROUP BY device_id, app_id, component_type, component, mn, mt, hour
+        """
+        self._ch.execute_rollup(sql)
+        logger.info("perf_hourly_rollup_complete")
+
+        from monctl_central.cache import _redis
+        from monctl_common.utils import utc_now
+
+        if _redis:
+            await _redis.set(
+                "monctl:scheduler:last_perf_hourly_rollup", utc_now().isoformat()
+            )
+
     async def _daily_rollup(self) -> None:
         """Aggregate hourly data into interface_daily."""
         sql = """
@@ -296,16 +348,62 @@ class SchedulerRunner:
                 "monctl:scheduler:last_daily_rollup", utc_now().isoformat()
             )
 
-    async def _retention_cleanup(self) -> None:
-        """Delete data older than configured retention periods."""
-        from sqlalchemy import select
-        from monctl_central.storage.models import SystemSetting
+    async def _perf_daily_rollup(self) -> None:
+        """Aggregate hourly performance data into performance_daily."""
+        sql = """
+        INSERT INTO performance_daily
+        SELECT
+            device_id,
+            app_id,
+            component_type,
+            component,
+            metric_name,
+            metric_type,
+            toStartOfDay(hour) AS day,
+            min(val_min) AS val_min,
+            max(val_max) AS val_max,
+            avg(val_avg) AS val_avg,
+            quantile(0.95)(val_p95) AS val_p95,
+            toUInt16(sum(sample_count)) AS sample_count,
+            any(device_name) AS device_name,
+            any(app_name) AS app_name,
+            any(tenant_id) AS tenant_id,
+            any(tenant_name) AS tenant_name
+        FROM performance_hourly
+        WHERE hour >= toStartOfDay(now() - INTERVAL 1 DAY)
+          AND hour < toStartOfDay(now())
+        GROUP BY device_id, app_id, component_type, component, metric_name, metric_type, day
+        """
+        self._ch.execute_rollup(sql)
+        logger.info("perf_daily_rollup_complete")
 
-        # Load retention settings
+        from monctl_central.cache import _redis
+        from monctl_common.utils import utc_now
+
+        if _redis:
+            await _redis.set(
+                "monctl:scheduler:last_perf_daily_rollup", utc_now().isoformat()
+            )
+
+    async def _retention_cleanup(self) -> None:
+        """Delete data older than configured retention periods.
+
+        Handles both global defaults and per-device overrides.
+        Per-device overrides are applied first, then global defaults
+        clean up remaining data (excluding overridden device+app combos).
+        """
+        from sqlalchemy import select
+        from monctl_central.storage.models import DataRetentionOverride, SystemSetting
+
+        # Load global retention settings
         raw_days = 7
         hourly_days = 90
         daily_days = 730
         config_days = 90
+        perf_days = 90
+        avail_days = 30
+        perf_hourly_days = 90
+        perf_daily_days = 730
 
         try:
             async with self._session_factory() as session:
@@ -314,6 +412,7 @@ class SchedulerRunner:
                     ("interface_hourly_retention_days", 90),
                     ("interface_daily_retention_days", 730),
                     ("config_retention_days", 90),
+                    ("check_results_retention_days", 90),
                 ]:
                     setting = await session.get(SystemSetting, key)
                     val = int(setting.value) if setting else default
@@ -321,18 +420,92 @@ class SchedulerRunner:
                         raw_days = val
                     elif key == "interface_hourly_retention_days":
                         hourly_days = val
+                    elif key == "interface_daily_retention_days":
+                        daily_days = val
                     elif key == "config_retention_days":
                         config_days = val
-                    else:
-                        daily_days = val
+                    elif key == "check_results_retention_days":
+                        perf_days = val
+                        avail_days = val
+
+                # Load retention defaults from unified system
+                for dt, fallback in [
+                    ("config", config_days),
+                    ("performance", perf_days),
+                    ("availability_latency", avail_days),
+                    ("interface", raw_days),
+                ]:
+                    rkey = f"retention_days_{dt}"
+                    setting = await session.get(SystemSetting, rkey)
+                    if setting:
+                        val = int(setting.value)
+                        if dt == "config":
+                            config_days = val
+                        elif dt == "performance":
+                            perf_days = val
+                        elif dt == "availability_latency":
+                            avail_days = val
+                        elif dt == "interface":
+                            raw_days = val
+
+                # Performance rollup retention
+                for key, attr in [
+                    ("perf_hourly_retention_days", None),
+                    ("perf_daily_retention_days", None),
+                ]:
+                    setting = await session.get(SystemSetting, key)
+                    if setting:
+                        if key == "perf_hourly_retention_days":
+                            perf_hourly_days = int(setting.value)
+                        elif key == "perf_daily_retention_days":
+                            perf_daily_days = int(setting.value)
+
+                # Process per-device overrides
+                overrides = (await session.execute(select(DataRetentionOverride))).scalars().all()
+
         except Exception:
             logger.debug("Could not load retention settings, using defaults")
+            overrides = []
+
+        # Apply per-device overrides first
+        override_exclusions: dict[str, list[str]] = {
+            "config": [], "performance": [],
+            "availability_latency": [], "interface": [],
+        }
+
+        for override in overrides:
+            table = override.data_type
+            if table not in override_exclusions:
+                continue
+            ts_col = "hour" if table == "interface_hourly" else (
+                "day" if table == "interface_daily" else "executed_at"
+            )
+            try:
+                self._ch.execute_cleanup(
+                    f"ALTER TABLE {table} DELETE WHERE "
+                    f"device_id = '{override.device_id}' AND app_id = '{override.app_id}' "
+                    f"AND {ts_col} < now() - INTERVAL {override.retention_days} DAY"
+                )
+            except Exception:
+                logger.debug("Override cleanup failed: %s/%s", override.device_id, override.app_id)
+            override_exclusions[table].append(
+                f"(device_id = '{override.device_id}' AND app_id = '{override.app_id}')"
+            )
+
+        # Global cleanup — exclude overridden combos
+        def _exclude_clause(table: str) -> str:
+            conds = override_exclusions.get(table, [])
+            return f" AND NOT ({' OR '.join(conds)})" if conds else ""
 
         cleanup_sqls = [
-            f"ALTER TABLE interface DELETE WHERE executed_at < now() - INTERVAL {raw_days} DAY",
+            f"ALTER TABLE interface DELETE WHERE executed_at < now() - INTERVAL {raw_days} DAY{_exclude_clause('interface')}",
             f"ALTER TABLE interface_hourly DELETE WHERE hour < now() - INTERVAL {hourly_days} DAY",
             f"ALTER TABLE interface_daily DELETE WHERE day < today() - INTERVAL {daily_days} DAY",
-            f"ALTER TABLE config DELETE WHERE executed_at < now() - INTERVAL {config_days} DAY",
+            f"ALTER TABLE config DELETE WHERE executed_at < now() - INTERVAL {config_days} DAY{_exclude_clause('config')}",
+            f"ALTER TABLE performance DELETE WHERE executed_at < now() - INTERVAL {perf_days} DAY{_exclude_clause('performance')}",
+            f"ALTER TABLE performance_hourly DELETE WHERE hour < now() - INTERVAL {perf_hourly_days} DAY",
+            f"ALTER TABLE performance_daily DELETE WHERE day < today() - INTERVAL {perf_daily_days} DAY",
+            f"ALTER TABLE availability_latency DELETE WHERE executed_at < now() - INTERVAL {avail_days} DAY{_exclude_clause('availability_latency')}",
         ]
 
         for sql in cleanup_sqls:
@@ -346,6 +519,12 @@ class SchedulerRunner:
             raw_days=raw_days,
             hourly_days=hourly_days,
             daily_days=daily_days,
+            config_days=config_days,
+            perf_days=perf_days,
+            perf_hourly_days=perf_hourly_days,
+            perf_daily_days=perf_daily_days,
+            avail_days=avail_days,
+            override_count=len(overrides),
         )
 
         from monctl_central.cache import _redis
@@ -375,3 +554,81 @@ class SchedulerRunner:
                     logger.info("app_cache_cleanup", deleted=result.rowcount)
         except Exception:
             logger.exception("app_cache_cleanup_error")
+
+    async def _check_os_updates(self) -> None:
+        """Check all nodes for OS updates via sidecars (runs daily)."""
+        now = datetime.now(timezone.utc)
+        if self._last_os_check is not None and (now - self._last_os_check).total_seconds() < 86400:
+            return
+
+        from sqlalchemy import delete, func, select
+        from monctl_central.storage.models import OsAvailableUpdate, SystemSetting, SystemVersion
+
+        try:
+            async with self._session_factory() as session:
+                # Check network_mode setting — skip if offline
+                setting = await session.get(SystemSetting, "network_mode")
+                if setting and setting.value == "offline":
+                    logger.debug("os_update_check_skipped_offline")
+                    self._last_os_check = now
+                    return
+
+                # Query all nodes
+                result = await session.execute(select(SystemVersion))
+                nodes = result.scalars().all()
+
+                if not nodes:
+                    self._last_os_check = now
+                    return
+
+                from monctl_central.upgrades.os_service import check_node_updates
+
+                for node in nodes:
+                    try:
+                        updates = await check_node_updates(node.node_ip)
+                    except Exception as exc:
+                        logger.warning(
+                            "os_update_check_node_failed",
+                            node=node.node_hostname,
+                            error=str(exc),
+                        )
+                        continue
+
+                    # Delete old entries for this node
+                    await session.execute(
+                        delete(OsAvailableUpdate).where(
+                            OsAvailableUpdate.node_hostname == node.node_hostname
+                        )
+                    )
+
+                    # Insert new entries
+                    for u in updates:
+                        entry = OsAvailableUpdate(
+                            node_hostname=node.node_hostname,
+                            node_role=node.node_role,
+                            package_name=u.get("package_name", u.get("package", "")),
+                            current_version=u.get("current_version", ""),
+                            new_version=u.get("new_version", u.get("version", "")),
+                            severity=u.get("severity", "normal"),
+                        )
+                        session.add(entry)
+
+                await session.commit()
+
+                # Update Redis badge count
+                from monctl_central.cache import _redis
+
+                if _redis:
+                    count_result = await session.execute(
+                        select(func.count()).select_from(OsAvailableUpdate).where(
+                            OsAvailableUpdate.is_installed == False  # noqa: E712
+                        )
+                    )
+                    count = count_result.scalar() or 0
+                    await _redis.set("monctl:os_updates:count", str(count))
+
+                self._last_os_check = now
+                logger.info("os_update_check_complete", node_count=len(nodes))
+
+        except Exception:
+            logger.exception("os_update_check_error")

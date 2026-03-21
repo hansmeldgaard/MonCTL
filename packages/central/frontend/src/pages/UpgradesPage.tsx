@@ -35,11 +35,15 @@ import {
   useStartUpgrade,
   useUpgradeJobs,
   useCancelUpgradeJob,
-  useCheckOsUpdates,
-  useOsPackages,
+  useOsUpdates,
+  useCheckOsUpdatesNew,
+  useDownloadOsPackages,
+  useUploadOsPackage,
+  useOsCachedPackages,
+  useInstallOsOnNode,
 } from "@/api/hooks.ts";
 import { timeAgo, formatBytes } from "@/lib/utils.ts";
-import type { UpgradeJob, UpgradeJobStep } from "@/types/api.ts";
+import type { UpgradeJob, UpgradeJobStep, OsInstallResult } from "@/types/api.ts";
 
 // ── Status helpers ────────────────────────────────────────────────────────────
 
@@ -86,8 +90,12 @@ export function UpgradesPage() {
   const deleteMutation = useDeleteUpgradePackage();
   const startMutation = useStartUpgrade();
   const cancelMutation = useCancelUpgradeJob();
-  const checkOs = useCheckOsUpdates();
-  const { data: osPackages } = useOsPackages();
+  const { data: osUpdatesByNode } = useOsUpdates();
+  const checkOs = useCheckOsUpdatesNew();
+  const downloadOs = useDownloadOsPackages();
+  const uploadOs = useUploadOsPackage();
+  const { data: cachedPackages } = useOsCachedPackages();
+  const installOs = useInstallOsOnNode();
 
   const [selectedPkgId, setSelectedPkgId] = useState<string | null>(null);
   const [scope, setScope] = useState("all");
@@ -95,6 +103,9 @@ export function UpgradesPage() {
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
   const [confirmStart, setConfirmStart] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const debInputRef = useRef<HTMLInputElement>(null);
+  const [osSelectedPkgs, setOsSelectedPkgs] = useState<Record<string, Set<string>>>({});
+  const [installResult, setInstallResult] = useState<{ hostname: string; result: OsInstallResult } | null>(null);
 
   const nodes = status?.nodes ?? [];
   const packages = status?.packages ?? [];
@@ -391,42 +402,160 @@ export function UpgradesPage() {
               <HardDrive className="h-4 w-4 text-zinc-400" />
               OS Updates
             </CardTitle>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => checkOs.mutate()}
-              disabled={checkOs.isPending}
-            >
-              {checkOs.isPending ? (
-                <Loader2 className="h-3 w-3 animate-spin mr-1" />
-              ) : (
-                <RefreshCw className="h-3 w-3 mr-1" />
-              )}
-              Check All Nodes
-            </Button>
+            <div className="flex gap-2">
+              <input
+                ref={debInputRef}
+                type="file"
+                accept=".deb"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) uploadOs.mutate(file);
+                  if (debInputRef.current) debInputRef.current.value = "";
+                }}
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => debInputRef.current?.click()}
+                disabled={uploadOs.isPending}
+              >
+                {uploadOs.isPending ? (
+                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                ) : (
+                  <Upload className="h-3 w-3 mr-1" />
+                )}
+                Upload .deb
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => checkOs.mutate()}
+                disabled={checkOs.isPending}
+              >
+                {checkOs.isPending ? (
+                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                ) : (
+                  <RefreshCw className="h-3 w-3 mr-1" />
+                )}
+                Check All Nodes
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
-          {/* Show check results if available */}
-          {checkOs.data && (
-            <div className="space-y-3 mb-6">
-              <h4 className="text-sm font-medium text-zinc-400">Available Updates</h4>
-              {Object.entries(checkOs.data.data ?? {}).map(([hostname, updates]) => (
-                <div key={hostname}>
-                  <p className="text-xs text-zinc-500 mb-1">{hostname}</p>
-                  {Array.isArray(updates) ? (
+          {checkOs.isError && (
+            <div className="mb-3 rounded-md bg-red-500/10 border border-red-500/30 p-3 text-sm text-red-400">
+              <AlertTriangle className="inline h-4 w-4 mr-1" />
+              Check failed: {(checkOs.error as Error)?.message ?? "Unknown error"}
+            </div>
+          )}
+          {uploadOs.isError && (
+            <div className="mb-3 rounded-md bg-red-500/10 border border-red-500/30 p-3 text-sm text-red-400">
+              <AlertTriangle className="inline h-4 w-4 mr-1" />
+              Upload failed: {(uploadOs.error as Error)?.message ?? "Unknown error"}
+            </div>
+          )}
+
+          {/* Per-node update cards */}
+          {osUpdatesByNode && Object.keys(osUpdatesByNode).length > 0 ? (
+            <div className="space-y-4 mb-6">
+              {Object.entries(osUpdatesByNode).map(([hostname, updates]) => {
+                const selected = osSelectedPkgs[hostname] ?? new Set<string>();
+                const allSelected = updates.length > 0 && selected.size === updates.length;
+                const togglePkg = (pkgName: string) => {
+                  setOsSelectedPkgs((prev) => {
+                    const s = new Set(prev[hostname] ?? []);
+                    if (s.has(pkgName)) s.delete(pkgName);
+                    else s.add(pkgName);
+                    return { ...prev, [hostname]: s };
+                  });
+                };
+                const toggleAll = () => {
+                  setOsSelectedPkgs((prev) => {
+                    if (allSelected) return { ...prev, [hostname]: new Set<string>() };
+                    return { ...prev, [hostname]: new Set(updates.map((u) => u.package)) };
+                  });
+                };
+                return (
+                  <div key={hostname} className="border border-zinc-800 rounded-lg p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <Server className="h-3.5 w-3.5 text-zinc-500" />
+                        <span className="text-sm font-medium">{hostname}</span>
+                        <Badge variant="default" className="text-[10px]">
+                          {updates.length} updates
+                        </Badge>
+                      </div>
+                      <div className="flex gap-1.5">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-6 text-[10px]"
+                          onClick={() => {
+                            const names = Array.from(selected);
+                            if (names.length > 0) downloadOs.mutate(names);
+                          }}
+                          disabled={selected.size === 0 || downloadOs.isPending}
+                        >
+                          {downloadOs.isPending ? (
+                            <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                          ) : null}
+                          Download Selected
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="default"
+                          className="h-6 text-[10px]"
+                          onClick={() => {
+                            const names = Array.from(selected);
+                            if (names.length === 0) return;
+                            installOs.mutate(
+                              { node_hostname: hostname, package_names: names },
+                              {
+                                onSuccess: (res) =>
+                                  setInstallResult({ hostname, result: res.data }),
+                              },
+                            );
+                          }}
+                          disabled={selected.size === 0 || installOs.isPending}
+                        >
+                          {installOs.isPending ? (
+                            <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                          ) : null}
+                          Install Selected
+                        </Button>
+                      </div>
+                    </div>
                     <Table>
                       <TableHeader>
                         <TableRow>
+                          <TableHead className="w-8">
+                            <input
+                              type="checkbox"
+                              checked={allSelected}
+                              onChange={toggleAll}
+                              className="accent-brand-500"
+                            />
+                          </TableHead>
                           <TableHead>Package</TableHead>
                           <TableHead>Current</TableHead>
                           <TableHead>New</TableHead>
                           <TableHead>Severity</TableHead>
+                          <TableHead>Status</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {(updates as any[]).map((u, i) => (
-                          <TableRow key={i}>
+                        {updates.map((u) => (
+                          <TableRow key={u.id}>
+                            <TableCell>
+                              <input
+                                type="checkbox"
+                                checked={selected.has(u.package)}
+                                onChange={() => togglePkg(u.package)}
+                                className="accent-brand-500"
+                              />
+                            </TableCell>
                             <TableCell className="font-mono text-xs">{u.package}</TableCell>
                             <TableCell className="text-xs text-zinc-500">{u.current}</TableCell>
                             <TableCell className="text-xs">{u.new}</TableCell>
@@ -438,50 +567,52 @@ export function UpgradesPage() {
                                 {u.severity}
                               </Badge>
                             </TableCell>
+                            <TableCell>
+                              {u.is_downloaded && (
+                                <Badge className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 text-[10px]">
+                                  cached
+                                </Badge>
+                              )}
+                            </TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
                     </Table>
-                  ) : (
-                    <p className="text-xs text-red-400">
-                      {(updates as any).error ?? "Check failed"}
-                    </p>
-                  )}
-                </div>
-              ))}
+                  </div>
+                );
+              })}
             </div>
+          ) : (
+            <p className="text-sm text-zinc-500 py-4 text-center mb-4">
+              No OS updates detected. Click "Check All Nodes" to scan.
+            </p>
           )}
 
-          {/* Cached OS packages */}
+          {/* Cached Packages */}
           <h4 className="text-sm font-medium text-zinc-400 mb-2">Cached Packages</h4>
-          {osPackages && osPackages.length > 0 ? (
+          {cachedPackages && cachedPackages.length > 0 ? (
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Package</TableHead>
                   <TableHead>Version</TableHead>
                   <TableHead>Arch</TableHead>
+                  <TableHead>Filename</TableHead>
                   <TableHead>Size</TableHead>
-                  <TableHead>Severity</TableHead>
                   <TableHead>Source</TableHead>
+                  <TableHead>Added</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {osPackages.map((pkg) => (
+                {cachedPackages.map((pkg) => (
                   <TableRow key={pkg.id}>
-                    <TableCell className="font-mono text-xs">{pkg.package_name}</TableCell>
+                    <TableCell className="font-mono text-xs">{pkg.package}</TableCell>
                     <TableCell className="text-xs">{pkg.version}</TableCell>
                     <TableCell className="text-xs text-zinc-500">{pkg.architecture}</TableCell>
+                    <TableCell className="font-mono text-xs max-w-48 truncate">{pkg.filename}</TableCell>
                     <TableCell className="text-xs">{formatBytes(pkg.file_size)}</TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={pkg.severity === "security" ? "destructive" : "default"}
-                        className="text-[10px]"
-                      >
-                        {pkg.severity}
-                      </Badge>
-                    </TableCell>
                     <TableCell className="text-xs text-zinc-500">{pkg.source}</TableCell>
+                    <TableCell className="text-xs text-zinc-400">{timeAgo(pkg.created_at)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -491,6 +622,43 @@ export function UpgradesPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* ── Install Result Dialog ────────────────────────────────────────── */}
+      {installResult && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="w-full max-w-2xl rounded-lg border border-zinc-700 bg-zinc-900 p-6 shadow-xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-semibold text-zinc-100">
+                Install Result — {installResult.hostname}
+              </h3>
+              {installResult.result.success ? (
+                <Badge className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 text-xs">
+                  Success
+                </Badge>
+              ) : (
+                <Badge className="bg-red-500/15 text-red-400 border-red-500/30 text-xs">
+                  Failed (exit {installResult.result.returncode})
+                </Badge>
+              )}
+            </div>
+            {installResult.result.error && (
+              <div className="mb-3 rounded-md bg-red-500/10 border border-red-500/30 p-2 text-xs text-red-400">
+                {installResult.result.error}
+              </div>
+            )}
+            <div className="rounded-md bg-zinc-950 border border-zinc-800 p-3 max-h-72 overflow-y-auto">
+              <pre className="text-[11px] text-zinc-400 whitespace-pre-wrap font-mono">
+                {installResult.result.output || "(no output)"}
+              </pre>
+            </div>
+            <div className="mt-4 flex justify-end">
+              <Button variant="outline" size="sm" onClick={() => setInstallResult(null)}>
+                Close
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

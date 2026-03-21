@@ -9,7 +9,7 @@ services:
       - collector_default
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /:/host_root:ro
+      - /:/host_root:rw
     environment:
       MONCTL_HOST_LABEL: ${MONCTL_HOST_LABEL:-unknown}
     restart: unless-stopped

@@ -77,6 +77,11 @@ import type {
   UpgradePackageInfo,
   UpgradeJob,
   OsPackageInfo,
+  OsUpdateByNode,
+  OsCheckResult,
+  OsCachedPkg,
+  OsInstallResult,
+  UpgradeBadge,
 } from "@/types/api.ts";
 
 function buildListQs(params: ListParams): string {
@@ -2547,5 +2552,80 @@ export function useOsPackages() {
     queryKey: ["os-packages"],
     queryFn: () => apiGet<OsPackageInfo[]>("/upgrades/os/packages"),
     select: (res) => res.data,
+  });
+}
+
+// ── OS Updates ──────────────────────────────────────────
+
+export function useOsUpdates() {
+  return useQuery({
+    queryKey: ["os-updates"],
+    queryFn: () => apiGet<OsUpdateByNode>("/upgrades/os-updates"),
+    select: (r) => r.data,
+    refetchInterval: 30_000,
+  });
+}
+
+export function useCheckOsUpdatesNew() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiPost<OsCheckResult>("/upgrades/check-os", {}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["os-updates"] });
+      qc.invalidateQueries({ queryKey: ["upgrade-badge"] });
+    },
+  });
+}
+
+export function useDownloadOsPackages() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (packageNames: string[]) =>
+      apiPost("/upgrades/os-download", { package_names: packageNames }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["os-updates"] });
+      qc.invalidateQueries({ queryKey: ["os-cached-packages"] });
+    },
+  });
+}
+
+export function useUploadOsPackage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (file: File) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      return apiPostFormData("/upgrades/os-upload", fd);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["os-cached-packages"] }),
+  });
+}
+
+export function useOsCachedPackages() {
+  return useQuery({
+    queryKey: ["os-cached-packages"],
+    queryFn: () => apiGet<OsCachedPkg[]>("/upgrades/os-packages"),
+    select: (r) => r.data,
+  });
+}
+
+export function useInstallOsOnNode() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { node_hostname: string; package_names: string[] }) =>
+      apiPost<OsInstallResult>("/upgrades/os-install", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["os-updates"] });
+      qc.invalidateQueries({ queryKey: ["upgrade-badge"] });
+    },
+  });
+}
+
+export function useUpgradeBadge() {
+  return useQuery({
+    queryKey: ["upgrade-badge"],
+    queryFn: () => apiGet<UpgradeBadge>("/upgrades/badge"),
+    select: (r) => r.data,
+    refetchInterval: 60_000,
   });
 }

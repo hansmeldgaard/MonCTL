@@ -7,8 +7,10 @@ Also provides /logs, /events, /images, /system endpoints.
 
 import json
 import os
+import re
 import shutil
 import socket
+import subprocess
 import threading
 import time
 from collections import deque
@@ -387,6 +389,163 @@ class StatsHandler(BaseHTTPRequestHandler):
                     "total": info.get("Containers", 0),
                 },
             })
+
+        elif path == "/os/check":
+            try:
+                result = subprocess.run(
+                    ["chroot", "/host_root", "bash", "-c",
+                     "apt-get update -qq 2>/dev/null && apt list --upgradable 2>/dev/null"],
+                    capture_output=True, text=True, timeout=120,
+                )
+                updates = []
+                for line in result.stdout.strip().splitlines():
+                    if "[upgradable from:" not in line:
+                        continue
+                    try:
+                        # Format: package/suite version arch [upgradable from: old_version]
+                        pkg_part, rest = line.split("/", 1)
+                        parts = rest.split()
+                        new_ver = parts[1] if len(parts) > 1 else ""
+                        old_ver = ""
+                        if "from:" in line:
+                            old_ver = line.split("from:")[-1].strip().rstrip("]")
+                        severity = "security" if "-security" in line else "normal"
+                        updates.append({
+                            "package": pkg_part.strip(),
+                            "current": old_ver,
+                            "new": new_ver,
+                            "severity": severity,
+                        })
+                    except Exception:
+                        continue
+                self._json_response(200, {"updates": updates, "error": None})
+            except subprocess.TimeoutExpired:
+                self._json_response(500, {"updates": [], "error": "apt-get update timed out"})
+            except Exception as e:
+                self._json_response(500, {"updates": [], "error": str(e)})
+
+        elif path.startswith("/os/packages/"):
+            filename = path[len("/os/packages/"):]
+            # Sanitize: no path traversal
+            if not filename or "/" in filename or "\\" in filename or ".." in filename:
+                self._json_response(400, {"error": "invalid filename"})
+                return
+            filepath = f"/host_root/opt/monctl/os-packages/{filename}"
+            if not os.path.isfile(filepath):
+                self._json_response(404, {"error": "file not found"})
+                return
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                file_size = os.path.getsize(filepath)
+                self.send_header("Content-Length", str(file_size))
+                self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+                self.end_headers()
+                with open(filepath, "rb") as f:
+                    while chunk := f.read(65536):
+                        self.wfile.write(chunk)
+            except BrokenPipeError:
+                pass
+
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_POST(self):
+        path = urlparse(self.path).path
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length) if content_length > 0 else b""
+        try:
+            payload = json.loads(body) if body else {}
+        except json.JSONDecodeError:
+            self._json_response(400, {"error": "invalid JSON"})
+            return
+
+        if path == "/os/install":
+            packages = payload.get("packages", [])
+            if not packages:
+                self._json_response(400, {"error": "packages list required"})
+                return
+            # Sanitize package names
+            for pkg in packages:
+                if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9.+\-:]*$', pkg):
+                    self._json_response(400, {"error": f"invalid package name: {pkg}"})
+                    return
+            pkg_str = " ".join(packages)
+            try:
+                result = subprocess.run(
+                    ["chroot", "/host_root", "bash", "-c",
+                     f"DEBIAN_FRONTEND=noninteractive apt-get install -y {pkg_str} 2>&1"],
+                    capture_output=True, text=True, timeout=600,
+                )
+                self._json_response(200, {
+                    "output": result.stdout,
+                    "returncode": result.returncode,
+                    "success": result.returncode == 0,
+                })
+            except subprocess.TimeoutExpired:
+                self._json_response(500, {"output": "", "returncode": -1, "success": False})
+
+        elif path == "/os/install-deb":
+            deb_dir = payload.get("deb_dir", "/opt/monctl/os-packages")
+            filenames = payload.get("filenames", [])
+            if not filenames:
+                self._json_response(400, {"error": "filenames list required"})
+                return
+            # Sanitize filenames
+            for fn in filenames:
+                if "/" in fn or "\\" in fn or ".." in fn:
+                    self._json_response(400, {"error": f"invalid filename: {fn}"})
+                    return
+            paths_str = " ".join(f"{deb_dir}/{fn}" for fn in filenames)
+            try:
+                result = subprocess.run(
+                    ["chroot", "/host_root", "bash", "-c",
+                     f"dpkg -i {paths_str} 2>&1 && apt-get install -f -y 2>&1"],
+                    capture_output=True, text=True, timeout=600,
+                )
+                self._json_response(200, {
+                    "output": result.stdout,
+                    "returncode": result.returncode,
+                    "success": result.returncode == 0,
+                })
+            except subprocess.TimeoutExpired:
+                self._json_response(500, {"output": "", "returncode": -1, "success": False})
+
+        elif path == "/os/download":
+            packages = payload.get("packages", [])
+            if not packages:
+                self._json_response(400, {"error": "packages list required"})
+                return
+            for pkg in packages:
+                if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9.+\-:]*$', pkg):
+                    self._json_response(400, {"error": f"invalid package name: {pkg}"})
+                    return
+            pkg_str = " ".join(packages)
+            try:
+                result = subprocess.run(
+                    ["chroot", "/host_root", "bash", "-c",
+                     f"mkdir -p /opt/monctl/os-packages && cd /opt/monctl/os-packages && apt-get download {pkg_str} 2>&1"],
+                    capture_output=True, text=True, timeout=300,
+                )
+                # List .deb files in the directory
+                deb_dir = "/host_root/opt/monctl/os-packages"
+                downloaded = []
+                if os.path.isdir(deb_dir):
+                    for fn in os.listdir(deb_dir):
+                        if fn.endswith(".deb"):
+                            fpath = os.path.join(deb_dir, fn)
+                            downloaded.append({
+                                "filename": fn,
+                                "size": os.path.getsize(fpath),
+                            })
+                self._json_response(200, {
+                    "downloaded": downloaded,
+                    "output": result.stdout,
+                    "success": result.returncode == 0,
+                })
+            except subprocess.TimeoutExpired:
+                self._json_response(500, {"downloaded": [], "output": "", "success": False})
 
         else:
             self.send_response(404)

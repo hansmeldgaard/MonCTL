@@ -1915,3 +1915,6 @@ async def pull_app_cache(
 
 from monctl_central.upgrades.collector_api import router as upgrade_collector_router
 router.include_router(upgrade_collector_router, prefix="/upgrade", tags=["upgrade"])
+
+from monctl_central.upgrades.os_collector_api import router as os_packages_router
+router.include_router(os_packages_router, prefix="/os-packages", tags=["os-packages"])

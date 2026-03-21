@@ -18,6 +18,7 @@ import {
   Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils.ts";
+import { useUpgradeBadge } from "@/api/hooks.ts";
 
 interface SidebarProps {
   collapsed: boolean;
@@ -42,6 +43,9 @@ const navItems = [
 ];
 
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {
+  const { data: badge } = useUpgradeBadge();
+  const osUpdateCount = badge?.os_update_count ?? 0;
+
   return (
     <aside
       className={cn(
@@ -68,7 +72,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
             end={item.end}
             className={({ isActive }) =>
               cn(
-                "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                "relative flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
                 isActive
                   ? "bg-brand-600/15 text-brand-400"
                   : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100",
@@ -78,6 +82,14 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
           >
             <item.icon className="h-4.5 w-4.5 shrink-0" />
             {!collapsed && <span>{item.label}</span>}
+            {item.to === "/upgrades" && osUpdateCount > 0 && !collapsed && (
+              <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500/20 px-1.5 text-[10px] font-semibold text-amber-400">
+                {osUpdateCount}
+              </span>
+            )}
+            {item.to === "/upgrades" && osUpdateCount > 0 && collapsed && (
+              <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-amber-500" />
+            )}
           </NavLink>
         ))}
       </nav>

@@ -1225,3 +1225,51 @@ export interface OsPackageInfo {
   source: string;
   is_downloaded: boolean;
 }
+
+// ── OS Updates ──────────────────────────────────────────
+
+export interface OsUpdateEntry {
+  id: string;
+  package: string;
+  current: string;
+  new: string;
+  severity: string;
+  is_downloaded: boolean;
+  checked_at: string;
+}
+
+export interface OsUpdateByNode {
+  [hostname: string]: OsUpdateEntry[];
+}
+
+export interface OsCheckResult {
+  [hostname: string]: {
+    status: string;
+    update_count?: number;
+    updates?: Array<{ package: string; current: string; new: string; severity: string }>;
+    error?: string;
+  };
+}
+
+export interface OsCachedPkg {
+  id: string;
+  package: string;
+  version: string;
+  architecture: string;
+  filename: string;
+  file_size: number;
+  sha256: string;
+  source: string;
+  created_at: string;
+}
+
+export interface OsInstallResult {
+  output: string;
+  returncode: number;
+  success: boolean;
+  error?: string;
+}
+
+export interface UpgradeBadge {
+  os_update_count: number;
+}

@@ -1127,3 +1127,38 @@ class OsUpdatePackage(Base):
     source: Mapped[str] = mapped_column(String(50), nullable=False)
     is_downloaded: Mapped[bool] = mapped_column(Boolean, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
+
+
+class OsAvailableUpdate(Base):
+    """An available OS package update detected on a node."""
+    __tablename__ = "os_available_updates"
+    __table_args__ = (
+        UniqueConstraint("node_hostname", "package_name", name="uq_os_update_node_pkg"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    node_hostname: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    node_role: Mapped[str] = mapped_column(String(50), nullable=False)
+    package_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    current_version: Mapped[str] = mapped_column(String(100), nullable=False, server_default="")
+    new_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    severity: Mapped[str] = mapped_column(String(50), nullable=False, server_default="'normal'")
+    is_downloaded: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    is_installed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
+
+
+class OsCachedPackage(Base):
+    """A .deb package file cached on central for distribution."""
+    __tablename__ = "os_cached_packages"
+    __table_args__ = (UniqueConstraint("filename", name="uq_os_cached_filename"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    package_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    version: Mapped[str] = mapped_column(String(100), nullable=False)
+    architecture: Mapped[str] = mapped_column(String(50), nullable=False, server_default="'amd64'")
+    filename: Mapped[str] = mapped_column(String(500), nullable=False)
+    file_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    source: Mapped[str] = mapped_column(String(50), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")

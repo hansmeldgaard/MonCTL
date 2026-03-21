@@ -17,6 +17,15 @@ class DownloadOsUpdatesRequest(BaseModel):
     package_names: list[str] = Field(min_length=1, max_length=100)
 
 
+class DownloadOsPackagesRequest(BaseModel):
+    package_names: list[str] = Field(min_length=1, max_length=100)
+
+
+class InstallOsOnNodeRequest(BaseModel):
+    node_hostname: str = Field(min_length=1, max_length=200)
+    package_names: list[str] = Field(min_length=1, max_length=100)
+
+
 class CollectorUpgradeReport(BaseModel):
     collector_id: str = Field(default="")
     upgrade_type: str = Field(default="monctl")
