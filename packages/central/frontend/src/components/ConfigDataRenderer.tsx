@@ -43,10 +43,15 @@ function TemplateRenderer({
     },
   );
 
+  // Inject config data as window.__configData for templates that use JS to parse it
+  const dataJson = JSON.stringify(data).replace(/<\//g, "<\\/");
+
   const srcDoc = `<!DOCTYPE html><html><head><style>
     html, body { margin: 0; padding: 8px; background: #18181b; color: #e4e4e7; font-family: system-ui, -apple-system, sans-serif; font-size: 14px; overflow: hidden; }
     ${template.css ?? ""}
-  </style></head><body>${renderedHtml}</body>
+  </style></head><body>
+  <script>window.__configData = ${dataJson};</script>
+  ${renderedHtml}
   <script>
     function sendHeight() {
       var h = document.documentElement.scrollHeight;
