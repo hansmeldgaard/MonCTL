@@ -185,8 +185,17 @@ async def config_compare(
     await _get_device_with_access(device_id, db, auth)
     ch = get_clickhouse()
 
-    snapshot_a = ch.query_config_snapshot_at_time(device_id, time_a, app_id=app_id)
-    snapshot_b = ch.query_config_snapshot_at_time(device_id, time_b, app_id=app_id)
+    # Strip timezone offset — ClickHouse DateTime64(3) params don't accept +00:00
+    from datetime import datetime as _dt
+    def _normalize_ts(ts: str) -> str:
+        try:
+            parsed = _dt.fromisoformat(ts)
+            return parsed.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        except Exception:
+            return ts
+
+    snapshot_a = ch.query_config_snapshot_at_time(device_id, _normalize_ts(time_a), app_id=app_id)
+    snapshot_b = ch.query_config_snapshot_at_time(device_id, _normalize_ts(time_b), app_id=app_id)
 
     map_a = {
         (r.get("component_type", ""), r.get("component", ""), r.get("config_key", "")): r.get("config_value", "")
