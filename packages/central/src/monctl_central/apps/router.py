@@ -349,7 +349,61 @@ class CreateVersionRequest(BaseModel):
         return validate_semver(v)
 
 
-# --- Assignment routes must be registered BEFORE /{app_id} to avoid path conflict ---
+# --- These routes must be registered BEFORE /{app_id} to avoid path conflict ---
+
+
+@router.get("/config-templates")
+async def get_config_templates(
+    device_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Return display templates for all config apps assigned to a device."""
+    stmt = (
+        select(AppAssignment, App, AppVersion)
+        .join(App, AppAssignment.app_id == App.id)
+        .join(AppVersion, AppAssignment.app_version_id == AppVersion.id)
+        .where(
+            AppAssignment.device_id == uuid.UUID(device_id),
+            App.target_table == "config",
+        )
+    )
+    result = await db.execute(stmt)
+    rows = result.all()
+
+    # Pre-load latest versions for use_latest assignments
+    latest_version_map: dict[uuid.UUID, AppVersion] = {}
+    use_latest_app_ids = {
+        row.AppAssignment.app_id for row in rows if row.AppAssignment.use_latest
+    }
+    if use_latest_app_ids:
+        latest_stmt = select(AppVersion).where(
+            AppVersion.app_id.in_(use_latest_app_ids),
+            AppVersion.is_latest == True,  # noqa: E712
+        )
+        latest_result = await db.execute(latest_stmt)
+        for lv in latest_result.scalars().all():
+            latest_version_map[lv.app_id] = lv
+
+    templates = {}
+    for row in rows:
+        a = row.AppAssignment
+        app = row.App
+        stored_version = row.AppVersion
+
+        if a.use_latest and a.app_id in latest_version_map:
+            effective_version = latest_version_map[a.app_id]
+        else:
+            effective_version = stored_version
+
+        templates[str(app.id)] = {
+            "app_name": app.name,
+            "version": effective_version.version,
+            "display_template": effective_version.display_template,
+        }
+
+    return {"status": "success", "data": templates}
+
 
 @router.get("/assignments")
 async def list_assignments(
@@ -1552,54 +1606,3 @@ async def get_alert_metrics(
     return {"status": "success", "data": metrics}
 
 
-@router.get("/config-templates")
-async def get_config_templates(
-    device_id: str,
-    db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
-):
-    """Return display templates for all config apps assigned to a device."""
-    stmt = (
-        select(AppAssignment, App, AppVersion)
-        .join(App, AppAssignment.app_id == App.id)
-        .join(AppVersion, AppAssignment.app_version_id == AppVersion.id)
-        .where(
-            AppAssignment.device_id == uuid.UUID(device_id),
-            App.target_table == "config",
-        )
-    )
-    result = await db.execute(stmt)
-    rows = result.all()
-
-    # Pre-load latest versions for use_latest assignments
-    latest_version_map: dict[uuid.UUID, AppVersion] = {}
-    use_latest_app_ids = {
-        row.AppAssignment.app_id for row in rows if row.AppAssignment.use_latest
-    }
-    if use_latest_app_ids:
-        latest_stmt = select(AppVersion).where(
-            AppVersion.app_id.in_(use_latest_app_ids),
-            AppVersion.is_latest == True,  # noqa: E712
-        )
-        latest_result = await db.execute(latest_stmt)
-        for lv in latest_result.scalars().all():
-            latest_version_map[lv.app_id] = lv
-
-    templates = {}
-    for row in rows:
-        a = row.AppAssignment
-        app = row.App
-        stored_version = row.AppVersion
-
-        if a.use_latest and a.app_id in latest_version_map:
-            effective_version = latest_version_map[a.app_id]
-        else:
-            effective_version = stored_version
-
-        templates[str(app.id)] = {
-            "app_name": app.name,
-            "version": effective_version.version,
-            "display_template": effective_version.display_template,
-        }
-
-    return {"status": "success", "data": templates}
