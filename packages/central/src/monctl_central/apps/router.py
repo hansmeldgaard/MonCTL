@@ -452,6 +452,20 @@ async def list_assignments(
         cred_rows = (await db.execute(cred_stmt)).all()
         cred_name_map = {r.id: r.name for r in cred_rows}
 
+    # Pre-load latest versions for use_latest resolution
+    latest_version_map: dict[uuid.UUID, AppVersion] = {}
+    use_latest_app_ids = {
+        row.AppAssignment.app_id for row in rows if row.AppAssignment.use_latest
+    }
+    if use_latest_app_ids:
+        latest_stmt = select(AppVersion).where(
+            AppVersion.app_id.in_(use_latest_app_ids),
+            AppVersion.is_latest == True,  # noqa: E712
+        )
+        latest_result = await db.execute(latest_stmt)
+        for lv in latest_result.scalars().all():
+            latest_version_map[lv.app_id] = lv
+
     # Resolve collector names for pinned assignments
     collector_ids = {row.AppAssignment.collector_id for row in rows if row.AppAssignment.collector_id}
     collector_name_map: dict[uuid.UUID, str] = {}
@@ -468,7 +482,12 @@ async def list_assignments(
                 "app": {
                     "id": str(row.App.id),
                     "name": row.App.name,
-                    "version": row.AppVersion.version,
+                    "version": (
+                        latest_version_map[row.AppAssignment.app_id].version
+                        if row.AppAssignment.use_latest
+                        and row.AppAssignment.app_id in latest_version_map
+                        else row.AppVersion.version
+                    ),
                 },
                 "app_version_id": str(row.AppAssignment.app_version_id),
                 "device": (

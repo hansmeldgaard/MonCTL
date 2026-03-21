@@ -2716,6 +2716,7 @@ function AssignmentsTab({ deviceId }: { deviceId: string }) {
         <TableHeader>
           <TableRow>
             <TableHead className="text-xs py-1">App</TableHead>
+            <TableHead className="text-xs py-1">Version</TableHead>
             <TableHead className="text-xs py-1">Role</TableHead>
             <TableHead className="text-xs py-1">Interval</TableHead>
             <TableHead className="text-xs py-1">Credential(s)</TableHead>
@@ -2728,6 +2729,18 @@ function AssignmentsTab({ deviceId }: { deviceId: string }) {
           {assignments.map((a) => (
             <TableRow key={a.id}>
               <TableCell className="py-1.5 font-mono text-sm">{a.app.name}</TableCell>
+              <TableCell className="py-1.5">
+                <div className="flex items-center gap-1">
+                  <Badge variant="default" className="text-[10px]">
+                    v{a.app.version}
+                  </Badge>
+                  {a.use_latest && (
+                    <Badge variant="default" className="text-[10px] text-zinc-500 border-zinc-700">
+                      latest
+                    </Badge>
+                  )}
+                </div>
+              </TableCell>
               <TableCell className="py-1.5">
                 {a.role ? (
                   <Badge className={`text-[10px] ${ROLE_COLORS[a.role] ?? "bg-zinc-500/15 text-zinc-400 border-zinc-500/30"}`}>

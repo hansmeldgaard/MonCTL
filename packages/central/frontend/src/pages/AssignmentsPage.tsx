@@ -295,6 +295,11 @@ export function AssignmentsPage() {
                       <Badge variant="default" className="text-xs">
                         v{assignment.app.version}
                       </Badge>
+                      {assignment.use_latest && (
+                        <Badge variant="default" className="text-[10px] text-zinc-500 border-zinc-700">
+                          latest
+                        </Badge>
+                      )}
                     </div>
                   </TableCell>
                   <TableCell>
