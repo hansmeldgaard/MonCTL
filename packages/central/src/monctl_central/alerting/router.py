@@ -5,7 +5,8 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from monctl_common.validators import validate_alert_window, validate_uuid
 import sqlalchemy as sa
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -89,29 +90,67 @@ def _fmt_override(o: ThresholdOverride) -> dict:
 class CreateAlertDefinitionRequest(BaseModel):
     app_id: str
     app_version_id: str
-    name: str
-    description: str | None = None
-    expression: str
-    window: str = "5m"
-    severity: str = Field(default="warning", description="info, warning, critical, emergency")
+    name: str = Field(min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
+    expression: str = Field(min_length=1, max_length=2000)
+    window: str = Field(default="5m", max_length=10)
+    severity: str = Field(default="warning", max_length=20, description="info, warning, critical, emergency")
     enabled: bool = True
-    message_template: str | None = None
+    message_template: str | None = Field(default=None, max_length=2000)
     notification_channels: list[dict] = Field(default_factory=list)
+
+    @field_validator("app_id")
+    @classmethod
+    def check_app_id(cls, v: str) -> str:
+        validate_uuid(v, "app_id")
+        return v
+
+    @field_validator("app_version_id")
+    @classmethod
+    def check_app_version_id(cls, v: str) -> str:
+        validate_uuid(v, "app_version_id")
+        return v
+
+    @field_validator("severity")
+    @classmethod
+    def check_severity(cls, v: str) -> str:
+        if v not in {"info", "warning", "critical", "emergency", "recovery"}:
+            raise ValueError("severity must be one of: info, warning, critical, emergency, recovery")
+        return v
+
+    @field_validator("window")
+    @classmethod
+    def check_window(cls, v: str) -> str:
+        return validate_alert_window(v)
 
 
 class UpdateAlertDefinitionRequest(BaseModel):
-    name: str | None = None
-    description: str | None = None
-    expression: str | None = None
-    window: str | None = None
-    severity: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
+    expression: str | None = Field(default=None, min_length=1, max_length=2000)
+    window: str | None = Field(default=None, max_length=10)
+    severity: str | None = Field(default=None, max_length=20)
     enabled: bool | None = None
-    message_template: str | None = None
+    message_template: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("severity")
+    @classmethod
+    def check_severity(cls, v: str | None) -> str | None:
+        if v is not None and v not in {"info", "warning", "critical", "emergency", "recovery"}:
+            raise ValueError("severity must be one of: info, warning, critical, emergency, recovery")
+        return v
+
+    @field_validator("window")
+    @classmethod
+    def check_window(cls, v: str | None) -> str | None:
+        if v is not None:
+            return validate_alert_window(v)
+        return v
 
 
 class ValidateExpressionRequest(BaseModel):
-    expression: str
-    target_table: str
+    expression: str = Field(min_length=1, max_length=2000)
+    target_table: str = Field(min_length=1, max_length=64)
 
 
 class CreateThresholdOverrideRequest(BaseModel):
@@ -119,6 +158,18 @@ class CreateThresholdOverrideRequest(BaseModel):
     device_id: str
     entity_key: str = ""
     overrides: dict
+
+    @field_validator("definition_id")
+    @classmethod
+    def check_definition_id(cls, v: str) -> str:
+        validate_uuid(v, "definition_id")
+        return v
+
+    @field_validator("device_id")
+    @classmethod
+    def check_device_id(cls, v: str) -> str:
+        validate_uuid(v, "device_id")
+        return v
 
 
 class UpdateThresholdOverrideRequest(BaseModel):

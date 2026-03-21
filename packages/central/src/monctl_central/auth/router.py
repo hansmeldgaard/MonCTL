@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,8 +26,8 @@ _REFRESH_MAX_AGE = settings.jwt_refresh_token_expire_days * 86400
 
 
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    username: str = Field(min_length=1, max_length=150)
+    password: str = Field(min_length=1, max_length=128)
 
 
 @router.post("/login")

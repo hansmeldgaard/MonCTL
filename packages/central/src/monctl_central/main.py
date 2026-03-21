@@ -638,6 +638,11 @@ app = FastAPI(
     license_info={"name": "MIT"},
 )
 
+# Structured validation error responses
+from fastapi.exceptions import RequestValidationError  # noqa: E402
+from monctl_central.validation import validation_exception_handler  # noqa: E402
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
+
 
 @app.get("/v1/health", tags=["system"])
 async def health_check():

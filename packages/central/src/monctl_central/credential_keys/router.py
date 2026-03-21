@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,19 +18,59 @@ VALID_KEY_TYPES = {"plain", "secret", "enum"}
 
 
 class CreateCredentialKeyRequest(BaseModel):
-    name: str = Field(max_length=64)
-    description: str | None = None
+    name: str = Field(min_length=1, max_length=64)
+    description: str | None = Field(default=None, max_length=2000)
     key_type: str = Field(default="plain", description="plain | secret | enum")
     enum_values: list[str] | None = Field(
         default=None, description="Allowed values when key_type is 'enum'"
     )
 
+    @field_validator("key_type")
+    @classmethod
+    def check_key_type(cls, v: str) -> str:
+        if v not in {"plain", "secret", "enum"}:
+            raise ValueError("key_type must be one of: plain, secret, enum")
+        return v
+
+    @field_validator("enum_values")
+    @classmethod
+    def check_enum_values(cls, v: list[str] | None) -> list[str] | None:
+        if v is not None:
+            if len(v) < 2:
+                raise ValueError("enum_values must have at least 2 values")
+            if len(v) != len(set(v)):
+                raise ValueError("enum_values must be unique")
+            for val in v:
+                if len(val) > 255:
+                    raise ValueError("Each enum value must be at most 255 characters")
+        return v
+
 
 class UpdateCredentialKeyRequest(BaseModel):
-    name: str | None = None
-    description: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    description: str | None = Field(default=None, max_length=2000)
     key_type: str | None = None
     enum_values: list[str] | None = None
+
+    @field_validator("key_type")
+    @classmethod
+    def check_key_type(cls, v: str | None) -> str | None:
+        if v is not None and v not in {"plain", "secret", "enum"}:
+            raise ValueError("key_type must be one of: plain, secret, enum")
+        return v
+
+    @field_validator("enum_values")
+    @classmethod
+    def check_enum_values(cls, v: list[str] | None) -> list[str] | None:
+        if v is not None:
+            if len(v) < 2:
+                raise ValueError("enum_values must have at least 2 values")
+            if len(v) != len(set(v)):
+                raise ValueError("enum_values must be unique")
+            for val in v:
+                if len(val) > 255:
+                    raise ValueError("Each enum value must be at most 255 characters")
+        return v
 
 
 def _fmt(k: CredentialKey) -> dict:

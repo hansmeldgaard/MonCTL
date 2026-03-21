@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
+import { validateName } from "@/lib/validation.ts";
 import { Building2, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
@@ -37,12 +39,12 @@ export function TenantsPage() {
 
   // Add dialog
   const [addOpen, setAddOpen] = useState(false);
-  const [addName, setAddName] = useState("");
+  const addNameField = useField("", validateName);
   const [addError, setAddError] = useState<string | null>(null);
 
   // Edit dialog
   const [editTarget, setEditTarget] = useState<Tenant | null>(null);
-  const [editName, setEditName] = useState("");
+  const editNameField = useField("", validateName);
   const [editMetadata, setEditMetadata] = useState<Record<string, string>>({});
   const [editError, setEditError] = useState<string | null>(null);
 
@@ -52,14 +54,10 @@ export function TenantsPage() {
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setAddError(null);
-    if (!addName.trim()) {
-      setAddError("Name is required.");
-      return;
-    }
+    if (!validateAll(addNameField)) return;
     try {
-      await createTenant.mutateAsync({ name: addName.trim() });
-      // If metadata was provided, update it after creation
-      setAddName("");
+      await createTenant.mutateAsync({ name: addNameField.value.trim() });
+      addNameField.reset();
       setAddOpen(false);
     } catch (err) {
       setAddError(err instanceof Error ? err.message : "Failed to create tenant");
@@ -68,7 +66,7 @@ export function TenantsPage() {
 
   function openEdit(t: Tenant) {
     setEditTarget(t);
-    setEditName(t.name);
+    editNameField.reset(t.name);
     setEditMetadata(t.metadata || {});
     setEditError(null);
   }
@@ -77,14 +75,11 @@ export function TenantsPage() {
     e.preventDefault();
     if (!editTarget) return;
     setEditError(null);
-    if (!editName.trim()) {
-      setEditError("Name is required.");
-      return;
-    }
+    if (!validateAll(editNameField)) return;
     try {
       await updateTenant.mutateAsync({
         id: editTarget.id,
-        data: { name: editName.trim(), metadata: editMetadata },
+        data: { name: editNameField.value.trim(), metadata: editMetadata },
       });
       setEditTarget(null);
     } catch (err) {
@@ -120,7 +115,7 @@ export function TenantsPage() {
           </p>
         </div>
         {isAdmin && (
-          <Button size="sm" onClick={() => { setAddName(""); setAddError(null); setAddOpen(true); }} className="gap-1.5">
+          <Button size="sm" onClick={() => { addNameField.reset(); setAddError(null); setAddOpen(true); }} className="gap-1.5">
             <Plus className="h-4 w-4" />
             New Tenant
           </Button>
@@ -219,10 +214,12 @@ export function TenantsPage() {
             <Input
               id="tenant-name"
               placeholder="e.g. Acme Corp"
-              value={addName}
-              onChange={(e) => setAddName(e.target.value)}
+              value={addNameField.value}
+              onChange={addNameField.onChange}
+              onBlur={addNameField.onBlur}
               autoFocus
             />
+            {addNameField.error && <p className="text-xs text-red-400 mt-0.5">{addNameField.error}</p>}
           </div>
           {addError && <p className="text-sm text-red-400">{addError}</p>}
           <DialogFooter>
@@ -252,10 +249,12 @@ export function TenantsPage() {
             <Label htmlFor="tenant-edit-name">Name</Label>
             <Input
               id="tenant-edit-name"
-              value={editName}
-              onChange={(e) => setEditName(e.target.value)}
+              value={editNameField.value}
+              onChange={editNameField.onChange}
+              onBlur={editNameField.onBlur}
               autoFocus
             />
+            {editNameField.error && <p className="text-xs text-red-400 mt-0.5">{editNameField.error}</p>}
           </div>
           <div className="space-y-1.5">
             <Label>Metadata</Label>

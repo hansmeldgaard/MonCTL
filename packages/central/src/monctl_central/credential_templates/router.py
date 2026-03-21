@@ -17,24 +17,24 @@ router = APIRouter()
 
 
 class TemplateField(BaseModel):
-    key_name: str
+    key_name: str = Field(min_length=1, max_length=64)
     required: bool = True
-    default_value: str | None = None
-    display_order: int = 0
+    default_value: str | None = Field(default=None, max_length=1000)
+    display_order: int = Field(default=0, ge=0, le=999)
 
 
 class CreateCredentialTemplateRequest(BaseModel):
     name: str = Field(max_length=64)
     credential_type: str = Field(max_length=64, default="")
-    description: str | None = None
-    fields: list[TemplateField] = Field(min_length=1)
+    description: str | None = Field(default=None, max_length=2000)
+    fields: list[TemplateField] = Field(min_length=1, max_length=50)
 
 
 class UpdateCredentialTemplateRequest(BaseModel):
-    name: str | None = None
-    credential_type: str | None = None
-    description: str | None = None
-    fields: list[TemplateField] | None = None
+    name: str | None = Field(default=None, max_length=64)
+    credential_type: str | None = Field(default=None, max_length=64)
+    description: str | None = Field(default=None, max_length=2000)
+    fields: list[TemplateField] | None = Field(default=None, min_length=1, max_length=50)
 
 
 def _fmt(t: CredentialTemplate) -> dict:

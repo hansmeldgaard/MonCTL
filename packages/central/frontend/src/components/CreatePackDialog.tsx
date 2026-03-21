@@ -1,4 +1,6 @@
 import { useState, useEffect } from "react";
+import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
+import { validateSlug, validateName, validateSemver } from "@/lib/validation.ts";
 import {
   AppWindow, Binary, ChevronDown, ChevronRight, KeyRound, LayoutTemplate,
   Loader2, Lock, Monitor, Plug, ShieldCheck, Tag, Unlock,
@@ -45,9 +47,9 @@ export function CreatePackDialog({ open, onClose }: CreatePackDialogProps) {
   const [step, setStep] = useState<1 | 2 | 3>(1);
 
   // Step 1: Metadata
-  const [packUid, setPackUid] = useState("");
-  const [name, setName] = useState("");
-  const [version, setVersion] = useState("1.0.0");
+  const packUidField = useField("", validateSlug);
+  const nameField = useField("", validateName);
+  const versionField = useField("1.0.0", validateSemver);
   const [description, setDescription] = useState("");
   const [author, setAuthor] = useState("");
   const [autoSlug, setAutoSlug] = useState(true);
@@ -67,9 +69,9 @@ export function CreatePackDialog({ open, onClose }: CreatePackDialogProps) {
   useEffect(() => {
     if (!open) {
       setStep(1);
-      setPackUid("");
-      setName("");
-      setVersion("1.0.0");
+      packUidField.reset();
+      nameField.reset();
+      versionField.reset("1.0.0");
       setDescription("");
       setAuthor("");
       setAutoSlug(true);
@@ -81,8 +83,8 @@ export function CreatePackDialog({ open, onClose }: CreatePackDialogProps) {
   }, [open]);
 
   function handleNameChange(val: string) {
-    setName(val);
-    if (autoSlug) setPackUid(toSlug(val));
+    nameField.setValue(val);
+    if (autoSlug) packUidField.setValue(toSlug(val));
   }
 
   function toggleEntity(section: string, id: string) {
@@ -108,14 +110,16 @@ export function CreatePackDialog({ open, onClose }: CreatePackDialogProps) {
     });
   }
 
-  const uidValid = /^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(packUid) || (packUid.length === 1 && /^[a-z0-9]$/.test(packUid));
-  const versionValid = /^\d+\.\d+(\.\d+)?$/.test(version);
-  const canProceedStep1 = name.trim().length > 0 && uidValid && versionValid;
+  const canProceedStep1 = !validateSlug(packUidField.value) && !validateName(nameField.value) && !validateSemver(versionField.value);
 
   const totalSelected = Object.values(selected).reduce((sum, s) => sum + s.size, 0);
 
   function handleNext() {
-    if (step === 1 && canProceedStep1) setStep(2);
+    if (step === 1) {
+      if (!validateAll(nameField, packUidField, versionField)) return;
+      setStep(2);
+      return;
+    }
     else if (step === 2) setStep(3);
   }
 
@@ -134,9 +138,9 @@ export function CreatePackDialog({ open, onClose }: CreatePackDialogProps) {
 
     try {
       await createPack.mutateAsync({
-        pack_uid: packUid,
-        name,
-        version,
+        pack_uid: packUidField.value,
+        name: nameField.value,
+        version: versionField.value,
         description: description || undefined,
         author: author || undefined,
         entity_ids,
@@ -180,11 +184,13 @@ export function CreatePackDialog({ open, onClose }: CreatePackDialogProps) {
             <label className="block text-sm font-medium text-zinc-300 mb-1">Name *</label>
             <input
               type="text"
-              value={name}
+              value={nameField.value}
               onChange={(e) => handleNameChange(e.target.value)}
+              onBlur={nameField.onBlur}
               placeholder="e.g. SNMP Network Basics"
               className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:border-brand-500 focus:outline-none"
             />
+            {nameField.error && <p className="text-xs text-red-400 mt-0.5">{nameField.error}</p>}
           </div>
 
           <div>
@@ -192,8 +198,9 @@ export function CreatePackDialog({ open, onClose }: CreatePackDialogProps) {
             <div className="flex items-center gap-2">
               <input
                 type="text"
-                value={packUid}
-                onChange={(e) => { if (!autoSlug) setPackUid(e.target.value); }}
+                value={packUidField.value}
+                onChange={(e) => { if (!autoSlug) packUidField.setValue(e.target.value); }}
+                onBlur={packUidField.onBlur}
                 readOnly={autoSlug}
                 className={cn(
                   "flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:border-brand-500 focus:outline-none",
@@ -209,8 +216,8 @@ export function CreatePackDialog({ open, onClose }: CreatePackDialogProps) {
                 {autoSlug ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
               </button>
             </div>
-            {packUid && !uidValid && (
-              <p className="mt-1 text-xs text-red-400">Must be lowercase alphanumeric with hyphens (min 1 char)</p>
+            {packUidField.error && (
+              <p className="mt-1 text-xs text-red-400">{packUidField.error}</p>
             )}
           </div>
 
@@ -218,13 +225,14 @@ export function CreatePackDialog({ open, onClose }: CreatePackDialogProps) {
             <label className="block text-sm font-medium text-zinc-300 mb-1">Version *</label>
             <input
               type="text"
-              value={version}
-              onChange={(e) => setVersion(e.target.value)}
+              value={versionField.value}
+              onChange={(e) => versionField.setValue(e.target.value)}
+              onBlur={versionField.onBlur}
               placeholder="1.0.0"
               className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:border-brand-500 focus:outline-none"
             />
-            {version && !versionValid && (
-              <p className="mt-1 text-xs text-red-400">Must be a valid version (e.g. 1.0.0)</p>
+            {versionField.error && (
+              <p className="mt-1 text-xs text-red-400">{versionField.error}</p>
             )}
           </div>
 
@@ -279,15 +287,15 @@ export function CreatePackDialog({ open, onClose }: CreatePackDialogProps) {
           <div className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-800/50 p-4">
             <div className="flex items-center justify-between">
               <span className="text-sm text-zinc-400">Pack</span>
-              <span className="text-sm font-medium text-zinc-100">{name}</span>
+              <span className="text-sm font-medium text-zinc-100">{nameField.value}</span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-sm text-zinc-400">UID</span>
-              <Badge variant="info">{packUid}</Badge>
+              <Badge variant="info">{packUidField.value}</Badge>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-sm text-zinc-400">Version</span>
-              <Badge variant="default">v{version}</Badge>
+              <Badge variant="default">v{versionField.value}</Badge>
             </div>
             {author && (
               <div className="flex items-center justify-between">

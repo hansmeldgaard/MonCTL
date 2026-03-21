@@ -5,7 +5,8 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
+from monctl_common.validators import validate_uuid
 import sqlalchemy as sa
 from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -75,8 +76,8 @@ async def list_templates(
 
 
 class CreateTemplateRequest(BaseModel):
-    name: str
-    description: str | None = None
+    name: str = Field(min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
     config: dict = Field(default_factory=dict)
 
 
@@ -111,8 +112,8 @@ async def get_template(
 
 
 class UpdateTemplateRequest(BaseModel):
-    name: str | None = None
-    description: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
     config: dict | None = None
 
 
@@ -152,8 +153,21 @@ async def delete_template(
 
 
 class ApplyTemplateRequest(BaseModel):
-    device_ids: list[str] = []
-    device_type_names: list[str] = []
+    device_ids: list[str] = Field(default_factory=list, max_length=500)
+    device_type_names: list[str] = Field(default_factory=list, max_length=50)
+
+    @field_validator("device_ids")
+    @classmethod
+    def check_device_ids(cls, v: list[str]) -> list[str]:
+        for did in v:
+            validate_uuid(did, "device_ids")
+        return v
+
+    @model_validator(mode="after")
+    def check_at_least_one_target(self) -> "ApplyTemplateRequest":
+        if not self.device_ids and not self.device_type_names:
+            raise ValueError("At least one of device_ids or device_type_names must be provided")
+        return self
 
 
 @router.post("/{template_id}/apply")

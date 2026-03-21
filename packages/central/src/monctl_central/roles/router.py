@@ -54,20 +54,20 @@ def _fmt_role(r: Role) -> dict:
 
 
 class PermissionEntry(BaseModel):
-    resource: str
-    action: str
+    resource: str = Field(min_length=1, max_length=64)
+    action: str = Field(min_length=1, max_length=32)
 
 
 class CreateRoleRequest(BaseModel):
     name: str = Field(min_length=1, max_length=100)
-    description: str | None = None
-    permissions: list[PermissionEntry] = []
+    description: str | None = Field(default=None, max_length=2000)
+    permissions: list[PermissionEntry] = Field(default_factory=list, max_length=200)
 
 
 class UpdateRoleRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
-    description: str | None = None
-    permissions: list[PermissionEntry] | None = None
+    description: str | None = Field(default=None, max_length=2000)
+    permissions: list[PermissionEntry] | None = Field(default=None, max_length=200)
 
 
 @router.get("")

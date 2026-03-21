@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
+import { validateName } from "@/lib/validation.ts";
 import {
   Cpu,
   Layers,
@@ -292,12 +294,12 @@ function CollectorGroupsCard() {
   const deleteGroup = useDeleteCollectorGroup();
 
   const [addOpen, setAddOpen] = useState(false);
-  const [addName, setAddName] = useState("");
+  const addNameField = useField("", validateName);
   const [addDesc, setAddDesc] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
 
   const [editTarget, setEditTarget] = useState<CollectorGroup | null>(null);
-  const [editName, setEditName] = useState("");
+  const editNameField = useField("", validateName);
   const [editDesc, setEditDesc] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
 
@@ -306,10 +308,10 @@ function CollectorGroupsCard() {
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setAddError(null);
-    if (!addName.trim()) { setAddError("Name is required."); return; }
+    if (!validateAll(addNameField)) return;
     try {
-      await createGroup.mutateAsync({ name: addName.trim(), description: addDesc.trim() || undefined });
-      setAddName(""); setAddDesc(""); setAddOpen(false);
+      await createGroup.mutateAsync({ name: addNameField.value.trim(), description: addDesc.trim() || undefined });
+      addNameField.reset(); setAddDesc(""); setAddOpen(false);
     } catch (err) {
       setAddError(err instanceof Error ? err.message : "Failed to create group");
     }
@@ -317,7 +319,7 @@ function CollectorGroupsCard() {
 
   function openEdit(g: CollectorGroup) {
     setEditTarget(g);
-    setEditName(g.name);
+    editNameField.reset(g.name);
     setEditDesc(g.description ?? "");
     setEditError(null);
   }
@@ -326,11 +328,11 @@ function CollectorGroupsCard() {
     e.preventDefault();
     if (!editTarget) return;
     setEditError(null);
-    if (!editName.trim()) { setEditError("Name is required."); return; }
+    if (!validateAll(editNameField)) return;
     try {
       await updateGroup.mutateAsync({
         id: editTarget.id,
-        data: { name: editName.trim(), description: editDesc.trim() || undefined },
+        data: { name: editNameField.value.trim(), description: editDesc.trim() || undefined },
       });
       setEditTarget(null);
     } catch (err) {
@@ -425,7 +427,7 @@ function CollectorGroupsCard() {
             <Button
               size="sm"
               variant="secondary"
-              onClick={() => { setAddName(""); setAddDesc(""); setAddError(null); setAddOpen(true); }}
+              onClick={() => { addNameField.reset(); setAddDesc(""); setAddError(null); setAddOpen(true); }}
               className="gap-1.5"
             >
               <Plus className="h-4 w-4" />
@@ -443,10 +445,12 @@ function CollectorGroupsCard() {
             <Input
               id="cg-name"
               placeholder="e.g. EU-West"
-              value={addName}
-              onChange={(e) => setAddName(e.target.value)}
+              value={addNameField.value}
+              onChange={addNameField.onChange}
+              onBlur={addNameField.onBlur}
               autoFocus
             />
+            {addNameField.error && <p className="text-xs text-red-400 mt-0.5">{addNameField.error}</p>}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="cg-desc">
@@ -477,10 +481,12 @@ function CollectorGroupsCard() {
             <Label htmlFor="cg-edit-name">Name</Label>
             <Input
               id="cg-edit-name"
-              value={editName}
-              onChange={(e) => setEditName(e.target.value)}
+              value={editNameField.value}
+              onChange={editNameField.onChange}
+              onBlur={editNameField.onBlur}
               autoFocus
             />
+            {editNameField.error && <p className="text-xs text-red-400 mt-0.5">{editNameField.error}</p>}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="cg-edit-desc">Description</Label>
@@ -758,7 +764,7 @@ function RegistrationTokensCard() {
   const deleteToken = useDeleteRegistrationToken();
 
   const [addOpen, setAddOpen] = useState(false);
-  const [addName, setAddName] = useState("");
+  const tokenNameField = useField("", validateName);
   const [addOneTime, setAddOneTime] = useState(false);
   const [addClusterId, setAddClusterId] = useState("");
   const [addExpiry, setAddExpiry] = useState("");
@@ -771,17 +777,17 @@ function RegistrationTokensCard() {
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setAddError(null);
-    if (!addName.trim()) { setAddError("Name is required."); return; }
+    if (!validateAll(tokenNameField)) return;
     try {
       const result = await createToken.mutateAsync({
-        name: addName.trim(),
+        name: tokenNameField.value.trim(),
         one_time: addOneTime,
         cluster_id: addClusterId || undefined,
         expires_at: addExpiry || undefined,
       });
       setAddOpen(false);
       setCreatedToken(result.data?.short_code ?? result.data?.token ?? null);
-      setAddName("");
+      tokenNameField.reset();
       setAddOneTime(false);
       setAddClusterId("");
       setAddExpiry("");
@@ -894,7 +900,7 @@ function RegistrationTokensCard() {
             <Button
               size="sm"
               variant="secondary"
-              onClick={() => { setAddName(""); setAddOneTime(false); setAddClusterId(""); setAddExpiry(""); setAddError(null); setAddOpen(true); }}
+              onClick={() => { tokenNameField.reset(); setAddOneTime(false); setAddClusterId(""); setAddExpiry(""); setAddError(null); setAddOpen(true); }}
               className="gap-1.5"
             >
               <Plus className="h-4 w-4" />
@@ -909,7 +915,8 @@ function RegistrationTokensCard() {
         <form onSubmit={handleCreate} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="rt-name">Name</Label>
-            <Input id="rt-name" placeholder="e.g. prod-eu-token" value={addName} onChange={(e) => setAddName(e.target.value)} autoFocus />
+            <Input id="rt-name" placeholder="e.g. prod-eu-token" value={tokenNameField.value} onChange={tokenNameField.onChange} onBlur={tokenNameField.onBlur} autoFocus />
+            {tokenNameField.error && <p className="text-xs text-red-400 mt-0.5">{tokenNameField.error}</p>}
           </div>
           <div className="flex items-center gap-2">
             <label className="flex items-center gap-2 cursor-pointer">

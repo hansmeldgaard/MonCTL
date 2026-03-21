@@ -1,6 +1,8 @@
 import { useState, useCallback, useMemo } from "react";
 import { useParams, Link } from "react-router-dom";
-import { ArrowLeft, AppWindow, Bell, Code2, Layout, Loader2, Pencil, Plug, Plus, RefreshCw, Star, Trash2 } from "lucide-react";
+import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
+import { validateName, validateSemver, validateAlertWindow } from "@/lib/validation.ts";
+import { ArrowLeft, AppWindow, Bell, Code2, Layout, Loader2, Pencil, Plug, Plus, RefreshCw, Star, Trash2, X } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
@@ -48,6 +50,7 @@ interface VersionDetail {
   checksum: string;
   published_at: string | null;
   display_template: DisplayTemplate | null;
+  volatile_keys?: string[];
 }
 
 export function AppDetailPage() {
@@ -64,20 +67,22 @@ export function AppDetailPage() {
 
   // Edit app state
   const [editOpen, setEditOpen] = useState(false);
-  const [editName, setEditName] = useState("");
+  const editNameField = useField("", validateName);
   const [editDesc, setEditDesc] = useState("");
   const [editConfigSchema, setEditConfigSchema] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
 
   // New version state
   const [versionOpen, setVersionOpen] = useState(false);
-  const [versionString, setVersionString] = useState("");
+  const versionField = useField("", validateSemver);
   const [versionCode, setVersionCode] = useState("# New monitoring app\n\nclass MyCheck:\n    def run(self, config):\n        pass\n");
   const [versionReqs, setVersionReqs] = useState("");
   const [versionEntry, setVersionEntry] = useState("");
   const [versionError, setVersionError] = useState<string | null>(null);
   const [newVersionTab, setNewVersionTab] = useState("code");
   const [newVersionTemplate, setNewVersionTemplate] = useState<DisplayTemplate | null>(null);
+  const [versionVolatileKeys, setVersionVolatileKeys] = useState<string[]>([]);
+  const [volatileKeyInput, setVolatileKeyInput] = useState("");
 
   // Version detail viewer
   const [viewVersion, setViewVersion] = useState<VersionDetail | null>(null);
@@ -89,6 +94,8 @@ export function AppDetailPage() {
   const [editVersionReqs, setEditVersionReqs] = useState("");
   const [editVersionEntry, setEditVersionEntry] = useState("");
   const [editVersionError, setEditVersionError] = useState<string | null>(null);
+  const [editVersionVolatileKeys, setEditVersionVolatileKeys] = useState<string[]>([]);
+  const [editVolatileKeyInput, setEditVolatileKeyInput] = useState("");
 
   // Version dialog tab (for config apps)
   const [viewDialogTab, setViewDialogTab] = useState("code");
@@ -112,6 +119,7 @@ export function AppDetailPage() {
     e.preventDefault();
     if (!id) return;
     setEditError(null);
+    if (!validateAll(editNameField)) return;
     let parsedSchema: Record<string, unknown> | undefined;
     if (editConfigSchema.trim()) {
       try {
@@ -121,7 +129,7 @@ export function AppDetailPage() {
       }
     }
     try {
-      await updateApp.mutateAsync({ id, data: { name: editName.trim(), description: editDesc.trim(), config_schema: parsedSchema ?? {} } });
+      await updateApp.mutateAsync({ id, data: { name: editNameField.value.trim(), description: editDesc.trim(), config_schema: parsedSchema ?? {} } });
       setEditOpen(false);
     } catch (err) {
       setEditError(err instanceof Error ? err.message : "Failed to update");
@@ -132,20 +140,21 @@ export function AppDetailPage() {
     e.preventDefault();
     if (!id) return;
     setVersionError(null);
-    if (!versionString.trim()) { setVersionError("Version is required."); return; }
+    if (!validateAll(versionField)) return;
     if (!versionCode.trim()) { setVersionError("Source code is required."); return; }
     try {
       await createVersion.mutateAsync({
         appId: id,
         data: {
-          version: versionString.trim(),
+          version: versionField.value.trim(),
           source_code: versionCode,
           requirements: versionReqs.trim() ? versionReqs.trim().split("\n").map((r) => r.trim()).filter(Boolean) : [],
           entry_class: versionEntry.trim() || undefined,
           display_template: newVersionTemplate ?? undefined,
+          volatile_keys: isConfigApp ? versionVolatileKeys : undefined,
         },
       });
-      setVersionString(""); setVersionCode(""); setVersionReqs(""); setVersionEntry(""); setNewVersionTemplate(null); setNewVersionTab("code"); setVersionOpen(false);
+      versionField.reset(); setVersionCode(""); setVersionReqs(""); setVersionEntry(""); setNewVersionTemplate(null); setVersionVolatileKeys([]); setNewVersionTab("code"); setVersionOpen(false);
     } catch (err) {
       setVersionError(err instanceof Error ? err.message : "Failed to create version");
     }
@@ -163,6 +172,7 @@ export function AppDetailPage() {
           source_code: editVersionCode,
           requirements: editVersionReqs.trim() ? editVersionReqs.trim().split("\n").map((r) => r.trim()).filter(Boolean) : [],
           entry_class: editVersionEntry.trim() || undefined,
+          volatile_keys: isConfigApp ? editVersionVolatileKeys : undefined,
         },
       });
       setEditVersionTarget(null);
@@ -193,6 +203,7 @@ export function AppDetailPage() {
       setEditVersionReqs((v.requirements ?? []).join("\n"));
       setEditVersionEntry(v.entry_class ?? "");
       setEditVersionError(null);
+      setEditVersionVolatileKeys(v.volatile_keys ?? []);
       setEditVersionTarget(v);
     } catch {
       // silent
@@ -267,7 +278,7 @@ export function AppDetailPage() {
           <h2 className="text-xl font-semibold text-zinc-100">{app.name}</h2>
           <Badge variant="info">{app.app_type}</Badge>
           <button
-            onClick={() => { setEditName(app.name); setEditDesc(app.description ?? ""); setEditConfigSchema(app.config_schema ? JSON.stringify(app.config_schema, null, 2) : ""); setEditError(null); setEditOpen(true); }}
+            onClick={() => { editNameField.reset(app.name); setEditDesc(app.description ?? ""); setEditConfigSchema(app.config_schema ? JSON.stringify(app.config_schema, null, 2) : ""); setEditError(null); setEditOpen(true); }}
             className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer"
             title="Edit"
           >
@@ -415,7 +426,7 @@ export function AppDetailPage() {
                   size="sm"
                   variant="secondary"
                   className="ml-auto gap-1.5"
-                  onClick={() => { setVersionString(""); setVersionCode("# New version\n"); setVersionReqs(""); setVersionEntry(""); setVersionError(null); setNewVersionTab("code"); setNewVersionTemplate(null); setVersionOpen(true); }}
+                  onClick={() => { versionField.reset(); setVersionCode("# New version\n"); setVersionReqs(""); setVersionEntry(""); setVersionError(null); setNewVersionTab("code"); setNewVersionTemplate(null); setVersionOpen(true); }}
                 >
                   <Plus className="h-4 w-4" /> New Version
                 </Button>
@@ -504,7 +515,8 @@ export function AppDetailPage() {
         <form onSubmit={handleEditApp} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="app-edit-name">Name</Label>
-            <Input id="app-edit-name" value={editName} onChange={(e) => setEditName(e.target.value)} autoFocus />
+            <Input id="app-edit-name" value={editNameField.value} onChange={editNameField.onChange} onBlur={editNameField.onBlur} autoFocus />
+            {editNameField.error && <p className="text-xs text-red-400 mt-0.5">{editNameField.error}</p>}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="app-edit-desc">Description</Label>
@@ -545,7 +557,7 @@ export function AppDetailPage() {
             </TabsList>
             <TabsContent value="code">
               <NewVersionCodeForm
-                versionString={versionString} setVersionString={setVersionString}
+                versionField={versionField}
                 versionCode={versionCode} setVersionCode={setVersionCode}
                 versionReqs={versionReqs} setVersionReqs={setVersionReqs}
                 versionEntry={versionEntry} setVersionEntry={setVersionEntry}
@@ -553,6 +565,9 @@ export function AppDetailPage() {
                 onSubmit={handleCreateVersion}
                 onCancel={() => setVersionOpen(false)}
                 isPending={createVersion.isPending}
+                volatileKeys={versionVolatileKeys} setVolatileKeys={setVersionVolatileKeys}
+                volatileKeyInput={volatileKeyInput} setVolatileKeyInput={setVolatileKeyInput}
+                isConfigApp={true}
               />
             </TabsContent>
             <TabsContent value="template">
@@ -565,7 +580,7 @@ export function AppDetailPage() {
           </Tabs>
         ) : (
           <NewVersionCodeForm
-            versionString={versionString} setVersionString={setVersionString}
+            versionField={versionField}
             versionCode={versionCode} setVersionCode={setVersionCode}
             versionReqs={versionReqs} setVersionReqs={setVersionReqs}
             versionEntry={versionEntry} setVersionEntry={setVersionEntry}
@@ -635,6 +650,9 @@ export function AppDetailPage() {
                 onSubmit={handleEditVersion}
                 onCancel={() => setEditVersionTarget(null)}
                 isPending={updateVersion.isPending}
+                volatileKeys={editVersionVolatileKeys} setVolatileKeys={setEditVersionVolatileKeys}
+                volatileKeyInput={editVolatileKeyInput} setVolatileKeyInput={setEditVolatileKeyInput}
+                isConfigApp={true}
               />
             </TabsContent>
             <TabsContent value="template">
@@ -717,6 +735,55 @@ function VersionCodeView({ version }: { version: VersionDetail }) {
   );
 }
 
+function VolatileKeysEditor({
+  keys,
+  setKeys,
+  inputVal,
+  setInputVal,
+}: {
+  keys: string[];
+  setKeys: (v: string[]) => void;
+  inputVal: string;
+  setInputVal: (v: string) => void;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label>Volatile Keys</Label>
+      <p className="text-xs text-zinc-500">
+        Keys that change every poll cycle (e.g. uptime, timestamps) — excluded from change detection.
+      </p>
+      <div className="flex flex-wrap gap-1.5 min-h-[28px]">
+        {keys.map((k) => (
+          <span key={k} className="inline-flex items-center gap-1 rounded-md bg-zinc-800 border border-zinc-700 px-2 py-0.5 text-xs font-mono text-zinc-300">
+            {k}
+            <button type="button" onClick={() => setKeys(keys.filter((x) => x !== k))} className="text-zinc-500 hover:text-zinc-300">
+              <X className="h-3 w-3" />
+            </button>
+          </span>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <Input
+          value={inputVal}
+          onChange={(e) => setInputVal(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              const v = inputVal.trim();
+              if (v && !keys.includes(v)) {
+                setKeys([...keys, v]);
+                setInputVal("");
+              }
+            }
+          }}
+          placeholder="Add key and press Enter"
+          className="text-xs"
+        />
+      </div>
+    </div>
+  );
+}
+
 function EditVersionCodeForm({
   editVersionCode,
   setEditVersionCode,
@@ -728,6 +795,9 @@ function EditVersionCodeForm({
   onSubmit,
   onCancel,
   isPending,
+  volatileKeys, setVolatileKeys,
+  volatileKeyInput, setVolatileKeyInput,
+  isConfigApp,
 }: {
   editVersionCode: string;
   setEditVersionCode: (v: string) => void;
@@ -739,6 +809,9 @@ function EditVersionCodeForm({
   onSubmit: (e: React.FormEvent) => void;
   onCancel: () => void;
   isPending: boolean;
+  volatileKeys?: string[]; setVolatileKeys?: (v: string[]) => void;
+  volatileKeyInput?: string; setVolatileKeyInput?: (v: string) => void;
+  isConfigApp?: boolean;
 }) {
   const reqsList = useMemo(
     () => editVersionReqs.trim() ? editVersionReqs.trim().split("\n").filter(Boolean) : [],
@@ -762,6 +835,14 @@ function EditVersionCodeForm({
           onChange={(reqs) => setEditVersionReqs(reqs.join("\n"))}
         />
       </div>
+      {isConfigApp && volatileKeys && setVolatileKeys && setVolatileKeyInput && (
+        <VolatileKeysEditor
+          keys={volatileKeys}
+          setKeys={setVolatileKeys}
+          inputVal={volatileKeyInput!}
+          setInputVal={setVolatileKeyInput}
+        />
+      )}
       {editVersionError && <p className="text-sm text-red-400">{editVersionError}</p>}
       <DialogFooter>
         <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
@@ -774,7 +855,7 @@ function EditVersionCodeForm({
 }
 
 function NewVersionCodeForm({
-  versionString, setVersionString,
+  versionField,
   versionCode, setVersionCode,
   versionReqs, setVersionReqs,
   versionEntry, setVersionEntry,
@@ -782,8 +863,11 @@ function NewVersionCodeForm({
   onSubmit,
   onCancel,
   isPending,
+  volatileKeys, setVolatileKeys,
+  volatileKeyInput, setVolatileKeyInput,
+  isConfigApp,
 }: {
-  versionString: string; setVersionString: (v: string) => void;
+  versionField: { value: string; onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => void; onBlur: () => void; error: string | null };
   versionCode: string; setVersionCode: (v: string) => void;
   versionReqs: string; setVersionReqs: (v: string) => void;
   versionEntry: string; setVersionEntry: (v: string) => void;
@@ -791,6 +875,9 @@ function NewVersionCodeForm({
   onSubmit: (e: React.FormEvent) => void;
   onCancel: () => void;
   isPending: boolean;
+  volatileKeys?: string[]; setVolatileKeys?: (v: string[]) => void;
+  volatileKeyInput?: string; setVolatileKeyInput?: (v: string) => void;
+  isConfigApp?: boolean;
 }) {
   const reqsList = useMemo(
     () => versionReqs.trim() ? versionReqs.trim().split("\n").filter(Boolean) : [],
@@ -802,7 +889,8 @@ function NewVersionCodeForm({
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1.5">
           <Label htmlFor="ver-string">Version</Label>
-          <Input id="ver-string" placeholder="e.g. 1.1.0" value={versionString} onChange={(e) => setVersionString(e.target.value)} autoFocus />
+          <Input id="ver-string" placeholder="e.g. 1.1.0" value={versionField.value} onChange={versionField.onChange} onBlur={versionField.onBlur} autoFocus />
+          {versionField.error && <p className="text-xs text-red-400 mt-0.5">{versionField.error}</p>}
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="ver-entry">Entry Class <span className="font-normal text-zinc-500">(optional)</span></Label>
@@ -820,6 +908,14 @@ function NewVersionCodeForm({
           onChange={(reqs) => setVersionReqs(reqs.join("\n"))}
         />
       </div>
+      {isConfigApp && volatileKeys && setVolatileKeys && setVolatileKeyInput && (
+        <VolatileKeysEditor
+          keys={volatileKeys}
+          setKeys={setVolatileKeys}
+          inputVal={volatileKeyInput!}
+          setInputVal={setVolatileKeyInput}
+        />
+      )}
       {versionError && <p className="text-sm text-red-400">{versionError}</p>}
       <DialogFooter>
         <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
@@ -846,9 +942,9 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
   // Form state — used for both create and edit
   const [formMode, setFormMode] = useState<"closed" | "create" | "edit">("closed");
   const [editId, setEditId] = useState<string | null>(null);
-  const [formName, setFormName] = useState("");
+  const formNameField = useField("", validateName);
   const [formExpression, setFormExpression] = useState("");
-  const [formWindow, setFormWindow] = useState("5m");
+  const formWindowField = useField("5m", validateAlertWindow);
   const [formSeverity, setFormSeverity] = useState("warning");
   const [formEnabled, setFormEnabled] = useState(true);
   const [formError, setFormError] = useState<string | null>(null);
@@ -858,9 +954,9 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
   const openCreate = (prefill?: { name?: string; expression?: string; window?: string; severity?: string }) => {
     setFormMode("create");
     setEditId(null);
-    setFormName(prefill?.name ?? "");
+    formNameField.reset(prefill?.name ?? "");
     setFormExpression(prefill?.expression ?? "");
-    setFormWindow(prefill?.window ?? "5m");
+    formWindowField.reset(prefill?.window ?? "5m");
     setFormSeverity(prefill?.severity ?? "warning");
     setFormEnabled(true);
     setFormError(null);
@@ -869,9 +965,9 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
   const openEdit = (defn: AppAlertDefinition) => {
     setFormMode("edit");
     setEditId(defn.id);
-    setFormName(defn.name);
+    formNameField.reset(defn.name);
     setFormExpression(defn.expression);
-    setFormWindow(defn.window);
+    formWindowField.reset(defn.window);
     setFormSeverity(defn.severity);
     setFormEnabled(defn.enabled);
     setFormError(null);
@@ -880,19 +976,22 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
   const closeForm = () => {
     setFormMode("closed");
     setEditId(null);
+    formNameField.reset();
+    formWindowField.reset("5m");
     setFormError(null);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
+    if (!validateAll(formNameField, formWindowField)) return;
     try {
       if (formMode === "edit" && editId) {
         await updateDef.mutateAsync({
           id: editId,
-          name: formName,
+          name: formNameField.value,
           expression: formExpression,
-          window: formWindow,
+          window: formWindowField.value,
           severity: formSeverity,
           enabled: formEnabled,
         });
@@ -904,9 +1003,9 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
         await createDef.mutateAsync({
           app_id: appId,
           app_version_id: latestVersion.id,
-          name: formName,
+          name: formNameField.value,
           expression: formExpression,
-          window: formWindow,
+          window: formWindowField.value,
           severity: formSeverity,
           enabled: formEnabled,
         });
@@ -977,7 +1076,8 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label htmlFor="alert-name">Name</Label>
-                <Input id="alert-name" value={formName} onChange={(e) => setFormName(e.target.value)} required />
+                <Input id="alert-name" value={formNameField.value} onChange={formNameField.onChange} onBlur={formNameField.onBlur} required />
+                {formNameField.error && <p className="text-xs text-red-400 mt-0.5">{formNameField.error}</p>}
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="alert-severity">Severity</Label>
@@ -1050,8 +1150,8 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
                 <Label htmlFor="alert-window">Window</Label>
                 <select
                   id="alert-window"
-                  value={formWindow}
-                  onChange={(e) => setFormWindow(e.target.value)}
+                  value={formWindowField.value}
+                  onChange={(e) => formWindowField.setValue(e.target.value)}
                   className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100"
                 >
                   <option value="30s">30s</option>

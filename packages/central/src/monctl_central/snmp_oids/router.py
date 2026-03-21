@@ -5,7 +5,8 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
+from monctl_common.validators import validate_oid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,15 +17,27 @@ router = APIRouter()
 
 
 class SnmpOidCreate(BaseModel):
-    name: str
-    oid: str
-    description: str | None = None
+    name: str = Field(min_length=1, max_length=255)
+    oid: str = Field(min_length=3, max_length=256)
+    description: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("oid")
+    @classmethod
+    def check_oid(cls, v: str) -> str:
+        return validate_oid(v)
 
 
 class SnmpOidUpdate(BaseModel):
-    name: str | None = None
-    oid: str | None = None
-    description: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    oid: str | None = Field(default=None, min_length=3, max_length=256)
+    description: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("oid")
+    @classmethod
+    def check_oid(cls, v: str | None) -> str | None:
+        if v is not None:
+            return validate_oid(v)
+        return v
 
 
 def _format_oid(o: SnmpOid) -> dict:

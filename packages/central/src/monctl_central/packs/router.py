@@ -6,7 +6,8 @@ import re
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
+from monctl_common.validators import validate_semver, validate_slug
 import sqlalchemy as sa
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -230,12 +231,22 @@ async def import_pack_endpoint(
 
 
 class CreatePackRequest(BaseModel):
-    pack_uid: str
-    name: str
-    version: str
-    description: str | None = None
-    author: str | None = None
+    pack_uid: str = Field(min_length=2, max_length=128)
+    name: str = Field(min_length=1, max_length=255)
+    version: str = Field(min_length=1, max_length=32)
+    description: str | None = Field(default=None, max_length=2000)
+    author: str | None = Field(default=None, max_length=255)
     entity_ids: dict[str, list[str]]
+
+    @field_validator("pack_uid")
+    @classmethod
+    def check_pack_uid(cls, v: str) -> str:
+        return validate_slug(v, "pack_uid")
+
+    @field_validator("version")
+    @classmethod
+    def check_version(cls, v: str) -> str:
+        return validate_semver(v)
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)

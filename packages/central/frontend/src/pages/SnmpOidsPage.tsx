@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
+import { validateName, validateOid } from "@/lib/validation.ts";
 import { Loader2, Network, Pencil, Plus, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
@@ -30,15 +32,15 @@ export function SnmpOidsPage() {
 
   // Add dialog
   const [addOpen, setAddOpen] = useState(false);
-  const [addName, setAddName] = useState("");
-  const [addOid, setAddOid] = useState("");
+  const addNameField = useField("", validateName);
+  const addOidField = useField("", validateOid);
   const [addDescription, setAddDescription] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
 
   // Edit dialog
   const [editTarget, setEditTarget] = useState<SnmpOid | null>(null);
-  const [editName, setEditName] = useState("");
-  const [editOid, setEditOid] = useState("");
+  const editNameField = useField("", validateName);
+  const editOidField = useField("", validateOid);
   const [editDescription, setEditDescription] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
 
@@ -47,8 +49,8 @@ export function SnmpOidsPage() {
 
   function openEdit(o: SnmpOid) {
     setEditTarget(o);
-    setEditName(o.name);
-    setEditOid(o.oid);
+    editNameField.reset(o.name);
+    editOidField.reset(o.oid);
     setEditDescription(o.description ?? "");
     setEditError(null);
   }
@@ -56,15 +58,14 @@ export function SnmpOidsPage() {
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setAddError(null);
-    if (!addName.trim()) { setAddError("Name is required."); return; }
-    if (!addOid.trim()) { setAddError("OID is required."); return; }
+    if (!validateAll(addNameField, addOidField)) return;
     try {
       await createOid.mutateAsync({
-        name: addName.trim(),
-        oid: addOid.trim(),
+        name: addNameField.value.trim(),
+        oid: addOidField.value.trim(),
         description: addDescription.trim() || undefined,
       });
-      setAddName(""); setAddOid(""); setAddDescription("");
+      addNameField.reset(); addOidField.reset(); setAddDescription("");
       setAddOpen(false);
     } catch (err) {
       setAddError(err instanceof Error ? err.message : "Failed to create OID");
@@ -75,14 +76,13 @@ export function SnmpOidsPage() {
     e.preventDefault();
     if (!editTarget) return;
     setEditError(null);
-    if (!editName.trim()) { setEditError("Name is required."); return; }
-    if (!editOid.trim()) { setEditError("OID is required."); return; }
+    if (!validateAll(editNameField, editOidField)) return;
     try {
       await updateOid.mutateAsync({
         id: editTarget.id,
         data: {
-          name: editName.trim(),
-          oid: editOid.trim(),
+          name: editNameField.value.trim(),
+          oid: editOidField.value.trim(),
           description: editDescription.trim() || undefined,
         },
       });
@@ -202,20 +202,24 @@ export function SnmpOidsPage() {
             <Input
               id="add-name"
               placeholder="e.g. System Uptime"
-              value={addName}
-              onChange={(e) => setAddName(e.target.value)}
+              value={addNameField.value}
+              onChange={addNameField.onChange}
+              onBlur={addNameField.onBlur}
               autoFocus
             />
+            {addNameField.error && <p className="text-xs text-red-400 mt-0.5">{addNameField.error}</p>}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="add-oid">OID</Label>
             <Input
               id="add-oid"
               placeholder="e.g. 1.3.6.1.2.1.1.3.0"
-              value={addOid}
-              onChange={(e) => setAddOid(e.target.value)}
+              value={addOidField.value}
+              onChange={addOidField.onChange}
+              onBlur={addOidField.onBlur}
               className="font-mono text-sm"
             />
+            {addOidField.error && <p className="text-xs text-red-400 mt-0.5">{addOidField.error}</p>}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="add-desc">
@@ -248,19 +252,23 @@ export function SnmpOidsPage() {
             <Label htmlFor="edit-name">Name</Label>
             <Input
               id="edit-name"
-              value={editName}
-              onChange={(e) => setEditName(e.target.value)}
+              value={editNameField.value}
+              onChange={editNameField.onChange}
+              onBlur={editNameField.onBlur}
               autoFocus
             />
+            {editNameField.error && <p className="text-xs text-red-400 mt-0.5">{editNameField.error}</p>}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="edit-oid">OID</Label>
             <Input
               id="edit-oid"
-              value={editOid}
-              onChange={(e) => setEditOid(e.target.value)}
+              value={editOidField.value}
+              onChange={editOidField.onChange}
+              onBlur={editOidField.onBlur}
               className="font-mono text-sm"
             />
+            {editOidField.error && <p className="text-xs text-red-400 mt-0.5">{editOidField.error}</p>}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="edit-desc">

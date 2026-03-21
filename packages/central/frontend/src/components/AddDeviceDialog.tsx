@@ -1,4 +1,6 @@
 import { useState, useMemo } from "react";
+import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
+import { validateName, validateAddress } from "@/lib/validation.ts";
 import { Key, Loader2, X } from "lucide-react";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
@@ -28,8 +30,8 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
   const { data: credentials } = useCredentials();
   const createDevice = useCreateDevice();
 
-  const [name, setName] = useState("");
-  const [address, setAddress] = useState("");
+  const nameField = useField("", validateName);
+  const addressField = useField("", validateAddress);
   const [deviceType, setDeviceType] = useState("host");
   const [tenantId, setTenantId] = useState("");
   const [collectorGroupId, setCollectorGroupId] = useState("");
@@ -50,8 +52,8 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
   }, [credsByType, deviceCreds]);
 
   function reset() {
-    setName("");
-    setAddress("");
+    nameField.reset();
+    addressField.reset();
     setDeviceType("host");
     setTenantId("");
     setCollectorGroupId("");
@@ -69,10 +71,7 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
     e.preventDefault();
     setError(null);
 
-    if (!name.trim() || !address.trim()) {
-      setError("Name and address are required.");
-      return;
-    }
+    if (!validateAll(nameField, addressField)) return;
 
     if (!tenantId) {
       setError("Tenant is required.");
@@ -90,8 +89,8 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
 
     try {
       await createDevice.mutateAsync({
-        name: name.trim(),
-        address: address.trim(),
+        name: nameField.value.trim(),
+        address: addressField.value.trim(),
         device_type: deviceType,
         tenant_id: tenantId || undefined,
         collector_group_id: collectorGroupId || undefined,
@@ -115,10 +114,12 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
           <Input
             id="device-name"
             placeholder="e.g. prod-web-01"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
+            value={nameField.value}
+            onChange={nameField.onChange}
+            onBlur={nameField.onBlur}
             autoFocus
           />
+          {nameField.error && <p className="text-xs text-red-400 mt-0.5">{nameField.error}</p>}
         </div>
 
         {/* Address */}
@@ -127,9 +128,11 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
           <Input
             id="device-address"
             placeholder="IP, hostname, or URL"
-            value={address}
-            onChange={(e) => setAddress(e.target.value)}
+            value={addressField.value}
+            onChange={addressField.onChange}
+            onBlur={addressField.onBlur}
           />
+          {addressField.error && <p className="text-xs text-red-400 mt-0.5">{addressField.error}</p>}
         </div>
 
         {/* Device Type */}

@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from monctl_central.dependencies import check_tenant_access, get_clickhouse, get_db, require_auth
-from monctl_central.storage.models import Device
+from monctl_central.storage.models import Device, InterfaceMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -269,7 +269,9 @@ _TIER_TABLE = {"raw": "interface", "hourly": "interface_hourly", "daily": "inter
 _TIER_TIME_COL = {"raw": "executed_at", "hourly": "hour", "daily": "day"}
 
 
-async def _auto_select_tier(from_ts_str: str | None, db: AsyncSession) -> str:
+async def _auto_select_tier(
+    from_ts_str: str | None, db: AsyncSession, device_id: str | None = None,
+) -> str:
     """Auto-select interface data tier based on age of query vs configured retention."""
     if not from_ts_str:
         return "raw"
@@ -279,6 +281,25 @@ async def _auto_select_tier(from_ts_str: str | None, db: AsyncSession) -> str:
 
     raw_days = 7
     hourly_days = 90
+
+    # Check per-device override first
+    if device_id:
+        try:
+            device = await db.get(Device, uuid.UUID(device_id))
+            if device and device.retention_overrides:
+                overrides = device.retention_overrides
+                if "interface_raw_retention_days" in overrides:
+                    raw_days = int(overrides["interface_raw_retention_days"])
+                if "interface_hourly_retention_days" in overrides:
+                    hourly_days = int(overrides["interface_hourly_retention_days"])
+                if age.days <= raw_days:
+                    return "raw"
+                elif age.days <= hourly_days:
+                    return "hourly"
+                return "daily"
+        except Exception:
+            pass
+
     try:
         setting = await db.get(SystemSetting, "interface_raw_retention_days")
         if setting:
@@ -319,7 +340,7 @@ async def device_interfaces(
     if tier and tier in _VALID_TIERS:
         selected_tier = tier
     else:
-        selected_tier = await _auto_select_tier(from_ts, db)
+        selected_tier = await _auto_select_tier(from_ts, db, device_id=device_id)
 
     table = _TIER_TABLE[selected_tier]
     time_col = _TIER_TIME_COL[selected_tier]
@@ -378,6 +399,17 @@ async def device_interfaces_latest(
     if not check_tenant_access(auth, device.tenant_id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
+    # Get valid interface_ids from metadata to filter out orphaned ClickHouse rows.
+    # Orphans occur when metadata is recreated (new UUID) but old ClickHouse rows
+    # still reference the previous interface_id.
+    from sqlalchemy import select
+    valid_ids_result = await db.execute(
+        select(InterfaceMetadata.id).where(
+            InterfaceMetadata.device_id == uuid.UUID(device_id),
+        )
+    )
+    valid_ids = {str(row[0]) for row in valid_ids_result.all()}
+
     ch = get_clickhouse()
     try:
         rows = ch.query_latest(table="interface", device_id=device_id)
@@ -387,7 +419,8 @@ async def device_interfaces_latest(
         else:
             raise
 
-    data = [_format_interface_row(r) for r in rows]
+    data = [_format_interface_row(r) for r in rows
+            if str(r.get("interface_id", "")) in valid_ids]
     return {
         "status": "success",
         "data": data,
@@ -468,6 +501,7 @@ def _format_performance_row(r: dict) -> dict:
     """Format a ClickHouse performance table row."""
     metric_names = r.get("metric_names", [])
     metric_values = r.get("metric_values", [])
+    metric_types = r.get("metric_types", [])
     metrics = dict(zip(metric_names, metric_values)) if metric_names else {}
     return {
         "assignment_id": str(r.get("assignment_id", "")),
@@ -480,6 +514,7 @@ def _format_performance_row(r: dict) -> dict:
         "metrics": metrics,
         "metric_names": list(metric_names),
         "metric_values": list(metric_values),
+        "metric_types": list(metric_types),
         "executed_at": _ensure_utc_iso(r.get("executed_at")) or "",
         "collector_name": r.get("collector_name", "") or None,
     }
@@ -549,6 +584,58 @@ async def device_performance_summary(
     return {"status": "success", "data": list(apps.values())}
 
 
+_PERF_TIER_TABLE = {"raw": "performance", "hourly": "performance_hourly", "daily": "performance_daily"}
+_PERF_TIER_TIME_COL = {"raw": "executed_at", "hourly": "hour", "daily": "day"}
+
+
+async def _auto_select_perf_tier(
+    from_ts_str: str | None, db: AsyncSession, device_id: str | None = None,
+) -> str:
+    """Auto-select performance data tier based on age of query vs configured retention."""
+    if not from_ts_str:
+        return "raw"
+    from monctl_central.storage.models import SystemSetting
+    from_dt = datetime.fromisoformat(from_ts_str.replace("Z", "+00:00"))
+    age = datetime.now(tz=from_dt.tzinfo or None) - from_dt
+
+    raw_days = 7
+    hourly_days = 90
+
+    # Check per-device override first
+    if device_id:
+        try:
+            device = await db.get(Device, uuid.UUID(device_id))
+            if device and device.retention_overrides:
+                overrides = device.retention_overrides
+                if "perf_raw_retention_days" in overrides:
+                    raw_days = int(overrides["perf_raw_retention_days"])
+                if "perf_hourly_retention_days" in overrides:
+                    hourly_days = int(overrides["perf_hourly_retention_days"])
+                if age.days <= raw_days:
+                    return "raw"
+                elif age.days <= hourly_days:
+                    return "hourly"
+                return "daily"
+        except Exception:
+            pass
+
+    try:
+        setting = await db.get(SystemSetting, "perf_raw_retention_days")
+        if setting:
+            raw_days = int(setting.value)
+        setting = await db.get(SystemSetting, "perf_hourly_retention_days")
+        if setting:
+            hourly_days = int(setting.value)
+    except Exception:
+        pass
+
+    if age.days <= raw_days:
+        return "raw"
+    elif age.days <= hourly_days:
+        return "hourly"
+    return "daily"
+
+
 @router.get("/performance/{device_id}")
 async def device_performance(
     device_id: str,
@@ -557,6 +644,7 @@ async def device_performance(
     component_type: Optional[str] = Query(default=None),
     component: Optional[str] = Query(default=None),
     app_id: Optional[str] = Query(default=None),
+    tier: Optional[str] = Query(default=None, description="Data tier: raw, hourly, daily (omit for auto)"),
     limit: int = Query(default=5000, le=20000),
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
@@ -568,42 +656,128 @@ async def device_performance(
     if not check_tenant_access(auth, device.tenant_id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
+    # Resolve tier
+    if tier and tier in _PERF_TIER_TABLE:
+        selected_tier = tier
+    else:
+        selected_tier = await _auto_select_perf_tier(from_ts, db, device_id=device_id)
+
     ch = get_clickhouse()
+    table = _PERF_TIER_TABLE[selected_tier]
+    time_col = _PERF_TIER_TIME_COL[selected_tier]
 
-    sql = "SELECT * FROM performance WHERE device_id = {device_id:UUID}"
-    params: dict = {"device_id": device_id}
+    if selected_tier == "raw":
+        # Raw tier — query performance table with array columns
+        sql = f"SELECT * FROM {table} WHERE device_id = {{device_id:UUID}}"
+        params: dict = {"device_id": device_id}
 
-    if from_ts:
-        sql += " AND executed_at >= {from_ts:DateTime64}"
-        # Strip timezone offset — ClickHouse DateTime64 params expect naive format
-        params["from_ts"] = from_ts.replace("Z", "").replace("+00:00", "").split("+")[0]
-    if to_ts:
-        sql += " AND executed_at <= {to_ts:DateTime64}"
-        params["to_ts"] = to_ts.replace("Z", "").replace("+00:00", "").split("+")[0]
-    if component_type:
-        sql += " AND component_type = {component_type:String}"
-        params["component_type"] = component_type
-    if component:
-        components = [c.strip() for c in component.split(",")]
-        sql += " AND component IN ({components:Array(String)})"
-        params["components"] = components
-    if app_id:
-        sql += " AND app_id = {app_id:UUID}"
-        params["app_id"] = app_id
+        if from_ts:
+            sql += f" AND {time_col} >= {{from_ts:DateTime64}}"
+            params["from_ts"] = from_ts.replace("Z", "").replace("+00:00", "").split("+")[0]
+        if to_ts:
+            sql += f" AND {time_col} <= {{to_ts:DateTime64}}"
+            params["to_ts"] = to_ts.replace("Z", "").replace("+00:00", "").split("+")[0]
+        if component_type:
+            sql += " AND component_type = {component_type:String}"
+            params["component_type"] = component_type
+        if component:
+            components = [c.strip() for c in component.split(",")]
+            sql += " AND component IN ({components:Array(String)})"
+            params["components"] = components
+        if app_id:
+            sql += " AND app_id = {app_id:UUID}"
+            params["app_id"] = app_id
 
-    sql += " ORDER BY component_type, component, executed_at DESC"
-    sql += " LIMIT {limit:UInt32}"
-    params["limit"] = limit
+        sql += f" ORDER BY component_type, component, {time_col} DESC"
+        sql += " LIMIT {limit:UInt32}"
+        params["limit"] = limit
 
-    try:
-        client = ch._get_client()
-        result = client.query(sql, parameters=params)
-        rows = list(result.named_results())
-    except Exception as exc:
-        if ch._is_table_missing_error(exc):
-            rows = []
-        else:
-            raise
+        try:
+            client = ch._get_client()
+            result = client.query(sql, parameters=params)
+            rows = list(result.named_results())
+        except Exception as exc:
+            if ch._is_table_missing_error(exc):
+                rows = []
+            else:
+                raise
 
-    data = [_format_performance_row(r) for r in rows]
-    return {"status": "success", "data": data, "meta": {"limit": limit, "count": len(data)}}
+        data = [_format_performance_row(r) for r in rows]
+    else:
+        # Rollup tier — individual metric rows, re-group into array format
+        sql = (
+            f"SELECT device_id, app_id, component_type, component, metric_name, metric_type,"
+            f" {time_col}, val_avg, val_min, val_max, val_p95, sample_count,"
+            f" device_name, app_name, tenant_id, tenant_name"
+            f" FROM {table} WHERE device_id = {{device_id:UUID}}"
+        )
+        params = {"device_id": device_id}
+
+        if from_ts:
+            sql += f" AND {time_col} >= {{from_ts:DateTime64}}"
+            params["from_ts"] = from_ts.replace("Z", "").replace("+00:00", "").split("+")[0]
+        if to_ts:
+            sql += f" AND {time_col} <= {{to_ts:DateTime64}}"
+            params["to_ts"] = to_ts.replace("Z", "").replace("+00:00", "").split("+")[0]
+        if component_type:
+            sql += " AND component_type = {component_type:String}"
+            params["component_type"] = component_type
+        if component:
+            components = [c.strip() for c in component.split(",")]
+            sql += " AND component IN ({components:Array(String)})"
+            params["components"] = components
+        if app_id:
+            sql += " AND app_id = {app_id:UUID}"
+            params["app_id"] = app_id
+
+        sql += f" ORDER BY component_type, component, {time_col} DESC"
+        sql += " LIMIT {limit:UInt32}"
+        params["limit"] = limit
+
+        try:
+            client = ch._get_client()
+            result = client.query(sql, parameters=params)
+            raw_rows = list(result.named_results())
+        except Exception as exc:
+            if ch._is_table_missing_error(exc):
+                raw_rows = []
+            else:
+                raise
+
+        # Re-group per-metric rows into array format
+        grouped: dict[tuple, dict] = {}
+        for row in raw_rows:
+            key = (row.get("component_type", ""), row.get("component", ""), str(row.get(time_col, "")))
+            if key not in grouped:
+                grouped[key] = {
+                    "assignment_id": "",
+                    "app_id": str(row.get("app_id", "")),
+                    "app_name": row.get("app_name", ""),
+                    "device_id": str(row.get("device_id", "")),
+                    "component_type": row.get("component_type", ""),
+                    "component": row.get("component", ""),
+                    "state": 0,
+                    "metrics": {},
+                    "metric_names": [],
+                    "metric_values": [],
+                    "metric_types": [],
+                    "executed_at": _ensure_utc_iso(row.get(time_col)) or "",
+                    "collector_name": None,
+                    "sample_count": 0,
+                }
+            entry = grouped[key]
+            mn = row.get("metric_name", "")
+            entry["metric_names"].append(mn)
+            entry["metric_values"].append(row.get("val_avg", 0))
+            entry["metric_types"].append(row.get("metric_type", "gauge"))
+            entry["metrics"][mn] = row.get("val_avg", 0)
+            entry["sample_count"] = max(entry["sample_count"], row.get("sample_count", 0))
+
+        data = list(grouped.values())
+
+    return {
+        "status": "success",
+        "data": data,
+        "tier": selected_tier,
+        "meta": {"limit": limit, "count": len(data)},
+    }

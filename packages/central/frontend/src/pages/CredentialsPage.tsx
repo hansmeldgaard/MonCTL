@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from "react";
+import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
+import { validateName, validateShortName } from "@/lib/validation.ts";
 import { ArrowDown, ArrowUp, FileText, KeyRound, Loader2, Pencil, Plus, Settings2, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
@@ -54,7 +56,7 @@ function CredentialKeysCard() {
   const deleteKey = useDeleteCredentialKey();
 
   const [addOpen, setAddOpen] = useState(false);
-  const [addName, setAddName] = useState("");
+  const addKeyNameField = useField("", validateShortName);
   const [addDesc, setAddDesc] = useState("");
   const [addKeyType, setAddKeyType] = useState<"plain" | "secret" | "enum">("plain");
   const [addEnumValues, setAddEnumValues] = useState<string[]>([]);
@@ -72,17 +74,17 @@ function CredentialKeysCard() {
   const [deleteTarget, setDeleteTarget] = useState<CredentialKey | null>(null);
 
   function resetAdd() {
-    setAddName(""); setAddDesc(""); setAddKeyType("plain"); setAddEnumValues([]); setAddEnumInput(""); setAddError(null); setAddOpen(true);
+    addKeyNameField.reset(); setAddDesc(""); setAddKeyType("plain"); setAddEnumValues([]); setAddEnumInput(""); setAddError(null); setAddOpen(true);
   }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setAddError(null);
-    if (!addName.trim()) { setAddError("Name is required."); return; }
+    if (!validateAll(addKeyNameField)) return;
     if (addKeyType === "enum" && addEnumValues.length < 2) { setAddError("Enum requires at least 2 values."); return; }
     try {
       await createKey.mutateAsync({
-        name: addName.trim(),
+        name: addKeyNameField.value.trim(),
         description: addDesc.trim() || undefined,
         key_type: addKeyType,
         enum_values: addKeyType === "enum" ? addEnumValues : undefined,
@@ -242,7 +244,8 @@ function CredentialKeysCard() {
         <form onSubmit={handleCreate} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="ck-name">Name</Label>
-            <Input id="ck-name" placeholder="e.g. api_key" value={addName} onChange={(e) => setAddName(e.target.value)} autoFocus />
+            <Input id="ck-name" placeholder="e.g. api_key" value={addKeyNameField.value} onChange={addKeyNameField.onChange} onBlur={addKeyNameField.onBlur} autoFocus />
+            {addKeyNameField.error && <p className="text-xs text-red-400 mt-0.5">{addKeyNameField.error}</p>}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="ck-desc">Description <span className="font-normal text-zinc-500">(optional)</span></Label>
@@ -345,7 +348,7 @@ function CredentialsCard() {
   const deleteCredential = useDeleteCredential();
 
   const [addOpen, setAddOpen] = useState(false);
-  const [addName, setAddName] = useState("");
+  const credNameField = useField("", validateName);
   const [addDesc, setAddDesc] = useState("");
   const [addType, setAddType] = useState("");
   const [addTemplateId, setAddTemplateId] = useState("");
@@ -416,16 +419,16 @@ function CredentialsCard() {
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setAddError(null);
-    if (!addName.trim()) { setAddError("Name is required."); return; }
+    if (!validateAll(credNameField)) return;
     try {
       await createCredential.mutateAsync({
-        name: addName.trim(),
+        name: credNameField.value.trim(),
         description: addDesc.trim() || undefined,
         template_id: addTemplateId || undefined,
         credential_type: addTemplateId ? undefined : addType,
         secret: addValues,
       });
-      setAddName(""); setAddDesc(""); setAddType(credentialTypes?.[0]?.name ?? ""); setAddTemplateId(""); setAddValues({}); setAddOpen(false);
+      credNameField.reset(); setAddDesc(""); setAddType(credentialTypes?.[0]?.name ?? ""); setAddTemplateId(""); setAddValues({}); setAddOpen(false);
     } catch (err) {
       setAddError(err instanceof Error ? err.message : "Failed to create credential");
     }
@@ -547,7 +550,7 @@ function CredentialsCard() {
             </Table>
           )}
           <div className="mt-4 flex justify-end border-t border-zinc-800 pt-4">
-            <Button size="sm" variant="secondary" onClick={() => { setAddName(""); setAddDesc(""); setAddType(credentialTypes?.[0]?.name ?? ""); setAddTemplateId(""); setAddValues({}); setAddError(null); setAddOpen(true); }} className="gap-1.5">
+            <Button size="sm" variant="secondary" onClick={() => { credNameField.reset(); setAddDesc(""); setAddType(credentialTypes?.[0]?.name ?? ""); setAddTemplateId(""); setAddValues({}); setAddError(null); setAddOpen(true); }} className="gap-1.5">
               <Plus className="h-4 w-4" /> New Credential
             </Button>
           </div>
@@ -569,7 +572,8 @@ function CredentialsCard() {
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="cr-name">Name</Label>
-              <Input id="cr-name" placeholder="e.g. snmp-prod" value={addName} onChange={(e) => setAddName(e.target.value)} autoFocus />
+              <Input id="cr-name" placeholder="e.g. snmp-prod" value={credNameField.value} onChange={credNameField.onChange} onBlur={credNameField.onBlur} autoFocus />
+              {credNameField.error && <p className="text-xs text-red-400 mt-0.5">{credNameField.error}</p>}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="cr-type">Type</Label>

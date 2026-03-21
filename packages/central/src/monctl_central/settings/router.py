@@ -22,6 +22,9 @@ _DEFAULTS = {
     "interface_hourly_retention_days": "90",
     "interface_daily_retention_days": "730",
     "config_retention_days": "90",
+    "perf_raw_retention_days": "7",
+    "perf_hourly_retention_days": "90",
+    "perf_daily_retention_days": "730",
     "pypi_network_mode": "direct",
     "pypi_proxy_url": "",
 }

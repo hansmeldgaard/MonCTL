@@ -3,14 +3,16 @@ import type { FormEvent } from "react";
 import { Navigate } from "react-router-dom";
 import { Activity, Loader2 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth.tsx";
+import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
+import { required } from "@/lib/validation.ts";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { ApiError } from "@/api/client.ts";
 
 export function LoginPage() {
   const { login, isAuthenticated, isLoading: authLoading } = useAuth();
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
+  const usernameField = useField("", required);
+  const passwordField = useField("", required);
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -28,11 +30,12 @@ export function LoginPage() {
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (!validateAll(usernameField, passwordField)) return;
     setError("");
     setIsSubmitting(true);
 
     try {
-      await login({ username, password });
+      await login({ username: usernameField.value, password: passwordField.value });
     } catch (err) {
       if (err instanceof ApiError) {
         setError(
@@ -70,26 +73,34 @@ export function LoginPage() {
         {/* Card */}
         <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-6 shadow-xl shadow-black/20">
           <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
-            <Input
-              id="username"
-              label="Username"
-              type="text"
-              placeholder="Enter username"
-              autoComplete="username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              required
-            />
-            <Input
-              id="password"
-              label="Password"
-              type="password"
-              placeholder="Enter password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
+            <div>
+              <Input
+                id="username"
+                label="Username"
+                type="text"
+                placeholder="Enter username"
+                autoComplete="username"
+                value={usernameField.value}
+                onChange={usernameField.onChange}
+                onBlur={usernameField.onBlur}
+                required
+              />
+              {usernameField.error && <p className="text-xs text-red-400 mt-0.5">{usernameField.error}</p>}
+            </div>
+            <div>
+              <Input
+                id="password"
+                label="Password"
+                type="password"
+                placeholder="Enter password"
+                autoComplete="current-password"
+                value={passwordField.value}
+                onChange={passwordField.onChange}
+                onBlur={passwordField.onBlur}
+                required
+              />
+              {passwordField.error && <p className="text-xs text-red-400 mt-0.5">{passwordField.error}</p>}
+            </div>
 
             {error && (
               <div className="rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-400">

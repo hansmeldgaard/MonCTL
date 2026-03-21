@@ -5,7 +5,8 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from monctl_common.validators import validate_uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -42,26 +43,70 @@ def _fmt_user(u: User, role_name: str | None = None) -> dict:
 
 class CreateUserRequest(BaseModel):
     username: str = Field(min_length=2, max_length=150)
-    password: str = Field(min_length=6)
+    password: str = Field(min_length=6, max_length=128)
     role: str = Field(default="user", description="'admin' or 'user'")
     role_id: str | None = None
-    display_name: str | None = None
-    email: str | None = None
+    display_name: str | None = Field(default=None, max_length=255)
+    email: str | None = Field(default=None, max_length=255)
     all_tenants: bool = False
+
+    @field_validator("role")
+    @classmethod
+    def check_role(cls, v: str) -> str:
+        if v not in {"admin", "user"}:
+            raise ValueError("role must be 'admin' or 'user'")
+        return v
+
+    @field_validator("email")
+    @classmethod
+    def check_email(cls, v: str | None) -> str | None:
+        if v is not None:
+            if "@" not in v or "." not in v.split("@")[-1]:
+                raise ValueError("Invalid email format")
+        return v
+
+    @field_validator("role_id")
+    @classmethod
+    def check_role_id(cls, v: str | None) -> str | None:
+        if v is not None:
+            validate_uuid(v, "role_id")
+        return v
 
 
 class UpdateUserRequest(BaseModel):
     role: str | None = None
     role_id: str | None = None
-    display_name: str | None = None
-    email: str | None = None
+    display_name: str | None = Field(default=None, max_length=255)
+    email: str | None = Field(default=None, max_length=255)
     all_tenants: bool | None = None
     is_active: bool | None = None
-    timezone: str | None = None
+    timezone: str | None = Field(default=None, max_length=50)
+
+    @field_validator("role")
+    @classmethod
+    def check_role(cls, v: str | None) -> str | None:
+        if v is not None and v not in {"admin", "user"}:
+            raise ValueError("role must be 'admin' or 'user'")
+        return v
+
+    @field_validator("email")
+    @classmethod
+    def check_email(cls, v: str | None) -> str | None:
+        if v is not None:
+            if "@" not in v or "." not in v.split("@")[-1]:
+                raise ValueError("Invalid email format")
+        return v
+
+    @field_validator("role_id")
+    @classmethod
+    def check_role_id(cls, v: str | None) -> str | None:
+        if v is not None:
+            validate_uuid(v, "role_id")
+        return v
 
 
 class UpdateTimezoneRequest(BaseModel):
-    timezone: str = Field(min_length=1, max_length=50)
+    timezone: str = Field(min_length=1, max_length=50, pattern=r"^[A-Za-z_/]+$")
 
 
 VALID_PAGE_SIZES = {50, 100, 250, 500}
@@ -69,8 +114,8 @@ VALID_SCROLL_MODES = {"paginated", "infinite"}
 
 
 class UpdateTablePreferencesRequest(BaseModel):
-    table_page_size: int | None = None
-    table_scroll_mode: str | None = None
+    table_page_size: int | None = Field(default=None, ge=10, le=200)
+    table_scroll_mode: str | None = Field(default=None, max_length=20)
 
 
 class AssignTenantRequest(BaseModel):

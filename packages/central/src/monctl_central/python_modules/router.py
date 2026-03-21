@@ -8,7 +8,8 @@ from pathlib import Path
 
 import structlog
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
+from monctl_common.validators import validate_uuid
 import sqlalchemy as sa
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -560,8 +561,8 @@ async def upload_wheels_batch(
 # ---------------------------------------------------------------------------
 
 class ImportPyPIRequest(BaseModel):
-    package_name: str
-    version: str | None = None
+    package_name: str = Field(min_length=1, max_length=255)
+    version: str | None = Field(default=None, max_length=32)
 
 
 @router.post("/import-pypi", status_code=status.HTTP_201_CREATED)
@@ -684,7 +685,7 @@ async def import_from_pypi(
 # ---------------------------------------------------------------------------
 
 class ResolveRequest(BaseModel):
-    dependencies: list[str]
+    dependencies: list[str] = Field(min_length=1, max_length=100)
 
 
 @router.post("/resolve")
@@ -712,7 +713,14 @@ async def resolve_dependencies(
 
 class AutoResolveRequest(BaseModel):
     module_id: str | None = None  # resolve for a specific module, or all if None
-    max_depth: int = 5  # max recursion depth to prevent infinite loops
+    max_depth: int = Field(default=5, ge=1, le=20)  # max recursion depth to prevent infinite loops
+
+    @field_validator("module_id")
+    @classmethod
+    def check_module_id(cls, v: str | None) -> str | None:
+        if v is not None:
+            validate_uuid(v, "module_id")
+        return v
 
 
 @router.post("/auto-resolve")

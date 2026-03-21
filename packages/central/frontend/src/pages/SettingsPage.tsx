@@ -1,5 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
+import { validateName } from "@/lib/validation.ts";
 import {
   Activity,
   Building2,
@@ -232,26 +234,27 @@ function ApiKeysTab() {
   const deleteKey = useDeleteUserApiKey();
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [newName, setNewName] = useState("");
+  const apiKeyNameField = useField("", validateName);
   const [newExpiry, setNewExpiry] = useState("");
   const [rawKey, setRawKey] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
   async function handleCreate() {
+    if (!validateAll(apiKeyNameField)) return;
     const result = await createKey.mutateAsync({
-      name: newName.trim(),
+      name: apiKeyNameField.value.trim(),
       expires_at: newExpiry || undefined,
     });
     setRawKey(result.data.raw_key);
-    setNewName("");
+    apiKeyNameField.reset();
     setNewExpiry("");
   }
 
   function handleCloseCreate() {
     setCreateOpen(false);
     setRawKey(null);
-    setNewName("");
+    apiKeyNameField.reset();
     setNewExpiry("");
     setCopied(false);
   }
@@ -387,11 +390,13 @@ function ApiKeysTab() {
                 <Label>Name</Label>
                 <Input
                   placeholder="e.g. Grafana integration"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
+                  value={apiKeyNameField.value}
+                  onChange={apiKeyNameField.onChange}
+                  onBlur={apiKeyNameField.onBlur}
                   className="text-xs"
                   autoFocus
                 />
+                {apiKeyNameField.error && <p className="text-xs text-red-400 mt-0.5">{apiKeyNameField.error}</p>}
               </div>
               <div className="space-y-1.5">
                 <Label>Expires (optional)</Label>
@@ -405,7 +410,7 @@ function ApiKeysTab() {
               </div>
               <DialogFooter>
                 <Button variant="secondary" onClick={handleCloseCreate}>Cancel</Button>
-                <Button onClick={handleCreate} disabled={createKey.isPending || !newName.trim()}>
+                <Button onClick={handleCreate} disabled={createKey.isPending || !apiKeyNameField.value.trim()}>
                   {createKey.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
                   Create
                 </Button>
@@ -489,6 +494,9 @@ function DataRetentionTab() {
   const [ifaceHourlyRetention, setIfaceHourlyRetention] = useState("90");
   const [ifaceDailyRetention, setIfaceDailyRetention] = useState("730");
   const [configRetention, setConfigRetention] = useState("90");
+  const [perfRawRetention, setPerfRawRetention] = useState("7");
+  const [perfHourlyRetention, setPerfHourlyRetention] = useState("90");
+  const [perfDailyRetention, setPerfDailyRetention] = useState("730");
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
@@ -501,6 +509,9 @@ function DataRetentionTab() {
       setIfaceHourlyRetention(settings.interface_hourly_retention_days ?? "90");
       setIfaceDailyRetention(settings.interface_daily_retention_days ?? "730");
       setConfigRetention(settings.config_retention_days ?? "90");
+      setPerfRawRetention(settings.perf_raw_retention_days ?? "7");
+      setPerfHourlyRetention(settings.perf_hourly_retention_days ?? "90");
+      setPerfDailyRetention(settings.perf_daily_retention_days ?? "730");
     }
   }, [settings]);
 
@@ -512,7 +523,10 @@ function DataRetentionTab() {
     ifaceRawRetention !== (settings.interface_raw_retention_days ?? "7") ||
     ifaceHourlyRetention !== (settings.interface_hourly_retention_days ?? "90") ||
     ifaceDailyRetention !== (settings.interface_daily_retention_days ?? "730") ||
-    configRetention !== (settings.config_retention_days ?? "90")
+    configRetention !== (settings.config_retention_days ?? "90") ||
+    perfRawRetention !== (settings.perf_raw_retention_days ?? "7") ||
+    perfHourlyRetention !== (settings.perf_hourly_retention_days ?? "90") ||
+    perfDailyRetention !== (settings.perf_daily_retention_days ?? "730")
   );
 
   async function handleSave() {
@@ -526,6 +540,9 @@ function DataRetentionTab() {
         interface_hourly_retention_days: ifaceHourlyRetention,
         interface_daily_retention_days: ifaceDailyRetention,
         config_retention_days: configRetention,
+        perf_raw_retention_days: perfRawRetention,
+        perf_hourly_retention_days: perfHourlyRetention,
+        perf_daily_retention_days: perfDailyRetention,
       },
     });
     setSaved(true);
@@ -618,6 +635,50 @@ function DataRetentionTab() {
           <div className="space-y-1.5">
             <label className="text-sm text-zinc-400">Daily Rollup</label>
             <Select value={ifaceDailyRetention} onChange={(e) => setIfaceDailyRetention(e.target.value)} className="max-w-48">
+              <option value="180">180 days</option>
+              <option value="365">1 year</option>
+              <option value="730">2 years (default)</option>
+              <option value="1095">3 years</option>
+              <option value="1825">5 years</option>
+            </Select>
+            <p className="text-xs text-zinc-600">Daily aggregated data for long-term trends.</p>
+          </div>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Database className="h-4 w-4" />
+            Performance Data Retention
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-1.5">
+            <label className="text-sm text-zinc-400">Raw Data</label>
+            <Select value={perfRawRetention} onChange={(e) => setPerfRawRetention(e.target.value)} className="max-w-48">
+              <option value="3">3 days</option>
+              <option value="7">7 days (default)</option>
+              <option value="14">14 days</option>
+              <option value="30">30 days</option>
+              <option value="60">60 days</option>
+              <option value="90">90 days</option>
+            </Select>
+            <p className="text-xs text-zinc-600">Full-resolution performance data (every poll interval).</p>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm text-zinc-400">Hourly Rollup</label>
+            <Select value={perfHourlyRetention} onChange={(e) => setPerfHourlyRetention(e.target.value)} className="max-w-48">
+              <option value="30">30 days</option>
+              <option value="60">60 days</option>
+              <option value="90">90 days (default)</option>
+              <option value="180">180 days</option>
+              <option value="365">1 year</option>
+            </Select>
+            <p className="text-xs text-zinc-600">Hourly aggregated data (avg, max, p95).</p>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm text-zinc-400">Daily Rollup</label>
+            <Select value={perfDailyRetention} onChange={(e) => setPerfDailyRetention(e.target.value)} className="max-w-48">
               <option value="180">180 days</option>
               <option value="365">1 year</option>
               <option value="730">2 years (default)</option>

@@ -6,7 +6,8 @@ import hashlib
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from monctl_common.validators import validate_semver
 import sqlalchemy as sa
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -66,30 +67,35 @@ def _fmt_version_detail(v: ConnectorVersion) -> dict:
 # ---------------------------------------------------------------------------
 
 class CreateConnectorRequest(BaseModel):
-    name: str
-    description: str | None = None
-    connector_type: str
+    name: str = Field(min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
+    connector_type: str = Field(min_length=1, max_length=64)
     requirements: dict | None = None
 
 
 class UpdateConnectorRequest(BaseModel):
-    name: str | None = None
-    description: str | None = None
-    connector_type: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
+    connector_type: str | None = Field(default=None, min_length=1, max_length=64)
 
 
 class CreateVersionRequest(BaseModel):
-    version: str
-    source_code: str
+    version: str = Field(min_length=1, max_length=32)
+    source_code: str = Field(min_length=1)
     requirements: dict | None = None
-    entry_class: str = "Connector"
+    entry_class: str = Field(default="Connector", max_length=255)
     set_latest: bool = False
+
+    @field_validator("version")
+    @classmethod
+    def check_version(cls, v: str) -> str:
+        return validate_semver(v)
 
 
 class UpdateVersionRequest(BaseModel):
-    source_code: str | None = None
+    source_code: str | None = Field(default=None, min_length=1)
     requirements: dict | None = None
-    entry_class: str | None = None
+    entry_class: str | None = Field(default=None, max_length=255)
 
 
 # ---------------------------------------------------------------------------

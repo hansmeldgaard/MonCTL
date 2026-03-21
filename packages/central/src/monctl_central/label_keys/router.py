@@ -7,6 +7,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
+from monctl_common.validators import validate_hex_color
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,8 +21,8 @@ _KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,62}[a-z0-9]$")
 
 class CreateLabelKeyRequest(BaseModel):
     key: str = Field(description="Label key name (lowercase, a-z0-9, hyphens, underscores)")
-    description: str | None = None
-    color: str | None = Field(default=None, description="Hex color for UI badges, e.g. '#3B82F6'")
+    description: str | None = Field(default=None, max_length=2000)
+    color: str | None = Field(default=None, max_length=7, description="Hex color for UI badges, e.g. '#3B82F6'")
     show_description: bool = Field(default=False)
     predefined_values: list[str] = Field(default_factory=list)
 
@@ -36,12 +37,47 @@ class CreateLabelKeyRequest(BaseModel):
             )
         return v
 
+    @field_validator("color")
+    @classmethod
+    def check_color(cls, v: str | None) -> str | None:
+        if v is not None:
+            return validate_hex_color(v)
+        return v
+
+    @field_validator("predefined_values")
+    @classmethod
+    def check_predefined_values(cls, v: list[str]) -> list[str]:
+        if len(v) != len(set(v)):
+            raise ValueError("predefined_values must be unique")
+        for val in v:
+            if len(val) > 255:
+                raise ValueError("Each predefined value must be at most 255 characters")
+        return v
+
 
 class UpdateLabelKeyRequest(BaseModel):
-    description: str | None = None
-    color: str | None = None
+    description: str | None = Field(default=None, max_length=2000)
+    color: str | None = Field(default=None, max_length=7)
     show_description: bool | None = None
     predefined_values: list[str] | None = None
+
+    @field_validator("color")
+    @classmethod
+    def check_color(cls, v: str | None) -> str | None:
+        if v is not None:
+            return validate_hex_color(v)
+        return v
+
+    @field_validator("predefined_values")
+    @classmethod
+    def check_predefined_values(cls, v: list[str] | None) -> list[str] | None:
+        if v is not None:
+            if len(v) != len(set(v)):
+                raise ValueError("predefined_values must be unique")
+            for val in v:
+                if len(val) > 255:
+                    raise ValueError("Each predefined value must be at most 255 characters")
+        return v
 
 
 def _fmt(k: LabelKey) -> dict:

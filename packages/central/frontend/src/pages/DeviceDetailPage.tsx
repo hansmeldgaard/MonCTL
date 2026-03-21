@@ -1,5 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
+import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
+import { validateName, validateAddress } from "@/lib/validation.ts";
 import {
   Activity,
   ArrowDown,
@@ -9,6 +11,7 @@ import {
   BarChart2,
   Bell,
   Clock,
+  Database,
   FileText,
   Gauge,
   Key,
@@ -90,8 +93,13 @@ import {
   useDeleteThresholdOverride,
   useConfigChangelog,
   useConfigDiff,
+  useConfigChangeTimestamps,
+  useConfigCompare,
+  useDeviceRetention,
+  useSetDeviceRetention,
+  useDeleteDeviceRetention,
 } from "@/api/hooks.ts";
-import type { Device as DeviceType, DeviceAssignment, DeviceThresholdRow } from "@/types/api.ts";
+import type { Device as DeviceType, DeviceAssignment, DeviceThresholdRow, ConfigDiffEntry, DeviceRetentionEntry } from "@/types/api.ts";
 import { ConfigDataRenderer } from "@/components/ConfigDataRenderer.tsx";
 import { ApplyTemplateDialog } from "@/components/ApplyTemplateDialog.tsx";
 import { PerformanceChart } from "@/components/PerformanceChart.tsx";
@@ -129,8 +137,9 @@ function AddAssignmentDialog({
   const { data: appDetail } = useAppDetail(selectedAppId || undefined);
   const createAssignment = useCreateAssignment();
 
+  const scheduleValidator = (v: string) => { const n = Number(v); if (isNaN(n) || n < 10 || n > 86400) return "Must be 10-86400"; return null; };
   const [scheduleType, setScheduleType] = useState("interval");
-  const [scheduleValue, setScheduleValue] = useState("60");
+  const scheduleValueField = useField("60", scheduleValidator);
   const [versionMode, setVersionMode] = useState<"latest" | "pinned">("latest");
   const [selectedVersionId, setSelectedVersionId] = useState("");
   const [selectedCredentialId, setSelectedCredentialId] = useState("");
@@ -163,7 +172,7 @@ function AddAssignmentDialog({
     setPinToCollector(false);
     setPinnedCollectorId("");
     setScheduleType("interval");
-    setScheduleValue("60");
+    scheduleValueField.reset("60");
     setConfigText("{}");
     setParsedConfig({});
     setConfigError(null);
@@ -197,13 +206,9 @@ function AddAssignmentDialog({
 
     // Validate schedule value
     if (scheduleType === "interval") {
-      const n = Number(scheduleValue);
-      if (!scheduleValue || isNaN(n) || n < 1 || !Number.isInteger(n)) {
-        setFormError("Interval must be a positive integer (seconds).");
-        return;
-      }
+      if (!validateAll(scheduleValueField)) return;
     } else if (scheduleType === "cron") {
-      const parts = scheduleValue.trim().split(/\s+/);
+      const parts = scheduleValueField.value.trim().split(/\s+/);
       if (parts.length < 5) {
         setFormError("Cron expression must have at least 5 fields: min hour day month weekday");
         return;
@@ -239,7 +244,7 @@ function AddAssignmentDialog({
         collector_id: pinToCollector && pinnedCollectorId ? pinnedCollectorId : null,
         device_id: deviceId,
         schedule_type: scheduleType,
-        schedule_value: scheduleValue,
+        schedule_value: scheduleValueField.value,
         config,
         use_latest: versionMode === "latest",
         credential_id: selectedCredentialId || null,
@@ -388,9 +393,9 @@ function AddAssignmentDialog({
                 const newType = e.target.value;
                 setScheduleType(newType);
                 if (newType === "cron") {
-                  setScheduleValue("*/5 * * * *");
+                  scheduleValueField.reset("*/5 * * * *");
                 } else {
-                  setScheduleValue("60");
+                  scheduleValueField.reset("60");
                 }
               }}
             >
@@ -404,10 +409,12 @@ function AddAssignmentDialog({
             </Label>
             <Input
               id="aa-sched-val"
-              value={scheduleValue}
-              onChange={(e) => setScheduleValue(e.target.value)}
+              value={scheduleValueField.value}
+              onChange={scheduleValueField.onChange}
+              onBlur={scheduleValueField.onBlur}
               placeholder={scheduleType === "interval" ? "60" : "*/5 * * * *"}
             />
+            {scheduleValueField.error && <p className="text-xs text-red-400 mt-0.5">{scheduleValueField.error}</p>}
             <p className="text-xs text-zinc-500">
               {scheduleType === "interval"
                 ? "How often to run, in seconds"
@@ -477,17 +484,19 @@ function AddAssignmentDialog({
 
 interface EditAssignmentDialogProps {
   assignment: DeviceAssignment | null;
+  deviceCollectorGroupId: string | null;
   open: boolean;
   onClose: () => void;
 }
 
-function EditAssignmentDialog({ assignment, open, onClose }: EditAssignmentDialogProps) {
+function EditAssignmentDialog({ assignment, deviceCollectorGroupId, open, onClose }: EditAssignmentDialogProps) {
   const updateAssignment = useUpdateAssignment();
   const { data: appDetail } = useAppDetail(assignment?.app.id);
   const { data: credentials } = useCredentials();
 
+  const editScheduleValidator = (v: string) => { const n = Number(v); if (isNaN(n) || n < 10 || n > 86400) return "Must be 10-86400"; return null; };
   const [scheduleType, setScheduleType] = useState("interval");
-  const [scheduleValue, setScheduleValue] = useState("60");
+  const editScheduleValueField = useField("60", editScheduleValidator);
   const [configText, setConfigText] = useState("{}");
   const [parsedConfig, setParsedConfig] = useState<Record<string, unknown>>({});
   const [configError, setConfigError] = useState<string | null>(null);
@@ -498,11 +507,14 @@ function EditAssignmentDialog({ assignment, open, onClose }: EditAssignmentDialo
   const [pinToCollector, setPinToCollector] = useState(false);
   const [pinnedCollectorId, setPinnedCollectorId] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
+  const { data: groupCollectors } = useCollectors(
+    pinToCollector && deviceCollectorGroupId ? { group_id: deviceCollectorGroupId } : undefined
+  );
 
   useEffect(() => {
     if (assignment) {
       setScheduleType(assignment.schedule_type);
-      setScheduleValue(assignment.schedule_value);
+      editScheduleValueField.reset(assignment.schedule_value);
       setConfigText(JSON.stringify(assignment.config, null, 2));
       setParsedConfig(assignment.config ?? {});
       setEnabled(assignment.enabled);
@@ -539,13 +551,9 @@ function EditAssignmentDialog({ assignment, open, onClose }: EditAssignmentDialo
 
     // Validate schedule value
     if (scheduleType === "interval") {
-      const n = Number(scheduleValue);
-      if (!scheduleValue || isNaN(n) || n < 1 || !Number.isInteger(n)) {
-        setFormError("Interval must be a positive integer (seconds).");
-        return;
-      }
+      if (!validateAll(editScheduleValueField)) return;
     } else if (scheduleType === "cron") {
-      const parts = scheduleValue.trim().split(/\s+/);
+      const parts = editScheduleValueField.value.trim().split(/\s+/);
       if (parts.length < 5) {
         setFormError("Cron expression must have at least 5 fields: min hour day month weekday");
         return;
@@ -559,12 +567,17 @@ function EditAssignmentDialog({ assignment, open, onClose }: EditAssignmentDialo
       return;
     }
 
+    if (pinToCollector && !pinnedCollectorId) {
+      setFormError("Select a collector or uncheck 'Pin to a specific collector'.");
+      return;
+    }
+
     try {
       await updateAssignment.mutateAsync({
         id: assignment.id,
         data: {
           schedule_type: scheduleType,
-          schedule_value: scheduleValue,
+          schedule_value: editScheduleValueField.value,
           config,
           enabled,
           app_version_id: versionId,
@@ -572,7 +585,7 @@ function EditAssignmentDialog({ assignment, open, onClose }: EditAssignmentDialo
           credential_id: selectedCredentialId || null,
           collector_id: pinToCollector && pinnedCollectorId
             ? pinnedCollectorId
-            : (assignment.collector_id ? "" : undefined),
+            : null,
         },
       });
       onClose();
@@ -648,10 +661,10 @@ function EditAssignmentDialog({ assignment, open, onClose }: EditAssignmentDialo
               onChange={(e) => {
                 const newType = e.target.value;
                 setScheduleType(newType);
-                if (newType === "cron" && !/\s/.test(scheduleValue)) {
-                  setScheduleValue("*/5 * * * *");
-                } else if (newType === "interval" && /\s/.test(scheduleValue)) {
-                  setScheduleValue("60");
+                if (newType === "cron" && !/\s/.test(editScheduleValueField.value)) {
+                  editScheduleValueField.reset("*/5 * * * *");
+                } else if (newType === "interval" && /\s/.test(editScheduleValueField.value)) {
+                  editScheduleValueField.reset("60");
                 }
               }}
             >
@@ -665,10 +678,12 @@ function EditAssignmentDialog({ assignment, open, onClose }: EditAssignmentDialo
             </Label>
             <Input
               id="ea-sched-val"
-              value={scheduleValue}
-              onChange={(e) => setScheduleValue(e.target.value)}
+              value={editScheduleValueField.value}
+              onChange={editScheduleValueField.onChange}
+              onBlur={editScheduleValueField.onBlur}
               placeholder={scheduleType === "interval" ? "60" : "*/5 * * * *"}
             />
+            {editScheduleValueField.error && <p className="text-xs text-red-400 mt-0.5">{editScheduleValueField.error}</p>}
             <p className="text-xs text-zinc-500">
               {scheduleType === "interval"
                 ? "How often to run, in seconds"
@@ -687,6 +702,37 @@ function EditAssignmentDialog({ assignment, open, onClose }: EditAssignmentDialo
             ))}
           </Select>
         </div>
+
+        {/* Pin to collector */}
+        {deviceCollectorGroupId && (
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="edit-pin-collector"
+                checked={pinToCollector}
+                onChange={(e) => { setPinToCollector(e.target.checked); if (!e.target.checked) setPinnedCollectorId(""); }}
+                className="accent-brand-500 cursor-pointer"
+              />
+              <Label htmlFor="edit-pin-collector" className="text-sm text-zinc-400 font-normal cursor-pointer">
+                Pin to a specific collector
+              </Label>
+            </div>
+            {pinToCollector && (
+              <>
+                <Select value={pinnedCollectorId} onChange={(e) => setPinnedCollectorId(e.target.value)}>
+                  <option value="">Select collector...</option>
+                  {(groupCollectors ?? []).map((c: { id: string; name: string; status: string }) => (
+                    <option key={c.id} value={c.id}>{c.name}{c.status !== "ACTIVE" ? ` (${c.status})` : ""}</option>
+                  ))}
+                </Select>
+                <p className="text-xs text-zinc-500">
+                  This assignment will only run on the selected collector. If the collector goes down, the assignment pauses until it recovers.
+                </p>
+              </>
+            )}
+          </div>
+        )}
 
         {/* Config */}
         <div className="space-y-1.5">
@@ -1119,11 +1165,16 @@ function PerformanceTab({ deviceId }: { deviceId: string }) {
 // ── Tab 3: Configuration ─────────────────────────────────
 
 function ConfigurationTab({ deviceId }: { deviceId: string }) {
+  const tz = useTimezone();
   const { data: configRows, isLoading } = useDeviceConfigData(deviceId);
-  const [view, setView] = useState<"current" | "changes">("current");
+  const [configView, setConfigView] = useState<"current" | "changes" | "compare">("current");
+  const [selectedConfigApp, setSelectedConfigApp] = useState<string | null>(null);
+
+  // Changelog
   const [changelogPage, setChangelogPage] = useState(0);
   const PAGE_SIZE = 50;
   const { data: changelogResp } = useConfigChangelog(deviceId, {
+    app_id: selectedConfigApp ?? undefined,
     limit: PAGE_SIZE,
     offset: changelogPage * PAGE_SIZE,
   });
@@ -1132,9 +1183,65 @@ function ConfigurationTab({ deviceId }: { deviceId: string }) {
     | { total?: number; count?: number }
     | undefined;
 
+  // Diff dialog for single key
   const [diffKey, setDiffKey] = useState<string | null>(null);
-  const { data: diffResp } = useConfigDiff(deviceId, diffKey ?? "", undefined, 20);
+  const { data: diffResp } = useConfigDiff(deviceId, diffKey ?? "", selectedConfigApp ?? undefined, 20);
   const diffRows = diffResp?.data ?? [];
+
+  // Compare view
+  const { data: timestamps } = useConfigChangeTimestamps(deviceId, {
+    app_id: selectedConfigApp ?? undefined,
+  });
+  const tsData = timestamps?.data ?? [];
+  const [compareTimeA, setCompareTimeA] = useState<string | null>(null);
+  const [compareTimeB, setCompareTimeB] = useState<string | null>(null);
+  const { data: compareResult } = useConfigCompare(
+    deviceId, compareTimeA, compareTimeB, selectedConfigApp ?? undefined
+  );
+
+  // Auto-set compare timestamps when data loads
+  useEffect(() => {
+    if (tsData.length >= 2 && !compareTimeA && !compareTimeB) {
+      setCompareTimeA(tsData[1].change_time);
+      setCompareTimeB(tsData[0].change_time);
+    }
+  }, [tsData, compareTimeA, compareTimeB]);
+
+  // Recent changes badge
+  const { data: recentResp } = useConfigChangelog(deviceId, {
+    from_ts: new Date(Date.now() - 86400000).toISOString(),
+    limit: 1,
+  });
+  const hasRecentChanges = (recentResp?.data?.length ?? 0) > 0;
+
+  // Group by app_id for sidebar and current view
+  const configApps = useMemo(() => {
+    const apps = new Map<string, { appName: string; data: Record<string, string> }>();
+    for (const row of (configRows ?? [])) {
+      const appId = String(row.app_id ?? "unknown");
+      const key = String(row.config_key ?? "");
+      const value = String(row.config_value ?? "");
+      const appName = String(row.app_name ?? appId);
+      if (!apps.has(appId)) {
+        apps.set(appId, { appName, data: {} });
+      }
+      const entry = apps.get(appId)!;
+      if (!(key in entry.data)) {
+        entry.data[key] = value;
+      }
+    }
+    return apps;
+  }, [configRows]);
+
+  // Auto-select first app
+  useEffect(() => {
+    if (!selectedConfigApp && configApps.size > 0) {
+      setSelectedConfigApp([...configApps.keys()][0]);
+    }
+  }, [configApps, selectedConfigApp]);
+
+  // Reset changelog page when switching apps
+  useEffect(() => { setChangelogPage(0); }, [selectedConfigApp]);
 
   if (isLoading) {
     return (
@@ -1144,213 +1251,520 @@ function ConfigurationTab({ deviceId }: { deviceId: string }) {
     );
   }
 
-  if ((!configRows || configRows.length === 0) && changelog.length === 0) {
+  if (configApps.size === 0) {
     return (
-      <div className="space-y-4">
-        <Card>
-          <CardContent className="py-12 flex flex-col items-center gap-3 text-zinc-600">
-            <Wrench className="h-8 w-8 text-zinc-700" />
-            <p className="text-sm text-zinc-500">No configuration data yet.</p>
-            <p className="text-xs text-zinc-700 text-center max-w-sm">
-              Config apps will populate structured data here once they have been assigned and executed.
-            </p>
-          </CardContent>
-        </Card>
-      </div>
+      <Card>
+        <CardContent className="py-12 flex flex-col items-center gap-3 text-zinc-600">
+          <Wrench className="h-8 w-8 text-zinc-700" />
+          <p className="text-sm text-zinc-500">No configuration data yet.</p>
+          <p className="text-xs text-zinc-700 text-center max-w-sm">
+            Config apps will populate structured data here once they have been assigned and executed.
+          </p>
+        </CardContent>
+      </Card>
     );
   }
 
-  // Group by app_id for current snapshot view
-  const grouped = new Map<string, { appName: string; data: Record<string, string> }>();
-  for (const row of (configRows ?? [])) {
-    const appId = String(row.app_id ?? "unknown");
-    const key = String(row.config_key ?? "");
-    const value = String(row.config_value ?? "");
-    const appName = String(row.app_name ?? appId);
-    if (!grouped.has(appId)) {
-      grouped.set(appId, { appName, data: {} });
-    }
-    const entry = grouped.get(appId)!;
-    if (!(key in entry.data)) {
-      entry.data[key] = value;
-    }
-  }
+  const selectedAppData = selectedConfigApp ? configApps.get(selectedConfigApp) : null;
 
   return (
-    <div className="space-y-4">
-      {/* View toggle */}
-      <div className="flex items-center gap-2">
-        <Button
-          variant={view === "current" ? "default" : "outline"}
-          size="sm"
-          onClick={() => setView("current")}
-        >
-          <Wrench className="h-3.5 w-3.5 mr-1" />
-          Current
-        </Button>
-        <Button
-          variant={view === "changes" ? "default" : "outline"}
-          size="sm"
-          onClick={() => setView("changes")}
-        >
-          <Clock className="h-3.5 w-3.5 mr-1" />
-          Changes
-          {changelogMeta?.total ? (
-            <Badge variant="default" className="ml-1.5 text-[10px] px-1.5 py-0">
-              {changelogMeta.total}
-            </Badge>
-          ) : null}
-        </Button>
+    <div className="flex gap-4">
+      {/* Left sidebar — app selector */}
+      <div className="w-48 shrink-0">
+        <Card>
+          <CardHeader className="py-2 px-3">
+            <CardTitle className="text-xs text-zinc-500 uppercase tracking-wide">Apps</CardTitle>
+          </CardHeader>
+          <CardContent className="p-1.5 space-y-0.5">
+            {[...configApps.entries()].map(([appId, { appName }]) => (
+              <button
+                key={appId}
+                onClick={() => setSelectedConfigApp(appId)}
+                className={`w-full text-left rounded-md px-2.5 py-1.5 text-xs transition-colors cursor-pointer truncate ${
+                  selectedConfigApp === appId
+                    ? "bg-brand-500/15 text-brand-400 font-medium"
+                    : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+                }`}
+              >
+                {appName}
+              </button>
+            ))}
+          </CardContent>
+        </Card>
       </div>
 
-      {view === "current" && (
-        <>
-          {[...grouped.entries()].map(([appId, { appName, data }]) => (
-            <Card key={appId}>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-sm">
-                  <Wrench className="h-4 w-4" />
-                  {appName}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ConfigDataRenderer template={null} data={data} />
-              </CardContent>
-            </Card>
-          ))}
-        </>
-      )}
+      {/* Main content area */}
+      <div className="flex-1 min-w-0 space-y-4">
+        {/* Sub-tabs */}
+        <div className="flex items-center gap-2">
+          <Button
+            variant={configView === "current" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setConfigView("current")}
+          >
+            <Wrench className="h-3.5 w-3.5 mr-1" />
+            Current
+          </Button>
+          <Button
+            variant={configView === "changes" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setConfigView("changes")}
+          >
+            <Clock className="h-3.5 w-3.5 mr-1" />
+            Changes
+            {hasRecentChanges && (
+              <span className="ml-1.5 text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 font-semibold">
+                New
+              </span>
+            )}
+          </Button>
+          <Button
+            variant={configView === "compare" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setConfigView("compare")}
+          >
+            <FileText className="h-3.5 w-3.5 mr-1" />
+            Compare
+          </Button>
+        </div>
 
-      {view === "changes" && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Config Change History</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {changelog.length === 0 ? (
-              <p className="text-sm text-zinc-500">No config changes recorded yet.</p>
-            ) : (
-              <>
+        {/* Current view */}
+        {configView === "current" && selectedAppData && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-sm">
+                <Wrench className="h-4 w-4" />
+                {selectedAppData.appName}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ConfigDataRenderer template={null} data={selectedAppData.data} />
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Changes view — changelog timeline */}
+        {configView === "changes" && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm flex items-center gap-2">
+                Config Change History
+                {changelogMeta?.total ? (
+                  <Badge variant="default" className="text-[10px] px-1.5 py-0">
+                    {changelogMeta.total}
+                  </Badge>
+                ) : null}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {changelog.length === 0 ? (
+                <div className="py-8 text-center">
+                  <Clock className="h-6 w-6 text-zinc-700 mx-auto mb-2" />
+                  <p className="text-sm text-zinc-500">No configuration changes detected.</p>
+                  <p className="text-xs text-zinc-600 mt-1 max-w-sm mx-auto">
+                    Changes will appear here automatically when config values on this device change between poll cycles.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Time</TableHead>
+                        <TableHead>App</TableHead>
+                        <TableHead>Component</TableHead>
+                        <TableHead>Key</TableHead>
+                        <TableHead>Value</TableHead>
+                        <TableHead className="w-16">Diff</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {changelog.map((row, i) => (
+                        <TableRow key={`${row.executed_at}-${row.config_key}-${i}`}>
+                          <TableCell className="text-xs text-zinc-400 whitespace-nowrap" title={formatDate(row.executed_at, tz)}>
+                            {timeAgo(row.executed_at)}
+                          </TableCell>
+                          <TableCell className="text-xs">{row.app_name}</TableCell>
+                          <TableCell className="text-xs font-mono text-zinc-500">
+                            {row.component ? `${row.component_type}/${row.component}` : "—"}
+                          </TableCell>
+                          <TableCell className="text-xs font-mono">{row.config_key}</TableCell>
+                          <TableCell className="text-xs font-mono max-w-[250px] truncate" title={row.config_value}>
+                            {row.config_value}
+                          </TableCell>
+                          <TableCell>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 px-2 text-xs"
+                              onClick={() => setDiffKey(row.config_key)}
+                            >
+                              <FileText className="h-3 w-3" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                  {(changelogMeta?.total ?? 0) > PAGE_SIZE && (
+                    <div className="flex items-center justify-between mt-3 text-xs text-zinc-400">
+                      <span>
+                        {changelogPage * PAGE_SIZE + 1}–
+                        {Math.min((changelogPage + 1) * PAGE_SIZE, changelogMeta?.total ?? 0)} of{" "}
+                        {changelogMeta?.total}
+                      </span>
+                      <div className="flex gap-1">
+                        <Button variant="outline" size="sm" className="h-6 px-2 text-xs"
+                          disabled={changelogPage === 0}
+                          onClick={() => setChangelogPage((p) => p - 1)}>
+                          Prev
+                        </Button>
+                        <Button variant="outline" size="sm" className="h-6 px-2 text-xs"
+                          disabled={(changelogPage + 1) * PAGE_SIZE >= (changelogMeta?.total ?? 0)}
+                          onClick={() => setChangelogPage((p) => p + 1)}>
+                          Next
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Compare view — side-by-side diff */}
+        {configView === "compare" && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm">Compare Snapshots</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {tsData.length < 2 ? (
+                <div className="py-8 text-center">
+                  <FileText className="h-6 w-6 text-zinc-700 mx-auto mb-2" />
+                  <p className="text-sm text-zinc-500">No changes to compare yet.</p>
+                  <p className="text-xs text-zinc-600 mt-1 max-w-sm mx-auto">
+                    The comparison view requires at least two different configuration snapshots.
+                    Changes will become available once config values on this device change between poll cycles.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-zinc-500">Before:</span>
+                      <Select
+                        value={compareTimeA ?? ""}
+                        onChange={(e) => setCompareTimeA(e.target.value)}
+                        className="w-52 text-xs"
+                      >
+                        {tsData.map((ts) => (
+                          <option key={ts.change_time} value={ts.change_time}>
+                            {formatDate(ts.change_time, tz)} ({ts.change_count} keys)
+                          </option>
+                        ))}
+                      </Select>
+                    </div>
+                    <span className="text-zinc-600">vs</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-zinc-500">After:</span>
+                      <Select
+                        value={compareTimeB ?? ""}
+                        onChange={(e) => setCompareTimeB(e.target.value)}
+                        className="w-52 text-xs"
+                      >
+                        {tsData.map((ts) => (
+                          <option key={ts.change_time} value={ts.change_time}>
+                            {formatDate(ts.change_time, tz)} ({ts.change_count} keys)
+                          </option>
+                        ))}
+                      </Select>
+                    </div>
+                  </div>
+
+                  {compareResult && (
+                    <>
+                      <p className="text-xs text-zinc-500">
+                        {compareResult.changes.length} change{compareResult.changes.length !== 1 ? "s" : ""} —{" "}
+                        {compareResult.total_keys_b} keys total
+                      </p>
+                      {compareResult.changes.length === 0 ? (
+                        <p className="text-sm text-zinc-500 py-4 text-center">
+                          No differences between these two snapshots.
+                        </p>
+                      ) : (
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Component</TableHead>
+                              <TableHead>Key</TableHead>
+                              <TableHead>Before</TableHead>
+                              <TableHead>After</TableHead>
+                              <TableHead className="w-20">Change</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {compareResult.changes.map((d: ConfigDiffEntry, i: number) => (
+                              <TableRow key={`${d.component_type}-${d.component}-${d.config_key}-${i}`}>
+                                <TableCell className="text-xs font-mono text-zinc-500">
+                                  {d.component ? `${d.component_type}/${d.component}` : "—"}
+                                </TableCell>
+                                <TableCell className="text-xs font-mono">{d.config_key}</TableCell>
+                                <TableCell className="text-xs font-mono max-w-[200px] truncate">
+                                  {d.change_type === "added" ? (
+                                    <span className="text-zinc-600">—</span>
+                                  ) : (
+                                    <span className="text-red-400 line-through">{d.value_a}</span>
+                                  )}
+                                </TableCell>
+                                <TableCell className="text-xs font-mono max-w-[200px] truncate">
+                                  {d.change_type === "removed" ? (
+                                    <span className="text-zinc-600">—</span>
+                                  ) : (
+                                    <span className="text-emerald-400">{d.value_b}</span>
+                                  )}
+                                </TableCell>
+                                <TableCell>
+                                  <Badge variant={
+                                    d.change_type === "added" ? "success" :
+                                    d.change_type === "removed" ? "destructive" : "warning"
+                                  } className="text-[10px]">
+                                    {d.change_type}
+                                  </Badge>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Diff dialog for single key */}
+        {diffKey && (
+          <Dialog open onClose={() => setDiffKey(null)} title={`History: ${diffKey}`}>
+            <div className="max-h-[60vh] overflow-auto">
+              {diffRows.length === 0 ? (
+                <p className="text-sm text-zinc-500 p-4">No history found.</p>
+              ) : (
                 <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Time</TableHead>
-                      <TableHead>App</TableHead>
-                      <TableHead>Key</TableHead>
                       <TableHead>Value</TableHead>
-                      <TableHead className="w-16">Diff</TableHead>
+                      <TableHead className="w-20">Hash</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {changelog.map((row, i) => (
-                      <TableRow key={`${row.executed_at}-${row.config_key}-${i}`}>
-                        <TableCell className="text-xs text-zinc-400 whitespace-nowrap">
-                          {formatDate(row.executed_at)}
-                        </TableCell>
-                        <TableCell className="text-xs">{row.app_name}</TableCell>
-                        <TableCell className="text-xs font-mono">{row.config_key}</TableCell>
-                        <TableCell className="text-xs font-mono max-w-[300px] truncate" title={row.config_value}>
-                          {row.config_value}
-                        </TableCell>
-                        <TableCell>
+                    {diffRows.map((row, i) => {
+                      const prevRow = diffRows[i + 1];
+                      const changed = !prevRow || prevRow.config_hash !== row.config_hash;
+                      return (
+                        <TableRow
+                          key={`${row.executed_at}-${i}`}
+                          className={changed ? "bg-amber-500/10" : ""}
+                        >
+                          <TableCell className="text-xs text-zinc-400 whitespace-nowrap">
+                            {formatDate(row.executed_at, tz)}
+                          </TableCell>
+                          <TableCell className="text-xs font-mono max-w-[400px] whitespace-pre-wrap break-all">
+                            {row.config_value}
+                          </TableCell>
+                          <TableCell className="text-xs font-mono text-zinc-500">
+                            {row.config_hash.slice(0, 8)}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              )}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" size="sm" onClick={() => setDiffKey(null)}>
+                Close
+              </Button>
+            </DialogFooter>
+          </Dialog>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Tab: Retention ────────────────────────────────────────
+
+const DATA_TYPE_LABELS: Record<string, string> = {
+  config: "Config",
+  performance: "Performance",
+  availability_latency: "Availability & Latency",
+  interface: "Interface",
+};
+
+const DATA_TYPE_COLORS: Record<string, string> = {
+  config: "bg-purple-500/20 text-purple-400",
+  performance: "bg-indigo-500/20 text-indigo-400",
+  availability_latency: "bg-emerald-500/20 text-emerald-400",
+  interface: "bg-cyan-500/20 text-cyan-400",
+};
+
+function RetentionTab({ deviceId }: { deviceId: string }) {
+  const { data: entries, isLoading } = useDeviceRetention(deviceId);
+  const setRetention = useSetDeviceRetention();
+  const deleteRetention = useDeleteDeviceRetention();
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
+
+  if (isLoading) {
+    return (
+      <div className="flex h-32 items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-brand-500" />
+      </div>
+    );
+  }
+
+  if (!entries || entries.length === 0) {
+    return (
+      <Card>
+        <CardContent className="py-12 flex flex-col items-center gap-3 text-zinc-600">
+          <Database className="h-8 w-8 text-zinc-700" />
+          <p className="text-sm text-zinc-500">No apps assigned to this device.</p>
+          <p className="text-xs text-zinc-700">Assign apps on the Assignments tab to configure data retention.</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // Group by data_type
+  const grouped = new Map<string, DeviceRetentionEntry[]>();
+  for (const e of entries) {
+    const list = grouped.get(e.data_type) ?? [];
+    list.push(e);
+    grouped.set(e.data_type, list);
+  }
+
+  async function handleSave(entry: DeviceRetentionEntry) {
+    const days = parseInt(editValue, 10);
+    if (isNaN(days) || days < 1) return;
+    await setRetention.mutateAsync({
+      deviceId,
+      app_id: entry.app_id,
+      data_type: entry.data_type,
+      retention_days: days,
+    });
+    setEditingId(null);
+  }
+
+  async function handleReset(entry: DeviceRetentionEntry) {
+    if (!entry.override_id) return;
+    await deleteRetention.mutateAsync({ deviceId, overrideId: entry.override_id });
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-md border border-blue-800/40 bg-blue-950/20 px-4 py-3">
+        <p className="text-xs text-blue-300">
+          Device-specific retention overrides the global default.
+          Edit a value to customize, or reset to inherit from global settings.
+        </p>
+      </div>
+
+      {[...grouped.entries()].map(([dataType, items]) => (
+        <Card key={dataType}>
+          <CardHeader className="py-3">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Badge className={`text-[10px] ${DATA_TYPE_COLORS[dataType] ?? ""}`}>
+                {DATA_TYPE_LABELS[dataType] ?? dataType}
+              </Badge>
+              data retention
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>App</TableHead>
+                  <TableHead className="w-36">Retention</TableHead>
+                  <TableHead className="w-32">Source</TableHead>
+                  <TableHead className="w-20"></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {items.map((entry) => {
+                  const isEditing = editingId === `${entry.app_id}-${entry.data_type}`;
+                  return (
+                    <TableRow key={`${entry.app_id}-${entry.data_type}`}>
+                      <TableCell className="text-xs font-medium">{entry.app_name}</TableCell>
+                      <TableCell>
+                        {isEditing ? (
+                          <div className="flex items-center gap-1.5">
+                            <Input
+                              type="number"
+                              value={editValue}
+                              onChange={(e) => setEditValue(e.target.value)}
+                              className="w-20 h-7 text-xs"
+                              autoFocus
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") handleSave(entry);
+                                if (e.key === "Escape") setEditingId(null);
+                              }}
+                            />
+                            <span className="text-xs text-zinc-500">days</span>
+                            <Button size="sm" className="h-6 px-2 text-xs" onClick={() => handleSave(entry)}
+                              disabled={setRetention.isPending}>
+                              <Save className="h-3 w-3" />
+                            </Button>
+                            <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => setEditingId(null)}>
+                              <X className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        ) : (
+                          <button
+                            className="text-xs text-zinc-200 hover:text-brand-400 cursor-pointer"
+                            onClick={() => {
+                              setEditingId(`${entry.app_id}-${entry.data_type}`);
+                              setEditValue(String(entry.retention_days));
+                            }}
+                          >
+                            {entry.retention_days} days
+                          </button>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant={entry.source === "device_override" ? "info" : "default"}
+                          className="text-[10px]"
+                        >
+                          {entry.source === "device_override" ? "device override" : "global default"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {entry.source === "device_override" && (
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="h-6 px-2 text-xs"
-                            onClick={() => setDiffKey(row.config_key)}
+                            className="h-6 px-2 text-xs text-zinc-500 hover:text-zinc-300"
+                            onClick={() => handleReset(entry)}
+                            disabled={deleteRetention.isPending}
                           >
-                            <FileText className="h-3 w-3" />
+                            Reset
                           </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-                {/* Pagination */}
-                {(changelogMeta?.total ?? 0) > PAGE_SIZE && (
-                  <div className="flex items-center justify-between mt-3 text-xs text-zinc-400">
-                    <span>
-                      {changelogPage * PAGE_SIZE + 1}–
-                      {Math.min((changelogPage + 1) * PAGE_SIZE, changelogMeta?.total ?? 0)} of{" "}
-                      {changelogMeta?.total}
-                    </span>
-                    <div className="flex gap-1">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-6 px-2 text-xs"
-                        disabled={changelogPage === 0}
-                        onClick={() => setChangelogPage((p) => p - 1)}
-                      >
-                        Prev
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-6 px-2 text-xs"
-                        disabled={
-                          (changelogPage + 1) * PAGE_SIZE >= (changelogMeta?.total ?? 0)
-                        }
-                        onClick={() => setChangelogPage((p) => p + 1)}
-                      >
-                        Next
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
           </CardContent>
         </Card>
-      )}
-
-      {/* Diff dialog */}
-      {diffKey && (
-        <Dialog open onClose={() => setDiffKey(null)} title={`History: ${diffKey}`}>
-          <div className="max-h-[60vh] overflow-auto">
-            {diffRows.length === 0 ? (
-              <p className="text-sm text-zinc-500 p-4">No history found.</p>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Time</TableHead>
-                    <TableHead>Value</TableHead>
-                    <TableHead className="w-20">Hash</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {diffRows.map((row, i) => {
-                    const prevRow = diffRows[i + 1];
-                    const changed = !prevRow || prevRow.config_hash !== row.config_hash;
-                    return (
-                      <TableRow
-                        key={`${row.executed_at}-${i}`}
-                        className={changed ? "bg-amber-500/10" : ""}
-                      >
-                        <TableCell className="text-xs text-zinc-400 whitespace-nowrap">
-                          {formatDate(row.executed_at)}
-                        </TableCell>
-                        <TableCell className="text-xs font-mono max-w-[400px] whitespace-pre-wrap break-all">
-                          {row.config_value}
-                        </TableCell>
-                        <TableCell className="text-xs font-mono text-zinc-500">
-                          {row.config_hash.slice(0, 8)}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setDiffKey(null)}>
-              Close
-            </Button>
-          </DialogFooter>
-        </Dialog>
-      )}
+      ))}
     </div>
   );
 }
@@ -1415,7 +1829,9 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
   const [filterAlias, setFilterAlias] = useState("");
   const [filterOperStatus, setFilterOperStatus] = useState<string>("");
   const [filterSpeed, setFilterSpeed] = useState<string>("");
+  const [showUnmonitored, setShowUnmonitored] = useState(true);
   const tz = useTimezone();
+  const { data: monitoring } = useDeviceMonitoring(deviceId);
   const { fromTs, toTs } = useMemo(() => rangeToTimestamps(timeRange), [timeRange]);
 
   // Build metadata lookup
@@ -1427,21 +1843,42 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
     return m;
   }, [metadata]);
 
+  // Device has an interface poller app assigned?
+  const hasInterfacePoller = !!monitoring?.interface?.app_name;
+
+  const isUnmonitored = useCallback(
+    (iface: { interface_id: string }) => {
+      if (!hasInterfacePoller) return true;
+      const meta = metaMap.get(iface.interface_id);
+      return !(meta?.polling_enabled ?? true);
+    },
+    [hasInterfacePoller, metaMap],
+  );
+
+  // Filter out orphaned ClickHouse rows (interface_id not in metadata).
+  // This happens when metadata is recreated with a new UUID — the old
+  // ClickHouse rows reference a stale interface_id that no longer exists in PG.
+  const validInterfaces = useMemo(() => {
+    if (!metadata?.length) return interfaces ?? [];
+    const metaIds = new Set(metadata.map(m => m.id));
+    return (interfaces ?? []).filter(i => metaIds.has(i.interface_id));
+  }, [interfaces, metadata]);
+
   // Dynamic filter options
   const availableOperStatuses = useMemo(() =>
-    [...new Set((interfaces ?? []).map(i => i.if_oper_status))].sort(), [interfaces]);
+    [...new Set(validInterfaces.map(i => i.if_oper_status))].sort(), [validInterfaces]);
   const availableSpeeds = useMemo(() =>
-    [...new Set((interfaces ?? []).map(i => i.if_speed_mbps))].filter(Boolean).sort((a, b) => a - b), [interfaces]);
+    [...new Set(validInterfaces.map(i => i.if_speed_mbps))].filter(Boolean).sort((a, b) => a - b), [validInterfaces]);
 
   // Filter
   const filtered = useMemo(() => {
-    let data = interfaces ?? [];
+    let data = validInterfaces;
     if (filterName) data = data.filter(i => matchesTextFilter(i.if_name, filterName));
     if (filterAlias) data = data.filter(i => matchesTextFilter(i.if_alias || "", filterAlias));
     if (filterOperStatus) data = data.filter(i => i.if_oper_status === filterOperStatus);
     if (filterSpeed) data = data.filter(i => i.if_speed_mbps === Number(filterSpeed));
     return data;
-  }, [interfaces, filterName, filterAlias, filterOperStatus, filterSpeed]);
+  }, [validInterfaces, filterName, filterAlias, filterOperStatus, filterSpeed]);
 
   // Sort
   const sorted = useMemo(() => {
@@ -1464,6 +1901,12 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
     });
     return arr;
   }, [filtered, sortKey, sortDir]);
+
+  // Apply unmonitored visibility filter
+  const displayList = useMemo(() => {
+    if (showUnmonitored) return sorted;
+    return sorted.filter(iface => !isUnmonitored(iface));
+  }, [sorted, showUnmonitored, isUnmonitored]);
 
   const toggleSort = (key: IfaceSortKey) => {
     if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
@@ -1575,8 +2018,9 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
     );
   }
 
-  const upCount = interfaces.filter(i => i.if_oper_status === "up").length;
-  const downCount = interfaces.filter(i => i.if_oper_status === "down").length;
+  const upCount = validInterfaces.filter(i => i.if_oper_status === "up").length;
+  const downCount = validInterfaces.filter(i => i.if_oper_status === "down").length;
+  const unmonitoredCount = validInterfaces.filter(isUnmonitored).length;
 
   return (
     <div className="space-y-4">
@@ -1584,10 +2028,11 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
       <div className="flex items-center gap-4 flex-wrap">
         <div className="flex items-center gap-2 text-sm">
           <span className="text-zinc-500">Interfaces:</span>
-          <Badge variant="default">{interfaces.length}</Badge>
+          <Badge variant="default">{validInterfaces.length}</Badge>
           <Badge variant="success">{upCount} up</Badge>
           {downCount > 0 && <Badge variant="destructive">{downCount} down</Badge>}
           {activeSelectedCount > 0 && <Badge variant="default">{activeSelectedCount} selected</Badge>}
+          {unmonitoredCount > 0 && <Badge variant="default" className="text-zinc-400 border-zinc-700">{unmonitoredCount} unmonitored</Badge>}
         </div>
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1" disabled={refreshMeta.isPending} onClick={() => refreshMeta.mutate(deviceId)}>
           {refreshMeta.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
@@ -1700,7 +2145,12 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
                     </Select>
                   )}
                 </TableCell>
-                <TableCell />
+                <TableCell className="text-center">
+                  <label className="flex items-center gap-1.5 cursor-pointer select-none whitespace-nowrap" title="Show interfaces with polling disabled">
+                    <input type="checkbox" checked={showUnmonitored} onChange={() => setShowUnmonitored(v => !v)} className="accent-brand-500 cursor-pointer" />
+                    <span className="text-[10px] text-zinc-500">Unmon.</span>
+                  </label>
+                </TableCell>
                 <TableCell>
                   <ClearableInput placeholder="Filter..." value={filterName} onChange={e => setFilterName(e.target.value)} onClear={() => setFilterName("")} className="h-6 text-[10px]" />
                 </TableCell>
@@ -1720,12 +2170,13 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {sorted.map((iface) => {
+              {displayList.map((iface) => {
                 const meta = metaMap.get(iface.interface_id);
                 const pollingOn = meta?.polling_enabled ?? true;
                 const alertingOn = meta?.alerting_enabled ?? true;
                 const metrics = parseMetrics(meta?.poll_metrics ?? "all");
                 const isSelected = selectedIds.has(iface.interface_id);
+                const unmonitored = isUnmonitored(iface);
 
                 const toggleMetric = (metric: string) => {
                   const next = new Set(metrics);
@@ -1735,7 +2186,7 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
 
                 return (
                 <TableRow key={iface.interface_id}
-                  className={`cursor-pointer transition-colors ${isSelected ? "bg-zinc-800/70" : "hover:bg-zinc-800/50"}`}
+                  className={`cursor-pointer transition-colors ${isSelected ? "bg-zinc-800/70" : "hover:bg-zinc-800/50"} ${unmonitored ? "opacity-40" : ""}`}
                   onClick={() => toggleSelect(iface.interface_id)}
                 >
                   <TableCell onClick={e => e.stopPropagation()}>
@@ -1779,6 +2230,15 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
                 </TableRow>
                 );
               })}
+              {displayList.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={12} className="text-center py-8 text-zinc-500 text-sm">
+                    {!showUnmonitored
+                      ? "No monitored interfaces. Enable polling on interfaces or toggle \"Unmon.\" to show all."
+                      : "No interfaces match your filters."}
+                  </TableCell>
+                </TableRow>
+              )}
             </TableBody>
           </Table>
         </CardContent>
@@ -2356,6 +2816,7 @@ function AssignmentsTab({ deviceId }: { deviceId: string }) {
       {/* Edit dialog uses the existing EditAssignmentDialog */}
       <EditAssignmentDialog
         assignment={editing ?? null}
+        deviceCollectorGroupId={device?.collector_group_id ?? null}
         open={!!editingId}
         onClose={() => setEditingId(null)}
       />
@@ -2397,8 +2858,8 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
   const updateDevice = useUpdateDevice();
 
   // Device fields
-  const [name, setName] = useState("");
-  const [address, setAddress] = useState("");
+  const settingsNameField = useField("", validateName);
+  const settingsAddressField = useField("", validateAddress);
   const [deviceType, setDeviceType] = useState("");
   const [tenantId, setTenantId] = useState("");
   const [collectorGroupId, setCollectorGroupId] = useState("");
@@ -2419,15 +2880,25 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
   const [labelsSaveSuccess, setLabelsSaveSuccess] = useState(false);
   const [labelError, setLabelError] = useState<string | null>(null);
 
+  // Retention overrides
+  const { data: systemSettings } = useSystemSettings();
+  const [retentionOverrides, setRetentionOverrides] = useState<Record<string, string>>({});
+  const [retentionModified, setRetentionModified] = useState(false);
+  const [retentionSaving, setRetentionSaving] = useState(false);
+  const [retentionSaveSuccess, setRetentionSaveSuccess] = useState(false);
+  const [retentionError, setRetentionError] = useState<string | null>(null);
+
   // Initialize form fields when device loads
   useEffect(() => {
     if (device) {
-      setName(device.name);
-      setAddress(device.address);
+      settingsNameField.reset(device.name);
+      settingsAddressField.reset(device.address);
       setDeviceType(device.device_type);
       setTenantId(device.tenant_id ?? "");
       setCollectorGroupId(device.collector_group_id ?? "");
       setLabels(device.labels ?? {});
+      setRetentionOverrides(device.retention_overrides ?? {});
+      setRetentionModified(false);
       // Build credentials state from resolved credentials
       const cmap: Record<string, string> = {};
       for (const [ctype, info] of Object.entries(device.credentials ?? {})) {
@@ -2442,12 +2913,13 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
     e.preventDefault();
     setSaveError(null);
     setSaveSuccess(false);
+    if (!validateAll(settingsNameField, settingsAddressField)) return;
     try {
       await updateDevice.mutateAsync({
         id: deviceId,
         data: {
-          name: name.trim(),
-          address: address.trim(),
+          name: settingsNameField.value.trim(),
+          address: settingsAddressField.value.trim(),
           device_type: deviceType,
           tenant_id: tenantId || null,
           collector_group_id: collectorGroupId || null,
@@ -2469,8 +2941,8 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
       await updateDevice.mutateAsync({
         id: deviceId,
         data: {
-          name: name.trim(),
-          address: address.trim(),
+          name: settingsNameField.value.trim(),
+          address: settingsAddressField.value.trim(),
           device_type: deviceType,
           tenant_id: tenantId || null,
           collector_group_id: collectorGroupId || null,
@@ -2525,6 +2997,29 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
     }
   }
 
+  async function handleSaveRetention() {
+    setRetentionError(null);
+    setRetentionSaving(true);
+    setRetentionSaveSuccess(false);
+    try {
+      const cleanOverrides: Record<string, string> = {};
+      for (const [k, v] of Object.entries(retentionOverrides)) {
+        if (v != null && v !== "") cleanOverrides[k] = v;
+      }
+      await updateDevice.mutateAsync({
+        id: deviceId,
+        data: { retention_overrides: cleanOverrides },
+      });
+      setRetentionModified(false);
+      setRetentionSaveSuccess(true);
+      setTimeout(() => setRetentionSaveSuccess(false), 3000);
+    } catch (err) {
+      setRetentionError(err instanceof Error ? err.message : "Failed to save retention overrides");
+    } finally {
+      setRetentionSaving(false);
+    }
+  }
+
   if (deviceLoading) {
     return (
       <div className="flex h-32 items-center justify-center">
@@ -2548,7 +3043,10 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
             <div className="grid grid-cols-2 gap-x-8 gap-y-3">
               <div className="grid grid-cols-[110px_1fr] items-center gap-2">
                 <Label htmlFor="s-name" className="text-right">Name</Label>
-                <Input id="s-name" value={name} onChange={(e) => setName(e.target.value)} />
+                <div>
+                  <Input id="s-name" value={settingsNameField.value} onChange={settingsNameField.onChange} onBlur={settingsNameField.onBlur} />
+                  {settingsNameField.error && <p className="text-xs text-red-400 mt-0.5">{settingsNameField.error}</p>}
+                </div>
               </div>
               <div className="grid grid-cols-[110px_1fr] items-center gap-2">
                 <Label htmlFor="s-dtype" className="text-right">Device Type</Label>
@@ -2560,7 +3058,10 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
               </div>
               <div className="grid grid-cols-[110px_1fr] items-center gap-2">
                 <Label htmlFor="s-address" className="text-right">Address</Label>
-                <Input id="s-address" value={address} onChange={(e) => setAddress(e.target.value)} />
+                <div>
+                  <Input id="s-address" value={settingsAddressField.value} onChange={settingsAddressField.onChange} onBlur={settingsAddressField.onBlur} />
+                  {settingsAddressField.error && <p className="text-xs text-red-400 mt-0.5">{settingsAddressField.error}</p>}
+                </div>
               </div>
               {tenants && tenants.length > 0 ? (
                 <div className="grid grid-cols-[110px_1fr] items-center gap-2">
@@ -2724,11 +3225,69 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
         </CardContent>
       </Card>
 
+      {/* Data Retention Overrides */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Database className="h-4 w-4" />
+            Data Retention Overrides
+            {retentionModified && (
+              <Button size="sm" className="ml-auto gap-1.5" onClick={handleSaveRetention} disabled={retentionSaving}>
+                {retentionSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                Save Retention
+              </Button>
+            )}
+            {retentionSaveSuccess && <span className="ml-auto text-sm text-emerald-400">Saved.</span>}
+          </CardTitle>
+          <p className="text-xs text-zinc-600">Override system-wide retention settings for this device. Leave empty to use the system default.</p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <span className="text-sm font-medium text-zinc-300">Interface Data</span>
+            <RetentionOverrideRow label="Raw Data" settingKey="interface_raw_retention_days" systemDefault={systemSettings?.interface_raw_retention_days ?? "7"} value={retentionOverrides.interface_raw_retention_days} onChange={(v) => { setRetentionOverrides(prev => ({ ...prev, interface_raw_retention_days: v ?? "" })); setRetentionModified(true); }} options={[3, 7, 14, 30, 60, 90]} />
+            <RetentionOverrideRow label="Hourly Rollup" settingKey="interface_hourly_retention_days" systemDefault={systemSettings?.interface_hourly_retention_days ?? "90"} value={retentionOverrides.interface_hourly_retention_days} onChange={(v) => { setRetentionOverrides(prev => ({ ...prev, interface_hourly_retention_days: v ?? "" })); setRetentionModified(true); }} options={[30, 60, 90, 180, 365]} />
+            <RetentionOverrideRow label="Daily Rollup" settingKey="interface_daily_retention_days" systemDefault={systemSettings?.interface_daily_retention_days ?? "730"} value={retentionOverrides.interface_daily_retention_days} onChange={(v) => { setRetentionOverrides(prev => ({ ...prev, interface_daily_retention_days: v ?? "" })); setRetentionModified(true); }} options={[365, 730, 1095, 1825]} />
+          </div>
+          <div className="space-y-2">
+            <span className="text-sm font-medium text-zinc-300">Performance Data</span>
+            <RetentionOverrideRow label="Raw Data" settingKey="perf_raw_retention_days" systemDefault={systemSettings?.perf_raw_retention_days ?? "7"} value={retentionOverrides.perf_raw_retention_days} onChange={(v) => { setRetentionOverrides(prev => ({ ...prev, perf_raw_retention_days: v ?? "" })); setRetentionModified(true); }} options={[3, 7, 14, 30, 60, 90]} />
+            <RetentionOverrideRow label="Hourly Rollup" settingKey="perf_hourly_retention_days" systemDefault={systemSettings?.perf_hourly_retention_days ?? "90"} value={retentionOverrides.perf_hourly_retention_days} onChange={(v) => { setRetentionOverrides(prev => ({ ...prev, perf_hourly_retention_days: v ?? "" })); setRetentionModified(true); }} options={[30, 60, 90, 180, 365]} />
+            <RetentionOverrideRow label="Daily Rollup" settingKey="perf_daily_retention_days" systemDefault={systemSettings?.perf_daily_retention_days ?? "730"} value={retentionOverrides.perf_daily_retention_days} onChange={(v) => { setRetentionOverrides(prev => ({ ...prev, perf_daily_retention_days: v ?? "" })); setRetentionModified(true); }} options={[365, 730, 1095, 1825]} />
+          </div>
+          {retentionError && <p className="text-xs text-red-400">{retentionError}</p>}
+        </CardContent>
+      </Card>
+
       {/* Monitoring Configuration */}
       <MonitoringCard deviceId={deviceId} device={device} />
     </div>
   );
 }
+
+
+function RetentionOverrideRow({ label, systemDefault, value, onChange, options }: {
+  label: string;
+  settingKey: string;
+  systemDefault: string;
+  value: string | undefined;
+  onChange: (v: string | undefined) => void;
+  options: number[];
+}) {
+  const isOverridden = value != null && value !== "";
+  return (
+    <div className="flex items-center gap-3">
+      <span className="text-xs text-zinc-400 w-28">{label}</span>
+      <Select value={value ?? ""} onChange={(e) => onChange(e.target.value || undefined)} className="max-w-52">
+        <option value="">System default ({systemDefault}d)</option>
+        {options.map((d) => <option key={d} value={String(d)}>{d} days</option>)}
+      </Select>
+      {isOverridden && (
+        <button className="text-xs text-zinc-600 hover:text-zinc-400" onClick={() => onChange(undefined)}>Reset</button>
+      )}
+    </div>
+  );
+}
+
 
 // ── Sortable Header helper ───────────────────────────────
 
@@ -3400,6 +3959,12 @@ export function DeviceDetailPage() {
               Thresholds
             </span>
           </TabTrigger>
+          <TabTrigger value="retention">
+            <span className="flex items-center gap-1.5">
+              <Database className="h-3.5 w-3.5" />
+              Retention
+            </span>
+          </TabTrigger>
           <TabTrigger value="settings">
             <span className="flex items-center gap-1.5">
               <Settings2 className="h-3.5 w-3.5" />
@@ -3434,6 +3999,9 @@ export function DeviceDetailPage() {
         </TabsContent>
         <TabsContent value="thresholds">
           <ThresholdsTab deviceId={deviceId} />
+        </TabsContent>
+        <TabsContent value="retention">
+          <RetentionTab deviceId={deviceId} />
         </TabsContent>
         <TabsContent value="settings">
           <SettingsTab deviceId={deviceId} />

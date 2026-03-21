@@ -792,6 +792,117 @@ def _calculate_utilization(rate_bps: float, if_speed_mbps: int) -> float:
     return min(pct, 100.0)
 
 
+# ── Performance counter normalization ────────────────────────
+
+_PERF_PREV_PREFIX = "perf-prev:"
+_PERF_PREV_TTL = 1200  # 20 minutes
+
+
+def _calculate_perf_rate(
+    current_value: float,
+    previous_value: float,
+    dt_seconds: float,
+) -> float:
+    """Calculate rate (per second) from counter delta.
+
+    current < previous = always reset (no wrap detection).
+    """
+    if dt_seconds <= 0:
+        return 0.0
+    if current_value < previous_value:
+        return 0.0
+    if current_value == previous_value:
+        return 0.0
+    return (current_value - previous_value) / dt_seconds
+
+
+async def _get_previous_perf_counters(
+    device_id: str, component_type: str, component: str,
+) -> dict | None:
+    """Get previous counter values for a performance component.
+
+    Returns dict like {"read_bytes": {"value": 123, "executed_at": "..."}, ...}
+    Falls back to ClickHouse performance_latest if Redis cache expired.
+    """
+    from monctl_central.cache import _redis
+
+    cache_key = f"{_PERF_PREV_PREFIX}{device_id}:{component_type}:{component}"
+
+    if _redis:
+        try:
+            cached = await _redis.get(cache_key)
+            if cached:
+                return json.loads(cached)
+        except Exception:
+            pass
+
+    # Fallback: ClickHouse performance_latest
+    try:
+        import asyncio
+        from monctl_central.dependencies import get_clickhouse
+        ch = get_clickhouse()
+        if ch:
+            rows = await asyncio.to_thread(
+                ch._get_client().query,
+                "SELECT metric_names, metric_values, metric_types, executed_at "
+                "FROM performance_latest FINAL "
+                "WHERE device_id = {device_id:UUID} "
+                "  AND component_type = {component_type:String} "
+                "  AND component = {component:String} "
+                "LIMIT 1",
+                parameters={
+                    "device_id": device_id,
+                    "component_type": component_type,
+                    "component": component,
+                },
+            )
+            named = list(rows.named_results())
+            if named:
+                row = named[0]
+                names = row.get("metric_names", [])
+                values = row.get("metric_values", [])
+                types = row.get("metric_types", [])
+                ea = row["executed_at"]
+                ea_iso = ea.isoformat() if hasattr(ea, "isoformat") else str(ea)
+
+                prev: dict = {}
+                for i, name in enumerate(names):
+                    mt = types[i] if i < len(types) else "gauge"
+                    if mt == "counter":
+                        prev[name] = {
+                            "value": values[i] if i < len(values) else 0,
+                            "executed_at": ea_iso,
+                        }
+                if prev:
+                    if _redis:
+                        await _redis.set(cache_key, json.dumps(prev), ex=_PERF_PREV_TTL)
+                    return prev
+    except Exception:
+        pass
+
+    return None
+
+
+async def _cache_perf_counters(
+    device_id: str, component_type: str, component: str,
+    counter_data: dict, executed_at_iso: str,
+) -> None:
+    """Cache current counter values. ALWAYS called — even on reset."""
+    from monctl_central.cache import _redis
+    if not _redis:
+        return
+    cache_key = f"{_PERF_PREV_PREFIX}{device_id}:{component_type}:{component}"
+    cache = {
+        name: {"value": val, "executed_at": executed_at_iso}
+        for name, val in counter_data.items()
+    }
+    if cache:
+        try:
+            await _redis.set(cache_key, json.dumps(cache), ex=_PERF_PREV_TTL)
+        except Exception:
+            pass
+
+
 async def _resolve_interface_id(
     db: AsyncSession,
     device_id: str,
@@ -960,7 +1071,7 @@ async def submit_results(
         # Each unique (component, component_type) becomes a separate ClickHouse row
         if target_table == "performance" and r.metrics:
             # Group metrics by (component, component_type)
-            component_groups: dict[tuple[str, str], tuple[list[str], list[float]]] = {}
+            component_groups: dict[tuple[str, str], tuple[list[str], list[float], list[str]]] = {}
             for m in r.metrics:
                 if not isinstance(m, dict):
                     continue
@@ -968,17 +1079,56 @@ async def submit_results(
                 comp_type = m.get("component_type", "")
                 key = (comp, comp_type)
                 if key not in component_groups:
-                    component_groups[key] = ([], [])
-                for mn, mv in zip(m.get("metric_names", []), m.get("metric_values", [])):
+                    component_groups[key] = ([], [], [])
+                raw_types = m.get("metric_types", [])
+                for idx, (mn, mv) in enumerate(zip(m.get("metric_names", []), m.get("metric_values", []))):
                     component_groups[key][0].append(str(mn))
                     component_groups[key][1].append(float(mv))
+                    component_groups[key][2].append(raw_types[idx] if idx < len(raw_types) else "gauge")
                 # Also support flat name/value metrics (no metric_names array)
                 if "name" in m and "value" in m and "metric_names" not in m:
                     component_groups[key][0].append(str(m["name"]))
                     component_groups[key][1].append(float(m["value"]))
+                    component_groups[key][2].append("gauge")
 
             if component_groups:
-                for (comp, comp_type), (mnames, mvalues) in component_groups.items():
+                for (comp, comp_type), (mnames, mvalues, mtypes) in component_groups.items():
+                    # Normalize counter metrics to rates
+                    normalized_values = list(mvalues)
+                    has_counters = any(t == "counter" for t in mtypes)
+                    if has_counters:
+                        previous = await _get_previous_perf_counters(
+                            device_id_resolved, comp_type, comp,
+                        )
+                        counter_data: dict[str, float] = {}
+                        for i, (name, value, mtype) in enumerate(zip(mnames, mvalues, mtypes)):
+                            if mtype == "counter":
+                                counter_data[name] = value
+                                if previous and name in previous:
+                                    try:
+                                        prev_entry = previous[name]
+                                        prev_ts_str = prev_entry["executed_at"]
+                                        if isinstance(prev_ts_str, str):
+                                            if prev_ts_str.endswith("Z"):
+                                                prev_ts_str = prev_ts_str[:-1] + "+00:00"
+                                            prev_ts = datetime.fromisoformat(prev_ts_str)
+                                            if prev_ts.tzinfo is None:
+                                                prev_ts = prev_ts.replace(tzinfo=timezone.utc)
+                                        else:
+                                            prev_ts = prev_ts_str
+                                        dt = (executed_at - prev_ts).total_seconds()
+                                        normalized_values[i] = _calculate_perf_rate(
+                                            value, prev_entry["value"], dt,
+                                        )
+                                    except (ValueError, TypeError, KeyError):
+                                        normalized_values[i] = 0.0
+                                else:
+                                    normalized_values[i] = 0.0
+                        await _cache_perf_counters(
+                            device_id_resolved, comp_type, comp,
+                            counter_data, executed_at.isoformat(),
+                        )
+
                     ch_rows.append({
                         "_target_table": "performance",
                         "assignment_id": str(assignment_id),
@@ -991,7 +1141,8 @@ async def submit_results(
                         "output": "",
                         "error_message": r.error_message or "",
                         "metric_names": mnames,
-                        "metric_values": mvalues,
+                        "metric_values": normalized_values,
+                        "metric_types": mtypes,
                         "executed_at": executed_at,
                         "execution_time": (r.execution_time_ms / 1000.0) if r.execution_time_ms else 0.0,
                         "started_at": started_at_dt,

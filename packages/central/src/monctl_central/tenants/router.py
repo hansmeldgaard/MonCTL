@@ -5,7 +5,8 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from monctl_common.validators import validate_metadata
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,13 +17,25 @@ router = APIRouter()
 
 
 class CreateTenantRequest(BaseModel):
-    name: str = Field(description="Unique tenant name")
+    name: str = Field(min_length=1, max_length=255, description="Unique tenant name")
     metadata: dict = Field(default_factory=dict, description="Key-value metadata")
+
+    @field_validator("metadata")
+    @classmethod
+    def check_metadata(cls, v: dict) -> dict:
+        return validate_metadata(v)
 
 
 class UpdateTenantRequest(BaseModel):
-    name: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=255)
     metadata: dict | None = None
+
+    @field_validator("metadata")
+    @classmethod
+    def check_metadata(cls, v: dict | None) -> dict | None:
+        if v is not None:
+            return validate_metadata(v)
+        return v
 
 
 def _fmt(t: Tenant) -> dict:

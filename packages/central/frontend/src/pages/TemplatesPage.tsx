@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
+import { validateName } from "@/lib/validation.ts";
 import { FileText, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
@@ -38,13 +40,13 @@ export function TemplatesPage() {
   const deleteTemplate = useDeleteTemplate();
 
   const [addOpen, setAddOpen] = useState(false);
-  const [addName, setAddName] = useState("");
+  const addNameField = useField("", validateName);
   const [addDesc, setAddDesc] = useState("");
   const [addConfig, setAddConfig] = useState("{}");
   const [addError, setAddError] = useState<string | null>(null);
 
   const [editTarget, setEditTarget] = useState<Template | null>(null);
-  const [editName, setEditName] = useState("");
+  const editNameField = useField("", validateName);
   const [editDesc, setEditDesc] = useState("");
   const [editConfig, setEditConfig] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
@@ -54,12 +56,12 @@ export function TemplatesPage() {
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setAddError(null);
-    if (!addName.trim()) { setAddError("Name is required."); return; }
+    if (!validateAll(addNameField)) return;
     let config: Record<string, unknown>;
     try { config = JSON.parse(addConfig); } catch { setAddError("Invalid JSON config."); return; }
     try {
-      await createTemplate.mutateAsync({ name: addName.trim(), description: addDesc.trim() || undefined, config });
-      setAddName(""); setAddDesc(""); setAddConfig("{}"); setAddOpen(false);
+      await createTemplate.mutateAsync({ name: addNameField.value.trim(), description: addDesc.trim() || undefined, config });
+      addNameField.reset(); setAddDesc(""); setAddConfig("{}"); setAddOpen(false);
     } catch (err) {
       setAddError(err instanceof Error ? err.message : "Failed to create template");
     }
@@ -67,7 +69,7 @@ export function TemplatesPage() {
 
   function openEdit(t: Template) {
     setEditTarget(t);
-    setEditName(t.name);
+    editNameField.reset(t.name);
     setEditDesc(t.description ?? "");
     setEditConfig(JSON.stringify(t.config, null, 2));
     setEditError(null);
@@ -77,12 +79,13 @@ export function TemplatesPage() {
     e.preventDefault();
     if (!editTarget) return;
     setEditError(null);
+    if (!validateAll(editNameField)) return;
     let config: Record<string, unknown>;
     try { config = JSON.parse(editConfig); } catch { setEditError("Invalid JSON config."); return; }
     try {
       await updateTemplate.mutateAsync({
         id: editTarget.id,
-        data: { name: editName.trim(), description: editDesc.trim(), config },
+        data: { name: editNameField.value.trim(), description: editDesc.trim(), config },
       });
       setEditTarget(null);
     } catch (err) {
@@ -106,7 +109,7 @@ export function TemplatesPage() {
           <h1 className="text-lg font-semibold text-zinc-100">Templates</h1>
           <p className="text-sm text-zinc-500">Reusable monitoring configurations for bulk device setup.</p>
         </div>
-        <Button size="sm" onClick={() => { setAddName(""); setAddDesc(""); setAddConfig("{}"); setAddError(null); setAddOpen(true); }} className="gap-1.5">
+        <Button size="sm" onClick={() => { addNameField.reset(); setAddDesc(""); setAddConfig("{}"); setAddError(null); setAddOpen(true); }} className="gap-1.5">
           <Plus className="h-4 w-4" /> New Template
         </Button>
       </div>
@@ -174,7 +177,8 @@ export function TemplatesPage() {
         <form onSubmit={handleCreate} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="tpl-name">Name</Label>
-            <Input id="tpl-name" placeholder="e.g. Standard Server" value={addName} onChange={e => setAddName(e.target.value)} autoFocus />
+            <Input id="tpl-name" placeholder="e.g. Standard Server" value={addNameField.value} onChange={addNameField.onChange} onBlur={addNameField.onBlur} autoFocus />
+            {addNameField.error && <p className="text-xs text-red-400 mt-0.5">{addNameField.error}</p>}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="tpl-desc">Description <span className="font-normal text-zinc-500">(optional)</span></Label>
@@ -200,7 +204,8 @@ export function TemplatesPage() {
         <form onSubmit={handleEdit} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="tpl-edit-name">Name</Label>
-            <Input id="tpl-edit-name" value={editName} onChange={e => setEditName(e.target.value)} autoFocus />
+            <Input id="tpl-edit-name" value={editNameField.value} onChange={editNameField.onChange} onBlur={editNameField.onBlur} autoFocus />
+            {editNameField.error && <p className="text-xs text-red-400 mt-0.5">{editNameField.error}</p>}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="tpl-edit-desc">Description</Label>

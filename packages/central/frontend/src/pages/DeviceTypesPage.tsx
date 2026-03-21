@@ -1,4 +1,6 @@
 import { useState, useMemo } from "react";
+import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
+import { validateShortName } from "@/lib/validation.ts";
 import { Loader2, Pencil, Plus, Server, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
@@ -54,14 +56,14 @@ export function DeviceTypesPage() {
   const deleteType = useDeleteDeviceType();
 
   const [addOpen, setAddOpen] = useState(false);
-  const [name, setName] = useState("");
+  const nameField = useField("", validateShortName);
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState("other");
   const [formError, setFormError] = useState<string | null>(null);
 
   // Edit state
   const [editTarget, setEditTarget] = useState<DeviceType | null>(null);
-  const [editName, setEditName] = useState("");
+  const editNameField = useField("", validateShortName);
   const [editDescription, setEditDescription] = useState("");
   const [editCategory, setEditCategory] = useState("other");
   const [editError, setEditError] = useState<string | null>(null);
@@ -87,18 +89,15 @@ export function DeviceTypesPage() {
     e.preventDefault();
     setFormError(null);
 
-    if (!name.trim()) {
-      setFormError("Name is required.");
-      return;
-    }
+    if (!validateAll(nameField)) return;
 
     try {
       await createType.mutateAsync({
-        name: name.trim().toLowerCase().replace(/\s+/g, "-"),
+        name: nameField.value.trim().toLowerCase().replace(/\s+/g, "-"),
         description: description.trim() || undefined,
         category,
       });
-      setName("");
+      nameField.reset();
       setDescription("");
       setCategory("other");
       setAddOpen(false);
@@ -109,7 +108,7 @@ export function DeviceTypesPage() {
 
   function openEdit(dt: DeviceType) {
     setEditTarget(dt);
-    setEditName(dt.name);
+    editNameField.reset(dt.name);
     setEditDescription(dt.description ?? "");
     setEditCategory(dt.category || "other");
     setEditError(null);
@@ -124,7 +123,7 @@ export function DeviceTypesPage() {
       await updateType.mutateAsync({
         id: editTarget.id,
         data: {
-          ...(isBuiltin ? {} : { name: editName.trim().toLowerCase().replace(/\s+/g, "-") }),
+          ...(isBuiltin ? {} : { name: editNameField.value.trim().toLowerCase().replace(/\s+/g, "-") }),
           description: editDescription.trim() || undefined,
           category: editCategory,
         },
@@ -271,10 +270,12 @@ export function DeviceTypesPage() {
             <Input
               id="dt-name"
               placeholder="e.g. firewall, load-balancer"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
+              value={nameField.value}
+              onChange={nameField.onChange}
+              onBlur={nameField.onBlur}
               autoFocus
             />
+            {nameField.error && <p className="text-xs text-red-400 mt-0.5">{nameField.error}</p>}
             <p className="text-xs text-zinc-500">
               Lowercase, hyphens allowed. Will be auto-formatted.
             </p>
@@ -322,8 +323,9 @@ export function DeviceTypesPage() {
             <Label htmlFor="dt-edit-name">Name</Label>
             <Input
               id="dt-edit-name"
-              value={editName}
-              onChange={(e) => setEditName(e.target.value)}
+              value={editNameField.value}
+              onChange={editNameField.onChange}
+              onBlur={editNameField.onBlur}
               disabled={editTarget ? BUILTIN_TYPES.has(editTarget.name) : false}
               autoFocus
             />

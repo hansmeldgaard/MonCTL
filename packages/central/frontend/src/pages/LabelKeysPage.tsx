@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
+import { validateLabelKey, validateHexColor } from "@/lib/validation.ts";
 import { Loader2, Plus, Pencil, Trash2, Tag, X } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
@@ -121,9 +123,9 @@ export function LabelKeysPage() {
   const [deleteTarget, setDeleteTarget] = useState<LabelKey | null>(null);
 
   // Create form
-  const [newKey, setNewKey] = useState("");
+  const newKeyField = useField("", validateLabelKey);
   const [newDesc, setNewDesc] = useState("");
-  const [newColor, setNewColor] = useState("");
+  const newColorField = useField("", validateHexColor);
   const [newShowDesc, setNewShowDesc] = useState(false);
   const [newValues, setNewValues] = useState<string[]>([]);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -135,9 +137,9 @@ export function LabelKeysPage() {
   const [editValues, setEditValues] = useState<string[]>([]);
 
   function openCreate() {
-    setNewKey("");
+    newKeyField.reset();
     setNewDesc("");
-    setNewColor("");
+    newColorField.reset();
     setNewShowDesc(false);
     setNewValues([]);
     setCreateError(null);
@@ -154,11 +156,12 @@ export function LabelKeysPage() {
 
   async function handleCreate() {
     setCreateError(null);
+    if (!validateAll(newKeyField, newColorField)) return;
     try {
       await createLabelKey.mutateAsync({
-        key: newKey.trim().toLowerCase(),
+        key: newKeyField.value.trim().toLowerCase(),
         description: newDesc.trim() || undefined,
-        color: newColor.trim() || undefined,
+        color: newColorField.value.trim() || undefined,
         show_description: newShowDesc,
         predefined_values: newValues,
       });
@@ -286,11 +289,13 @@ export function LabelKeysPage() {
             <Label>Key</Label>
             <Input
               placeholder="e.g. site, env, role"
-              value={newKey}
-              onChange={(e) => setNewKey(e.target.value)}
+              value={newKeyField.value}
+              onChange={newKeyField.onChange}
+              onBlur={newKeyField.onBlur}
               className="font-mono text-xs"
               autoFocus
             />
+            {newKeyField.error && <p className="text-xs text-red-400 mt-0.5">{newKeyField.error}</p>}
             <p className="text-[10px] text-zinc-500">Lowercase, a-z, 0-9, hyphens, underscores.</p>
           </div>
           <div className="space-y-1.5">
@@ -317,13 +322,14 @@ export function LabelKeysPage() {
             </label>
             <p className="text-[10px] text-zinc-500 ml-6">
               {newDesc.trim()
-                ? `When enabled, labels display "${newDesc.trim()}: xyz" instead of "${newKey.trim().toLowerCase() || "key"}: xyz"`
+                ? `When enabled, labels display "${newDesc.trim()}: xyz" instead of "${newKeyField.value.trim().toLowerCase() || "key"}: xyz"`
                 : "Add a description first to enable this option"}
             </p>
           </div>
           <div className="space-y-1.5">
             <Label>Color</Label>
-            <ColorPicker value={newColor} onChange={setNewColor} />
+            <ColorPicker value={newColorField.value} onChange={(v) => newColorField.setValue(v)} />
+            {newColorField.error && <p className="text-xs text-red-400 mt-0.5">{newColorField.error}</p>}
           </div>
           <div className="space-y-1.5">
             <Label>Predefined Values</Label>

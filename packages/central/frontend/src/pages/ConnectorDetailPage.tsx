@@ -1,5 +1,7 @@
 import { useState, useMemo } from "react";
 import { useParams, Link } from "react-router-dom";
+import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
+import { validateSemver } from "@/lib/validation.ts";
 import { ArrowLeft, Code2, Loader2, Pencil, Plug, Plus, Star, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
@@ -51,7 +53,7 @@ export function ConnectorDetailPage() {
 
   // New version state
   const [versionOpen, setVersionOpen] = useState(false);
-  const [versionString, setVersionString] = useState("");
+  const versionField = useField("", validateSemver);
   const [versionCode, setVersionCode] = useState("# New connector\n\nclass MyConnector:\n    def connect(self, config):\n        pass\n");
   const [versionReqs, setVersionReqs] = useState("");
   const [versionEntry, setVersionEntry] = useState("");
@@ -88,19 +90,19 @@ export function ConnectorDetailPage() {
     e.preventDefault();
     if (!id) return;
     setVersionError(null);
-    if (!versionString.trim()) { setVersionError("Version is required."); return; }
+    if (!validateAll(versionField)) return;
     if (!versionCode.trim()) { setVersionError("Source code is required."); return; }
     try {
       await createVersion.mutateAsync({
         connectorId: id,
         data: {
-          version: versionString.trim(),
+          version: versionField.value.trim(),
           source_code: versionCode,
           requirements: versionReqs.trim() ? versionReqs.trim().split("\n").map((r) => r.trim()).filter(Boolean) : [],
           entry_class: versionEntry.trim() || undefined,
         },
       });
-      setVersionString(""); setVersionCode(""); setVersionReqs(""); setVersionEntry(""); setVersionOpen(false);
+      versionField.reset(); setVersionCode(""); setVersionReqs(""); setVersionEntry(""); setVersionOpen(false);
     } catch (err) {
       setVersionError(err instanceof Error ? err.message : "Failed to create version");
     }
@@ -271,7 +273,7 @@ export function ConnectorDetailPage() {
                   size="sm"
                   variant="secondary"
                   className="ml-auto gap-1.5"
-                  onClick={() => { setVersionString(""); setVersionCode("# New connector version\n"); setVersionReqs(""); setVersionEntry(""); setVersionError(null); setVersionOpen(true); }}
+                  onClick={() => { versionField.reset(); setVersionCode("# New connector version\n"); setVersionReqs(""); setVersionEntry(""); setVersionError(null); setVersionOpen(true); }}
                 >
                   <Plus className="h-4 w-4" /> New Version
                 </Button>
@@ -375,7 +377,7 @@ export function ConnectorDetailPage() {
       {/* New Version Dialog */}
       <Dialog open={versionOpen} onClose={() => setVersionOpen(false)} title="New Version" size="fullscreen">
         <NewVersionCodeForm
-          versionString={versionString} setVersionString={setVersionString}
+          versionField={versionField}
           versionCode={versionCode} setVersionCode={setVersionCode}
           versionReqs={versionReqs} setVersionReqs={setVersionReqs}
           versionEntry={versionEntry} setVersionEntry={setVersionEntry}
@@ -522,7 +524,7 @@ function EditVersionCodeForm({
 }
 
 function NewVersionCodeForm({
-  versionString, setVersionString,
+  versionField,
   versionCode, setVersionCode,
   versionReqs, setVersionReqs,
   versionEntry, setVersionEntry,
@@ -531,7 +533,7 @@ function NewVersionCodeForm({
   onCancel,
   isPending,
 }: {
-  versionString: string; setVersionString: (v: string) => void;
+  versionField: { value: string; onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => void; onBlur: () => void; error: string | null };
   versionCode: string; setVersionCode: (v: string) => void;
   versionReqs: string; setVersionReqs: (v: string) => void;
   versionEntry: string; setVersionEntry: (v: string) => void;
@@ -550,7 +552,8 @@ function NewVersionCodeForm({
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1.5">
           <Label htmlFor="ver-string">Version</Label>
-          <Input id="ver-string" placeholder="e.g. 1.0.0" value={versionString} onChange={(e) => setVersionString(e.target.value)} autoFocus />
+          <Input id="ver-string" placeholder="e.g. 1.0.0" value={versionField.value} onChange={versionField.onChange} onBlur={versionField.onBlur} autoFocus />
+          {versionField.error && <p className="text-xs text-red-400 mt-0.5">{versionField.error}</p>}
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="ver-entry">Entry Class <span className="font-normal text-zinc-500">(optional)</span></Label>

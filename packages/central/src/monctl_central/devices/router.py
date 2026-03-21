@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
@@ -15,6 +15,7 @@ from monctl_central.dependencies import apply_tenant_filter, check_tenant_access
 from sqlalchemy.orm import selectinload
 from monctl_central.storage.models import Credential, CollectorGroup, Device, InterfaceMetadata, LabelKey, Tenant, Collector
 from monctl_common.utils import utc_now
+from monctl_common.validators import validate_address, validate_labels, validate_metadata, validate_uuid
 
 router = APIRouter()
 
@@ -50,9 +51,9 @@ class CreateDeviceRequest(BaseModel):
         }
     }
 
-    name: str = Field(description="Human-readable device name, e.g. 'prod-db-01'")
-    address: str = Field(description="IP address, hostname, or URL")
-    device_type: str = Field(default="host", description="'host', 'network', 'api', 'database', etc.")
+    name: str = Field(min_length=1, max_length=255, description="Human-readable device name, e.g. 'prod-db-01'")
+    address: str = Field(min_length=1, max_length=500, description="IP address, hostname, or URL")
+    device_type: str = Field(default="host", min_length=1, max_length=64, description="'host', 'network', 'api', 'database', etc.")
     collector_id: str | None = Field(default=None, description="UUID of the owning collector")
     tenant_id: str | None = Field(default=None, description="UUID of the owning tenant")
     collector_group_id: str | None = Field(default=None, description="UUID of the collector group")
@@ -61,11 +62,33 @@ class CreateDeviceRequest(BaseModel):
     labels: dict[str, str] = Field(default_factory=dict, description="Key-value labels")
     metadata: dict = Field(default_factory=dict, description="Additional metadata")
 
+    @field_validator("address")
+    @classmethod
+    def check_address(cls, v: str) -> str:
+        return validate_address(v)
+
+    @field_validator("labels")
+    @classmethod
+    def check_labels(cls, v: dict[str, str]) -> dict[str, str]:
+        return validate_labels(v)
+
+    @field_validator("metadata")
+    @classmethod
+    def check_metadata(cls, v: dict) -> dict:
+        return validate_metadata(v)
+
+    @field_validator("collector_id", "tenant_id", "collector_group_id", "default_credential_id")
+    @classmethod
+    def check_uuids(cls, v: str | None, info) -> str | None:
+        if v is not None:
+            validate_uuid(v, info.field_name)
+        return v
+
 
 class UpdateDeviceRequest(BaseModel):
-    name: str | None = None
-    address: str | None = None
-    device_type: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    address: str | None = Field(default=None, min_length=1, max_length=500)
+    device_type: str | None = Field(default=None, min_length=1, max_length=64)
     collector_id: str | None = None
     tenant_id: str | None = None
     collector_group_id: str | None = None
@@ -73,6 +96,35 @@ class UpdateDeviceRequest(BaseModel):
     credentials: dict[str, str] | None = None
     labels: dict[str, str] | None = None
     metadata: dict | None = None
+    retention_overrides: dict[str, str] | None = None
+
+    @field_validator("address")
+    @classmethod
+    def check_address(cls, v: str | None) -> str | None:
+        if v is not None:
+            return validate_address(v)
+        return v
+
+    @field_validator("labels")
+    @classmethod
+    def check_labels(cls, v: dict[str, str] | None) -> dict[str, str] | None:
+        if v is not None:
+            return validate_labels(v)
+        return v
+
+    @field_validator("metadata")
+    @classmethod
+    def check_metadata(cls, v: dict | None) -> dict | None:
+        if v is not None:
+            return validate_metadata(v)
+        return v
+
+    @field_validator("collector_id", "tenant_id", "collector_group_id", "default_credential_id")
+    @classmethod
+    def check_uuids(cls, v: str | None, info) -> str | None:
+        if v is not None and v != "":
+            validate_uuid(v, info.field_name)
+        return v
 
 
 def _format_device(d: Device, resolved_credentials: dict | None = None) -> dict:
@@ -92,6 +144,7 @@ def _format_device(d: Device, resolved_credentials: dict | None = None) -> dict:
         "credentials": resolved_credentials if resolved_credentials is not None else {},
         "labels": d.labels,
         "metadata": d.metadata_,
+        "retention_overrides": d.retention_overrides or {},
         "created_at": d.created_at.isoformat() if d.created_at else None,
         "updated_at": d.updated_at.isoformat() if d.updated_at else None,
     }
@@ -371,10 +424,13 @@ async def update_device(
     if request.tenant_id is not None:
         device.tenant_id = uuid.UUID(request.tenant_id) if request.tenant_id != "" else None
 
-    # Track whether collector_group_id is changing (and what it's changing to)
-    new_group_id: uuid.UUID | None = device.collector_group_id
+    # Track whether collector_group_id is actually changing
+    old_group_id = device.collector_group_id
+    group_changed = False
     if request.collector_group_id is not None:
         new_group_id = uuid.UUID(request.collector_group_id) if request.collector_group_id != "" else None
+        if new_group_id != old_group_id:
+            group_changed = True
         device.collector_group_id = new_group_id
 
     if request.default_credential_id is not None:
@@ -386,13 +442,30 @@ async def update_device(
         await _auto_register_label_keys(request.labels, db)
     if request.metadata is not None:
         device.metadata_ = request.metadata
+    if request.retention_overrides is not None:
+        _VALID_RETENTION_KEYS = {
+            "interface_raw_retention_days", "interface_hourly_retention_days", "interface_daily_retention_days",
+            "perf_raw_retention_days", "perf_hourly_retention_days", "perf_daily_retention_days",
+        }
+        invalid_keys = set(request.retention_overrides.keys()) - _VALID_RETENTION_KEYS
+        if invalid_keys:
+            raise HTTPException(status_code=422, detail=f"Invalid retention keys: {invalid_keys}")
+        for k, v in request.retention_overrides.items():
+            try:
+                val = int(v)
+                if val < 1:
+                    raise ValueError()
+            except (ValueError, TypeError):
+                raise HTTPException(status_code=422, detail=f"Invalid value for {k}: must be a positive integer")
+        device.retention_overrides = request.retention_overrides
     device.updated_at = utc_now()
     await db.flush()
 
-    # When a device is placed into a collector group, migrate all its existing
-    # explicit-collector assignments to group-level (collector_id = NULL) so that
-    # the group's collectors pick them up via round-robin.
-    if new_group_id is not None:
+    # When a device is moved to a DIFFERENT collector group, migrate all its
+    # existing explicit-collector assignments to group-level (collector_id = NULL)
+    # so that the group's collectors pick them up via round-robin.
+    # Only do this when the group actually changes — not on unrelated edits (name, etc.).
+    if group_changed and device.collector_group_id is not None:
         from sqlalchemy import update
         from monctl_central.storage.models import AppAssignment, Collector
         from monctl_common.utils import utc_now as _utc_now
@@ -421,9 +494,9 @@ async def update_device(
 
 class MonitoringCheckConfig(BaseModel):
     """Configuration for a single monitoring check (availability or latency)."""
-    app_name: str | None = None
+    app_name: str | None = Field(default=None, max_length=255)
     config: dict = Field(default_factory=dict)
-    interval_seconds: int = 60
+    interval_seconds: int = Field(default=60, ge=10, le=86400)
 
 
 class UpdateMonitoringRequest(BaseModel):
@@ -646,7 +719,7 @@ def _validate_poll_metrics(value: str) -> bool:
 class UpdateInterfaceSettingsRequest(BaseModel):
     polling_enabled: Optional[bool] = None
     alerting_enabled: Optional[bool] = None
-    poll_metrics: Optional[str] = None
+    poll_metrics: Optional[str] = Field(default=None, max_length=100)
 
 
 @router.patch("/{device_id}/interface-metadata/{interface_id}")
@@ -688,10 +761,10 @@ async def update_interface_settings(
 
 
 class BulkInterfaceSettingsRequest(BaseModel):
-    interface_ids: list[str]
+    interface_ids: list[str] = Field(min_length=1, max_length=500)
     polling_enabled: Optional[bool] = None
     alerting_enabled: Optional[bool] = None
-    poll_metrics: Optional[str] = None
+    poll_metrics: Optional[str] = Field(default=None, max_length=100)
 
 
 @router.patch("/{device_id}/interface-metadata")
@@ -774,7 +847,7 @@ async def delete_device(
 
 
 class BulkDeleteRequest(BaseModel):
-    device_ids: list[str]
+    device_ids: list[str] = Field(min_length=1, max_length=500)
 
 
 @router.post("/bulk-delete", status_code=status.HTTP_200_OK)

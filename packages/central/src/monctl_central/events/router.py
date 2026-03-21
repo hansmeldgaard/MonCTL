@@ -7,7 +7,8 @@ import json
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from monctl_common.validators import validate_uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -179,7 +180,7 @@ async def list_cleared_events(
 
 
 class BulkEventActionRequest(BaseModel):
-    event_ids: list[str]
+    event_ids: list[str] = Field(min_length=1, max_length=500)
 
 
 @router.post("/acknowledge")
@@ -208,28 +209,62 @@ async def clear_events(
 
 
 class CreateEventPolicyRequest(BaseModel):
-    name: str
-    description: str | None = None
+    name: str = Field(min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
     definition_id: str
     mode: str = Field(default="consecutive")
     fire_count_threshold: int = Field(default=1, ge=1)
     window_size: int = Field(default=5, ge=1)
-    event_severity: str = Field(default="warning")
-    message_template: str | None = None
+    event_severity: str = Field(default="warning", max_length=20)
+    message_template: str | None = Field(default=None, max_length=2000)
     auto_clear_on_resolve: bool = True
     enabled: bool = True
 
+    @field_validator("definition_id")
+    @classmethod
+    def check_definition_id(cls, v: str) -> str:
+        validate_uuid(v, "definition_id")
+        return v
+
+    @field_validator("event_severity")
+    @classmethod
+    def check_severity(cls, v: str) -> str:
+        if v not in {"info", "warning", "critical", "emergency", "recovery"}:
+            raise ValueError("event_severity must be one of: info, warning, critical, emergency, recovery")
+        return v
+
+    @field_validator("mode")
+    @classmethod
+    def check_mode(cls, v: str) -> str:
+        if v not in {"consecutive", "sliding_window"}:
+            raise ValueError("mode must be 'consecutive' or 'sliding_window'")
+        return v
+
 
 class UpdateEventPolicyRequest(BaseModel):
-    name: str | None = None
-    description: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
     mode: str | None = None
     fire_count_threshold: int | None = None
     window_size: int | None = None
-    event_severity: str | None = None
-    message_template: str | None = None
+    event_severity: str | None = Field(default=None, max_length=20)
+    message_template: str | None = Field(default=None, max_length=2000)
     auto_clear_on_resolve: bool | None = None
     enabled: bool | None = None
+
+    @field_validator("event_severity")
+    @classmethod
+    def check_severity(cls, v: str | None) -> str | None:
+        if v is not None and v not in {"info", "warning", "critical", "emergency", "recovery"}:
+            raise ValueError("event_severity must be one of: info, warning, critical, emergency, recovery")
+        return v
+
+    @field_validator("mode")
+    @classmethod
+    def check_mode(cls, v: str | None) -> str | None:
+        if v is not None and v not in {"consecutive", "sliding_window"}:
+            raise ValueError("mode must be 'consecutive' or 'sliding_window'")
+        return v
 
 
 @router.get("/policies")

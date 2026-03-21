@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,20 +14,33 @@ from monctl_central.dependencies import get_db, require_collector_key, require_a
 from monctl_central.storage.models import ApiKey, Collector, CollectorGroup, RegistrationToken
 from monctl_common.utils import generate_api_key, hash_api_key, key_prefix_display, utc_now
 from monctl_common.constants import COLLECTOR_KEY_PREFIX
+from monctl_common.validators import validate_labels, validate_uuid
 
 router = APIRouter()
 
 
 class RegisterRequest(BaseModel):
-    hostname: str
-    registration_token: str | None = None  # Legacy long token
-    registration_code: str | None = None   # Short 6-char code (preferred)
+    hostname: str = Field(min_length=1, max_length=255)
+    registration_token: str | None = Field(default=None, max_length=512)  # Legacy long token
+    registration_code: str | None = Field(default=None, min_length=6, max_length=6)  # Short 6-char code (preferred)
     os_info: dict | None = None
     ip_addresses: list[str] | None = None
     labels: dict[str, str] = Field(default_factory=dict)
     cluster_id: str | None = None
-    peer_address: str | None = None
-    fingerprint: str | None = None
+    peer_address: str | None = Field(default=None, max_length=500)
+    fingerprint: str | None = Field(default=None, max_length=512)
+
+    @field_validator("labels")
+    @classmethod
+    def check_labels(cls, v: dict[str, str]) -> dict[str, str]:
+        return validate_labels(v)
+
+    @field_validator("cluster_id")
+    @classmethod
+    def check_cluster_id(cls, v: str | None) -> str | None:
+        if v is not None:
+            validate_uuid(v, "cluster_id")
+        return v
 
 
 class RegisterResponse(BaseModel):
@@ -40,10 +53,16 @@ class RegisterResponse(BaseModel):
 class HeartbeatRequest(BaseModel):
     collector_id: str
     timestamp: datetime
-    config_version: int
+    config_version: int = Field(ge=0)
     system_stats: dict | None = None
     app_statuses: dict | None = None
     peer_states: dict | None = None
+
+    @field_validator("collector_id")
+    @classmethod
+    def check_collector_id(cls, v: str) -> str:
+        validate_uuid(v, "collector_id")
+        return v
 
 
 class HeartbeatResponse(BaseModel):
@@ -52,16 +71,29 @@ class HeartbeatResponse(BaseModel):
 
 
 class UpdateCollectorRequest(BaseModel):
-    name: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=255)
     group_id: str | None = None  # empty string = unassign, UUID string = assign
+
+    @field_validator("group_id")
+    @classmethod
+    def check_group_id(cls, v: str | None) -> str | None:
+        if v is not None and v != "":
+            validate_uuid(v, "group_id")
+        return v
 
 
 class ApproveRequest(BaseModel):
     group_id: str
 
+    @field_validator("group_id")
+    @classmethod
+    def check_group_id(cls, v: str) -> str:
+        validate_uuid(v, "group_id")
+        return v
+
 
 class RejectRequest(BaseModel):
-    reason: str | None = None
+    reason: str | None = Field(default=None, max_length=1000)
 
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)

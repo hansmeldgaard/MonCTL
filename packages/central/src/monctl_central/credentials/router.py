@@ -14,7 +14,8 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from monctl_common.validators import validate_uuid
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
@@ -62,13 +63,14 @@ class CreateCredentialRequest(BaseModel):
         }
     }
 
-    name: str = Field(description="Unique reference name used in config: `$credential:<name>`")
-    description: str | None = Field(default=None)
+    name: str = Field(min_length=1, max_length=255, description="Unique reference name used in config: `$credential:<name>`")
+    description: str | None = Field(default=None, max_length=2000)
     template_id: str | None = Field(
         default=None, description="UUID of the credential template to use"
     )
     credential_type: str | None = Field(
         default=None,
+        max_length=64,
         description="Type hint: 'snmp_community', 'ssh_password', etc. Ignored if template_id is set.",
     )
     secret: dict = Field(
@@ -78,6 +80,13 @@ class CreateCredentialRequest(BaseModel):
             "Keys are injected into the app config when the `$credential:name` reference is resolved."
         )
     )
+
+    @field_validator("template_id")
+    @classmethod
+    def check_template_id(cls, v: str | None) -> str | None:
+        if v is not None:
+            validate_uuid(v, "template_id")
+        return v
 
 
 class UpdateCredentialRequest(BaseModel):
@@ -94,8 +103,8 @@ class UpdateCredentialRequest(BaseModel):
         }
     }
 
-    description: str | None = None
-    credential_type: str | None = None
+    description: str | None = Field(default=None, max_length=2000)
+    credential_type: str | None = Field(default=None, max_length=64)
     secret: dict | None = Field(default=None, description="New secret data (replaces existing)")
 
 
@@ -153,8 +162,8 @@ async def list_credential_types(
 
 
 class CredentialTypeRequest(BaseModel):
-    name: str
-    description: str | None = None
+    name: str = Field(min_length=1, max_length=64)
+    description: str | None = Field(default=None, max_length=2000)
 
 
 @router.post("/types", status_code=status.HTTP_201_CREATED)

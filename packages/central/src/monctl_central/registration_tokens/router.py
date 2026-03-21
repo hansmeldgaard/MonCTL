@@ -8,7 +8,8 @@ import string
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from monctl_common.validators import validate_uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,10 +28,28 @@ def _generate_short_code(length: int = 6) -> str:
 
 
 class CreateTokenRequest(BaseModel):
-    name: str = Field(description="Human-readable token name")
+    name: str = Field(min_length=1, max_length=255, description="Human-readable token name")
     one_time: bool = Field(default=False, description="Token can only be used once")
     cluster_id: str | None = Field(default=None, description="Restrict to a specific cluster")
     expires_at: str | None = Field(default=None, description="ISO 8601 expiry timestamp")
+
+    @field_validator("cluster_id")
+    @classmethod
+    def check_cluster_id(cls, v: str | None) -> str | None:
+        if v is not None:
+            validate_uuid(v, "cluster_id")
+        return v
+
+    @field_validator("expires_at")
+    @classmethod
+    def check_expires_at(cls, v: str | None) -> str | None:
+        if v is not None:
+            from datetime import datetime
+            try:
+                datetime.fromisoformat(v)
+            except (ValueError, TypeError):
+                raise ValueError("expires_at must be a valid ISO 8601 timestamp")
+        return v
 
 
 def _fmt(t: RegistrationToken) -> dict:

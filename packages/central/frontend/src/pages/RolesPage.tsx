@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
+import { validateShortName } from "@/lib/validation.ts";
 import { Loader2, Plus, Pencil, Trash2, ShieldCheck } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
@@ -129,32 +131,33 @@ export function RolesPage() {
   const [deleteTarget, setDeleteTarget] = useState<Role | null>(null);
 
   // Create form
-  const [newName, setNewName] = useState("");
+  const newNameField = useField("", validateShortName);
   const [newDesc, setNewDesc] = useState("");
   const [newPerms, setNewPerms] = useState<{ resource: string; action: string }[]>([]);
 
   // Edit form
-  const [editName, setEditName] = useState("");
+  const editNameField = useField("", validateShortName);
   const [editDesc, setEditDesc] = useState("");
   const [editPerms, setEditPerms] = useState<{ resource: string; action: string }[]>([]);
 
   function openCreate() {
-    setNewName("");
+    newNameField.reset();
     setNewDesc("");
     setNewPerms([]);
     setCreateOpen(true);
   }
 
   function openEdit(role: Role) {
-    setEditName(role.name);
+    editNameField.reset(role.name);
     setEditDesc(role.description ?? "");
     setEditPerms(role.permissions.map((p) => ({ resource: p.resource, action: p.action })));
     setEditTarget(role);
   }
 
   async function handleCreate() {
+    if (!validateAll(newNameField)) return;
     await createRole.mutateAsync({
-      name: newName.trim(),
+      name: newNameField.value.trim(),
       description: newDesc.trim() || undefined,
       permissions: newPerms,
     });
@@ -163,10 +166,11 @@ export function RolesPage() {
 
   async function handleUpdate() {
     if (!editTarget) return;
+    if (!validateAll(editNameField)) return;
     await updateRole.mutateAsync({
       id: editTarget.id,
       data: {
-        name: editName.trim(),
+        name: editNameField.value.trim(),
         description: editDesc.trim() || undefined,
         permissions: editPerms,
       },
@@ -264,11 +268,13 @@ export function RolesPage() {
             <Label>Name</Label>
             <Input
               placeholder="e.g. Network Operator"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
+              value={newNameField.value}
+              onChange={newNameField.onChange}
+              onBlur={newNameField.onBlur}
               className="text-xs"
               autoFocus
             />
+            {newNameField.error && <p className="text-xs text-red-400 mt-0.5">{newNameField.error}</p>}
           </div>
           <div className="space-y-1.5">
             <Label>Description</Label>
@@ -291,7 +297,7 @@ export function RolesPage() {
           )}
           <DialogFooter>
             <Button variant="secondary" onClick={() => setCreateOpen(false)}>Cancel</Button>
-            <Button onClick={handleCreate} disabled={createRole.isPending || !newName.trim()}>
+            <Button onClick={handleCreate} disabled={createRole.isPending || !newNameField.value.trim()}>
               {createRole.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
               Create
             </Button>
@@ -305,10 +311,12 @@ export function RolesPage() {
           <div className="space-y-1.5">
             <Label>Name</Label>
             <Input
-              value={editName}
-              onChange={(e) => setEditName(e.target.value)}
+              value={editNameField.value}
+              onChange={editNameField.onChange}
+              onBlur={editNameField.onBlur}
               className="text-xs"
             />
+            {editNameField.error && <p className="text-xs text-red-400 mt-0.5">{editNameField.error}</p>}
           </div>
           <div className="space-y-1.5">
             <Label>Description</Label>

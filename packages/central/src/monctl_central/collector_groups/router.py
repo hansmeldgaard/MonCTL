@@ -17,13 +17,13 @@ router = APIRouter()
 
 
 class CreateCollectorGroupRequest(BaseModel):
-    name: str = Field(description="Unique group name")
-    description: str | None = Field(default=None, description="Optional description")
+    name: str = Field(min_length=1, max_length=255, description="Unique group name")
+    description: str | None = Field(default=None, max_length=2000, description="Optional description")
 
 
 class UpdateCollectorGroupRequest(BaseModel):
-    name: str | None = Field(default=None, description="New group name")
-    description: str | None = Field(default=None, description="New description")
+    name: str | None = Field(default=None, min_length=1, max_length=255, description="New group name")
+    description: str | None = Field(default=None, max_length=2000, description="New description")
 
 
 def _fmt(g: CollectorGroup, collector_count: int = 0, health: dict | None = None) -> dict:

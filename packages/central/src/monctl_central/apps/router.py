@@ -6,12 +6,13 @@ import re
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 import sqlalchemy as sa
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from monctl_central.dependencies import apply_tenant_filter, get_db, require_auth
+from monctl_common.validators import validate_semver, validate_uuid
 from monctl_central.storage.models import (
     App,
     AppAssignment,
@@ -54,11 +55,25 @@ class CreateAppRequest(BaseModel):
         }
     }
 
-    name: str
-    description: str | None = None
-    app_type: str = Field(description="'script' or 'sdk'")
+    name: str = Field(min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
+    app_type: str = Field(min_length=1, max_length=32, description="'script' or 'sdk'")
     config_schema: dict | None = None
-    target_table: str = Field(default="availability_latency", description="ClickHouse target table")
+    target_table: str = Field(default="availability_latency", max_length=64, description="ClickHouse target table")
+
+    @field_validator("app_type")
+    @classmethod
+    def check_app_type(cls, v: str) -> str:
+        if v not in {"script", "sdk"}:
+            raise ValueError("app_type must be 'script' or 'sdk'")
+        return v
+
+    @field_validator("target_table")
+    @classmethod
+    def check_target_table(cls, v: str) -> str:
+        if v not in {"availability_latency", "performance", "interface", "config"}:
+            raise ValueError("target_table must be one of: availability_latency, performance, interface, config")
+        return v
 
 
 class ConnectorBindingInput(BaseModel):
@@ -156,8 +171,8 @@ class CreateAssignmentRequest(BaseModel):
             "the decrypted secret before the config is sent to the collector."
         ),
     )
-    schedule_type: str = Field(description="'interval' (seconds) or 'cron' (cron expression)")
-    schedule_value: str = Field(description="Seconds for interval (e.g. '60') or cron expression (e.g. '*/5 * * * *')")
+    schedule_type: str = Field(default="interval", max_length=32, description="'interval' (seconds) or 'cron' (cron expression)")
+    schedule_value: str = Field(min_length=1, max_length=32, description="Seconds for interval (e.g. '60') or cron expression (e.g. '*/5 * * * *')")
     resource_limits: dict = Field(default_factory=lambda: {"timeout_seconds": 30, "memory_mb": 256})
     role: str | None = Field(default=None, description="Optional role: 'availability' or 'latency'")
     use_latest: bool = Field(default=False, description="Follow latest app version dynamically")
@@ -166,6 +181,26 @@ class CreateAssignmentRequest(BaseModel):
         default_factory=list,
         description="Optional connector bindings to attach to this assignment",
     )
+
+    @field_validator("app_id", "app_version_id")
+    @classmethod
+    def check_required_uuids(cls, v: str, info) -> str:
+        validate_uuid(v, info.field_name)
+        return v
+
+    @field_validator("collector_id", "device_id", "cluster_id", "credential_id")
+    @classmethod
+    def check_optional_uuids(cls, v: str | None, info) -> str | None:
+        if v is not None:
+            validate_uuid(v, info.field_name)
+        return v
+
+    @field_validator("schedule_type")
+    @classmethod
+    def check_schedule_type(cls, v: str) -> str:
+        if v not in {"interval", "cron"}:
+            raise ValueError("schedule_type must be 'interval' or 'cron'")
+        return v
 
 
 @router.get("")
@@ -278,21 +313,40 @@ async def create_app(
 
 
 class UpdateAppRequest(BaseModel):
-    name: str | None = None
-    description: str | None = None
-    app_type: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
+    app_type: str | None = Field(default=None, min_length=1, max_length=32)
     config_schema: dict | None = None
-    target_table: str | None = None
+    target_table: str | None = Field(default=None, max_length=64)
+
+    @field_validator("app_type")
+    @classmethod
+    def check_app_type(cls, v: str | None) -> str | None:
+        if v is not None and v not in {"script", "sdk"}:
+            raise ValueError("app_type must be 'script' or 'sdk'")
+        return v
+
+    @field_validator("target_table")
+    @classmethod
+    def check_target_table(cls, v: str | None) -> str | None:
+        if v is not None and v not in {"availability_latency", "performance", "interface", "config"}:
+            raise ValueError("target_table must be one of: availability_latency, performance, interface, config")
+        return v
 
 
 class CreateVersionRequest(BaseModel):
-    version: str
-    source_code: str
+    version: str = Field(min_length=1, max_length=32)
+    source_code: str = Field(min_length=1)
     requirements: list[str] = Field(default_factory=list)
     entry_class: str | None = None
     set_latest: bool = False
     display_template: dict | None = None
     volatile_keys: list[str] | None = None
+
+    @field_validator("version")
+    @classmethod
+    def check_version(cls, v: str) -> str:
+        return validate_semver(v)
 
 
 # --- Assignment routes must be registered BEFORE /{app_id} to avoid path conflict ---
@@ -609,8 +663,8 @@ async def get_app(
 
 
 class AppConnectorBindingInput(BaseModel):
-    alias: str
-    connector_id: str
+    alias: str = Field(min_length=1, max_length=64)
+    connector_id: str = Field(min_length=1)
     use_latest: bool = True
     connector_version_id: str | None = None
     settings: dict = Field(default_factory=dict)
@@ -880,8 +934,8 @@ async def delete_assignment(
 
 
 class UpdateAssignmentRequest(BaseModel):
-    schedule_type: str | None = None
-    schedule_value: str | None = None
+    schedule_type: str | None = Field(default=None, max_length=32)
+    schedule_value: str | None = Field(default=None, min_length=1, max_length=32)
     config: dict | None = None
     enabled: bool | None = None
     app_version_id: str | None = None
@@ -889,6 +943,27 @@ class UpdateAssignmentRequest(BaseModel):
     collector_id: str | None = None  # "" = unpin, UUID = pin, None = don't change
     credential_id: str | None = None
     connector_bindings: list[ConnectorBindingInput] | None = None
+
+    @field_validator("schedule_type")
+    @classmethod
+    def check_schedule_type(cls, v: str | None) -> str | None:
+        if v is not None and v not in {"interval", "cron"}:
+            raise ValueError("schedule_type must be 'interval' or 'cron'")
+        return v
+
+    @field_validator("app_version_id", "credential_id")
+    @classmethod
+    def check_optional_uuids(cls, v: str | None, info) -> str | None:
+        if v is not None and v != "":
+            validate_uuid(v, info.field_name)
+        return v
+
+    @field_validator("collector_id")
+    @classmethod
+    def check_collector_id(cls, v: str | None) -> str | None:
+        if v is not None and v != "":
+            validate_uuid(v, "collector_id")
+        return v
 
 
 @router.put("/assignments/{assignment_id}")

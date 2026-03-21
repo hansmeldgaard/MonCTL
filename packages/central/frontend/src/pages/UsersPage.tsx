@@ -1,4 +1,6 @@
 import { useState, useEffect } from "react";
+import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
+import { validateUsername, validatePassword, validateEmail } from "@/lib/validation.ts";
 import {
   Loader2,
   Plus,
@@ -62,10 +64,10 @@ function AddUserDialog({ open, onClose }: AddUserDialogProps) {
   const { data: roles } = useRoles();
   const assignTenant = useAssignTenantToUser();
 
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
+  const usernameField = useField("", validateUsername);
+  const passwordField = useField("", validatePassword);
   const [displayName, setDisplayName] = useState("");
-  const [email, setEmail] = useState("");
+  const emailField = useField("", validateEmail);
   const [role, setRole] = useState("user");
   const [roleId, setRoleId] = useState("");
   const [allTenants, setAllTenants] = useState(false);
@@ -73,10 +75,10 @@ function AddUserDialog({ open, onClose }: AddUserDialogProps) {
   const [formError, setFormError] = useState<string | null>(null);
 
   function reset() {
-    setUsername("");
-    setPassword("");
+    usernameField.reset();
+    passwordField.reset();
     setDisplayName("");
-    setEmail("");
+    emailField.reset();
     setRole("user");
     setRoleId("");
     setAllTenants(false);
@@ -102,23 +104,16 @@ function AddUserDialog({ open, onClose }: AddUserDialogProps) {
     e.preventDefault();
     setFormError(null);
 
-    if (!username.trim()) {
-      setFormError("Username is required.");
-      return;
-    }
-    if (!password) {
-      setFormError("Password is required.");
-      return;
-    }
+    if (!validateAll(usernameField, passwordField, emailField)) return;
 
     try {
       const result = await createUser.mutateAsync({
-        username: username.trim(),
-        password,
+        username: usernameField.value.trim(),
+        password: passwordField.value,
         role,
         role_id: role !== "admin" && roleId ? roleId : undefined,
         display_name: displayName.trim() || undefined,
-        email: email.trim() || undefined,
+        email: emailField.value.trim() || undefined,
         all_tenants: allTenants,
       });
       // Assign selected tenants after user creation
@@ -147,21 +142,25 @@ function AddUserDialog({ open, onClose }: AddUserDialogProps) {
             <Label htmlFor="nu-username">Username *</Label>
             <Input
               id="nu-username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              value={usernameField.value}
+              onChange={usernameField.onChange}
+              onBlur={usernameField.onBlur}
               placeholder="jdoe"
               autoComplete="off"
             />
+            {usernameField.error && <p className="text-xs text-red-400 mt-0.5">{usernameField.error}</p>}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="nu-password">Password *</Label>
             <Input
               id="nu-password"
               type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              value={passwordField.value}
+              onChange={passwordField.onChange}
+              onBlur={passwordField.onBlur}
               autoComplete="new-password"
             />
+            {passwordField.error && <p className="text-xs text-red-400 mt-0.5">{passwordField.error}</p>}
           </div>
         </div>
 
@@ -180,10 +179,12 @@ function AddUserDialog({ open, onClose }: AddUserDialogProps) {
             <Input
               id="nu-email"
               type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              value={emailField.value}
+              onChange={emailField.onChange}
+              onBlur={emailField.onBlur}
               placeholder="jdoe@example.com"
             />
+            {emailField.error && <p className="text-xs text-red-400 mt-0.5">{emailField.error}</p>}
           </div>
         </div>
 
@@ -289,7 +290,7 @@ function EditUserDialog({ user, onClose }: EditUserDialogProps) {
   const [role, setRole] = useState(user?.role ?? "user");
   const [roleId, setRoleId] = useState(user?.role_id ?? "");
   const [displayName, setDisplayName] = useState(user?.display_name ?? "");
-  const [email, setEmail] = useState(user?.email ?? "");
+  const editEmailField = useField(user?.email ?? "", validateEmail);
   const [allTenants, setAllTenants] = useState(user?.all_tenants ?? false);
   const [isActive, setIsActive] = useState(user?.is_active ?? true);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -304,7 +305,7 @@ function EditUserDialog({ user, onClose }: EditUserDialogProps) {
       setRole(user.role ?? "user");
       setRoleId(user.role_id ?? "");
       setDisplayName(user.display_name ?? "");
-      setEmail(user.email ?? "");
+      editEmailField.reset(user.email ?? "");
       setAllTenants(user.all_tenants ?? false);
       setIsActive(user.is_active ?? true);
     }
@@ -315,6 +316,7 @@ function EditUserDialog({ user, onClose }: EditUserDialogProps) {
     if (!userId) return;
     setSaveError(null);
     setSaveSuccess(false);
+    if (!validateAll(editEmailField)) return;
     try {
       await updateUser.mutateAsync({
         id: userId,
@@ -322,7 +324,7 @@ function EditUserDialog({ user, onClose }: EditUserDialogProps) {
           role,
           role_id: role !== "admin" ? (roleId || null) : null,
           display_name: displayName.trim() || null,
-          email: email.trim() || null,
+          email: editEmailField.value.trim() || null,
           all_tenants: allTenants,
           is_active: isActive,
         },
@@ -378,9 +380,11 @@ function EditUserDialog({ user, onClose }: EditUserDialogProps) {
               <Input
                 id="eu-email"
                 type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                value={editEmailField.value}
+                onChange={editEmailField.onChange}
+                onBlur={editEmailField.onBlur}
               />
+              {editEmailField.error && <p className="text-xs text-red-400 mt-0.5">{editEmailField.error}</p>}
             </div>
           </div>
 
