@@ -66,6 +66,7 @@ import {
   useDevice,
   useDeviceAssignments,
   useDeviceConfigData,
+  useDeviceConfigTemplates,
   useDeviceHistory,
   useDeviceMonitoring,
   useDeviceResults,
@@ -1167,6 +1168,7 @@ function PerformanceTab({ deviceId }: { deviceId: string }) {
 function ConfigurationTab({ deviceId }: { deviceId: string }) {
   const tz = useTimezone();
   const { data: configRows, isLoading } = useDeviceConfigData(deviceId);
+  const { data: configTemplates } = useDeviceConfigTemplates(deviceId);
   const [configView, setConfigView] = useState<"current" | "changes" | "compare">("current");
   const [selectedConfigApp, setSelectedConfigApp] = useState<string | null>(null);
 
@@ -1338,7 +1340,18 @@ function ConfigurationTab({ deviceId }: { deviceId: string }) {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <ConfigDataRenderer template={null} data={selectedAppData.data} />
+              <ConfigDataRenderer
+                template={
+                  selectedConfigApp && configTemplates?.[selectedConfigApp]?.display_template?.html
+                    ? {
+                        html: configTemplates[selectedConfigApp].display_template!.html,
+                        css: configTemplates[selectedConfigApp].display_template!.css ?? undefined,
+                        key_mappings: [],
+                      }
+                    : null
+                }
+                data={selectedAppData.data}
+              />
             </CardContent>
           </Card>
         )}

@@ -148,6 +148,20 @@ export function useDeviceConfigData(deviceId: string | undefined) {
   });
 }
 
+export function useDeviceConfigTemplates(deviceId: string | undefined) {
+  return useQuery({
+    queryKey: ["device-config-templates", deviceId],
+    queryFn: () =>
+      apiGet<Record<string, {
+        app_name: string;
+        version: string;
+        display_template: { html: string; css: string | null } | null;
+      }>>(`/apps/config-templates?device_id=${deviceId}`),
+    select: (res) => res.data,
+    enabled: !!deviceId,
+  });
+}
+
 // ── Single Device ────────────────────────────────────────
 
 export function useDevice(id: string | undefined) {
