@@ -110,6 +110,7 @@ export interface Device {
   default_credential_name: string | null;
   is_enabled: boolean;
   credentials: Record<string, { id: string; name: string; credential_type: string }>;
+  retention_overrides: Record<string, string>;
   created_at?: string;
   updated_at?: string;
 }
@@ -472,6 +473,7 @@ export interface PerformanceRecord {
   metrics: Record<string, number>;
   metric_names: string[];
   metric_values: number[];
+  metric_types: string[];
   executed_at: string;
   collector_name: string | null;
 }
@@ -1117,4 +1119,109 @@ export interface ConfigChangeTimestamp {
   change_time: string;
   change_count: number;
   changed_keys: string[];
+}
+
+export interface ConfigDiffEntry {
+  component_type: string;
+  component: string;
+  config_key: string;
+  value_a: string | null;
+  value_b: string | null;
+  change_type: "added" | "removed" | "modified";
+}
+
+export interface ConfigCompareResult {
+  time_a: string;
+  time_b: string;
+  changes: ConfigDiffEntry[];
+  total_keys_a: number;
+  total_keys_b: number;
+}
+
+export interface DeviceRetentionEntry {
+  app_id: string;
+  app_name: string;
+  data_type: string;
+  retention_days: number;
+  source: "global_default" | "device_override";
+  override_id: string | null;
+}
+
+export interface RetentionDefaults {
+  config: number;
+  performance: number;
+  availability_latency: number;
+  interface: number;
+}
+
+// ── Upgrades ─────────────────────────────────────────────────────────────
+
+export interface SystemVersionNode {
+  id: string;
+  hostname: string;
+  role: string;
+  ip: string;
+  monctl_version: string | null;
+  os_version: string | null;
+  kernel_version: string | null;
+  python_version: string | null;
+  last_reported_at: string | null;
+}
+
+export interface UpgradePackageInfo {
+  id: string;
+  version: string;
+  package_type: string;
+  filename: string;
+  file_size: number;
+  sha256_hash: string;
+  changelog: string | null;
+  contains_central: boolean;
+  contains_collector: boolean;
+  uploaded_by: string | null;
+  created_at: string;
+}
+
+export interface UpgradeStatus {
+  nodes: SystemVersionNode[];
+  packages: UpgradePackageInfo[];
+}
+
+export interface UpgradeJobStep {
+  id: string;
+  step_order: number;
+  node_hostname: string;
+  node_role: string;
+  node_ip: string;
+  action: string;
+  status: string;
+  started_at: string | null;
+  completed_at: string | null;
+  output_log: string | null;
+  error_message: string | null;
+}
+
+export interface UpgradeJob {
+  id: string;
+  target_version: string;
+  scope: string;
+  strategy: string;
+  status: string;
+  started_by: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  error_message: string | null;
+  steps: UpgradeJobStep[];
+}
+
+export interface OsPackageInfo {
+  id: string;
+  package_name: string;
+  version: string;
+  architecture: string;
+  filename: string;
+  file_size: number;
+  severity: string;
+  source: string;
+  is_downloaded: boolean;
 }

@@ -528,6 +528,32 @@ class SshConnector:
     except Exception:
         logger.warning("clickhouse_init_failed", exc_info=True)
 
+    # Register this central node's version
+    import platform as _platform
+    import socket as _socket
+    from monctl_central.storage.models import SystemVersion
+
+    async with factory() as session:
+        _hostname = settings.instance_id or _socket.gethostname()
+        sv = (await session.execute(
+            select(SystemVersion).where(SystemVersion.node_hostname == _hostname)
+        )).scalar_one_or_none()
+        if not sv:
+            sv = SystemVersion(
+                node_hostname=_hostname,
+                node_role="central",
+                node_ip=_socket.gethostbyname(_socket.gethostname()),
+            )
+            session.add(sv)
+        sv.monctl_version = "0.1.0"
+        sv.os_version = f"{_platform.system()} {_platform.release()}"
+        sv.kernel_version = _platform.release()
+        sv.python_version = _platform.python_version()
+        from monctl_common.utils import utc_now
+        sv.last_reported_at = utc_now()
+        await session.commit()
+        logger.info("central_version_registered", hostname=_hostname)
+
     # ── Redis connection ───────────────────────────────────────────────────
     from monctl_central.cache import get_redis
 
@@ -626,6 +652,7 @@ _TAGS = [
     {"name": "results",     "description": "Query check results. Use `/v1/results/by-device/{id}` for a per-device status dashboard."},
     {"name": "alerting",    "description": "App-level alert definitions, instances, and threshold overrides."},
     {"name": "events",      "description": "Events and event policies. Events are promoted from alerts via configurable policies."},
+    {"name": "upgrades", "description": "System upgrade management. Upload bundles, orchestrate rolling upgrades, manage OS patches."},
 ]
 
 app = FastAPI(

@@ -13,6 +13,7 @@ import {
   Monitor,
   Package,
   Plug,
+  ArrowUpCircle,
   Settings,
   Zap,
 } from "lucide-react";
@@ -36,6 +37,7 @@ const navItems = [
   { to: "/packs", icon: Boxes, label: "Packs", end: false },
   { to: "/alerts", icon: Bell, label: "Alerts", end: false },
   { to: "/events", icon: Zap, label: "Events", end: false },
+  { to: "/upgrades", icon: ArrowUpCircle, label: "Upgrades", end: false },
   { to: "/settings", icon: Settings, label: "Settings", end: false },
 ];
 

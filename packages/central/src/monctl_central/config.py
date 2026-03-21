@@ -68,6 +68,9 @@ class Settings(BaseSettings):
     jwt_access_token_expire_minutes: int = 30
     jwt_refresh_token_expire_days: int = 7
 
+    # Upgrade management
+    upgrade_storage_dir: str = "/data/upgrades"
+
     # Initial admin user (created on first startup if no users exist)
     admin_username: str = "admin"
     admin_password: str = ""  # Set via MONCTL_ADMIN_PASSWORD to seed admin on first boot

@@ -1911,3 +1911,7 @@ async def pull_app_cache(
 
     has_more = len(rows) > limit
     return {"status": "success", "data": {"entries": entries, "has_more": has_more}}
+
+
+from monctl_central.upgrades.collector_api import router as upgrade_collector_router
+router.include_router(upgrade_collector_router, prefix="/upgrade", tags=["upgrade"])

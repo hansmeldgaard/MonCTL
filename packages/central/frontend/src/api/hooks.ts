@@ -70,6 +70,13 @@ import type {
   BulkUpdateAssignmentsRequest,
   ConfigChangeEntry,
   ConfigChangeTimestamp,
+  ConfigCompareResult,
+  DeviceRetentionEntry,
+  RetentionDefaults,
+  UpgradeStatus,
+  UpgradePackageInfo,
+  UpgradeJob,
+  OsPackageInfo,
 } from "@/types/api.ts";
 
 function buildListQs(params: ListParams): string {
@@ -749,6 +756,7 @@ export function useUpdateDevice() {
         collector_group_id: string | null;
         credentials: Record<string, string>;
         labels: Record<string, string>;
+        retention_overrides: Record<string, string>;
       }>;
     }) => apiPut<Device>(`/devices/${id}`, data),
     onSuccess: (_res, { id }) => {
@@ -1540,7 +1548,7 @@ export function useCreateAppVersion() {
   return useMutation({
     mutationFn: ({ appId, data }: {
       appId: string;
-      data: { version: string; source_code: string; requirements?: string[]; entry_class?: string; display_template?: DisplayTemplate };
+      data: { version: string; source_code: string; requirements?: string[]; entry_class?: string; display_template?: DisplayTemplate; volatile_keys?: string[] };
     }) => apiPost<{ id: string }>(`/apps/${appId}/versions`, data),
     onSuccess: (_res, { appId }) => {
       qc.invalidateQueries({ queryKey: ["app-detail", appId] });
@@ -1566,7 +1574,7 @@ export function useUpdateAppVersion() {
     mutationFn: ({ appId, versionId, data }: {
       appId: string;
       versionId: string;
-      data: { source_code?: string; requirements?: string[]; entry_class?: string; display_template?: DisplayTemplate | null };
+      data: { source_code?: string; requirements?: string[]; entry_class?: string; display_template?: DisplayTemplate | null; volatile_keys?: string[] };
     }) => apiPut<{ id: string }>(`/apps/${appId}/versions/${versionId}`, data),
     onSuccess: (_res, { appId }) => {
       qc.invalidateQueries({ queryKey: ["app-detail", appId] });
@@ -2382,5 +2390,162 @@ export function useConfigChangeTimestamps(
         `/devices/${deviceId}/config/change-timestamps${q ? `?${q}` : ""}`
       ),
     enabled: !!deviceId,
+  });
+}
+
+export function useConfigCompare(
+  deviceId: string,
+  timeA: string | null,
+  timeB: string | null,
+  appId?: string
+) {
+  const qs = new URLSearchParams();
+  if (timeA) qs.set("time_a", timeA);
+  if (timeB) qs.set("time_b", timeB);
+  if (appId) qs.set("app_id", appId);
+  return useQuery({
+    queryKey: ["config-compare", deviceId, timeA, timeB, appId],
+    queryFn: () =>
+      apiGet<ConfigCompareResult>(
+        `/devices/${deviceId}/config/compare?${qs.toString()}`
+      ),
+    select: (res) => res.data,
+    enabled: !!deviceId && !!timeA && !!timeB,
+  });
+}
+
+// ── Retention ───────────────────────────────────────────────────────────
+
+export function useRetentionDefaults() {
+  return useQuery({
+    queryKey: ["retention-defaults"],
+    queryFn: () => apiGet<RetentionDefaults>("/retention/defaults"),
+    select: (res) => res.data,
+  });
+}
+
+export function useSetRetentionDefault() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { data_type: string; retention_days: number }) =>
+      apiPut("/retention/defaults", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["retention-defaults"] });
+      qc.invalidateQueries({ queryKey: ["device-retention"] });
+    },
+  });
+}
+
+export function useDeviceRetention(deviceId: string) {
+  return useQuery({
+    queryKey: ["device-retention", deviceId],
+    queryFn: () => apiGet<DeviceRetentionEntry[]>(`/devices/${deviceId}/retention`),
+    select: (res) => res.data,
+    enabled: !!deviceId,
+  });
+}
+
+export function useSetDeviceRetention() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ deviceId, ...data }: {
+      deviceId: string; app_id: string; data_type: string; retention_days: number;
+    }) => apiPut(`/devices/${deviceId}/retention`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["device-retention"] });
+    },
+  });
+}
+
+export function useDeleteDeviceRetention() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ deviceId, overrideId }: { deviceId: string; overrideId: string }) =>
+      apiDelete(`/devices/${deviceId}/retention/${overrideId}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["device-retention"] });
+    },
+  });
+}
+
+// ── Upgrades ─────────────────────────────────────────────────────────────
+
+export function useUpgradeStatus() {
+  return useQuery({
+    queryKey: ["upgrade-status"],
+    queryFn: () => apiGet<UpgradeStatus>("/upgrades/status"),
+    select: (res) => res.data,
+    refetchInterval: POLL_DETAIL,
+  });
+}
+
+export function useUploadUpgradeBundle() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (file: File) => {
+      return apiPostFormData<UpgradePackageInfo>("/upgrades/upload", (() => { const fd = new FormData(); fd.append("file", file); return fd; })());
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["upgrade-status"] }),
+  });
+}
+
+export function useDeleteUpgradePackage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (packageId: string) => apiDelete(`/upgrades/packages/${packageId}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["upgrade-status"] }),
+  });
+}
+
+export function useStartUpgrade() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { upgrade_package_id: string; scope: string; strategy: string }) =>
+      apiPost<UpgradeJob>("/upgrades/execute", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["upgrade-status"] });
+      qc.invalidateQueries({ queryKey: ["upgrade-jobs"] });
+    },
+  });
+}
+
+export function useUpgradeJobs() {
+  return useQuery({
+    queryKey: ["upgrade-jobs"],
+    queryFn: () => apiGet<UpgradeJob[]>("/upgrades/jobs"),
+    select: (res) => res.data,
+    refetchInterval: 5_000,
+  });
+}
+
+export function useUpgradeJob(jobId: string | null) {
+  return useQuery({
+    queryKey: ["upgrade-job", jobId],
+    queryFn: () => apiGet<UpgradeJob>(`/upgrades/jobs/${jobId}`),
+    select: (res) => res.data,
+    enabled: !!jobId,
+    refetchInterval: 3_000,
+  });
+}
+
+export function useCancelUpgradeJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => apiPost(`/upgrades/jobs/${jobId}/cancel`, {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["upgrade-jobs"] }),
+  });
+}
+
+export function useCheckOsUpdates() {
+  return useMutation({
+    mutationFn: () => apiPost<Record<string, unknown>>("/upgrades/os/check", {}),
+  });
+}
+
+export function useOsPackages() {
+  return useQuery({
+    queryKey: ["os-packages"],
+    queryFn: () => apiGet<OsPackageInfo[]>("/upgrades/os/packages"),
+    select: (res) => res.data,
   });
 }

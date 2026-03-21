@@ -195,6 +195,7 @@ class Device(Base):
     )
     labels: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, server_default="{}")
+    retention_overrides: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default="now()"
     )
@@ -1008,3 +1009,121 @@ class AppCache(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default="now()"
     )
+
+
+class DataRetentionOverride(Base):
+    """Per-device, per-app retention override for a specific ClickHouse data type."""
+    __tablename__ = "data_retention_overrides"
+    __table_args__ = (
+        UniqueConstraint("device_id", "app_id", "data_type", name="uq_retention_device_app_type"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("devices.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    app_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("apps.id", ondelete="CASCADE"), nullable=False
+    )
+    data_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    retention_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default="now()"
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default="now()"
+    )
+
+
+class SystemVersion(Base):
+    """Tracks installed software versions per node."""
+    __tablename__ = "system_versions"
+    __table_args__ = (UniqueConstraint("node_hostname", name="uq_system_version_hostname"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    node_hostname: Mapped[str] = mapped_column(String(200), nullable=False)
+    node_role: Mapped[str] = mapped_column(String(50), nullable=False)
+    node_ip: Mapped[str] = mapped_column(String(50), nullable=False)
+    monctl_version: Mapped[str | None] = mapped_column(String(50))
+    docker_image_id: Mapped[str | None] = mapped_column(String(100))
+    os_version: Mapped[str | None] = mapped_column(String(200))
+    kernel_version: Mapped[str | None] = mapped_column(String(100))
+    python_version: Mapped[str | None] = mapped_column(String(50))
+    last_reported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
+
+
+class UpgradePackage(Base):
+    """A MonCTL upgrade bundle stored on central."""
+    __tablename__ = "upgrade_packages"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    version: Mapped[str] = mapped_column(String(50), nullable=False, unique=True)
+    package_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    filename: Mapped[str] = mapped_column(String(500), nullable=False)
+    file_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    changelog: Mapped[str | None] = mapped_column(Text)
+    metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB)
+    contains_central: Mapped[bool] = mapped_column(Boolean, server_default="false")
+    contains_collector: Mapped[bool] = mapped_column(Boolean, server_default="false")
+    uploaded_by: Mapped[str | None] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
+
+
+class UpgradeJob(Base):
+    """An orchestrated upgrade execution."""
+    __tablename__ = "upgrade_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    upgrade_package_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("upgrade_packages.id"), nullable=False)
+    target_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    scope: Mapped[str] = mapped_column(String(50), nullable=False)
+    strategy: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, server_default="'pending'")
+    started_by: Mapped[str | None] = mapped_column(String(200))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
+
+    steps: Mapped[list["UpgradeJobStep"]] = relationship(back_populates="job", cascade="all, delete-orphan", order_by="UpgradeJobStep.step_order")
+
+
+class UpgradeJobStep(Base):
+    """Individual step in an upgrade job (one per node)."""
+    __tablename__ = "upgrade_job_steps"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("upgrade_jobs.id", ondelete="CASCADE"), nullable=False)
+    step_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    node_hostname: Mapped[str] = mapped_column(String(200), nullable=False)
+    node_role: Mapped[str] = mapped_column(String(50), nullable=False)
+    node_ip: Mapped[str] = mapped_column(String(50), nullable=False)
+    action: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, server_default="'pending'")
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    output_log: Mapped[str | None] = mapped_column(Text)
+    error_message: Mapped[str | None] = mapped_column(Text)
+
+    job: Mapped["UpgradeJob"] = relationship(back_populates="steps")
+
+
+class OsUpdatePackage(Base):
+    """Cached OS package (.deb) available for distribution."""
+    __tablename__ = "os_update_packages"
+    __table_args__ = (UniqueConstraint("package_name", "version", "architecture"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    package_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    version: Mapped[str] = mapped_column(String(100), nullable=False)
+    architecture: Mapped[str] = mapped_column(String(50), nullable=False, server_default="'amd64'")
+    filename: Mapped[str] = mapped_column(String(500), nullable=False)
+    file_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    severity: Mapped[str] = mapped_column(String(50), server_default="'normal'")
+    source: Mapped[str] = mapped_column(String(50), nullable=False)
+    is_downloaded: Mapped[bool] = mapped_column(Boolean, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")

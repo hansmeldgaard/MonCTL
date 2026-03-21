@@ -370,6 +370,27 @@ async def heartbeat(
         # Re-read config_version after the bulk update
         await db.refresh(collector)
 
+    # Update system version info from heartbeat
+    if request.system_stats:
+        from monctl_central.storage.models import SystemVersion
+        sv = (await db.execute(
+            select(SystemVersion).where(SystemVersion.node_hostname == collector.hostname)
+        )).scalar_one_or_none()
+        if sv is None:
+            sv = SystemVersion(
+                node_hostname=collector.hostname,
+                node_role="collector",
+                node_ip=(collector.ip_addresses[0] if collector.ip_addresses else ""),
+            )
+            db.add(sv)
+        sv.monctl_version = request.system_stats.get("monctl_version")
+        os_info = request.system_stats.get("os_info", {})
+        if isinstance(os_info, dict):
+            sv.os_version = os_info.get("os_version")
+            sv.kernel_version = os_info.get("kernel_version")
+            sv.python_version = os_info.get("python_version")
+        sv.last_reported_at = utc_now()
+
     current_version = collector.config_version
     config_changed = current_version != request.config_version
 
