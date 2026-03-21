@@ -64,6 +64,8 @@ services:
       MONCTL_ADMIN_USERNAME: "admin"
       MONCTL_ADMIN_PASSWORD: "changeme"
       MONCTL_COLLECTOR_API_KEY: "collector-secret-key-changeme"
+    volumes:
+      - upgrades_data:/data/upgrades
     depends_on:
       postgres:
         condition: service_healthy
@@ -109,3 +111,4 @@ volumes:
   pgdata:
   chdata:
   collector_data:
+  upgrades_data:

@@ -14,6 +14,7 @@ import {
   RefreshCw,
   ChevronDown,
   ChevronRight,
+  HardDrive,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
@@ -34,6 +35,8 @@ import {
   useStartUpgrade,
   useUpgradeJobs,
   useCancelUpgradeJob,
+  useCheckOsUpdates,
+  useOsPackages,
 } from "@/api/hooks.ts";
 import { timeAgo, formatBytes } from "@/lib/utils.ts";
 import type { UpgradeJob, UpgradeJobStep } from "@/types/api.ts";
@@ -83,6 +86,8 @@ export function UpgradesPage() {
   const deleteMutation = useDeleteUpgradePackage();
   const startMutation = useStartUpgrade();
   const cancelMutation = useCancelUpgradeJob();
+  const checkOs = useCheckOsUpdates();
+  const { data: osPackages } = useOsPackages();
 
   const [selectedPkgId, setSelectedPkgId] = useState<string | null>(null);
   const [scope, setScope] = useState("all");
@@ -374,6 +379,115 @@ export function UpgradesPage() {
                 />
               ))}
             </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── OS Updates ──────────────────────────────────────────────────── */}
+      <Card className="border-zinc-800 bg-zinc-900">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <HardDrive className="h-4 w-4 text-zinc-400" />
+              OS Updates
+            </CardTitle>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => checkOs.mutate()}
+              disabled={checkOs.isPending}
+            >
+              {checkOs.isPending ? (
+                <Loader2 className="h-3 w-3 animate-spin mr-1" />
+              ) : (
+                <RefreshCw className="h-3 w-3 mr-1" />
+              )}
+              Check All Nodes
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {/* Show check results if available */}
+          {checkOs.data && (
+            <div className="space-y-3 mb-6">
+              <h4 className="text-sm font-medium text-zinc-400">Available Updates</h4>
+              {Object.entries(checkOs.data.data ?? {}).map(([hostname, updates]) => (
+                <div key={hostname}>
+                  <p className="text-xs text-zinc-500 mb-1">{hostname}</p>
+                  {Array.isArray(updates) ? (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Package</TableHead>
+                          <TableHead>Current</TableHead>
+                          <TableHead>New</TableHead>
+                          <TableHead>Severity</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {(updates as any[]).map((u, i) => (
+                          <TableRow key={i}>
+                            <TableCell className="font-mono text-xs">{u.package}</TableCell>
+                            <TableCell className="text-xs text-zinc-500">{u.current}</TableCell>
+                            <TableCell className="text-xs">{u.new}</TableCell>
+                            <TableCell>
+                              <Badge
+                                variant={u.severity === "security" ? "destructive" : "default"}
+                                className="text-[10px]"
+                              >
+                                {u.severity}
+                              </Badge>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  ) : (
+                    <p className="text-xs text-red-400">
+                      {(updates as any).error ?? "Check failed"}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Cached OS packages */}
+          <h4 className="text-sm font-medium text-zinc-400 mb-2">Cached Packages</h4>
+          {osPackages && osPackages.length > 0 ? (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Package</TableHead>
+                  <TableHead>Version</TableHead>
+                  <TableHead>Arch</TableHead>
+                  <TableHead>Size</TableHead>
+                  <TableHead>Severity</TableHead>
+                  <TableHead>Source</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {osPackages.map((pkg) => (
+                  <TableRow key={pkg.id}>
+                    <TableCell className="font-mono text-xs">{pkg.package_name}</TableCell>
+                    <TableCell className="text-xs">{pkg.version}</TableCell>
+                    <TableCell className="text-xs text-zinc-500">{pkg.architecture}</TableCell>
+                    <TableCell className="text-xs">{formatBytes(pkg.file_size)}</TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={pkg.severity === "security" ? "destructive" : "default"}
+                        className="text-[10px]"
+                      >
+                        {pkg.severity}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-xs text-zinc-500">{pkg.source}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : (
+            <p className="text-xs text-zinc-600">No cached OS packages.</p>
           )}
         </CardContent>
       </Card>

@@ -42,6 +42,7 @@ from monctl_collector.config import CollectorConfig, load_config
 from monctl_collector.jobs.scheduler import JobScheduler
 from monctl_collector.cache.app_cache_sync import AppCacheSyncLoop
 from monctl_collector.peer.server import CollectorPeerServicer, start_server
+from monctl_collector.upgrade_agent import UpgradeAgent
 
 logger = structlog.get_logger()
 
@@ -119,6 +120,16 @@ async def run(cfg: CollectorConfig) -> None:
     )
     await app_cache_sync.start()
 
+    # Upgrade agent (polls central for available upgrades)
+    upgrade_agent = UpgradeAgent(
+        central_url=cfg.central.url,
+        api_key=cfg.central.api_key,
+        collector_id=cfg.collector_id or "",
+        verify_ssl=cfg.central.verify_ssl,
+        check_interval=60,
+    )
+    await upgrade_agent.start()
+
     logger.info("cache_node_ready", node_id=node_id)
 
     # ── Shutdown handler ──────────────────────────────────────────────────────
@@ -136,6 +147,7 @@ async def run(cfg: CollectorConfig) -> None:
 
     # Graceful shutdown
     logger.info("cache_node_shutting_down")
+    await upgrade_agent.stop()
     await app_cache_sync.stop()
     await scheduler.stop()
     if status_server:

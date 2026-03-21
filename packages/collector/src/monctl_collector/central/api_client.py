@@ -209,6 +209,8 @@ class CentralAPIClient:
 
         Returns True on success.
         """
+        import platform
+
         payload = {
             "node_id": node_id,
             "load_score": load_info.get("load_score", 0.0),
@@ -221,6 +223,14 @@ class CentralAPIClient:
             "peer_states": peer_states,
             "container_states": container_states,
             "queue_stats": queue_stats,
+            "system_stats": {
+                "monctl_version": "0.1.0",
+                "os_info": {
+                    "os_version": f"{platform.system()} {platform.release()}",
+                    "kernel_version": platform.release(),
+                    "python_version": platform.python_version(),
+                },
+            },
         }
         try:
             async with self._session.post(self._url("/heartbeat"), json=payload) as resp:

@@ -48,6 +48,8 @@ services:
       MONCTL_ADMIN_USERNAME: admin
       MONCTL_ADMIN_PASSWORD: ${ADMIN_PASSWORD}
       MONCTL_COLLECTOR_API_KEY: ${COLLECTOR_API_KEY}
+    volumes:
+      - upgrades_data:/data/upgrades
     depends_on:
       postgres:
         condition: service_healthy
@@ -64,3 +66,4 @@ services:
 volumes:
   pgdata:
   redisdata:
+  upgrades_data:

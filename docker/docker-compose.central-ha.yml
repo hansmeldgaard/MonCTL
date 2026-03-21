@@ -83,6 +83,8 @@ services:
       MONCTL_ADMIN_PASSWORD: ${ADMIN_PASSWORD}
       MONCTL_COLLECTOR_API_KEY: ${COLLECTOR_API_KEY}
       MONCTL_CLICKHOUSE_HOSTS: ${CLICKHOUSE_HOSTS:-10.145.210.43,10.145.210.44}
+    volumes:
+      - upgrades_data:/data/upgrades
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8443/v1/health"]
@@ -94,3 +96,4 @@ services:
 volumes:
   pgdata:
   redisdata:
+  upgrades_data:
