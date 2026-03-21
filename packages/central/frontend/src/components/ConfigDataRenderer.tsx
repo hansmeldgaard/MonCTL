@@ -44,32 +44,36 @@ function TemplateRenderer({
   );
 
   const srcDoc = `<!DOCTYPE html><html><head><style>
-    body { margin: 8px; background: #18181b; color: #e4e4e7; font-family: system-ui; }
+    html, body { margin: 0; padding: 8px; background: #18181b; color: #e4e4e7; font-family: system-ui, -apple-system, sans-serif; font-size: 14px; overflow: hidden; }
     ${template.css ?? ""}
-  </style></head><body>${renderedHtml}</body></html>`;
+  </style></head><body>${renderedHtml}</body>
+  <script>
+    function sendHeight() {
+      var h = document.documentElement.scrollHeight;
+      window.parent.postMessage({ type: 'config-renderer-height', height: h }, '*');
+    }
+    sendHeight();
+    new MutationObserver(sendHeight).observe(document.body, { childList: true, subtree: true });
+    setTimeout(sendHeight, 200);
+  </script>
+  </html>`;
 
   useEffect(() => {
-    const iframe = iframeRef.current;
-    if (!iframe) return;
-    iframe.srcdoc = srcDoc;
-
-    const onLoad = () => {
-      try {
-        const h = iframe.contentDocument?.body?.scrollHeight;
-        if (h && h > 0) setHeight(h + 16);
-      } catch {
-        // cross-origin
+    function handleMessage(e: MessageEvent) {
+      if (e.data?.type === "config-renderer-height" && typeof e.data.height === "number") {
+        setHeight(Math.max(e.data.height + 4, 100));
       }
-    };
-    iframe.addEventListener("load", onLoad);
-    return () => iframe.removeEventListener("load", onLoad);
-  }, [srcDoc]);
+    }
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, []);
 
   return (
     <div className={className}>
       <iframe
         ref={iframeRef}
-        sandbox="allow-same-origin"
+        srcDoc={srcDoc}
+        sandbox="allow-scripts allow-same-origin"
         title="Config Data"
         className="w-full border-0 rounded-md"
         style={{ height: `${height}px`, background: "#18181b" }}
