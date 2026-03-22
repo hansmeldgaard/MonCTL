@@ -30,7 +30,7 @@ async def sync_threshold_variables(
                     When provided, these override the heuristic auto-detection.
 
     Returns:
-        List of warning messages (e.g. missing $variable references).
+        List of warning messages (e.g. missing named threshold references).
     """
     warnings: list[str] = []
 
@@ -38,7 +38,7 @@ async def sync_threshold_variables(
     if not validation.valid:
         return warnings
 
-    # Build hint lookup: param_key → hint dict
+    # Build hint lookup: param_key -> hint dict
     hints: dict[str, dict] = {}
     if pack_hints:
         for h in pack_hints:
@@ -53,46 +53,33 @@ async def sync_threshold_variables(
         ).scalars().all()
     }
 
-    # Check explicit $variable references — warn if not pre-created
-    variable_ref_names = set(validation.variable_refs)
-    for vname in variable_ref_names:
-        if vname not in existing_vars:
-            warnings.append(
-                f"Expression references ${{${vname}}} but no ThresholdVariable "
-                f"'{vname}' exists on this app. Create it first for proper defaults."
-            )
-            logger.warning(
-                "threshold_variable_missing variable=%s app_id=%s definition=%s",
-                vname, str(app_id), definition.name,
-            )
-
-    # Auto-create ThresholdVariables for implicit threshold params
-    # ONLY if the expression has NO $variable references — if user uses $variable
-    # syntax, they've opted into explicit mode and we don't create implicit variables
-    if not variable_ref_names:
-        for param in validation.threshold_params:
-            hint = hints.get(param.name, {})
-            existing = existing_vars.get(param.name)
+    for ref in validation.threshold_refs:
+        if ref.is_named:
+            # Named reference -- must already exist
+            if ref.name not in existing_vars:
+                warnings.append(
+                    f"Threshold variable '{ref.name}' not found. "
+                    f"Create it in the Thresholds tab first."
+                )
+        else:
+            # Inline value -- auto-create variable if it doesn't exist
+            hint = hints.get(ref.name, {})
+            existing = existing_vars.get(ref.name)
             if existing is None:
                 var = ThresholdVariable(
                     app_id=app_id,
-                    name=param.name,
-                    display_name=hint.get("display_name") or _auto_display_name(param.name),
-                    default_value=param.default_value,
-                    unit=hint.get("unit") or _auto_detect_unit(param.name),
+                    name=ref.name,
+                    display_name=hint.get("display_name") or _auto_display_name(ref.name),
+                    default_value=ref.inline_value,
+                    unit=hint.get("unit") or _auto_detect_unit(ref.name),
                     description=hint.get("description"),
                 )
                 db.add(var)
+                existing_vars[ref.name] = var
             else:
-                if existing.default_value != param.default_value:
-                    existing.default_value = param.default_value
+                if existing.default_value != ref.inline_value:
+                    existing.default_value = ref.inline_value
                     existing.updated_at = datetime.now(timezone.utc)
-                if hint.get("display_name") and existing.display_name == _auto_display_name(param.name):
-                    existing.display_name = hint["display_name"]
-                if hint.get("unit") and existing.unit == _auto_detect_unit(param.name):
-                    existing.unit = hint["unit"]
-                if hint.get("description") and not existing.description:
-                    existing.description = hint["description"]
 
     return warnings
 

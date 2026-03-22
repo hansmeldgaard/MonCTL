@@ -3,7 +3,7 @@
 Grammar:
     expression     := condition (("AND" | "OR") condition)*
 
-    condition      := arith_expr COMPARE_OP value
+    condition      := arith_expr COMPARE_OP threshold_ref
                    |  identifier "CHANGED"
                    |  identifier "IN" "(" value_list ")"
                    |  identifier "NOT" "IN" "(" value_list ")"
@@ -14,8 +14,10 @@ Grammar:
     arith_term     := arith_atom (("*" | "/") arith_atom)*
     arith_atom     := agg_call
                    |  number
-                   |  "$" variable_name
                    |  "(" arith_expr ")"
+
+    threshold_ref  := NUMBER   (inline value, auto-creates threshold variable)
+                   |  IDENTIFIER  (named reference, looks up existing variable)
 
     agg_call       := AGG_FUNC "(" identifier ")"
     AGG_FUNC       := "avg" | "max" | "min" | "sum" | "count" | "last" | "rate"
@@ -60,19 +62,21 @@ class NumericLiteral:
 
 
 @dataclass
-class VariableRef:
-    """Reference to a named threshold variable: $rtt_ms_warn"""
-    variable_name: str
+class ThresholdRef:
+    """A reference to a threshold — either an inline value or a named variable."""
+    name: str              # Auto-generated name for inline, user name for named refs
+    inline_value: float | None  # The literal value for inline, None for named refs
+    is_named: bool         # True if user wrote a name, False if inline value
 
 
-ArithNode = Union[AggCall, ArithOp, NumericLiteral, VariableRef]
+ArithNode = Union[AggCall, ArithOp, NumericLiteral]
 
 
 @dataclass
 class Comparison:
     left: ArithNode | str       # ArithNode for numeric, str for config string
     op: str
-    right: float | str | VariableRef
+    right: ThresholdRef | float | str
 
 
 @dataclass
@@ -108,7 +112,6 @@ _TOKEN_RE = re.compile(
     |(?P<ARITH>[+\-*/])
     |(?P<NUMBER>-?\d+(?:\.\d+)?)
     |(?P<STRING>'[^']*'|"[^"]*")
-    |(?P<VARIABLE>\$[a-z_][a-z0-9_]*)
     |(?P<WORD>[a-zA-Z_]\w*)
     |(?P<WS>\s+)
     """,
@@ -138,8 +141,6 @@ def _tokenize(expr: str) -> list[tuple[str, str]]:
                 tokens.append(("AGG_FUNC", value.lower()))
             else:
                 tokens.append(("IDENT", value))
-        elif m.lastgroup == "VARIABLE":
-            tokens.append(("VARIABLE", value))
         elif m.lastgroup == "STRING":
             tokens.append(("STRING", value[1:-1]))
         elif m.lastgroup == "NUMBER":
@@ -249,8 +250,8 @@ class _Parser:
         if tok[0] == "IDENT":
             return self._parse_ident_condition()
 
-        # Aggregation call or arithmetic expression starting with agg/number/$variable
-        if tok[0] in ("AGG_FUNC", "NUMBER", "VARIABLE"):
+        # Aggregation call or arithmetic expression starting with agg/number
+        if tok[0] in ("AGG_FUNC", "NUMBER"):
             return self._parse_arith_comparison()
 
         raise ParseError(f"Unexpected token: '{tok[1]}'")
@@ -291,10 +292,10 @@ class _Parser:
         raise ParseError(f"Expected operator after '{ident}'")
 
     def _parse_arith_comparison(self) -> Comparison:
-        """Parse: arith_expr COMPARE_OP value."""
+        """Parse: arith_expr COMPARE_OP threshold_ref."""
         arith = self._parse_arith_expr()
         op = self.consume("OP")[1]
-        right = self._parse_value()
+        right = self._parse_threshold_ref(arith)
         return Comparison(left=arith, op=op, right=right)
 
     # ── Arithmetic expression parsing (precedence climbing) ──
@@ -328,7 +329,7 @@ class _Parser:
         return left
 
     def _parse_arith_atom(self) -> ArithNode:
-        """arith_atom := agg_call | number | $variable | "(" arith_expr ")" """
+        """arith_atom := agg_call | number | "(" arith_expr ")" """
         tok = self.peek()
         if tok is None:
             raise ParseError("Expected arithmetic operand, got end of expression")
@@ -340,11 +341,6 @@ class _Parser:
             self.consume()
             return NumericLiteral(value=float(tok[1]))
 
-        if tok[0] == "VARIABLE":
-            self.consume()
-            # Strip the leading '$' to get the variable name
-            return VariableRef(variable_name=tok[1][1:])
-
         if tok[0] == "LPAREN":
             self._enter_depth()
             self.consume()
@@ -353,7 +349,7 @@ class _Parser:
             self._exit_depth()
             return expr
 
-        raise ParseError(f"Expected aggregation, number, variable, or '(', got '{tok[1]}'")
+        raise ParseError(f"Expected aggregation, number, or '(', got '{tok[1]}'")
 
     def _parse_agg_call(self) -> AggCall:
         func = self.consume("AGG_FUNC")[1]
@@ -368,7 +364,28 @@ class _Parser:
         self._count_agg()
         return AggCall(func=func, metric=metric)
 
-    def _parse_value(self) -> float | str | VariableRef:
+    _threshold_index: int = 0
+
+    def _parse_threshold_ref(self, left_ast: ArithNode) -> ThresholdRef | str:
+        """Parse threshold reference: NUMBER (inline) or IDENTIFIER (named)."""
+        tok = self.peek()
+        if tok is None:
+            raise ParseError("Expected threshold value")
+        if tok[0] == "NUMBER":
+            self.consume()
+            value = float(tok[1])
+            name = _auto_threshold_name(left_ast, self._threshold_index)
+            self._threshold_index += 1
+            return ThresholdRef(name=name, inline_value=value, is_named=False)
+        if tok[0] == "IDENT":
+            self.consume()
+            return ThresholdRef(name=tok[1], inline_value=None, is_named=True)
+        if tok[0] == "STRING":
+            self.consume()
+            return tok[1]
+        raise ParseError(f"Expected number, identifier, or string, got '{tok[1]}'")
+
+    def _parse_value(self) -> float | str:
         tok = self.peek()
         if tok is None:
             raise ParseError("Expected value")
@@ -378,9 +395,6 @@ class _Parser:
         if tok[0] == "STRING":
             self.consume()
             return tok[1]
-        if tok[0] == "VARIABLE":
-            self.consume()
-            return VariableRef(variable_name=tok[1][1:])
         raise ParseError(f"Expected number or string, got '{tok[1]}'")
 
     def _parse_value_list(self) -> list[str]:
@@ -406,6 +420,14 @@ class _Parser:
             else:
                 break
         return values
+
+
+def _auto_threshold_name(left_ast: ArithNode, index: int) -> str:
+    """Generate a threshold variable name from the left side of a comparison."""
+    if isinstance(left_ast, AggCall):
+        return f"{left_ast.metric}_threshold"
+    # Complex arithmetic — use positional fallback
+    return f"_expr_{index}_threshold"
 
 
 def parse_expression(expression: str) -> ASTNode:
@@ -440,7 +462,7 @@ def _has_agg_call(node: ArithNode) -> bool:
         return True
     if isinstance(node, ArithOp):
         return _has_agg_call(node.left) or _has_agg_call(node.right)
-    # NumericLiteral and VariableRef: no agg
+    # NumericLiteral: no agg
     return False
 
 
@@ -514,6 +536,13 @@ class ThresholdParam:
 
 
 @dataclass
+class ThresholdRefInfo:
+    name: str
+    is_named: bool
+    inline_value: float | None
+
+
+@dataclass
 class CompiledQuery:
     sql: str
     params: dict
@@ -532,7 +561,7 @@ class ValidationResult:
     has_aggregation: bool = True
     has_arithmetic: bool = False
     has_division: bool = False
-    variable_refs: list[str] = field(default_factory=list)
+    threshold_refs: list[ThresholdRefInfo] = field(default_factory=list)
 
     @property
     def error(self) -> str | None:
@@ -575,7 +604,7 @@ def validate_expression(
     # ── Walk AST to collect metadata ─────────────────────
     metrics: list[str] = []
     thresholds: list[ThresholdParam] = []
-    var_refs: list[str] = []
+    threshold_ref_infos: list[ThresholdRefInfo] = []
     has_agg = False
     has_arith = False
     has_div = False
@@ -592,9 +621,6 @@ def validate_expression(
                 has_div = True
             _walk_arith(node.left)
             _walk_arith(node.right)
-        elif isinstance(node, VariableRef):
-            if node.variable_name not in var_refs:
-                var_refs.append(node.variable_name)
         # NumericLiteral: nothing to collect
 
     def _walk(node: ASTNode) -> None:
@@ -604,19 +630,32 @@ def validate_expression(
                 # Config string comparison
                 metrics.append(node.left)
             else:
-                # ArithNode (AggCall, ArithOp, NumericLiteral, VariableRef)
+                # ArithNode (AggCall, ArithOp, NumericLiteral)
                 _walk_arith(node.left)
-                if isinstance(node.right, VariableRef):
-                    # Explicit $variable reference as threshold
-                    vname = node.right.variable_name
-                    if vname not in var_refs:
-                        var_refs.append(vname)
-                    thresholds.append(ThresholdParam(
-                        name=vname, default_value=0.0, param_key=vname,
+                if isinstance(node.right, ThresholdRef):
+                    ref = node.right
+                    threshold_ref_infos.append(ThresholdRefInfo(
+                        name=ref.name,
+                        is_named=ref.is_named,
+                        inline_value=ref.inline_value,
                     ))
+                    if ref.is_named:
+                        # Named reference — param key is the name
+                        thresholds.append(ThresholdParam(
+                            name=ref.name, default_value=0.0, param_key=ref.name,
+                        ))
+                    else:
+                        # Inline value — auto-generated param key
+                        key = f"_threshold_{_counter[0]}"
+                        thresholds.append(ThresholdParam(
+                            name=ref.name,
+                            default_value=ref.inline_value,
+                            param_key=key,
+                        ))
+                        _counter[0] += 1
                 elif isinstance(node.right, (int, float)):
+                    # Backward compat: plain float from _parse_value (ident conditions)
                     key = f"_threshold_{_counter[0]}"
-                    # Build threshold name from first agg_call found
                     agg_calls = _collect_agg_calls(node.left) if not isinstance(node.left, str) else []
                     if agg_calls:
                         first = agg_calls[0]
@@ -690,9 +729,9 @@ def validate_expression(
 
     _check_div_zero(ast)
 
-    # Threshold is finite number (skip for $variable refs with default 0.0)
+    # Threshold is finite number (skip for named refs with default 0.0)
     for tp in thresholds:
-        # Skip variable-ref thresholds (they have name == param_key)
+        # Skip named-ref thresholds (they have name == param_key and default 0.0)
         if tp.name == tp.param_key and tp.default_value == 0.0:
             continue
         if not math.isfinite(tp.default_value):
@@ -704,9 +743,17 @@ def validate_expression(
             agg_calls = _collect_agg_calls(n.left)
             for ac in agg_calls:
                 if ac.metric.endswith("_pct") or ac.metric.endswith("_percent"):
-                    # Skip range check for $variable refs (resolved at runtime)
-                    if isinstance(n.right, (int, float)):
-                        if not (0 <= n.right <= 100):
+                    # Skip range check for named refs (resolved at runtime)
+                    if isinstance(n.right, ThresholdRef) and n.right.is_named:
+                        continue
+                    # Check inline threshold values
+                    threshold_val = None
+                    if isinstance(n.right, ThresholdRef) and n.right.inline_value is not None:
+                        threshold_val = n.right.inline_value
+                    elif isinstance(n.right, (int, float)):
+                        threshold_val = float(n.right)
+                    if threshold_val is not None:
+                        if not (0 <= threshold_val <= 100):
                             errors.append(
                                 f"Threshold for percentage metric '{ac.metric}' must be 0-100"
                             )
@@ -774,7 +821,7 @@ def validate_expression(
         has_aggregation=has_agg,
         has_arithmetic=has_arith,
         has_division=has_div,
-        variable_refs=var_refs,
+        threshold_refs=threshold_ref_infos,
     )
 
 
@@ -856,24 +903,41 @@ class _Compiler:
 
             ch_op = "=" if node.op == "==" else node.op
 
-            if isinstance(node.right, VariableRef):
-                # Explicit $variable reference — use variable name as param key
-                vname = node.right.variable_name
-                self._having_parts.append(f"{arith_alias} {ch_op} {{{vname}:Float64}}")
-                self.params[vname] = 0.0  # default, resolved at runtime
-                self.threshold_params.append(ThresholdParam(
-                    name=vname,
-                    default_value=0.0,
-                    param_key=vname,
-                ))
-            else:
+            if isinstance(node.right, ThresholdRef):
+                ref = node.right
+                if ref.is_named:
+                    # Named reference — use ref name as param key
+                    self._having_parts.append(
+                        f"{arith_alias} {ch_op} {{{ref.name}:Float64}}"
+                    )
+                    self.params[ref.name] = 0.0  # default, resolved at runtime
+                    self.threshold_params.append(ThresholdParam(
+                        name=ref.name,
+                        default_value=0.0,
+                        param_key=ref.name,
+                    ))
+                else:
+                    # Inline value — auto-generated param key
+                    param_key = f"_threshold_{self._threshold_idx}"
+                    self._having_parts.append(
+                        f"{arith_alias} {ch_op} {{{param_key}:Float64}}"
+                    )
+                    self.params[param_key] = ref.inline_value
+                    self.threshold_params.append(ThresholdParam(
+                        name=ref.name,
+                        default_value=ref.inline_value,
+                        param_key=param_key,
+                    ))
+                    self._threshold_idx += 1
+            elif isinstance(node.right, (int, float)):
+                # Backward compat: plain float from ident conditions
                 param_key = f"_threshold_{self._threshold_idx}"
-                self._having_parts.append(f"{arith_alias} {ch_op} {{{param_key}:Float64}}")
-
-                threshold_val = float(node.right) if isinstance(node.right, (int, float)) else 0.0
+                self._having_parts.append(
+                    f"{arith_alias} {ch_op} {{{param_key}:Float64}}"
+                )
+                threshold_val = float(node.right)
                 self.params[param_key] = threshold_val
 
-                # Build threshold name from first agg call
                 agg_calls = _collect_agg_calls(node.left)
                 if agg_calls:
                     first = agg_calls[0]
@@ -910,8 +974,6 @@ class _Compiler:
             return self._agg_to_sql(node)
         elif isinstance(node, NumericLiteral):
             return str(node.value)
-        elif isinstance(node, VariableRef):
-            return f"{{{node.variable_name}:Float64}}"
         elif isinstance(node, ArithOp):
             left_sql = self._arith_to_sql(node.left)
             right_sql = self._arith_to_sql(node.right)
@@ -1038,13 +1100,20 @@ def _arith_to_string(node: ArithNode) -> str:
     elif isinstance(node, NumericLiteral):
         v = node.value
         return str(int(v)) if v == int(v) else str(v)
-    elif isinstance(node, VariableRef):
-        return f"${node.variable_name}"
     elif isinstance(node, ArithOp):
         left = _arith_to_string(node.left)
         right = _arith_to_string(node.right)
         return f"{left} {node.op} {right}"
     return str(node)
+
+
+def _threshold_ref_to_string(ref: ThresholdRef) -> str:
+    """Convert a ThresholdRef back to a DSL expression string."""
+    if ref.is_named:
+        return ref.name
+    # Inline value — output the number
+    v = ref.inline_value
+    return str(int(v)) if v == int(v) else str(v)
 
 
 def _ast_to_string(node: ASTNode) -> str:
@@ -1054,8 +1123,8 @@ def _ast_to_string(node: ASTNode) -> str:
             left_str = node.left
         else:
             left_str = _arith_to_string(node.left)
-        if isinstance(node.right, VariableRef):
-            right_str = f"${node.right.variable_name}"
+        if isinstance(node.right, ThresholdRef):
+            right_str = _threshold_ref_to_string(node.right)
         elif isinstance(node.right, str):
             right_str = f"'{node.right}'"
         else:

@@ -981,15 +981,18 @@ function ThresholdsTab({ appId }: { appId: string }) {
   const [createError, setCreateError] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
-  // Build a map: variable name -> list of definitions that reference $variable_name
+  // Build a map: variable name -> list of definitions that reference the variable
   const variableUsage = useMemo(() => {
     const usage: Record<string, { definition_id: string; definition_name: string }[]> = {};
     if (variables && definitions) {
       for (const v of variables) {
         const refs: { definition_id: string; definition_name: string }[] = [];
         for (const d of definitions) {
-          if (d.expression && d.expression.includes(`$${v.name}`)) {
-            refs.push({ definition_id: d.id, definition_name: d.name });
+          if (d.expression) {
+            const re = new RegExp(`(?:>|<|>=|<=|==|!=)\\s*${v.name}\\b`);
+            if (re.test(d.expression)) {
+              refs.push({ definition_id: d.id, definition_name: d.name });
+            }
           }
         }
         usage[v.id] = refs;
@@ -1092,7 +1095,7 @@ function ThresholdsTab({ appId }: { appId: string }) {
                 return (
                   <TableRow key={v.id}>
                     <TableCell className="font-medium text-zinc-100">
-                      <span className="font-mono text-sm">${v.name}</span>
+                      <span className="font-mono text-sm">{v.name}</span>
                       {v.display_name && (
                         <span className="text-zinc-400 text-xs ml-2">({v.display_name})</span>
                       )}
@@ -1441,7 +1444,7 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
                     Functions: <span className="font-mono text-zinc-500">avg</span>, <span className="font-mono text-zinc-500">max</span>, <span className="font-mono text-zinc-500">min</span>, <span className="font-mono text-zinc-500">sum</span>, <span className="font-mono text-zinc-500">count</span>, <span className="font-mono text-zinc-500">last</span>
                     {" · "}Operators: <span className="font-mono text-zinc-500">{">"}</span>, <span className="font-mono text-zinc-500">{"<"}</span>, <span className="font-mono text-zinc-500">{">="}</span>, <span className="font-mono text-zinc-500">{"<="}</span>, <span className="font-mono text-zinc-500">==</span>, <span className="font-mono text-zinc-500">!=</span>
                     {" · "}Combine: <span className="font-mono text-zinc-500">AND</span>, <span className="font-mono text-zinc-500">OR</span>
-                    {" · "}Thresholds: <span className="font-mono text-zinc-500">$name</span>
+                    {" · "}Thresholds: <span className="font-mono text-zinc-500">name</span>
                     {app.target_table === "config" && (
                       <> · String: <span className="font-mono text-zinc-500">CHANGED</span>, <span className="font-mono text-zinc-500">IN ('a', 'b')</span></>
                     )}
@@ -1461,10 +1464,9 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
                         type="button"
                         className="inline-flex items-center gap-1 rounded-md border border-amber-500/30 bg-zinc-800 px-2 py-1 text-xs font-mono text-amber-300 hover:bg-amber-500/10 hover:text-amber-200 cursor-pointer transition-colors"
                         onClick={() => {
-                          setFormExpression(prev => prev ? `${prev}$${v.name}` : `$${v.name}`);
+                          setFormExpression(prev => prev ? `${prev}${v.name}` : v.name);
                         }}
                       >
-                        <span className="text-amber-500">$</span>
                         {v.name}
                         <span className="text-zinc-500 text-[10px] ml-0.5">
                           ({v.default_value}{v.unit === "percent" ? "%" : v.unit === "ms" ? "ms" : ""})
@@ -1475,14 +1477,17 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
                 </div>
               )}
               {/* Show resolved threshold variables */}
-              {formExpression && formExpression.includes("$") && variables && variables.length > 0 && (
+              {formExpression && variables && variables.length > 0 && (
                 <div className="mt-2 space-y-0.5">
                   {variables
-                    .filter(v => formExpression.includes(`$${v.name}`))
+                    .filter(v => {
+                      const regex = new RegExp(`(?<![a-z_])${v.name}(?![a-z0-9_(])`, 'i');
+                      return regex.test(formExpression);
+                    })
                     .map(v => (
                       <div key={v.id} className="flex items-center gap-1.5 text-xs">
                         <span className="text-emerald-500 font-mono">ok</span>
-                        <span className="text-zinc-400 font-mono">${v.name}</span>
+                        <span className="text-amber-400 font-mono">{v.name}</span>
                         <span className="text-zinc-500">&rarr;</span>
                         <span className="text-zinc-300">{v.display_name || v.name}</span>
                         <span className="text-zinc-500">=</span>

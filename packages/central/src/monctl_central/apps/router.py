@@ -1829,17 +1829,28 @@ async def delete_app_threshold(
     if not variable or str(variable.app_id) != app_id:
         raise HTTPException(status_code=404, detail="Threshold variable not found")
 
-    # Check if any alert definitions reference $variable_name
+    # Check if any alert definitions reference the variable (by name on right side
+    # of comparison, or via auto-generated threshold param name)
+    from monctl_central.alerting.dsl import validate_expression
     alert_defs = (await db.execute(
         select(AlertDefinition).where(AlertDefinition.app_id == uuid.UUID(app_id))
     )).scalars().all()
     for ad in alert_defs:
-        if f"${variable.name}" in ad.expression:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Cannot delete: alert definition '{ad.name}' references "
-                       f"${variable.name} in its expression",
-            )
+        validation = validate_expression(ad.expression, app.target_table)
+        for ref in validation.threshold_refs:
+            if ref.name == variable.name:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Cannot delete: alert definition '{ad.name}' references "
+                           f"'{variable.name}' in its expression",
+                )
+        for tp in validation.threshold_params:
+            if tp.name == variable.name:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Cannot delete: alert definition '{ad.name}' references "
+                           f"'{variable.name}' in its expression",
+                )
 
     await db.delete(variable)
     await db.flush()

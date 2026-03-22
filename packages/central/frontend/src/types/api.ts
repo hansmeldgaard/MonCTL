@@ -487,7 +487,11 @@ export interface ExpressionValidation {
   has_aggregation: boolean;
   has_arithmetic: boolean;
   has_division: boolean;
-  variable_refs: string[];
+  threshold_refs: {
+    name: string;
+    is_named: boolean;
+    inline_value: number | null;
+  }[];
 }
 
 export interface DeviceThresholdRow {

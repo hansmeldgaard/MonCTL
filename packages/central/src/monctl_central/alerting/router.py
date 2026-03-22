@@ -569,6 +569,10 @@ async def validate_expression_endpoint(
                 {"name": tp.name, "default_value": tp.default_value, "param_key": tp.param_key}
                 for tp in result.threshold_params
             ],
+            "threshold_refs": [
+                {"name": ref.name, "is_named": ref.is_named, "inline_value": ref.inline_value}
+                for ref in result.threshold_refs
+            ],
             "has_aggregation": result.has_aggregation,
             "has_arithmetic": result.has_arithmetic,
             "has_division": result.has_division,
@@ -719,14 +723,17 @@ async def cleanup_orphan_threshold_variables(
 
         referenced = False
         for d in defs:
-            if f"${var.name}" in d.expression:
-                referenced = True
-                break
             validation = validate_expression(d.expression, "")
-            for tp in validation.threshold_params:
-                if tp.name == var.name:
+            # Check threshold_refs (named refs) and threshold_params (inline auto-created)
+            for ref in validation.threshold_refs:
+                if ref.name == var.name:
                     referenced = True
                     break
+            if not referenced:
+                for tp in validation.threshold_params:
+                    if tp.name == var.name:
+                        referenced = True
+                        break
             if referenced:
                 break
 
