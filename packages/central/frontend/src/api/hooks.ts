@@ -1,11 +1,9 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiDelete, apiGet, apiGetRaw, apiPatch, apiPost, apiPostFormData, apiPut } from "@/api/client.ts";
 import type {
-  AlertEntity,
   AlertInstance,
   AlertLogEntry,
   AlertMetric,
-  AlertDefinition,
   AppAlertDefinition,
   AppDetail,
   AppSummary,
