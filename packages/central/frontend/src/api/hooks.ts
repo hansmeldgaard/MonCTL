@@ -1107,6 +1107,13 @@ export function useUpdateMyTimezone() {
   });
 }
 
+export function useUpdateMyIdleTimeout() {
+  return useMutation({
+    mutationFn: (data: { idle_timeout_minutes: number | null }) =>
+      apiPut<{ idle_timeout_minutes: number | null }>("/users/me/idle-timeout", data),
+  });
+}
+
 export function useUpdateTablePreferences() {
   const qc = useQueryClient();
   return useMutation({
@@ -1613,6 +1620,25 @@ export function useDeleteAppVersion() {
   });
 }
 
+export function useCloneAppVersion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ appId, versionId }: { appId: string; versionId: string }) =>
+      apiPost<{
+        id: string;
+        version: string;
+        checksum: string;
+        is_latest: boolean;
+        cloned_from: { version_id: string; version: string };
+        alert_definitions_cloned: number;
+      }>(`/apps/${appId}/versions/${versionId}/clone`, {}),
+    onSuccess: (_res, { appId }) => {
+      qc.invalidateQueries({ queryKey: ["app-detail", appId] });
+      qc.invalidateQueries({ queryKey: ["apps"] });
+    },
+  });
+}
+
 export function useAppConfigKeys(appId: string | undefined, versionId?: string) {
   return useQuery({
     queryKey: ["app-config-keys", appId, versionId],
@@ -2080,6 +2106,24 @@ export function useSetConnectorLatest() {
       apiPut(`/connectors/${connectorId}/versions/${versionId}/set-latest`, {}),
     onSuccess: (_res, vars) => {
       qc.invalidateQueries({ queryKey: ["connector-detail", vars.connectorId] });
+    },
+  });
+}
+
+export function useCloneConnectorVersion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ connectorId, versionId }: { connectorId: string; versionId: string }) =>
+      apiPost<{
+        id: string;
+        version: string;
+        checksum: string;
+        is_latest: boolean;
+        cloned_from: { version_id: string; version: string };
+      }>(`/connectors/${connectorId}/versions/${versionId}/clone`, {}),
+    onSuccess: (_res, { connectorId }) => {
+      qc.invalidateQueries({ queryKey: ["connector-detail", connectorId] });
+      qc.invalidateQueries({ queryKey: ["connectors"] });
     },
   });
 }

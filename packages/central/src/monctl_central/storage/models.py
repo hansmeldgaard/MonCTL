@@ -151,6 +151,11 @@ class AppVersion(Base):
     volatile_keys: Mapped[list | None] = mapped_column(JSONB, server_default="[]")
 
     app: Mapped[App] = relationship(back_populates="versions")
+    alert_definitions: Mapped[list["AppAlertDefinition"]] = relationship(
+        back_populates="app_version",
+        cascade="all, delete-orphan",
+        foreign_keys="[AppAlertDefinition.app_version_id]",
+    )
 
 
 class DeviceType(Base):
@@ -418,7 +423,7 @@ class AppAlertDefinition(Base):
     )
 
     app: Mapped["App"] = relationship()
-    app_version: Mapped["AppVersion"] = relationship()
+    app_version: Mapped["AppVersion"] = relationship(back_populates="alert_definitions")
     instances: Mapped[list["AlertInstance"]] = relationship(
         back_populates="definition", cascade="all, delete-orphan"
     )
@@ -537,6 +542,10 @@ class User(Base):
     timezone: Mapped[str] = mapped_column(String(50), nullable=False, default="UTC")
     table_page_size: Mapped[int] = mapped_column(Integer, nullable=False, server_default="50", default=50)
     table_scroll_mode: Mapped[str] = mapped_column(String(16), nullable=False, server_default="paginated", default="paginated")
+    idle_timeout_minutes: Mapped[int | None] = mapped_column(
+        Integer, nullable=True,
+        comment="Per-user idle timeout override. NULL = use system default.",
+    )
     # Legacy single-tenant FK (kept for backward compat, not used for access control)
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True

@@ -16,6 +16,7 @@ export interface AuthUser {
   timezone: string;
   table_page_size: number;
   table_scroll_mode: "paginated" | "infinite";
+  idle_timeout_minutes: number;
   all_tenants?: boolean;
   tenant_ids?: string[] | null; // null = unrestricted, [] = see nothing, [ids] = specific
   permissions?: string[] | null; // null = admin (full access), ["resource:action", ...]
@@ -962,7 +963,7 @@ export interface PackDetail extends Pack {
 export interface PackImportPreviewEntity {
   section: string;
   name: string;
-  status: "new" | "conflict" | "unchanged";
+  status: "new" | "conflict" | "unchanged" | "info";
   existing_pack: string | null;
 }
 

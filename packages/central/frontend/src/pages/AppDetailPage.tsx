@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
 import { validateName, validateSemver, validateAlertWindow } from "@/lib/validation.ts";
-import { ArrowLeft, AppWindow, Bell, Code2, Layout, Loader2, Pencil, Plug, Plus, RefreshCw, Star, Trash2 } from "lucide-react";
+import { ArrowLeft, AppWindow, Bell, Code2, Copy, Layout, Loader2, Pencil, Plug, Plus, RefreshCw, Star, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
@@ -28,6 +28,7 @@ import {
   useSetLatestVersion,
   useUpdateAppVersion,
   useDeleteAppVersion,
+  useCloneAppVersion,
   useAlertDefinitions,
   useAlertMetrics,
   useCreateAlertDefinition,
@@ -62,6 +63,7 @@ export function AppDetailPage() {
   const setLatest = useSetLatestVersion();
   const updateVersion = useUpdateAppVersion();
   const deleteVersion = useDeleteAppVersion();
+  const cloneVersion = useCloneAppVersion();
 
   const [activeTab, setActiveTab] = useState("overview");
   const isConfigApp = app?.target_table === "config";
@@ -189,6 +191,13 @@ export function AppDetailPage() {
     } catch (err) {
       setDeleteVersionError(err instanceof Error ? err.message : "Failed to delete version");
     }
+  }
+
+  async function handleCloneVersion(versionId: string) {
+    if (!id) return;
+    try {
+      await cloneVersion.mutateAsync({ appId: id, versionId });
+    } catch { /* handled by React Query */ }
   }
 
   async function openEditVersion(versionId: string) {
@@ -487,6 +496,16 @@ export function AppDetailPage() {
                           >
                             <Pencil className="h-3.5 w-3.5" /> Edit
                           </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="gap-1"
+                            disabled={cloneVersion.isPending}
+                            onClick={() => handleCloneVersion(v.id)}
+                            title="Clone version"
+                          >
+                            <Copy className="h-3.5 w-3.5" />
+                          </Button>
                           <button
                             onClick={() => setDeleteVersionTarget({ id: v.id, version: v.version })}
                             className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
@@ -621,6 +640,20 @@ export function AppDetailPage() {
           )
         )}
         <DialogFooter>
+          <Button
+            size="sm"
+            variant="secondary"
+            className="gap-1.5"
+            disabled={cloneVersion.isPending}
+            onClick={() => {
+              if (viewVersion) {
+                handleCloneVersion(viewVersion.id);
+                setViewVersion(null);
+              }
+            }}
+          >
+            <Copy className="h-4 w-4" /> Clone
+          </Button>
           <Button variant="secondary" onClick={() => setViewVersion(null)}>Close</Button>
         </DialogFooter>
       </Dialog>

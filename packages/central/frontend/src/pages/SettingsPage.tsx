@@ -40,6 +40,7 @@ import {
   useGenerateTlsCert,
   useDeployTlsCert,
   useUpdateMyTimezone,
+  useUpdateMyIdleTimeout,
   useUserApiKeys,
   useCreateUserApiKey,
   useDeleteUserApiKey,
@@ -79,10 +80,13 @@ type TabKey = (typeof TABS)[number]["key"];
 function ProfileTab() {
   const { user, refresh } = useAuth();
   const updateTimezone = useUpdateMyTimezone();
+  const updateIdleTimeout = useUpdateMyIdleTimeout();
   const { pageSize, scrollMode, updatePreferences, isUpdating: tablePrefUpdating } = useTablePreferences();
   const [tablePrefSaved, setTablePrefSaved] = useState(false);
   const [selectedTz, setSelectedTz] = useState(user?.timezone ?? "UTC");
   const [tzSaved, setTzSaved] = useState(false);
+  const [idleTimeout, setIdleTimeout] = useState<string>("default");
+  const [idleSaved, setIdleSaved] = useState(false);
 
   const allTimezones = useMemo(() => {
     try {
@@ -96,13 +100,31 @@ function ProfileTab() {
     if (user?.timezone) setSelectedTz(user.timezone);
   }, [user?.timezone]);
 
+  useEffect(() => {
+    if (user) {
+      setIdleTimeout(user.idle_timeout_minutes != null ? String(user.idle_timeout_minutes) : "default");
+    }
+  }, [user?.idle_timeout_minutes]);
+
   const tzModified = selectedTz !== (user?.timezone ?? "UTC");
+  const idleModified = (() => {
+    const currentValue = user?.idle_timeout_minutes != null ? String(user.idle_timeout_minutes) : "default";
+    return idleTimeout !== currentValue;
+  })();
 
   async function handleSaveTimezone() {
     await updateTimezone.mutateAsync(selectedTz);
     await refresh();
     setTzSaved(true);
     setTimeout(() => setTzSaved(false), 2000);
+  }
+
+  async function handleSaveIdleTimeout() {
+    const value = idleTimeout === "default" ? null : Number(idleTimeout);
+    await updateIdleTimeout.mutateAsync({ idle_timeout_minutes: value });
+    await refresh();
+    setIdleSaved(true);
+    setTimeout(() => setIdleSaved(false), 2000);
   }
 
   return (
@@ -156,6 +178,48 @@ function ProfileTab() {
           ) : (
             <p className="text-sm text-zinc-500">User info not available</p>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Activity className="h-4 w-4" />
+            Session
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between rounded-md bg-zinc-800/50 px-4 py-3">
+            <div>
+              <span className="text-sm text-zinc-400">Idle Timeout</span>
+              <p className="text-xs text-zinc-600 mt-0.5">
+                Automatically log out after this period of inactivity.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <select
+                value={idleTimeout}
+                onChange={(e) => setIdleTimeout(e.target.value)}
+                className="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              >
+                <option value="default">System default</option>
+                <option value="15">15 minutes</option>
+                <option value="30">30 minutes</option>
+                <option value="60">1 hour</option>
+                <option value="120">2 hours</option>
+                <option value="240">4 hours</option>
+                <option value="480">8 hours</option>
+                <option value="0">Never</option>
+              </select>
+              {idleModified && (
+                <Button size="sm" onClick={handleSaveIdleTimeout} disabled={updateIdleTimeout.isPending}>
+                  {updateIdleTimeout.isPending && <Loader2 className="h-3 w-3 animate-spin" />}
+                  Save
+                </Button>
+              )}
+              {idleSaved && <span className="text-sm text-emerald-400">Saved!</span>}
+            </div>
+          </div>
         </CardContent>
       </Card>
 
@@ -497,6 +561,7 @@ function DataRetentionTab() {
   const [perfRawRetention, setPerfRawRetention] = useState("7");
   const [perfHourlyRetention, setPerfHourlyRetention] = useState("90");
   const [perfDailyRetention, setPerfDailyRetention] = useState("730");
+  const [idleTimeoutDefault, setIdleTimeoutDefault] = useState("60");
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
@@ -512,6 +577,7 @@ function DataRetentionTab() {
       setPerfRawRetention(settings.perf_raw_retention_days ?? "7");
       setPerfHourlyRetention(settings.perf_hourly_retention_days ?? "90");
       setPerfDailyRetention(settings.perf_daily_retention_days ?? "730");
+      setIdleTimeoutDefault(settings.session_idle_timeout_minutes ?? "60");
     }
   }, [settings]);
 
@@ -526,7 +592,8 @@ function DataRetentionTab() {
     configRetention !== (settings.config_retention_days ?? "90") ||
     perfRawRetention !== (settings.perf_raw_retention_days ?? "7") ||
     perfHourlyRetention !== (settings.perf_hourly_retention_days ?? "90") ||
-    perfDailyRetention !== (settings.perf_daily_retention_days ?? "730")
+    perfDailyRetention !== (settings.perf_daily_retention_days ?? "730") ||
+    idleTimeoutDefault !== (settings.session_idle_timeout_minutes ?? "60")
   );
 
   async function handleSave() {
@@ -543,6 +610,7 @@ function DataRetentionTab() {
         perf_raw_retention_days: perfRawRetention,
         perf_hourly_retention_days: perfHourlyRetention,
         perf_daily_retention_days: perfDailyRetention,
+        session_idle_timeout_minutes: idleTimeoutDefault,
       },
     });
     setSaved(true);
@@ -708,6 +776,32 @@ function DataRetentionTab() {
               <option value="730">2 years</option>
             </Select>
             <p className="text-xs text-zinc-600">How long to keep configuration change history in ClickHouse.</p>
+          </div>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Activity className="h-4 w-4" />
+            Session Settings
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-1.5">
+            <label className="text-sm text-zinc-400">Default Session Idle Timeout</label>
+            <Select value={idleTimeoutDefault} onChange={(e) => setIdleTimeoutDefault(e.target.value)} className="max-w-48">
+              <option value="15">15 minutes</option>
+              <option value="30">30 minutes</option>
+              <option value="60">1 hour (default)</option>
+              <option value="120">2 hours</option>
+              <option value="240">4 hours</option>
+              <option value="480">8 hours</option>
+              <option value="0">Never</option>
+            </Select>
+            <p className="text-xs text-zinc-600">
+              Users are automatically logged out after this period of inactivity.
+              Individual users can override this in their profile.
+            </p>
           </div>
         </CardContent>
       </Card>

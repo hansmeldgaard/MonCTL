@@ -1169,6 +1169,7 @@ function ConfigurationTab({ deviceId }: { deviceId: string }) {
   const tz = useTimezone();
   const { data: configRows, isLoading } = useDeviceConfigData(deviceId);
   const { data: configTemplates } = useDeviceConfigTemplates(deviceId);
+  const { data: assignments } = useDeviceAssignments(deviceId);
   const [configView, setConfigView] = useState<"current" | "changes" | "compare">("current");
   const [selectedConfigApp, setSelectedConfigApp] = useState<string | null>(null);
 
@@ -1223,22 +1224,33 @@ function ConfigurationTab({ deviceId }: { deviceId: string }) {
 
   // Group by app_id for sidebar and current view
   const configApps = useMemo(() => {
-    const apps = new Map<string, { appName: string; data: Record<string, string> }>();
+    const apps = new Map<string, { appName: string; data: Record<string, string>; lastCollected: string | null; intervalSeconds: number | null }>();
+    // Build a map of app_id -> interval from assignments
+    const intervalByAppId = new Map<string, number>();
+    for (const a of (assignments ?? [])) {
+      if (a.schedule_type === "interval") {
+        intervalByAppId.set(a.app.id, Number(a.schedule_value));
+      }
+    }
     for (const row of (configRows ?? [])) {
       const appId = String(row.app_id ?? "unknown");
       const key = String(row.config_key ?? "");
       const value = String(row.config_value ?? "");
       const appName = String(row.app_name ?? appId);
+      const executedAt = String(row.executed_at ?? "");
       if (!apps.has(appId)) {
-        apps.set(appId, { appName, data: {} });
+        apps.set(appId, { appName, data: {}, lastCollected: null, intervalSeconds: intervalByAppId.get(appId) ?? null });
       }
       const entry = apps.get(appId)!;
       if (!(key in entry.data)) {
         entry.data[key] = value;
       }
+      if (executedAt && (!entry.lastCollected || executedAt > entry.lastCollected)) {
+        entry.lastCollected = executedAt;
+      }
     }
     return apps;
-  }, [configRows]);
+  }, [configRows, assignments]);
 
   // Auto-select first app
   useEffect(() => {
@@ -1342,6 +1354,24 @@ function ConfigurationTab({ deviceId }: { deviceId: string }) {
               <CardTitle className="flex items-center gap-2 text-sm">
                 <Wrench className="h-4 w-4" />
                 {selectedAppData.appName}
+                {selectedAppData.lastCollected && (() => {
+                  const ageSec = (Date.now() - new Date(selectedAppData.lastCollected).getTime()) / 1000;
+                  const interval = selectedAppData.intervalSeconds;
+                  // green = within 1.5x interval, yellow = within 2.5x, red = beyond
+                  const missedPolls = interval ? ageSec / interval : 0;
+                  const statusColor = !interval ? "bg-zinc-700 text-zinc-300"
+                    : missedPolls <= 1.5 ? "bg-emerald-900/60 text-emerald-400 border border-emerald-700/50"
+                    : missedPolls <= 2.5 ? "bg-amber-900/60 text-amber-400 border border-amber-700/50"
+                    : "bg-red-900/60 text-red-400 border border-red-700/50";
+                  return (
+                    <span
+                      className={`ml-auto text-xs font-medium px-2 py-0.5 rounded ${statusColor}`}
+                      title={`Last polled: ${formatDate(selectedAppData.lastCollected, tz)}${interval ? ` · Interval: ${interval}s` : ""}`}
+                    >
+                      {timeAgo(selectedAppData.lastCollected)}
+                    </span>
+                  );
+                })()}
               </CardTitle>
             </CardHeader>
             <CardContent>

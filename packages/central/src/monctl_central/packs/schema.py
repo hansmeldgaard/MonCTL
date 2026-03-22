@@ -8,7 +8,7 @@ from fastapi import HTTPException
 
 
 VALID_SECTIONS = {
-    "apps", "alert_rules", "credential_templates", "snmp_oids",
+    "apps", "credential_templates", "snmp_oids",
     "device_templates", "device_types", "label_keys", "connectors",
 }
 
@@ -50,6 +50,36 @@ def validate_pack_schema(data: dict) -> None:
             raise HTTPException(
                 status_code=400, detail=f"App '{app['name']}' must have at least one version"
             )
+        # Validate alert_definitions within each version
+        for ver in app["versions"]:
+            for alert_def in ver.get("alert_definitions", []):
+                if not alert_def.get("name"):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Alert definition in app '{app['name']}' version "
+                               f"'{ver.get('version', '?')}' requires a name",
+                    )
+                if not alert_def.get("expression"):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Alert definition '{alert_def.get('name', '?')}' in app "
+                               f"'{app['name']}' requires an expression",
+                    )
+                if alert_def.get("severity") and alert_def["severity"] not in (
+                    "info", "warning", "critical", "emergency",
+                ):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Alert definition '{alert_def['name']}': "
+                               "severity must be info/warning/critical/emergency",
+                    )
+                if alert_def.get("window") and alert_def["window"] not in (
+                    "30s", "5m", "15m", "1h", "6h", "1d",
+                ):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Alert definition '{alert_def['name']}': invalid window value",
+                    )
 
     for conn in contents.get("connectors", []):
         if not conn.get("name"):
@@ -58,12 +88,6 @@ def validate_pack_schema(data: dict) -> None:
             raise HTTPException(
                 status_code=400,
                 detail=f"Connector '{conn['name']}' must have at least one version",
-            )
-
-    for rule in contents.get("alert_rules", []):
-        if not rule.get("name") or not rule.get("expression"):
-            raise HTTPException(
-                status_code=400, detail="Alert rules require name and expression"
             )
 
     for oid in contents.get("snmp_oids", []):

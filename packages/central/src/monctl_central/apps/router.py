@@ -15,6 +15,7 @@ from monctl_central.dependencies import apply_tenant_filter, get_db, require_aut
 from monctl_common.validators import validate_semver, validate_uuid
 from monctl_central.storage.models import (
     App,
+    AppAlertDefinition,
     AppAssignment,
     AppConnectorBinding,
     AppVersion,
@@ -27,6 +28,26 @@ router = APIRouter()
 
 
 VALID_TARGET_TABLES = {"availability_latency", "performance", "interface", "config"}
+
+
+def _next_patch_version(source_version: str, existing_versions: set[str]) -> str:
+    """Auto-increment patch version from source.
+
+    '1.0.0' -> '1.0.1', or '1.0.2' if '1.0.1' already exists.
+    Falls back to appending '.1' for non-semver strings.
+    """
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)$", source_version)
+    if match:
+        major, minor, patch = int(match.group(1)), int(match.group(2)), int(match.group(3))
+        candidate_patch = patch + 1
+        while f"{major}.{minor}.{candidate_patch}" in existing_versions:
+            candidate_patch += 1
+        return f"{major}.{minor}.{candidate_patch}"
+
+    counter = 1
+    while f"{source_version}.{counter}" in existing_versions:
+        counter += 1
+    return f"{source_version}.{counter}"
 
 
 class CreateAppRequest(BaseModel):
@@ -1429,6 +1450,93 @@ async def create_app_version(
     return {
         "status": "success",
         "data": {"id": str(version.id), "version": version.version, "checksum": checksum, "is_latest": version.is_latest},
+    }
+
+
+@router.post("/{app_id}/versions/{version_id}/clone", status_code=status.HTTP_201_CREATED)
+async def clone_app_version(
+    app_id: str,
+    version_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Clone an existing app version into a new draft version.
+
+    Copies source_code, requirements, entry_class, display_template,
+    and all AppAlertDefinition records. The new version is NOT set as
+    is_latest.
+    """
+    import hashlib
+
+    stmt = select(AppVersion).where(
+        AppVersion.id == uuid.UUID(version_id),
+        AppVersion.app_id == uuid.UUID(app_id),
+    )
+    source = (await db.execute(stmt)).scalar_one_or_none()
+    if source is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source version not found")
+
+    all_versions = (await db.execute(
+        select(AppVersion.version).where(AppVersion.app_id == uuid.UUID(app_id))
+    )).scalars().all()
+    new_version = _next_patch_version(source.version, set(all_versions))
+
+    checksum = hashlib.sha256((source.source_code or "").encode()).hexdigest()
+    cloned = AppVersion(
+        app_id=source.app_id,
+        version=new_version,
+        source_code=source.source_code,
+        requirements=source.requirements or [],
+        entry_class=source.entry_class,
+        checksum_sha256=checksum,
+        is_latest=False,
+        display_template=source.display_template,
+        volatile_keys=source.volatile_keys or [],
+    )
+    db.add(cloned)
+    await db.flush()
+
+    # Clone alert definitions from the source version
+    source_defs = (await db.execute(
+        select(AppAlertDefinition).where(
+            AppAlertDefinition.app_version_id == source.id,
+        )
+    )).scalars().all()
+
+    cloned_def_count = 0
+    for defn in source_defs:
+        cloned_def = AppAlertDefinition(
+            app_id=defn.app_id,
+            app_version_id=cloned.id,
+            name=defn.name,
+            description=defn.description,
+            expression=defn.expression,
+            window=defn.window,
+            severity=defn.severity,
+            enabled=defn.enabled,
+            message_template=defn.message_template,
+            notification_channels=defn.notification_channels,
+            pack_origin=defn.pack_origin,
+            pack_id=defn.pack_id,
+        )
+        db.add(cloned_def)
+        cloned_def_count += 1
+
+    await db.flush()
+
+    return {
+        "status": "success",
+        "data": {
+            "id": str(cloned.id),
+            "version": cloned.version,
+            "checksum": cloned.checksum_sha256,
+            "is_latest": cloned.is_latest,
+            "cloned_from": {
+                "version_id": str(source.id),
+                "version": source.version,
+            },
+            "alert_definitions_cloned": cloned_def_count,
+        },
     }
 
 

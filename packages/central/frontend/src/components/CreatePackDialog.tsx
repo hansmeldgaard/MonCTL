@@ -3,7 +3,7 @@ import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
 import { validateSlug, validateName, validateSemver } from "@/lib/validation.ts";
 import {
   AppWindow, Binary, ChevronDown, ChevronRight, KeyRound, LayoutTemplate,
-  Loader2, Lock, Monitor, Plug, ShieldCheck, Tag, Unlock,
+  Loader2, Lock, Monitor, Plug, Tag, Unlock,
 } from "lucide-react";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import { Button } from "@/components/ui/button.tsx";
@@ -19,7 +19,6 @@ interface CreatePackDialogProps {
 
 const SECTION_CONFIG: { key: string; label: string; icon: React.ReactNode }[] = [
   { key: "apps", label: "Apps", icon: <AppWindow className="h-4 w-4" /> },
-  { key: "alert_rules", label: "Alert Rules", icon: <ShieldCheck className="h-4 w-4" /> },
   { key: "credential_templates", label: "Credential Templates", icon: <KeyRound className="h-4 w-4" /> },
   { key: "snmp_oids", label: "SNMP OIDs", icon: <Binary className="h-4 w-4" /> },
   { key: "device_templates", label: "Device Templates", icon: <LayoutTemplate className="h-4 w-4" /> },
@@ -30,7 +29,6 @@ const SECTION_CONFIG: { key: string; label: string; icon: React.ReactNode }[] = 
 
 const EMPTY_SELECTED: Record<string, Set<string>> = {
   apps: new Set(),
-  alert_rules: new Set(),
   credential_templates: new Set(),
   snmp_oids: new Set(),
   device_templates: new Set(),

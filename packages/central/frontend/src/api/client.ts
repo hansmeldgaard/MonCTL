@@ -11,13 +11,48 @@ export class ApiError extends Error {
   }
 }
 
+// ---------- Silent refresh machinery ----------
+
+let isRefreshing = false;
+let refreshPromise: Promise<boolean> | null = null;
+
+/**
+ * Attempt to refresh the access token using the refresh cookie.
+ * Returns true if successful, false otherwise.
+ * Deduplicates concurrent refresh attempts.
+ */
+async function tryRefreshToken(): Promise<boolean> {
+  if (isRefreshing && refreshPromise) {
+    return refreshPromise;
+  }
+  isRefreshing = true;
+  refreshPromise = (async () => {
+    try {
+      const res = await fetch(`${BASE_URL}/auth/refresh`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+      return res.ok;
+    } catch {
+      return false;
+    } finally {
+      isRefreshing = false;
+      refreshPromise = null;
+    }
+  })();
+  return refreshPromise;
+}
+
+// ---------- Core request function ----------
+
 async function request<T>(
   endpoint: string,
   options: RequestInit = {},
 ): Promise<T> {
   const url = `${BASE_URL}${endpoint}`;
 
-  const res = await fetch(url, {
+  let res = await fetch(url, {
     ...options,
     credentials: "include",
     headers: {
@@ -26,8 +61,22 @@ async function request<T>(
     },
   });
 
+  // On 401, attempt one silent refresh, then retry the original request
+  if (res.status === 401 && !endpoint.startsWith("/auth/")) {
+    const refreshed = await tryRefreshToken();
+    if (refreshed) {
+      res = await fetch(url, {
+        ...options,
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          ...options.headers,
+        },
+      });
+    }
+  }
+
   if (res.status === 401) {
-    // Redirect to login on auth failure, but not if we're already on /login
     if (!window.location.pathname.startsWith("/login")) {
       window.location.href = "/login";
     }
@@ -102,11 +151,23 @@ export async function apiPostFormData<T>(
 ): Promise<ApiResponse<T>> {
   const url = `${BASE_URL}${endpoint}`;
 
-  const res = await fetch(url, {
+  let res = await fetch(url, {
     method: "POST",
     credentials: "include",
     body: formData,
   });
+
+  // On 401, attempt one silent refresh, then retry
+  if (res.status === 401 && !endpoint.startsWith("/auth/")) {
+    const refreshed = await tryRefreshToken();
+    if (refreshed) {
+      res = await fetch(url, {
+        method: "POST",
+        credentials: "include",
+        body: formData,
+      });
+    }
+  }
 
   if (res.status === 401) {
     if (!window.location.pathname.startsWith("/login")) {

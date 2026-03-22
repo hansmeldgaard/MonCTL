@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -22,6 +23,22 @@ from monctl_central.storage.models import (
 from monctl_common.utils import utc_now
 
 router = APIRouter()
+
+
+def _next_patch_version(source_version: str, existing_versions: set[str]) -> str:
+    """Auto-increment patch version from source."""
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)$", source_version)
+    if match:
+        major, minor, patch = int(match.group(1)), int(match.group(2)), int(match.group(3))
+        candidate_patch = patch + 1
+        while f"{major}.{minor}.{candidate_patch}" in existing_versions:
+            candidate_patch += 1
+        return f"{major}.{minor}.{candidate_patch}"
+
+    counter = 1
+    while f"{source_version}.{counter}" in existing_versions:
+        counter += 1
+    return f"{source_version}.{counter}"
 
 
 # ---------------------------------------------------------------------------
@@ -417,4 +434,61 @@ async def set_latest_version(
     return {
         "status": "success",
         "data": _fmt_version(target),
+    }
+
+
+@router.post("/{connector_id}/versions/{version_id}/clone", status_code=status.HTTP_201_CREATED)
+async def clone_connector_version(
+    connector_id: str,
+    version_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Clone an existing connector version into a new draft version.
+
+    Copies source_code, requirements, entry_class. The new version is NOT
+    set as is_latest.
+    """
+    stmt = select(ConnectorVersion).where(
+        ConnectorVersion.id == uuid.UUID(version_id),
+        ConnectorVersion.connector_id == uuid.UUID(connector_id),
+    )
+    source = (await db.execute(stmt)).scalar_one_or_none()
+    if source is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Source version not found",
+        )
+
+    all_versions = (await db.execute(
+        select(ConnectorVersion.version).where(
+            ConnectorVersion.connector_id == uuid.UUID(connector_id),
+        )
+    )).scalars().all()
+    new_version = _next_patch_version(source.version, set(all_versions))
+
+    checksum = hashlib.sha256((source.source_code or "").encode()).hexdigest()
+    cloned = ConnectorVersion(
+        connector_id=source.connector_id,
+        version=new_version,
+        source_code=source.source_code,
+        requirements=source.requirements,
+        entry_class=source.entry_class,
+        checksum=checksum,
+        is_latest=False,
+    )
+    db.add(cloned)
+    await db.flush()
+
+    return {
+        "status": "success",
+        "data": {
+            "id": str(cloned.id),
+            "version": cloned.version,
+            "checksum": cloned.checksum,
+            "is_latest": cloned.is_latest,
+            "cloned_from": {
+                "version_id": str(source.id),
+                "version": source.version,
+            },
+        },
     }

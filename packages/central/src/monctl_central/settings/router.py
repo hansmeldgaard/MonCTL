@@ -27,6 +27,7 @@ _DEFAULTS = {
     "perf_daily_retention_days": "730",
     "pypi_network_mode": "direct",
     "pypi_proxy_url": "",
+    "session_idle_timeout_minutes": "60",
 }
 
 

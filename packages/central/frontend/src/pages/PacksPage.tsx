@@ -25,7 +25,7 @@ import { PaginationBar } from "@/components/PaginationBar.tsx";
 
 const SECTION_LABELS: Record<string, string> = {
   apps: "Apps",
-  alert_rules: "Alert Rules",
+  alert_definitions: "Alert Definitions",
   credential_templates: "Credential Templates",
   snmp_oids: "SNMP OIDs",
   device_templates: "Device Templates",
@@ -305,6 +305,7 @@ export function PacksPage() {
                           {entity.status === "new" && <Badge className="bg-green-600">New</Badge>}
                           {entity.status === "conflict" && <Badge className="bg-amber-600">Conflict</Badge>}
                           {entity.status === "unchanged" && <Badge variant="info">Unchanged</Badge>}
+                          {entity.status === "info" && <Badge className="bg-blue-600">Included</Badge>}
                         </TableCell>
                         <TableCell>
                           {entity.status === "conflict" ? (
@@ -319,6 +320,8 @@ export function PacksPage() {
                             </select>
                           ) : entity.status === "new" ? (
                             <span className="text-xs text-green-400">Will create</span>
+                          ) : entity.status === "info" ? (
+                            <span className="text-xs text-blue-400">Included with app</span>
                           ) : (
                             <span className="text-xs text-zinc-500">Will skip</span>
                           )}

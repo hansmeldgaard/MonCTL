@@ -14,7 +14,7 @@ import { useTimezone } from "@/hooks/useTimezone.ts";
 
 const SECTION_LABELS: Record<string, string> = {
   apps: "Apps",
-  alert_rules: "Alert Rules",
+  alert_definitions: "Alert Definitions",
   credential_templates: "Credential Templates",
   snmp_oids: "SNMP OIDs",
   device_templates: "Device Templates",
@@ -23,7 +23,7 @@ const SECTION_LABELS: Record<string, string> = {
   connectors: "Connectors",
 };
 
-const SECTIONS = ["apps", "alert_rules", "credential_templates", "snmp_oids", "device_templates", "device_types", "label_keys", "connectors"];
+const SECTIONS = ["apps", "alert_definitions", "credential_templates", "snmp_oids", "device_templates", "device_types", "label_keys", "connectors"];
 
 export function PackDetailPage() {
   const { id } = useParams<{ id: string }>();

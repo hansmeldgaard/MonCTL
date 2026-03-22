@@ -118,6 +118,16 @@ class UpdateTablePreferencesRequest(BaseModel):
     table_scroll_mode: str | None = Field(default=None, max_length=20)
 
 
+VALID_IDLE_TIMEOUTS = {15, 30, 60, 120, 240, 480, 0}
+
+
+class UpdateIdleTimeoutRequest(BaseModel):
+    idle_timeout_minutes: int | None = Field(
+        default=None,
+        description="Idle timeout in minutes. NULL = use system default. 0 = never.",
+    )
+
+
 class AssignTenantRequest(BaseModel):
     tenant_id: str
 
@@ -158,6 +168,31 @@ async def update_my_table_preferences(
             "table_page_size": user.table_page_size,
             "table_scroll_mode": user.table_scroll_mode,
         },
+    }
+
+
+@router.put("/me/idle-timeout")
+async def update_my_idle_timeout(
+    request: UpdateIdleTimeoutRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Update the current user's idle timeout preference."""
+    user = await db.get(User, uuid.UUID(auth["user_id"]))
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if request.idle_timeout_minutes is not None and request.idle_timeout_minutes not in VALID_IDLE_TIMEOUTS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"idle_timeout_minutes must be one of {sorted(VALID_IDLE_TIMEOUTS)} or null",
+        )
+
+    user.idle_timeout_minutes = request.idle_timeout_minutes
+    user.updated_at = utc_now()
+    return {
+        "status": "success",
+        "data": {"idle_timeout_minutes": user.idle_timeout_minutes},
     }
 
 

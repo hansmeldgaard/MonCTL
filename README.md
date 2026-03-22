@@ -1,30 +1,32 @@
 # MonCTL — Distributed Monitoring Platform
 
-MonCTL is a distributed monitoring platform with a central management server and distributed collector nodes. Collectors pull job assignments from central, execute monitoring checks (ping, port, SNMP, custom apps), and forward results back for storage and alerting.
+MonCTL is a distributed monitoring platform with a central management server and distributed collector nodes. Collectors pull job assignments from central, execute monitoring checks (ping, port, SNMP, HTTP, custom apps), and forward results back for storage, alerting, and configuration tracking.
 
 ## Architecture
 
 ```
-Browser --> HAProxy (VIP :443) --> central1-4 (:8444)
-                                     |-- PostgreSQL (Patroni HA)
-                                     |-- ClickHouse (replicated cluster)
-                                     +-- Redis
+Browser → HAProxy (VIP :443) → central1-4 (:8443)
+                                  ├── PostgreSQL (Patroni HA)
+                                  ├── ClickHouse (replicated cluster)
+                                  └── Redis
 
-Collectors (worker1-4) --> poll jobs from central --> execute checks --> forward results
+Collectors (worker1-4) → poll jobs from central → execute checks → forward results
 ```
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|-----------|
-| Backend | Python 3.11, FastAPI, SQLAlchemy async, Alembic |
-| Frontend | React 19, TypeScript, Vite, Tailwind CSS v4 |
-| Time-series | ClickHouse (replicated, 3 nodes) |
-| Relational DB | PostgreSQL 16 (Patroni HA, 2 nodes) |
+| Backend | Python 3.11, FastAPI, SQLAlchemy 2.0 async, Alembic, Pydantic 2 |
+| Frontend | React 19, TypeScript 5.9, Vite 7, Tailwind CSS v4, React Query (TanStack) 5 |
+| Time-series | ClickHouse (ReplicatedMergeTree, replicated cluster) |
+| Relational DB | PostgreSQL 16 (Patroni HA) |
 | Cache | Redis |
-| Proxy | HAProxy (TLS termination, round-robin) |
-| Collector | Python 3.11, gRPC (peer communication), SQLite (local buffer) |
-| TUI | Textual |
+| Proxy | HAProxy (TLS termination, round-robin) + Keepalived (VIP failover) |
+| Collector | Python 3.12, gRPC (peer communication), SQLite (local buffer) |
+| Icons | Lucide React |
+| Charts | Recharts |
+| Code editor | CodeMirror 6 (Python syntax) |
 
 ## Package Structure
 
@@ -33,7 +35,8 @@ packages/
   central/          Central management server (FastAPI + React SPA)
   collector/        Distributed collector node
   common/           Shared utilities
-  sdk/              SDK package
+  sdk/              SDK package (base classes, testing utilities)
+apps/               Built-in monitoring apps (ping, port, HTTP, SNMP)
 docker/             Dockerfiles and deployment configs
 ```
 
@@ -41,19 +44,37 @@ docker/             Dockerfiles and deployment configs
 
 The central server provides:
 
-- **Device management** with CRUD, grouping, and templates
-- **App framework** for monitoring checks (built-in + custom)
-- **Collector management** with registration, approval, and group assignment
-- **Credential vault** with AES-256-GCM encryption
-- **Alerting engine** with configurable rules and thresholds
-- **Multi-tenant support** with role-based access control
+- **Device management** with CRUD, bulk operations, grouping, and templates
+- **App framework** for monitoring checks (built-in + custom) with version management
+- **Connector system** for protocol-specific communication (SNMP, SSH, etc.)
+- **Collector management** with registration, approval, group assignment, and load balancing
+- **Credential vault** with AES-256-GCM encryption and resolution chain
+- **Alerting engine** with configurable rules, thresholds, and event policies
+- **Multi-tenant support** with role-based access control (custom RBAC roles)
 - **Time-series storage** in ClickHouse with configurable retention
+- **Config change tracking** with write suppression, changelog, and diff UI
+- **Interface monitoring** with targeted polling, rate calculation, and multi-tier retention
+- **Monitoring packs** for import/export of apps, connectors, and alert definitions
+- **Python module registry** with PyPI import and wheel distribution
+- **Docker infrastructure monitoring** (containers, logs, events, images)
 - **REST API** with JWT cookie auth (web UI) and bearer token auth (collectors/management)
 
 ### API
 
-- Web API: `/v1/` (devices, collectors, apps, credentials, alerts, etc.)
-- Collector API: `/api/v1/` (job pull, result submission, heartbeat)
+- Web API: `/v1/` — 29 routers (devices, collectors, apps, credentials, alerts, config history, etc.)
+- Collector API: `/api/v1/` (job pull, result submission, app/connector code, credentials)
+
+### ClickHouse Tables
+
+| Table | Purpose |
+|-------|---------|
+| `availability_latency` | Ping/port/HTTP check results |
+| `performance` | Custom metric results (CPU, memory, disk, etc.) |
+| `interface` | Per-interface SNMP data with hourly/daily rollups |
+| `config` | Configuration tracking (change-only writes) |
+| `events` | Collector events (TTL 30 days) |
+
+Each table has a `*_latest` materialized view (ReplacingMergeTree) for instant latest-per-key lookups.
 
 ## Collector
 
@@ -65,31 +86,12 @@ Each collector node runs three services:
 | `poll-worker` | Pulls job assignments, executes checks, manages app virtualenvs |
 | `forwarder` | Batches and ships results to central |
 
-### Collector TUI Tools
-
-- **`monctl-setup`** — Register collector with central, view connection status
-- **`monctl-status`** — Monitor Docker containers, gossip membership, system resources
-
 ## Deployment
 
 ### Prerequisites
 
 - Docker and Docker Compose on all nodes
 - SSH access between build machine and servers
-
-### Build & Deploy Collector
-
-```bash
-# Build
-docker build --no-cache -t monctl-collector:latest \
-  -f docker/Dockerfile.collector-v2 packages/collector/
-
-# Distribute to workers
-docker save monctl-collector:latest | ssh user@<worker-ip> 'docker load'
-
-# Start/restart
-ssh user@<worker-ip> 'cd /opt/monctl/collector && docker compose down && docker compose up -d'
-```
 
 ### Build & Deploy Central
 
@@ -99,12 +101,24 @@ docker build --platform linux/amd64 --no-cache -t monctl-central:latest \
   -f docker/Dockerfile.central .
 
 # Distribute to central nodes
-docker save monctl-central:latest | ssh user@<central-ip> 'docker load'
+docker save monctl-central:latest | ssh monctl@<central-ip> 'docker load'
 
 # Start/restart
-ssh user@<central-ip> 'cd /opt/monctl/central && \
-  docker compose -f docker-compose.central.yml down && \
-  docker compose -f docker-compose.central.yml up -d'
+ssh monctl@<central-ip> 'cd /opt/monctl/central && docker compose down && docker compose up -d'
+```
+
+### Build & Deploy Collector
+
+```bash
+# Build
+docker build --platform linux/amd64 --no-cache -t monctl-collector:latest \
+  -f docker/Dockerfile.collector-v2 .
+
+# Distribute to workers
+docker save monctl-collector:latest | ssh monctl@<worker-ip> 'docker load'
+
+# Start/restart
+ssh monctl@<worker-ip> 'cd /opt/monctl/collector && docker compose down && docker compose up -d'
 ```
 
 ### Configuration
@@ -135,9 +149,6 @@ Collectors are configured via `.env` at `/opt/monctl/collector/.env`:
 # Install dev dependencies
 cd packages/central && pip install -e ".[dev]"
 cd packages/collector && pip install -e ".[dev]"
-
-# Run tests
-pytest
 
 # Lint
 ruff check .

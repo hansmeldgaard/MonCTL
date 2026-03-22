@@ -45,15 +45,16 @@ packages/
 │   │   ├── dependencies.py     # DI: get_db, get_clickhouse, require_auth, require_admin
 │   │   ├── cache.py            # Redis client + caching (enrichment, interface ID, refresh flags)
 │   │   ├── storage/
-│   │   │   ├── models.py       # SQLAlchemy models (33 models, all PostgreSQL tables)
+│   │   │   ├── models.py       # SQLAlchemy models (41 models, all PostgreSQL tables)
 │   │   │   └── clickhouse.py   # ClickHouse client, DDL, insert/query methods
-│   │   ├── api/router.py       # Main router (mounts 25+ sub-routers at /v1/)
+│   │   ├── api/router.py       # Main router (mounts 29 sub-routers at /v1/)
 │   │   ├── auth/               # JWT cookie auth (login, refresh, me)
 │   │   ├── devices/router.py   # Device CRUD, bulk-patch, monitoring config, interface metadata, credentials
 │   │   ├── collectors/router.py # Collector registration, approval, heartbeat
 │   │   ├── collector_api/router.py # /api/v1/ endpoints collectors call (jobs, results, credentials)
 │   │   ├── apps/router.py      # App CRUD + assignment CRUD + version management
 │   │   ├── results/router.py   # ClickHouse query API (history, latest, interfaces)
+│   │   ├── config_history/     # Config change history (changelog, snapshot, diff)
 │   │   ├── credentials/        # Credential CRUD, types, crypto
 │   │   ├── credential_keys/    # Reusable credential field definitions
 │   │   ├── connectors/         # Connector CRUD + versions
@@ -72,13 +73,13 @@ packages/
 │   │   └── src/
 │   │       ├── api/
 │   │       │   ├── client.ts   # fetch() wrapper (apiGet, apiPost, apiPut, apiPatch, apiDelete)
-│   │       │   └── hooks.ts    # 116 React Query hooks for ALL API endpoints
-│   │       ├── types/api.ts    # 93+ TypeScript interfaces for API responses
+│   │       │   └── hooks.ts    # 185 React Query hooks for ALL API endpoints
+│   │       ├── types/api.ts    # 100 TypeScript interfaces for API responses
 │   │       ├── pages/          # 26 page components
-│   │       ├── components/     # 19 reusable UI components (incl. ClearableInput)
+│   │       ├── components/     # 33 reusable UI components (incl. ClearableInput, FilterableSortHead, PaginationBar)
 │   │       ├── hooks/          # useAuth, useTimezone
 │   │       └── layouts/        # Sidebar + Header + AppLayout
-│   └── alembic/                # 42 database migrations
+│   └── alembic/                # 39 database migrations
 ├── collector/                  # Collector node
 │   └── src/monctl_collector/
 │       ├── config.py           # YAML + env config
@@ -146,12 +147,28 @@ packages/
 | `availability_latency` | Ping/port/HTTP check results | state, rtt_ms, response_time_ms, reachable |
 | `performance` | Custom metric results | component, component_type, metric_names[], metric_values[] |
 | `interface` | Per-interface SNMP data | interface_id, in/out octets, rates, errors, discards, utilization |
-| `config` | Configuration tracking | config_key, config_value, config_hash |
+| `config` | Configuration tracking (change-only writes) | config_key, config_value, config_hash |
 | `events` | Collector events | TTL 30 days |
 
 Each table has a `*_latest` materialized view (ReplacingMergeTree) for instant latest-per-key lookups. Interface also has `interface_hourly` and `interface_daily` rollup tables.
 
 **History query default**: `GET /v1/results` queries `availability_latency`, `performance`, `config` by default (NOT `interface` — interface data has its own dedicated endpoints to avoid flooding the History tab with one row per interface per poll).
+
+### Config Data Optimization
+
+**Write suppression**: `collector_api/router.py` compares each config key's MD5 hash against `config_latest FINAL` before writing. Only changed keys and volatile keys are written to ClickHouse. In-memory LRU cache (60s TTL) avoids repeated ClickHouse lookups.
+
+**Volatile keys**: `AppVersion.volatile_keys` JSONB field lists keys that change every poll cycle (e.g., uptime). These bypass suppression and are always written.
+
+**Change history API** (`config_history/router.py`): 4 endpoints under `/v1/devices/{id}/config/`:
+- `GET /changelog` — paginated change history
+- `GET /snapshot` — current config values from `config_latest FINAL`
+- `GET /diff?config_key=...` — value history for a specific key
+- `GET /change-timestamps` — timeline of changes (minute-level buckets)
+
+**Retention**: `config_retention_days` system setting (default 90 days). Scheduler cleanup task deletes old config rows.
+
+**Frontend**: ConfigurationTab has "Current" / "Changes" toggle. Changes view shows paginated changelog. Diff dialog shows value history per key with change highlighting.
 
 ### Device Enable/Disable
 
@@ -299,3 +316,5 @@ SSH user: `monctl` for all servers. Compose files at `/opt/monctl/{central,colle
 **Filter empty states**: When filters are active but match no results, always keep the table visible (headers + filter inputs) with an empty body row message like `"No devices match your filters"`. Only show the big centered empty state (icon + action button) when there are truly zero items AND no filters are active. This lets users refine their query without losing context.
 
 **Conditional rendering and focus**: Never use `{condition && <Element/>}` to insert/remove elements in a parent container that has sibling form inputs — React's index-based reconciliation can cause focus loss. Instead, always render the element and toggle visibility with CSS (`opacity-0 pointer-events-none`).
+
+**List views (server-side search/sort/pagination)**: All list pages use the `useListState` hook for per-column debounced filters (300ms), sort state, and pagination. Column headers use `FilterableSortHead` (sort label + inline `ClearableInput`). Pagination uses `PaginationBar`. All list hooks accept `ListParams` and use `placeholderData: keepPreviousData` to prevent table unmount during refetch.

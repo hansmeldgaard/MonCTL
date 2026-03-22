@@ -67,9 +67,9 @@ packages/
 │   │   │                           #     apply_tenant_filter, check_tenant_access
 │   │   ├── cache.py                # Redis client + caching (api keys, credentials, enrichment, interface ID, refresh flags)
 │   │   ├── storage/
-│   │   │   ├── models.py           # 42 SQLAlchemy models (alle PostgreSQL-tabeller)
-│   │   │   └── clickhouse.py       # ClickHouseClient wrapper, 5 domænetabeller + MV'er + rollup
-│   │   ├── api/router.py           # Hovedrouter — monterer 28 sub-routers på /v1/
+│   │   │   ├── models.py           # 41 SQLAlchemy models (alle PostgreSQL-tabeller)
+│   │   │   └── clickhouse.py       # ClickHouseClient wrapper, 5 domænetabeller + MV'er + rollup + config history
+│   │   ├── api/router.py           # Hovedrouter — monterer 29 sub-routers på /v1/
 │   │   ├── auth/                   # JWT cookie auth (login, refresh, me)
 │   │   ├── devices/router.py       # Device CRUD, bulk-patch, monitoring config, interface metadata, credentials
 │   │   ├── collectors/router.py    # Collector register, approve, reject, heartbeat, config
@@ -77,6 +77,7 @@ packages/
 │   │   ├── collector_groups/router.py
 │   │   ├── apps/router.py          # App CRUD + AppVersion CRUD + Assignment CRUD
 │   │   ├── results/router.py       # ClickHouse query API (history, latest, interfaces)
+│   │   ├── config_history/         # Config change history (changelog, snapshot, diff, timestamps)
 │   │   ├── credentials/            # Credential CRUD, types, templates, crypto
 │   │   ├── credential_keys/        # Reusable credential field definitions
 │   │   ├── connectors/             # Connector CRUD + versions
@@ -98,17 +99,17 @@ packages/
 │   │       ├── App.tsx             # React Router — alle routes
 │   │       ├── api/
 │   │       │   ├── client.ts       # fetch() wrapper: apiGet, apiPost, apiPut, apiPatch, apiDelete
-│   │       │   └── hooks.ts        # 177 React Query hooks for alle API endpoints
-│   │       ├── types/api.ts        # 93+ TypeScript interfaces for alle API responses
+│   │       │   └── hooks.ts        # 185 React Query hooks for alle API endpoints
+│   │       ├── types/api.ts        # 100 TypeScript interfaces for alle API responses
 │   │       ├── lib/utils.ts        # cn(), formatDate(dateStr, tz), timeAgo(), capitalize(), truncate()
 │   │       ├── hooks/
 │   │       │   ├── useAuth.tsx     # Auth context (user, login, logout, refresh)
 │   │       │   └── useTimezone.ts  # Returnerer user.timezone, default "UTC"
 │   │       ├── pages/              # 26 page components
-│   │       ├── components/         # 18 feature-komponenter + 10 UI-primitiver
+│   │       ├── components/         # 23 feature-komponenter + 10 UI-primitiver
 │   │       │   └── ui/             # badge, button, card, clearable-input, dialog, input, label, select, table, tabs
 │   │       └── layouts/            # AppLayout, Sidebar (13 nav items), Header
-│   └── alembic/                    # 35 migrationer, kører auto ved container startup
+│   └── alembic/                    # 39 migrationer, kører auto ved container startup
 ├── collector/                      # Collector node
 │   └── src/monctl_collector/
 │       ├── config.py               # YAML + env config
@@ -140,7 +141,7 @@ packages/
 | Collector | collectors | id, name, hostname, ip_addresses, status (PENDING/ACTIVE/DOWN/REJECTED), load_score, effective_load, total_jobs, deadline_miss_rate, group_id, cluster_id, fingerprint |
 | CollectorGroup | collector_groups | id, name, description, label_selector (JSONB) |
 | App | apps | id, name, description, app_type (script/sdk), config_schema (JSONB), target_table |
-| AppVersion | app_versions | id, app_id, version, source_code, requirements (JSONB), entry_class, is_latest, checksum, display_template |
+| AppVersion | app_versions | id, app_id, version, source_code, requirements (JSONB), entry_class, is_latest, checksum, display_template, volatile_keys (JSONB) |
 | AppAssignment | app_assignments | id, app_id, app_version_id, collector_id, device_id, config (JSONB), schedule_type, schedule_value, resource_limits, role, use_latest, enabled, credential_id |
 | AppConnectorBinding | app_connector_bindings | id, app_id, connector_id, alias, use_latest, settings (JSONB) |
 | AssignmentConnectorBinding | assignment_connector_bindings | id, assignment_id, connector_id, connector_version_id, alias, credential_id, use_latest, settings (JSONB) |
@@ -197,7 +198,7 @@ packages/
 | availability_latency | Ping, HTTP, port checks | (assignment_id, executed_at) | state, rtt_ms, response_time_ms, reachable, status_code |
 | performance | CPU, memory, custom metrics | (device_id, component_type, component, executed_at) | component, component_type, metric_names[], metric_values[] |
 | interface | Network interface stats | (device_id, interface_id, executed_at) | interface_id, if_name, if_speed_mbps, in/out rates, errors, discards, utilization |
-| config | Config/discovery data | (device_id, component_type, component, config_key, executed_at) | config_key, config_value, config_hash |
+| config | Config/discovery data (change-only writes) | (device_id, component_type, component, config_key, executed_at) | config_key, config_value, config_hash |
 | events | Collector events | TTL 30 days | event_type, severity, message |
 
 Alle tabeller har: assignment_id, collector_id, app_id, device_id, executed_at, received_at + denormaliserede felter: collector_name, device_name, app_name, tenant_id.
@@ -245,6 +246,20 @@ Hver tabel har en `_latest` materialized view (ReplacingMergeTree) der holder se
 
 **Rate calculation**: Central-side (ikke collector). Previous counters cached i Redis per interface. Delta/rate computed ved result ingestion.
 
+### Config Data Optimization
+
+**Write suppression**: `collector_api/router.py` sammenligner MD5 hash per config key mod `config_latest FINAL` før skrivning. Kun ændrede keys og volatile keys skrives. In-memory LRU cache (60s TTL).
+
+**Volatile keys**: `AppVersion.volatile_keys` JSONB felt — keys der ændres hvert poll (fx uptime). Bypasser suppression.
+
+**Change history API** (`config_history/router.py`): 4 endpoints under `/v1/devices/{id}/config/`:
+- `GET /changelog` — paginated ændringshistorik
+- `GET /snapshot` — nuværende config (fra `config_latest FINAL`)
+- `GET /diff?config_key=...` — værdihistorik for specifik key
+- `GET /change-timestamps` — tidslinje (minut-buckets)
+
+**Retention**: `config_retention_days` system setting (default 90 dage). Scheduler cleanup task sletter gammel config data.
+
 ### Device Enable/Disable
 
 **Model**: `Device.is_enabled` boolean (default `true`). Disabled devices udelukkes fra collector job scheduling via `or_(device_id IS NULL, Device.is_enabled == True)` filter i `GET /api/v1/jobs`.
@@ -279,6 +294,7 @@ Import/export af monitoring packs (apps + connectors + alert definitions + crede
 | collector_groups | /v1/collector-groups | CRUD | require_auth |
 | apps | /v1/apps | CRUD apps + versions + assignments + connector bindings | require_auth |
 | results | /v1/results | GET list, /latest, /by-device/:id, /interfaces, /interface-history | require_auth |
+| config_history | /v1/devices/:id/config | GET /changelog, /snapshot, /diff, /change-timestamps | require_auth |
 | credentials | /v1/credentials | CRUD + types CRUD (secrets aldrig returneret) | require_auth |
 | credential_keys | /v1/credential-keys | CRUD | require_auth |
 | credential_templates | /v1/credential-templates | CRUD | require_auth |
@@ -353,7 +369,7 @@ stmt = apply_tenant_filter(stmt, auth, Device.tenant_id)
 | ConnectorsPage | /connectors | Connector liste |
 | ConnectorDetailPage | /connectors/:id | Connector versions + code editor |
 | PythonModulesPage | /python-modules | Package registry, PyPI import, wheel upload |
-| AssignmentsPage | /assignments | Read-only tabel over alle assignments med søgning |
+| AssignmentsPage | /assignments | Assignment liste med per-column filter, bulk actions (schedule, credential, enabled) |
 | TemplatesPage | /templates | Template CRUD |
 | PacksPage | /packs | Monitoring pack liste |
 | PackDetailPage | /packs/:id | Pack versions, entities, export |
@@ -369,7 +385,7 @@ stmt = apply_tenant_filter(stmt, auth, Device.tenant_id)
 | RolesPage | (settings tab) | RBAC role CRUD + permissions |
 | SnmpOidsPage | (settings tab) | SNMP OID catalog CRUD |
 
-### Feature-komponenter (18)
+### Feature-komponenter (23)
 
 | Komponent | Formål |
 |-----------|--------|
@@ -381,6 +397,8 @@ stmt = apply_tenant_filter(stmt, auth, Device.tenant_id)
 | CredentialCell | Viser credential chain (override → assignment → device default) |
 | CreatePackDialog | Dialog til at oprette monitoring packs |
 | DisplayTemplateEditor | Editor for app display templates (HTML/CSS) |
+| FilterableSortHead | Sort label + inline ClearableInput filter i TableHead |
+| PaginationBar | Reusable pagination controls (X-Y of Z + prev/next) |
 | InterfaceTrafficChart | Recharts: In/Out traffic chart for network interfaces |
 | KeyValueEditor | Key-value pair editor for metadata/labels |
 | LabelEditor | Label editor med auto-complete fra LabelKey definitions |
@@ -420,6 +438,8 @@ Dashboard → System Health → Docker Infra → Devices → Apps → Connectors
 **Filter empty states**: Når filtre er aktive men matcher intet, vis altid tabellen (headers + filter inputs) med en tom body-række. Vis kun den store centered empty state når der virkelig er nul items OG ingen filtre er aktive.
 
 **Conditional rendering og fokus**: Brug aldrig `{condition && <Element/>}` til at indsætte/fjerne elementer i en parent container der har sibling form inputs. Brug i stedet CSS visibility (`opacity-0 pointer-events-none`).
+
+**List views (server-side søgning/sortering/paginering)**: Alle list pages bruger `useListState` hook for per-column debounced filters (300ms), sort state og paginering. Column headers bruger `FilterableSortHead`. Paginering bruger `PaginationBar`. Alle list hooks accepterer `ListParams` og bruger `placeholderData: keepPreviousData` for at undgå tabel-unmount under refetch.
 
 ---
 

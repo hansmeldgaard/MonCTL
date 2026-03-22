@@ -17,7 +17,7 @@ from monctl_central.auth.service import (
 )
 from monctl_central.config import settings
 from monctl_central.dependencies import get_db
-from monctl_central.storage.models import User
+from monctl_central.storage.models import SystemSetting, User
 
 router = APIRouter()
 
@@ -28,6 +28,23 @@ _REFRESH_MAX_AGE = settings.jwt_refresh_token_expire_days * 86400
 class LoginRequest(BaseModel):
     username: str = Field(min_length=1, max_length=150)
     password: str = Field(min_length=1, max_length=128)
+
+
+async def _get_effective_idle_timeout(user: User, db: AsyncSession) -> int:
+    """Return the effective idle timeout in minutes for this user.
+
+    Priority: user.idle_timeout_minutes > system setting > 60 (hardcoded fallback).
+    """
+    if user.idle_timeout_minutes is not None:
+        return user.idle_timeout_minutes
+
+    setting = await db.get(SystemSetting, "session_idle_timeout_minutes")
+    if setting and setting.value:
+        try:
+            return int(setting.value)
+        except ValueError:
+            pass
+    return 60
 
 
 @router.post("/login")
@@ -66,6 +83,8 @@ async def login(
         max_age=_REFRESH_MAX_AGE, path="/v1/auth",
     )
 
+    idle_timeout = await _get_effective_idle_timeout(user, db)
+
     return {
         "status": "success",
         "data": {
@@ -76,6 +95,7 @@ async def login(
             "timezone": user.timezone,
             "table_page_size": user.table_page_size,
             "table_scroll_mode": user.table_scroll_mode,
+            "idle_timeout_minutes": idle_timeout,
         },
     }
 
@@ -122,6 +142,8 @@ async def refresh(
         max_age=_ACCESS_MAX_AGE, path="/",
     )
 
+    idle_timeout = await _get_effective_idle_timeout(user, db)
+
     return {
         "status": "success",
         "data": {
@@ -130,6 +152,7 @@ async def refresh(
             "role": user.role,
             "display_name": user.display_name,
             "timezone": user.timezone,
+            "idle_timeout_minutes": idle_timeout,
         },
     }
 
@@ -179,6 +202,8 @@ async def get_me(request: Request, db: AsyncSession = Depends(get_db)):
         perms = await _load_user_permissions(db, user_id)
         permissions_list = list(perms)
 
+    idle_timeout = await _get_effective_idle_timeout(user, db) if user else 60
+
     return {
         "status": "success",
         "data": {
@@ -193,5 +218,6 @@ async def get_me(request: Request, db: AsyncSession = Depends(get_db)):
             "all_tenants": all_tenants,
             "tenant_ids": tenant_ids,
             "permissions": permissions_list,
+            "idle_timeout_minutes": idle_timeout,
         },
     }
