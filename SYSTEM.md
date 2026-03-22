@@ -81,8 +81,12 @@ packages/
 │   │   ├── credentials/            # Credential CRUD, types, templates, crypto
 │   │   ├── credential_keys/        # Reusable credential field definitions
 │   │   ├── connectors/             # Connector CRUD + versions
-│   │   ├── alerting/               # Alert definitions, instances, evaluation engine, event policies
-│   │   ├── events/                 # Active/cleared events, acknowledgement
+│   │   ├── alerting/               # Alert definitions, entities, DSL engine, threshold variables
+│   │   │   ├── dsl.py             # DSL parser + ClickHouse SQL compiler (arithmetic, rate)
+│   │   │   ├── engine.py          # Alert evaluation (30s cycle, writes fire/clear to alert_log)
+│   │   │   ├── router.py          # Definitions, entities, overrides, validation, alert log
+│   │   │   └── threshold_sync.py  # Auto-sync threshold variables from expressions
+│   │   ├── events/                 # Event policies + engine + acknowledge/clear
 │   │   ├── packs/                  # Monitoring pack import/export
 │   │   ├── python_modules/         # Package registry + PyPI import + wheel distribution
 │   │   ├── docker_infra/           # Docker host monitoring (stats, logs, events, images)
@@ -158,10 +162,12 @@ packages/
 | UserTenant | user_tenants | (user_id, tenant_id) composite PK |
 | Role | roles | id, name, description, is_system |
 | RolePermission | role_permissions | id, role_id, resource, action |
-| AppAlertDefinition | app_alert_definitions | id, app_version_id, name, expression, window, severity, enabled, message_template, notification_channels |
-| AlertInstance | alert_instances | id, definition_id, assignment_id, device_id, state (ok/firing/resolved), enabled, entity_key, entity_labels |
-| ThresholdOverride | threshold_overrides | id, definition_id, device_id, entity_key, overrides (JSONB) |
+| AlertDefinition | alert_definitions | id, app_id, name, expression, window, severity, enabled, message_template |
+| AlertEntity | alert_entities | id, definition_id, assignment_id, device_id, state (ok/firing/resolved), enabled, entity_key, entity_labels, fire_count, fire_history |
+| ThresholdVariable | threshold_variables | id, app_id, name, display_name, default_value, app_value, unit |
+| ThresholdOverride | threshold_overrides | id, variable_id, device_id, entity_key, value |
 | EventPolicy | event_policies | id, name, definition_id, mode, fire_count_threshold, window_size, event_severity, auto_clear_on_resolve |
+| ActiveEvent | active_events | id, policy_id, entity_key, clickhouse_event_id |
 | ApiKey | api_keys | id, key_hash, key_type (collector/management), collector_id, user_id, scopes |
 | RegistrationToken | registration_tokens | id, token_hash, short_code, one_time, used, cluster_id |
 | TlsCertificate | tls_certificates | id, name, cert_pem, key_pem_encrypted, is_active |
@@ -199,7 +205,8 @@ packages/
 | performance | CPU, memory, custom metrics | (device_id, component_type, component, executed_at) | component, component_type, metric_names[], metric_values[] |
 | interface | Network interface stats | (device_id, interface_id, executed_at) | interface_id, if_name, if_speed_mbps, in/out rates, errors, discards, utilization |
 | config | Config/discovery data (change-only writes) | (device_id, component_type, component, config_key, executed_at) | config_key, config_value, config_hash |
-| events | Collector events | TTL 30 days | event_type, severity, message |
+| alert_log | Alert fire/clear history | (tenant_id, definition_id, entity_key, occurred_at) | action, current_value, threshold_value, fire_count |
+| events | Event lifecycle (active/ack/cleared) | (tenant_id, severity, occurred_at, id) | event_type, definition_id, policy_id, state |
 
 Alle tabeller har: assignment_id, collector_id, app_id, device_id, executed_at, received_at + denormaliserede felter: collector_name, device_name, app_name, tenant_id.
 
@@ -268,13 +275,25 @@ Hver tabel har en `_latest` materialized view (ReplacingMergeTree) der holder se
 
 **Frontend**: DevicesPage bulk action bar inkluderer Enable, Disable, Move to Group, Move to Tenant knapper. Disabled devices renderes med `opacity-50` og grå status dot.
 
-### Alerting System
+### Alerting System (Redesigned)
 
-- `AppAlertDefinition`: Alert rules defineret per app (DSL expression language)
-- `AlertInstance`: Active/resolved alert instances per assignment + entity
-- `ThresholdOverride`: Per-device per-entity threshold overrides
-- `EventPolicy`: Regler for at promovere alerts til events
-- Background evaluation engine med leader election (Redis SETNX + TTL)
+**Two-tier architecture**: Alerts (per-entity, high-volume) → Events (policy-promoted, lower-volume).
+
+**Alert Definitions** (`AlertDefinition`): App-level (NOT version-level). DSL expression language with arithmetic (+, -, *, /), `rate()`, safety limits (2000 chars, 200 tokens, 10 nesting). Auto-extracts threshold parameters.
+
+**DSL Examples**: `avg(in_utilization_pct) > 80`, `rate(in_octets) * 8 / 1000000 > 500`, `firmware_version CHANGED`, `state IN ('down')`.
+
+**Alert Entities** (`AlertEntity`): Per-assignment per-entity state (ok/firing/resolved). fire_count, fire_history (20-entry ring buffer), current_value.
+
+**Threshold Variables** (`ThresholdVariable`): App-level named parameters auto-synced from DSL. 4-level hierarchy: expression default → app_value → device override → entity override. `ThresholdOverride` references `variable_id` + scalar `value`.
+
+**Alert Log** (`alert_log` ClickHouse): Append-only fire/clear records. Written every 30s by engine.
+
+**Event Policies** (`EventPolicy`): consecutive or cumulative mode. `ActiveEvent` table for dedup.
+
+**Events** (`events` ClickHouse): active → acknowledged → cleared. Auto-clear on alert resolve.
+
+**Engine**: 30s cycle, leader-elected. Resolves thresholds per-entity, batches ClickHouse queries by effective threshold combination.
 
 ### Packs System
 
@@ -363,9 +382,9 @@ stmt = apply_tenant_filter(stmt, auth, Device.tenant_id)
 | SystemHealthPage | /system-health | Subsystem-kort (PG, CH, Redis, Collectors, Scheduler) + collector-tabel med filter |
 | DockerInfraPage | /docker-infrastructure | Docker host overview, containers, logs, events, images |
 | DevicesPage | /devices | Server-side pagination/sort/filter, bulk actions (enable/disable/move/delete/template), status dots |
-| DeviceDetailPage | /devices/:id | Tabs: Overview, Checks (history+chart), Assignments, Interfaces, Performance, Config, Thresholds |
+| DeviceDetailPage | /devices/:id | Tabs: Overview (staleness warning + availability chart), Checks, Assignments, Interfaces, Performance, Config (poll status badge), Alerts, Thresholds (4-level hierarchy) |
 | AppsPage | /apps | App liste med type/target_table/version count |
-| AppDetailPage | /apps/:id | Tabs: Overview (edit), Versions (CodeEditor), Connector Bindings, Alert Definitions |
+| AppDetailPage | /apps/:id | Tabs: Overview (edit), Versions (CodeEditor+VersionActions), Connector Bindings, Alerts, Thresholds |
 | ConnectorsPage | /connectors | Connector liste |
 | ConnectorDetailPage | /connectors/:id | Connector versions + code editor |
 | PythonModulesPage | /python-modules | Package registry, PyPI import, wheel upload |
@@ -373,7 +392,7 @@ stmt = apply_tenant_filter(stmt, auth, Device.tenant_id)
 | TemplatesPage | /templates | Template CRUD |
 | PacksPage | /packs | Monitoring pack liste |
 | PackDetailPage | /packs/:id | Pack versions, entities, export |
-| AlertsPage | /alerts | Tabs: Alert Definitions, Alert Instances |
+| AlertsPage | /alerts | Tabs: Active Alerts, Alert Log (ClickHouse), Alert Definitions |
 | EventsPage | /events | Active/cleared events med acknowledge/clear |
 | SettingsPage | /settings/:tab | Tabs: Profile, System, Device Types, Collectors, Credentials, SNMP OIDs, Labels, Roles, Users, Tenants |
 | CollectorsPage | (settings tab) | Pending/Active collectors, Groups, Registration Tokens |
@@ -408,6 +427,7 @@ stmt = apply_tenant_filter(stmt, auth, Device.tenant_id)
 | StatusBadge | State → farve+label mapping (OK, WARNING, CRITICAL, DOWN, etc.) |
 | TimePicker | Time picker component |
 | TimeRangePicker | Dropdown: presets (15m-30d-all) + relative + absolute custom ranges |
+| VersionActions | Reusable icon-only action buttons for version rows (fixed-width slots) |
 | WheelUploadDialog | Dialog til at uploade Python wheel files |
 
 ### UI-primitiver (10)

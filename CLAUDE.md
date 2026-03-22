@@ -58,8 +58,17 @@ packages/
 │   │   ├── credentials/        # Credential CRUD, types, crypto
 │   │   ├── credential_keys/    # Reusable credential field definitions
 │   │   ├── connectors/         # Connector CRUD + versions
-│   │   ├── alerting/           # Alert definitions, instances, evaluation engine, event policies
-│   │   ├── events/             # Active/cleared events, acknowledgement
+│   │   ├── alerting/           # Alert definitions, entities, DSL engine, threshold variables, evaluation engine
+│   │   │   ├── dsl.py          # DSL parser + ClickHouse SQL compiler (arithmetic, rate, safety limits)
+│   │   │   ├── engine.py       # Alert evaluation engine (30s cycle, writes fire/clear to alert_log)
+│   │   │   ├── router.py       # Alert definitions CRUD, entities, overrides, validation, alert log
+│   │   │   ├── threshold_sync.py # Auto-sync threshold variables from DSL expressions
+│   │   │   ├── instance_sync.py  # Sync alert entities for new assignments
+│   │   │   ├── cleanup.py      # Reset old resolved entities
+│   │   │   └── notifier.py     # Webhook notifications
+│   │   ├── events/             # Event policies, engine, active/cleared events
+│   │   │   ├── engine.py       # Event promotion engine (runs after alert engine)
+│   │   │   └── router.py       # Events CRUD, policies, acknowledge/clear
 │   │   ├── packs/              # Monitoring pack import/export
 │   │   ├── python_modules/     # Package registry + PyPI import + wheel distribution
 │   │   ├── docker_infra/       # Docker host monitoring (stats, logs, events, images)
@@ -148,7 +157,8 @@ packages/
 | `performance` | Custom metric results | component, component_type, metric_names[], metric_values[] |
 | `interface` | Per-interface SNMP data | interface_id, in/out octets, rates, errors, discards, utilization |
 | `config` | Configuration tracking (change-only writes) | config_key, config_value, config_hash |
-| `events` | Collector events | TTL 30 days |
+| `alert_log` | Alert fire/clear history | definition_id, entity_key, action, current_value, threshold_value |
+| `events` | Event lifecycle (active/ack/cleared) | definition_id, policy_id, severity, state |
 
 Each table has a `*_latest` materialized view (ReplacingMergeTree) for instant latest-per-key lookups. Interface also has `interface_hourly` and `interface_daily` rollup tables.
 
@@ -180,11 +190,27 @@ Each table has a `*_latest` materialized view (ReplacingMergeTree) for instant l
 
 ### Alerting System
 
-- `AppAlertDefinition`: Alert rules defined per app (DSL expression language)
-- `AlertInstance`: Active/resolved alert instances
-- `ThresholdOverride`: Per-device per-entity overrides
-- `EventPolicy`: Rules for promoting alerts to events
-- Background evaluation engine with leader election
+**Two-tier architecture**: Alerts (high-volume, per-entity) → Events (advanced logic, lower-volume).
+
+**Alert Definitions** (`AlertDefinition`): Live on the **app** (not version). DSL expression language with arithmetic (+, -, *, /), `rate()` function, and safety limits. Definitions persist across version upgrades.
+
+**DSL Grammar**: `avg(in_utilization_pct) > 80 AND max(in_errors) > 100`, `rate(in_octets) * 8 / 1000000 > 500`, `firmware_version CHANGED`, `state IN ('down', 'degraded')`. Compiled to parameterized ClickHouse SQL.
+
+**Alert Entities** (`AlertEntity`): Per-assignment per-entity state tracking (ok/firing/resolved). Created dynamically on first encounter. Tracks fire_count, fire_history (ring buffer of 20), current_value.
+
+**Threshold Variables** (`ThresholdVariable`): Named parameters auto-extracted from DSL expressions. 4-level override hierarchy: expression default → app variable (`app_value`) → device override → entity override. Auto-synced when definitions are created/updated.
+
+**Threshold Overrides** (`ThresholdOverride`): References `variable_id` (not definition_id). Single `value: Float` per override row.
+
+**Alert Log** (`alert_log` ClickHouse table): Append-only fire/clear history. Written by engine every 30s evaluation cycle.
+
+**Event Policies** (`EventPolicy`): Promote alerts to events based on fire_count (consecutive) or fire_history (cumulative/sliding window). `ActiveEvent` PostgreSQL table for dedup tracking.
+
+**Events** (`events` ClickHouse table): State machine: active → acknowledged → cleared. Auto-clear when underlying alerts resolve.
+
+**Engine**: Runs every 30s via scheduler. Writes fire/clear records to `alert_log`. Resolves thresholds per-entity from 4-level hierarchy. Groups entities by effective threshold for batched ClickHouse queries.
+
+**Validation**: `POST /v1/alerts/validate-expression` returns `errors[]`, `warnings[]`, `referenced_metrics[]`, `threshold_params[]`, `has_arithmetic`, `has_division`.
 
 ---
 
@@ -316,5 +342,11 @@ SSH user: `monctl` for all servers. Compose files at `/opt/monctl/{central,colle
 **Filter empty states**: When filters are active but match no results, always keep the table visible (headers + filter inputs) with an empty body row message like `"No devices match your filters"`. Only show the big centered empty state (icon + action button) when there are truly zero items AND no filters are active. This lets users refine their query without losing context.
 
 **Conditional rendering and focus**: Never use `{condition && <Element/>}` to insert/remove elements in a parent container that has sibling form inputs — React's index-based reconciliation can cause focus loss. Instead, always render the element and toggle visibility with CSS (`opacity-0 pointer-events-none`).
+
+**VersionActions** (`components/VersionActions.tsx`): Reusable icon-only action buttons for version table rows (Set Latest, View, Edit, Clone, Delete). Each action sits in a fixed-width `w-7` slot — guarantees vertical alignment across rows regardless of conditional visibility.
+
+**Config poll status badge**: ConfigurationTab shows a color-coded badge next to app name — green (within 1.5x interval), yellow (1 poll missed), red (2+ polls missed). Uses assignment interval data.
+
+**Staleness warning**: OverviewTab shows an amber banner when no check data received in 15+ minutes.
 
 **List views (server-side search/sort/pagination)**: All list pages use the `useListState` hook for per-column debounced filters (300ms), sort state, and pagination. Column headers use `FilterableSortHead` (sort label + inline `ClearableInput`). Pagination uses `PaginationBar`. All list hooks accept `ListParams` and use `placeholderData: keepPreviousData` to prevent table unmount during refetch.
