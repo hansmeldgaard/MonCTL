@@ -2,7 +2,7 @@ import { useState, useMemo } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
 import { validateSemver } from "@/lib/validation.ts";
-import { ArrowLeft, Code2, Copy, Loader2, Pencil, Plug, Plus, Star, Trash2 } from "lucide-react";
+import { ArrowLeft, Code2, Copy, Loader2, Pencil, Plug, Plus, Star } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
@@ -20,6 +20,7 @@ import {
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import { CodeEditor } from "@/components/CodeEditor.tsx";
 import { ModulePicker } from "@/components/ModulePicker.tsx";
+import { VersionActions } from "@/components/VersionActions.tsx";
 import {
   useConnectorDetail,
   useUpdateConnector,
@@ -301,7 +302,7 @@ export function ConnectorDetailPage() {
                       <TableHead>Version</TableHead>
                       <TableHead>ID</TableHead>
                       <TableHead>Status</TableHead>
-                      <TableHead className="w-40"></TableHead>
+                      <TableHead className="w-36"></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -316,51 +317,16 @@ export function ConnectorDetailPage() {
                             </Badge>
                           )}
                         </TableCell>
-                        <TableCell className="flex items-center gap-1">
-                          {!v.is_latest && (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => id && setLatest.mutate({ connectorId: id, versionId: v.id })}
-                              disabled={setLatest.isPending}
-                              title="Set as Latest"
-                            >
-                              <Star className="h-3.5 w-3.5" /> Set Latest
-                            </Button>
-                          )}
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => loadVersion(v.id)}
-                            disabled={loadingVersion}
-                          >
-                            <Code2 className="h-3.5 w-3.5" /> View
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => openEditVersion(v.id)}
-                            disabled={loadingVersion}
-                          >
-                            <Pencil className="h-3.5 w-3.5" /> Edit
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="gap-1"
-                            disabled={cloneVersion.isPending}
-                            onClick={() => handleCloneVersion(v.id)}
-                            title="Clone version"
-                          >
-                            <Copy className="h-3.5 w-3.5" />
-                          </Button>
-                          <button
-                            onClick={() => setDeleteVersionTarget({ id: v.id, version: v.version })}
-                            className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                            title="Delete version"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                        <TableCell>
+                          <VersionActions
+                            isLatest={v.is_latest}
+                            onSetLatest={() => id && setLatest.mutate({ connectorId: id, versionId: v.id })}
+                            onView={() => loadVersion(v.id)}
+                            onEdit={() => openEditVersion(v.id)}
+                            onClone={() => handleCloneVersion(v.id)}
+                            onDelete={() => setDeleteVersionTarget({ id: v.id, version: v.version })}
+                            disabled={loadingVersion || setLatest.isPending || cloneVersion.isPending}
+                          />
                         </TableCell>
                       </TableRow>
                     ))}
