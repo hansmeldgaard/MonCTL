@@ -454,30 +454,49 @@ class AlertEntity(Base):
     assignment: Mapped["AppAssignment"] = relationship()
 
 
-class ThresholdOverride(Base):
-    """Per-device override for an alert definition's expression thresholds."""
-    __tablename__ = "threshold_overrides"
+class ThresholdVariable(Base):
+    """Named threshold parameter on an app with a default value."""
+    __tablename__ = "threshold_variables"
     __table_args__ = (
-        UniqueConstraint("definition_id", "device_id", "entity_key", name="uq_override_def_device_entity"),
+        UniqueConstraint("app_id", "name", name="uq_threshold_var_app_name"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    definition_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("alert_definitions.id", ondelete="CASCADE"),
-        nullable=False, index=True
+    app_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("apps.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    display_name: Mapped[str | None] = mapped_column(String(255))
+    description: Mapped[str | None] = mapped_column(Text)
+    default_value: Mapped[float] = mapped_column(Float, nullable=False)
+    app_value: Mapped[float | None] = mapped_column(Float)
+    unit: Mapped[str | None] = mapped_column(String(50))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+
+    app: Mapped["App"] = relationship()
+
+
+class ThresholdOverride(Base):
+    """Per-device or per-entity override for a threshold variable."""
+    __tablename__ = "threshold_overrides"
+    __table_args__ = (
+        UniqueConstraint("variable_id", "device_id", "entity_key", name="uq_threshold_override_var_device_entity"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    variable_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("threshold_variables.id", ondelete="CASCADE"), nullable=False, index=True
     )
     device_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("devices.id", ondelete="CASCADE"),
-        nullable=False, index=True
+        UUID(as_uuid=True), ForeignKey("devices.id", ondelete="CASCADE"), nullable=False, index=True
     )
     entity_key: Mapped[str] = mapped_column(String(500), nullable=False, server_default="")
-    overrides: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=text("now()")
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=text("now()")
-    )
+    value: Mapped[float] = mapped_column(Float, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+
+    variable: Mapped["ThresholdVariable"] = relationship()
 
 
 class RegistrationToken(Base):

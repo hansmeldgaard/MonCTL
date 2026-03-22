@@ -21,6 +21,7 @@ from monctl_central.storage.models import (
     AssignmentConnectorBinding,
     Connector,
     ConnectorVersion,
+    ThresholdVariable,
 )
 
 router = APIRouter()
@@ -1683,3 +1684,75 @@ async def get_alert_metrics(
     return {"status": "success", "data": metrics}
 
 
+# ── App Threshold Variables ──────────────────────────────
+
+
+def _fmt_threshold_variable(v: ThresholdVariable) -> dict:
+    return {
+        "id": str(v.id),
+        "app_id": str(v.app_id),
+        "name": v.name,
+        "display_name": v.display_name,
+        "description": v.description,
+        "default_value": v.default_value,
+        "app_value": v.app_value,
+        "unit": v.unit,
+        "created_at": v.created_at.isoformat() if v.created_at else None,
+        "updated_at": v.updated_at.isoformat() if v.updated_at else None,
+    }
+
+
+class UpdateThresholdVariableRequest(BaseModel):
+    app_value: float | None = None
+    display_name: str | None = Field(default=None, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
+
+
+@router.get("/{app_id}/thresholds")
+async def list_app_thresholds(
+    app_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """List all threshold variables for an app."""
+    app = await db.get(App, uuid.UUID(app_id))
+    if not app:
+        raise HTTPException(status_code=404, detail="App not found")
+
+    stmt = (
+        select(ThresholdVariable)
+        .where(ThresholdVariable.app_id == uuid.UUID(app_id))
+        .order_by(ThresholdVariable.name)
+    )
+    variables = (await db.execute(stmt)).scalars().all()
+    return {"status": "success", "data": [_fmt_threshold_variable(v) for v in variables]}
+
+
+@router.put("/{app_id}/thresholds/{var_id}")
+async def update_app_threshold(
+    app_id: str,
+    var_id: str,
+    request: UpdateThresholdVariableRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Update a threshold variable (app_value, display_name, description)."""
+    app = await db.get(App, uuid.UUID(app_id))
+    if not app:
+        raise HTTPException(status_code=404, detail="App not found")
+
+    variable = await db.get(ThresholdVariable, uuid.UUID(var_id))
+    if not variable or str(variable.app_id) != app_id:
+        raise HTTPException(status_code=404, detail="Threshold variable not found")
+
+    if request.app_value is not None:
+        variable.app_value = request.app_value
+    if request.display_name is not None:
+        variable.display_name = request.display_name
+    if request.description is not None:
+        variable.description = request.description
+
+    from monctl_common.utils import utc_now
+    variable.updated_at = utc_now()
+    await db.flush()
+    return {"status": "success", "data": _fmt_threshold_variable(variable)}

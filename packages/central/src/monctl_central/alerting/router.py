@@ -14,6 +14,7 @@ from sqlalchemy.orm import selectinload
 
 from monctl_central.alerting.dsl import invert_expression, validate_expression
 from monctl_central.alerting.instance_sync import sync_instances_for_definition
+from monctl_central.alerting.threshold_sync import sync_threshold_variables
 from monctl_central.dependencies import get_clickhouse, get_db, require_auth
 from monctl_central.storage.models import (
     AlertEntity,
@@ -21,6 +22,7 @@ from monctl_central.storage.models import (
     AlertDefinition,
     AppAssignment,
     ThresholdOverride,
+    ThresholdVariable,
 )
 from monctl_common.utils import utc_now
 
@@ -73,10 +75,10 @@ def _fmt_entity(i: AlertEntity) -> dict:
 def _fmt_override(o: ThresholdOverride) -> dict:
     return {
         "id": str(o.id),
-        "definition_id": str(o.definition_id),
+        "variable_id": str(o.variable_id),
         "device_id": str(o.device_id),
         "entity_key": o.entity_key,
-        "overrides": o.overrides,
+        "value": o.value,
         "created_at": o.created_at.isoformat() if o.created_at else None,
         "updated_at": o.updated_at.isoformat() if o.updated_at else None,
     }
@@ -143,15 +145,15 @@ class ValidateExpressionRequest(BaseModel):
 
 
 class CreateThresholdOverrideRequest(BaseModel):
-    definition_id: str
+    variable_id: str
     device_id: str
     entity_key: str = ""
-    overrides: dict
+    value: float
 
-    @field_validator("definition_id")
+    @field_validator("variable_id")
     @classmethod
-    def check_definition_id(cls, v: str) -> str:
-        validate_uuid(v, "definition_id")
+    def check_variable_id(cls, v: str) -> str:
+        validate_uuid(v, "variable_id")
         return v
 
     @field_validator("device_id")
@@ -162,7 +164,7 @@ class CreateThresholdOverrideRequest(BaseModel):
 
 
 class UpdateThresholdOverrideRequest(BaseModel):
-    overrides: dict
+    value: float
 
 
 # ── Alert Definitions ────────────────────────────────────
@@ -276,6 +278,9 @@ async def create_alert_definition(
     db.add(defn)
     await db.flush()
 
+    # Auto-sync threshold variables from expression
+    await sync_threshold_variables(db, uuid.UUID(request.app_id), defn, app.target_table)
+
     # Auto-create instances for all existing assignments
     await sync_instances_for_definition(db, defn)
     await db.flush()
@@ -317,12 +322,15 @@ async def update_alert_definition(
 
     if request.expression is not None:
         app = await db.get(App, defn.app_id)
-        validation = validate_expression(request.expression, app.target_table if app else "availability_latency")
+        target_table = app.target_table if app else "availability_latency"
+        validation = validate_expression(request.expression, target_table)
         if not validation.valid:
             raise HTTPException(
                 status_code=400, detail=f"Invalid expression: {validation.error}"
             )
         defn.expression = request.expression
+        # Re-sync threshold variables when expression changes
+        await sync_threshold_variables(db, defn.app_id, defn, target_table)
 
     if request.severity is not None:
         if request.severity not in _VALID_SEVERITIES:
@@ -573,7 +581,7 @@ async def validate_expression_endpoint(
 @router.get("/overrides")
 async def list_threshold_overrides(
     device_id: str | None = Query(None),
-    definition_id: str | None = Query(None),
+    variable_id: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
@@ -581,8 +589,8 @@ async def list_threshold_overrides(
     stmt = select(ThresholdOverride)
     if device_id:
         stmt = stmt.where(ThresholdOverride.device_id == uuid.UUID(device_id))
-    if definition_id:
-        stmt = stmt.where(ThresholdOverride.definition_id == uuid.UUID(definition_id))
+    if variable_id:
+        stmt = stmt.where(ThresholdOverride.variable_id == uuid.UUID(variable_id))
 
     overrides = (await db.execute(stmt)).scalars().all()
     return {"status": "success", "data": [_fmt_override(o) for o in overrides]}
@@ -595,11 +603,16 @@ async def create_threshold_override(
     auth: dict = Depends(require_auth),
 ):
     """Create a threshold override for a device."""
+    # Verify the variable exists
+    variable = await db.get(ThresholdVariable, uuid.UUID(request.variable_id))
+    if not variable:
+        raise HTTPException(status_code=404, detail="Threshold variable not found")
+
     override = ThresholdOverride(
-        definition_id=uuid.UUID(request.definition_id),
+        variable_id=uuid.UUID(request.variable_id),
         device_id=uuid.UUID(request.device_id),
         entity_key=request.entity_key,
-        overrides=request.overrides,
+        value=request.value,
     )
     db.add(override)
     await db.flush()
@@ -617,7 +630,7 @@ async def update_threshold_override(
     override = await db.get(ThresholdOverride, uuid.UUID(override_id))
     if not override:
         raise HTTPException(status_code=404, detail="Not found")
-    override.overrides = request.overrides
+    override.value = request.value
     override.updated_at = utc_now()
     return {"status": "success", "data": _fmt_override(override)}
 

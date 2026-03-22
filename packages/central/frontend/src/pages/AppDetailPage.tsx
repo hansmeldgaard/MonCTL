@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
 import { validateName, validateSemver, validateAlertWindow } from "@/lib/validation.ts";
-import { ArrowLeft, AppWindow, Bell, Code2, Copy, Layout, Loader2, Pencil, Plug, Plus, RefreshCw, Star, Trash2 } from "lucide-react";
+import { ArrowLeft, AppWindow, Bell, Check, Code2, Copy, Layout, Loader2, Pencil, Plug, Plus, RefreshCw, SlidersHorizontal, Star, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
@@ -40,6 +40,8 @@ import {
   useDeleteAppConnector,
   useConnectors,
   useAppConfigKeys,
+  useAppThresholds,
+  useUpdateThresholdVariable,
 } from "@/api/hooks.ts";
 import { apiGet } from "@/api/client.ts";
 import type { AppAlertDefinition, DisplayTemplate } from "@/types/api.ts";
@@ -304,6 +306,7 @@ export function AppDetailPage() {
           <TabTrigger value="overview">Overview</TabTrigger>
           <TabTrigger value="versions">Versions ({app.versions.length})</TabTrigger>
           <TabTrigger value="alerts">Alerts</TabTrigger>
+          <TabTrigger value="thresholds">Thresholds</TabTrigger>
         </TabsList>
 
         <TabsContent value="overview">
@@ -491,6 +494,10 @@ export function AppDetailPage() {
 
         <TabsContent value="alerts">
           <AlertsTab appId={id!} app={app} />
+        </TabsContent>
+
+        <TabsContent value="thresholds">
+          <ThresholdsTab appId={id!} />
         </TabsContent>
       </Tabs>
 
@@ -949,6 +956,120 @@ function NewVersionCodeForm({
         </Button>
       </DialogFooter>
     </form>
+  );
+}
+
+
+// ── Thresholds Tab ──────────────────────────────────────
+
+function ThresholdsTab({ appId }: { appId: string }) {
+  const { data: variables, isLoading } = useAppThresholds(appId);
+  const updateVar = useUpdateThresholdVariable();
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
+
+  if (isLoading) return <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-zinc-500" /></div>;
+
+  if (!variables || variables.length === 0) {
+    return (
+      <Card>
+        <CardContent className="py-12 text-center">
+          <SlidersHorizontal className="h-8 w-8 text-zinc-600 mx-auto mb-2" />
+          <p className="text-sm text-zinc-500">No threshold variables defined.</p>
+          <p className="text-xs text-zinc-600 mt-1">Variables are auto-created when alert definitions with threshold expressions are added.</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const handleSave = (varId: string) => {
+    const val = parseFloat(editValue);
+    if (!isNaN(val) && isFinite(val)) {
+      updateVar.mutate({ appId, varId, app_value: val });
+    }
+    setEditingId(null);
+  };
+
+  const handleReset = (varId: string) => {
+    updateVar.mutate({ appId, varId, app_value: null });
+  };
+
+  const formatUnit = (value: number, unit: string | null) => {
+    if (unit === "percent") return `${value}%`;
+    if (unit === "ms") return `${value} ms`;
+    if (unit === "bytes") return `${value} B`;
+    return String(value);
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm flex items-center gap-2">
+          <SlidersHorizontal className="h-4 w-4" />
+          Threshold Variables ({variables.length})
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Expression Default</TableHead>
+              <TableHead>App Value</TableHead>
+              <TableHead>Unit</TableHead>
+              <TableHead className="w-24"></TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {variables.map((v) => (
+              <TableRow key={v.id}>
+                <TableCell className="font-medium text-zinc-100">
+                  {v.display_name || v.name}
+                  {v.description && (
+                    <p className="text-xs text-zinc-500 mt-0.5">{v.description}</p>
+                  )}
+                </TableCell>
+                <TableCell className="text-zinc-400 font-mono text-sm">
+                  {formatUnit(v.default_value, v.unit)}
+                </TableCell>
+                <TableCell>
+                  {editingId === v.id ? (
+                    <div className="flex items-center gap-1">
+                      <Input
+                        type="number"
+                        value={editValue}
+                        onChange={(e) => setEditValue(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") handleSave(v.id); if (e.key === "Escape") setEditingId(null); }}
+                        className="w-24 h-7 text-sm"
+                        autoFocus
+                      />
+                      <Button size="sm" variant="ghost" onClick={() => handleSave(v.id)}>
+                        <Check className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  ) : (
+                    <span
+                      className={`font-mono text-sm cursor-pointer hover:text-brand-400 ${v.app_value != null ? "text-brand-300" : "text-zinc-500"}`}
+                      onClick={() => { setEditingId(v.id); setEditValue(String(v.app_value ?? v.default_value)); }}
+                    >
+                      {v.app_value != null ? formatUnit(v.app_value, v.unit) : "—"}
+                    </span>
+                  )}
+                </TableCell>
+                <TableCell className="text-zinc-500 text-xs">{v.unit || "—"}</TableCell>
+                <TableCell>
+                  {v.app_value != null && (
+                    <Button size="sm" variant="ghost" className="text-zinc-500 hover:text-zinc-300" onClick={() => handleReset(v.id)}>
+                      Reset
+                    </Button>
+                  )}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
   );
 }
 

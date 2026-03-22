@@ -3749,26 +3749,9 @@ function AlertsTab({ deviceId }: { deviceId: string }) {
 
 function ThresholdsTab({ deviceId }: { deviceId: string }) {
   const { data: thresholds, isLoading } = useDeviceThresholds(deviceId);
-  const updateInstance = useUpdateAlertInstance();
   const createOverride = useCreateThresholdOverride();
   const updateOverride = useUpdateThresholdOverride();
   const deleteOverride = useDeleteThresholdOverride();
-
-  const severityVariant = (severity: string) => {
-    switch (severity?.toLowerCase()) {
-      case "critical":
-      case "emergency":
-        return "destructive" as const;
-      case "warning":
-        return "warning" as const;
-      case "recovery":
-        return "success" as const;
-      case "info":
-        return "info" as const;
-      default:
-        return "default" as const;
-    }
-  };
 
   if (isLoading) {
     return (
@@ -3784,14 +3767,13 @@ function ThresholdsTab({ deviceId }: { deviceId: string }) {
         <CardContent>
           <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
             <Bell className="mb-2 h-8 w-8 text-zinc-600" />
-            <p className="text-sm">No alert definitions for this device</p>
+            <p className="text-sm">No threshold variables for this device</p>
           </div>
         </CardContent>
       </Card>
     );
   }
 
-  // Group by app_name
   const grouped = thresholds.reduce<Record<string, DeviceThresholdRow[]>>((acc, row) => {
     const key = row.app_name || "Unknown";
     if (!acc[key]) acc[key] = [];
@@ -3810,32 +3792,26 @@ function ThresholdsTab({ deviceId }: { deviceId: string }) {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Alert Name</TableHead>
-                  <TableHead>Expression</TableHead>
-                  <TableHead>Severity</TableHead>
+                  <TableHead>Threshold</TableHead>
                   <TableHead>Default</TableHead>
-                  <TableHead>Override</TableHead>
-                  <TableHead>Enabled</TableHead>
-                  <TableHead>State</TableHead>
+                  <TableHead>App Value</TableHead>
+                  <TableHead>Device Override</TableHead>
+                  <TableHead>Effective</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.map((row) => (
                   <ThresholdRow
-                    key={row.definition_id}
+                    key={row.variable_id}
                     row={row}
-                    severityVariant={severityVariant}
-                    onToggleEnabled={(id, enabled) =>
-                      updateInstance.mutate({ id, enabled })
-                    }
-                    onSaveOverride={(defId, overrides, existingId) => {
+                    onSaveOverride={(varId, value, existingId) => {
                       if (existingId) {
-                        updateOverride.mutate({ id: existingId, overrides });
+                        updateOverride.mutate({ id: existingId, value });
                       } else {
                         createOverride.mutate({
-                          definition_id: defId,
+                          variable_id: varId,
                           device_id: deviceId,
-                          overrides,
+                          value,
                         });
                       }
                     }}
@@ -3853,52 +3829,48 @@ function ThresholdsTab({ deviceId }: { deviceId: string }) {
 
 function ThresholdRow({
   row,
-  severityVariant,
-  onToggleEnabled,
   onSaveOverride,
   onDeleteOverride,
 }: {
   row: DeviceThresholdRow;
-  severityVariant: (s: string) => "destructive" | "warning" | "success" | "info" | "default";
-  onToggleEnabled: (id: string, enabled: boolean) => void;
-  onSaveOverride: (defId: string, overrides: Record<string, number | string>, existingId?: string) => void;
+  onSaveOverride: (varId: string, value: number, existingId?: string) => void;
   onDeleteOverride: (id: string) => void;
 }) {
   const [editValue, setEditValue] = useState<string>("");
   const [editing, setEditing] = useState(false);
 
-  const firstThreshold = row.default_thresholds[0];
-  const overrideValue = row.override?.overrides?.[firstThreshold?.name];
+  const formatUnit = (value: number, unit: string | null) => {
+    if (unit === "percent") return `${value}%`;
+    if (unit === "ms") return `${value} ms`;
+    return String(value);
+  };
 
   const handleSave = () => {
-    if (!firstThreshold) return;
     const val = parseFloat(editValue);
-    if (isNaN(val)) return;
-    onSaveOverride(
-      row.definition_id,
-      { [firstThreshold.name]: val },
-      row.override?.id
-    );
+    if (isNaN(val) || !isFinite(val)) return;
+    onSaveOverride(row.variable_id, val, row.device_override_id ?? undefined);
     setEditing(false);
   };
 
   return (
     <TableRow>
-      <TableCell className="font-medium text-zinc-100">{row.name}</TableCell>
-      <TableCell className="text-zinc-400 font-mono text-xs max-w-xs truncate">
-        {row.expression}
+      <TableCell className="font-medium text-zinc-100">
+        {row.display_name || row.name}
       </TableCell>
-      <TableCell>
-        <Badge variant={severityVariant(row.severity)}>{row.severity}</Badge>
+      <TableCell className="text-zinc-400 font-mono text-sm">
+        {formatUnit(row.expression_default, row.unit)}
       </TableCell>
-      <TableCell className="text-zinc-400">
-        {firstThreshold ? `${firstThreshold.default}` : "—"}
+      <TableCell className="text-zinc-400 font-mono text-sm">
+        {row.app_value != null ? (
+          <span className="text-blue-400">{formatUnit(row.app_value, row.unit)}</span>
+        ) : "—"}
       </TableCell>
       <TableCell>
         {editing ? (
           <div className="flex items-center gap-1">
             <Input
               className="w-20 h-7 text-xs"
+              type="number"
               value={editValue}
               onChange={(e) => setEditValue(e.target.value)}
               onKeyDown={(e) => {
@@ -3917,26 +3889,20 @@ function ThresholdRow({
         ) : (
           <div className="flex items-center gap-1">
             <span
-              className={`text-sm cursor-pointer ${overrideValue != null ? "text-brand-400 font-medium" : "text-zinc-500"}`}
+              className={`text-sm cursor-pointer hover:text-brand-400 ${row.device_value != null ? "text-brand-400 font-medium" : "text-zinc-500"}`}
               onClick={() => {
-                setEditValue(
-                  overrideValue != null
-                    ? String(overrideValue)
-                    : firstThreshold
-                      ? String(firstThreshold.default)
-                      : ""
-                );
+                setEditValue(String(row.device_value ?? row.effective_value));
                 setEditing(true);
               }}
             >
-              {overrideValue != null ? String(overrideValue) : "—"}
+              {row.device_value != null ? formatUnit(row.device_value, row.unit) : "—"}
             </span>
-            {row.override && (
+            {row.device_override_id && (
               <Button
                 size="sm"
                 variant="ghost"
                 className="h-6 px-1 text-zinc-500 hover:text-red-400"
-                onClick={() => onDeleteOverride(row.override!.id)}
+                onClick={() => onDeleteOverride(row.device_override_id!)}
               >
                 <X className="h-3 w-3" />
               </Button>
@@ -3944,30 +3910,8 @@ function ThresholdRow({
           </div>
         )}
       </TableCell>
-      <TableCell>
-        {row.instance_id && (
-          <button
-            className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium cursor-pointer ${
-              row.instance_enabled
-                ? "bg-emerald-500/20 text-emerald-400"
-                : "bg-zinc-700/50 text-zinc-500"
-            }`}
-            onClick={() =>
-              onToggleEnabled(row.instance_id!, !row.instance_enabled)
-            }
-          >
-            {row.instance_enabled ? "On" : "Off"}
-          </button>
-        )}
-      </TableCell>
-      <TableCell>
-        {row.instance_state && (
-          <Badge
-            variant={row.instance_state === "firing" ? "destructive" : "success"}
-          >
-            {row.instance_state}
-          </Badge>
-        )}
+      <TableCell className="font-mono text-sm font-medium text-zinc-200">
+        {formatUnit(row.effective_value, row.unit)}
       </TableCell>
     </TableRow>
   );

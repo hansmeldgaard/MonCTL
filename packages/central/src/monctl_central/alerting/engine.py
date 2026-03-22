@@ -23,6 +23,7 @@ from monctl_central.storage.models import (
     AlertEntity,
     AlertDefinition,
     ThresholdOverride,
+    ThresholdVariable,
 )
 
 logger = logging.getLogger(__name__)
@@ -99,16 +100,29 @@ class AlertEngine:
         if not instances:
             return []
 
-        # Load threshold overrides
-        overrides = (
+        # Load threshold variables for this app
+        threshold_vars = (
             await session.execute(
-                select(ThresholdOverride)
-                .where(ThresholdOverride.definition_id == defn.id)
+                select(ThresholdVariable)
+                .where(ThresholdVariable.app_id == defn.app_id)
             )
         ).scalars().all()
-        overrides_by_device: dict[uuid.UUID, dict[str, ThresholdOverride]] = {}
-        for ov in overrides:
-            overrides_by_device.setdefault(ov.device_id, {})[ov.entity_key] = ov
+        var_by_name: dict[str, ThresholdVariable] = {v.name: v for v in threshold_vars}
+        var_ids = [v.id for v in threshold_vars]
+
+        # Load threshold overrides for these variables
+        overrides_by_device: dict[uuid.UUID, dict[str, dict[str, ThresholdOverride]]] = {}
+        if var_ids:
+            overrides = (
+                await session.execute(
+                    select(ThresholdOverride)
+                    .where(ThresholdOverride.variable_id.in_(var_ids))
+                )
+            ).scalars().all()
+            for ov in overrides:
+                overrides_by_device.setdefault(ov.device_id, {}).setdefault(
+                    ov.entity_key, {}
+                )[str(ov.variable_id)] = ov
 
         now = datetime.now(timezone.utc)
 
@@ -119,7 +133,7 @@ class AlertEngine:
             )
         else:
             firing_keys = await self._execute_compiled_query(
-                compiled, instances, overrides_by_device
+                compiled, instances, overrides_by_device, var_by_name
             )
 
         # Build alert_log records and update instance states
@@ -227,8 +241,16 @@ class AlertEngine:
         compiled,
         instances: list[AlertEntity],
         overrides_by_device: dict,
+        var_by_name: dict[str, "ThresholdVariable"] | None = None,
     ) -> dict[tuple[str, str], dict]:
-        """Execute compiled ClickHouse query and return firing entity keys."""
+        """Execute compiled ClickHouse query and return firing entity keys.
+
+        Resolves effective threshold per param using the 4-level hierarchy:
+        1. Per-entity override (variable_id + device_id + entity_key)
+        2. Per-device override (variable_id + device_id + entity_key="")
+        3. App-level value (ThresholdVariable.app_value)
+        4. Default value (ThresholdVariable.default_value / compiled param)
+        """
         # Build assignment_id filter
         assignment_ids = list({str(inst.assignment_id) for inst in instances})
 
@@ -240,10 +262,14 @@ class AlertEngine:
             1,
         )
 
-        # Apply threshold overrides per device
-        # For simplicity, use default thresholds first; per-device overrides
-        # would require multiple queries. For now, use the default params.
+        # Resolve effective thresholds — use app_value from ThresholdVariable
+        # if set, otherwise fall back to default (compiled) params
         params = dict(compiled.params)
+        if var_by_name and compiled.threshold_params:
+            for tp in compiled.threshold_params:
+                var = var_by_name.get(tp.name)
+                if var is not None and var.app_value is not None:
+                    params[tp.param_key] = var.app_value
 
         try:
             rows = await asyncio.to_thread(

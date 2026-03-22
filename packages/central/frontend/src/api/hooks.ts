@@ -21,6 +21,7 @@ import type {
   DeviceAssignment,
   DeviceListParams,
   DeviceThresholdRow,
+  ThresholdVariable,
   DisplayTemplate,
   DeviceResults,
   DeviceType,
@@ -469,17 +470,39 @@ export function useDeviceThresholds(deviceId: string) {
   });
 }
 
+// ── App Threshold Variables ─────────────────────────────
+
+export function useAppThresholds(appId: string) {
+  return useQuery({
+    queryKey: ["app-thresholds", appId],
+    queryFn: () => apiGet<ThresholdVariable[]>(`/apps/${appId}/thresholds`),
+    select: (res) => res.data,
+    enabled: !!appId,
+  });
+}
+
+export function useUpdateThresholdVariable() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      appId, varId, ...data
+    }: { appId: string; varId: string; app_value?: number | null; display_name?: string; description?: string }) =>
+      apiPut(`/apps/${appId}/thresholds/${varId}`, data),
+    onSuccess: (_, vars) => {
+      qc.invalidateQueries({ queryKey: ["app-thresholds", vars.appId] });
+      qc.invalidateQueries({ queryKey: ["device-thresholds"] });
+    },
+  });
+}
+
 export function useCreateThresholdOverride() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: {
-      definition_id: string;
-      device_id: string;
-      entity_key?: string;
-      overrides: Record<string, number | string>;
-    }) => apiPost("/alerts/overrides", data),
+    mutationFn: (data: { variable_id: string; device_id: string; entity_key?: string; value: number }) =>
+      apiPost("/alerts/overrides", data),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["device-thresholds"] });
+      await qc.invalidateQueries({ queryKey: ["app-thresholds"] });
     },
   });
 }
@@ -487,8 +510,8 @@ export function useCreateThresholdOverride() {
 export function useUpdateThresholdOverride() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, overrides }: { id: string; overrides: Record<string, number | string> }) =>
-      apiPut(`/alerts/overrides/${id}`, { overrides }),
+    mutationFn: ({ id, value }: { id: string; value: number }) =>
+      apiPut(`/alerts/overrides/${id}`, { value }),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["device-thresholds"] });
     },

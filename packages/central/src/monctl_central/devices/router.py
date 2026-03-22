@@ -874,14 +874,14 @@ async def get_device_thresholds(
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
-    """Get all alert definitions applicable to this device with their override status."""
-    from monctl_central.alerting.dsl import validate_expression
+    """Get all alert definitions applicable to this device with threshold variable hierarchy."""
     from monctl_central.storage.models import (
         AlertEntity,
         App,
         AlertDefinition,
         AppAssignment,
         ThresholdOverride,
+        ThresholdVariable,
     )
 
     device_uuid = uuid.UUID(device_id)
@@ -904,20 +904,32 @@ async def get_device_thresholds(
             )
         ).scalars().all()
 
-        for defn in definitions:
-            target_table = assignment.app.target_table if assignment.app else "availability_latency"
-            validation = validate_expression(defn.expression, target_table)
+        # Load threshold variables for this app
+        threshold_vars = (
+            await db.execute(
+                select(ThresholdVariable)
+                .where(ThresholdVariable.app_id == assignment.app_id)
+            )
+        ).scalars().all()
+        var_by_name = {v.name: v for v in threshold_vars}
 
-            override = (
+        # Load overrides for this device and these variables
+        var_ids = [v.id for v in threshold_vars]
+        device_overrides: dict[str, ThresholdOverride] = {}
+        if var_ids:
+            overrides = (
                 await db.execute(
                     select(ThresholdOverride)
                     .where(
-                        ThresholdOverride.definition_id == defn.id,
+                        ThresholdOverride.variable_id.in_(var_ids),
                         ThresholdOverride.device_id == device_uuid,
                     )
                 )
-            ).scalar_one_or_none()
+            ).scalars().all()
+            for ov in overrides:
+                device_overrides[str(ov.variable_id)] = ov
 
+        for defn in definitions:
             instance = (
                 await db.execute(
                     select(AlertEntity)
@@ -928,20 +940,37 @@ async def get_device_thresholds(
                 )
             ).scalar_one_or_none()
 
+            # Build threshold details with hierarchy
+            thresholds = []
+            for var in threshold_vars:
+                override = device_overrides.get(str(var.id))
+                effective = (
+                    override.value if override
+                    else var.app_value if var.app_value is not None
+                    else var.default_value
+                )
+                thresholds.append({
+                    "variable_id": str(var.id),
+                    "name": var.name,
+                    "display_name": var.display_name,
+                    "unit": var.unit,
+                    "default_value": var.default_value,
+                    "app_value": var.app_value,
+                    "device_override": {
+                        "id": str(override.id),
+                        "value": override.value,
+                        "entity_key": override.entity_key,
+                    } if override else None,
+                    "effective_value": effective,
+                })
+
             results.append({
                 "definition_id": str(defn.id),
                 "name": defn.name,
                 "app_name": assignment.app.name if assignment.app else "",
                 "expression": defn.expression,
                 "severity": defn.severity,
-                "default_thresholds": [
-                    {"name": tp.name, "default": tp.default_value}
-                    for tp in validation.threshold_params
-                ],
-                "override": {
-                    "id": str(override.id),
-                    "overrides": override.overrides,
-                } if override else None,
+                "thresholds": thresholds,
                 "instance_id": str(instance.id) if instance else None,
                 "instance_enabled": instance.enabled if instance else None,
                 "instance_state": instance.state if instance else None,

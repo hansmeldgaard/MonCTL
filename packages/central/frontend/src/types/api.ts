@@ -446,12 +446,25 @@ export interface AlertLogEntry {
   occurred_at: string;
 }
 
+export interface ThresholdVariable {
+  id: string;
+  app_id: string;
+  name: string;
+  display_name: string | null;
+  description: string | null;
+  default_value: number;
+  app_value: number | null;
+  unit: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ThresholdOverride {
   id: string;
-  definition_id: string;
+  variable_id: string;
   device_id: string;
   entity_key: string;
-  overrides: Record<string, number | string>;
+  value: number;
   created_at: string;
   updated_at: string;
 }
@@ -475,16 +488,26 @@ export interface ExpressionValidation {
 }
 
 export interface DeviceThresholdRow {
-  definition_id: string;
+  variable_id: string;
   name: string;
+  display_name: string | null;
+  unit: string | null;
   app_name: string;
-  expression: string;
-  severity: string;
-  default_thresholds: { name: string; default: number | string }[];
-  override: { id: string; overrides: Record<string, number | string> } | null;
-  instance_id: string | null;
-  instance_enabled: boolean | null;
-  instance_state: string | null;
+  expression_default: number;
+  app_value: number | null;
+  device_value: number | null;
+  effective_value: number;
+  device_override_id: string | null;
+  entity_overrides: {
+    override_id: string;
+    entity_key: string;
+    entity_labels: Record<string, string>;
+    value: number;
+  }[];
+  used_by_definitions: {
+    definition_id: string;
+    definition_name: string;
+  }[];
 }
 
 // ── Performance Data ─────────────────────────────────────
