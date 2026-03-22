@@ -7,6 +7,32 @@ import re
 from fastapi import HTTPException
 
 
+_VALID_UNITS = {"percent", "ms", "bytes", "count", "ratio"}
+
+
+def _validate_threshold_defaults(alert_def: dict) -> None:
+    """Validate threshold_defaults entries in an alert definition."""
+    for td in alert_def.get("threshold_defaults", []):
+        name = alert_def.get("name", "?")
+        if not td.get("param_key"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"threshold_defaults entry in alert '{name}' requires param_key",
+            )
+        if "default_value" not in td:
+            raise HTTPException(
+                status_code=400,
+                detail=f"threshold_defaults entry '{td.get('param_key')}' in alert "
+                       f"'{name}' requires default_value",
+            )
+        if td.get("unit") and td["unit"] not in _VALID_UNITS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"threshold_defaults unit '{td['unit']}' in alert '{name}' "
+                       f"must be one of: {', '.join(sorted(_VALID_UNITS))}",
+            )
+
+
 VALID_SECTIONS = {
     "apps", "credential_templates", "snmp_oids",
     "device_templates", "device_types", "label_keys", "connectors",
@@ -74,12 +100,28 @@ def validate_pack_schema(data: dict) -> None:
                                "severity must be info/warning/critical/emergency",
                     )
                 if alert_def.get("window") and alert_def["window"] not in (
-                    "30s", "5m", "15m", "1h", "6h", "1d",
+                    "30s", "1m", "5m", "15m", "1h", "6h", "1d",
                 ):
                     raise HTTPException(
                         status_code=400,
                         detail=f"Alert definition '{alert_def['name']}': invalid window value",
                     )
+                _validate_threshold_defaults(alert_def)
+
+        # App-level alert_definitions (new location)
+        for alert_def in app.get("alert_definitions", []):
+            if not alert_def.get("name"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Alert definition in app '{app['name']}' requires a name",
+                )
+            if not alert_def.get("expression"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Alert definition '{alert_def.get('name', '?')}' in app "
+                           f"'{app['name']}' requires an expression",
+                )
+            _validate_threshold_defaults(alert_def)
 
     for conn in contents.get("connectors", []):
         if not conn.get("name"):

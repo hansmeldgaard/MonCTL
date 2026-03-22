@@ -23,6 +23,7 @@ from monctl_central.storage.models import (
     PackVersion,
     SnmpOid,
     Template,
+    ThresholdVariable,
 )
 
 # Maps section name → (Model, name_field)
@@ -91,7 +92,10 @@ async def export_pack(pack_id: uuid.UUID, db: AsyncSession) -> dict:
             app_alert_defs = (await db.execute(
                 select(AlertDefinition).where(AlertDefinition.app_id == a.id)
             )).scalars().all()
-            app_exports.append(_export_app(a, app_alert_defs))
+            app_tv = (await db.execute(
+                select(ThresholdVariable).where(ThresholdVariable.app_id == a.id)
+            )).scalars().all()
+            app_exports.append(_export_app(a, app_alert_defs, list(app_tv)))
         result["contents"]["apps"] = app_exports
 
     # Credential templates
@@ -139,7 +143,11 @@ async def export_pack(pack_id: uuid.UUID, db: AsyncSession) -> dict:
     return result
 
 
-def _export_app(a: App, alert_definitions: list | None = None) -> dict:
+def _export_app(
+    a: App,
+    alert_definitions: list | None = None,
+    threshold_vars: list | None = None,
+) -> dict:
     d: dict = {
         "name": a.name,
         "description": a.description,
@@ -158,10 +166,13 @@ def _export_app(a: App, alert_definitions: list | None = None) -> dict:
             "display_template": v.display_template,
         }
         d["versions"].append(ver_data)
-    # Export alert definitions at the app level
+    # Export alert definitions at the app level with threshold_defaults
     if alert_definitions:
-        d["alert_definitions"] = [
-            {
+        from monctl_central.alerting.dsl import validate_expression
+        tv_by_name = {v.name: v for v in (threshold_vars or [])}
+        d["alert_definitions"] = []
+        for ad in alert_definitions:
+            ad_dict = {
                 "name": ad.name,
                 "expression": ad.expression,
                 "window": ad.window,
@@ -170,8 +181,24 @@ def _export_app(a: App, alert_definitions: list | None = None) -> dict:
                 "description": ad.description,
                 "message_template": ad.message_template,
             }
-            for ad in alert_definitions
-        ]
+            # Include threshold_defaults from threshold variables
+            if tv_by_name:
+                validation = validate_expression(ad.expression, a.target_table)
+                if validation.valid and validation.threshold_params:
+                    param_names = {p.name for p in validation.threshold_params}
+                    relevant = [tv_by_name[n] for n in param_names if n in tv_by_name]
+                    if relevant:
+                        ad_dict["threshold_defaults"] = [
+                            {
+                                "param_key": v.name,
+                                "default_value": v.default_value,
+                                "display_name": v.display_name,
+                                "unit": v.unit,
+                                "description": v.description,
+                            }
+                            for v in relevant
+                        ]
+            d["alert_definitions"].append(ad_dict)
     return d
 
 
@@ -636,7 +663,7 @@ async def _sync_app_alert_definitions(
                 existing_def.pack_origin = pack_uid
         else:
             # Create new definition
-            new_def = AlertDefinition(
+            existing_def = AlertDefinition(
                 app_id=app.id,
                 name=name,
                 expression=ad_data["expression"],
@@ -647,11 +674,25 @@ async def _sync_app_alert_definitions(
                 message_template=ad_data.get("message_template"),
                 pack_origin=pack_uid,
             )
-            db.add(new_def)
+            db.add(existing_def)
             await db.flush()
+            existing_by_name[name] = existing_def
             # Auto-create AlertEntities for existing assignments
             from monctl_central.alerting.instance_sync import sync_instances_for_definition
-            await sync_instances_for_definition(db, new_def)
+            await sync_instances_for_definition(db, existing_def)
+
+    # Sync threshold variables for all definitions
+    from monctl_central.alerting.threshold_sync import sync_threshold_variables
+    for ad_data in alert_defs_data:
+        defn = existing_by_name.get(ad_data["name"])
+        if defn:
+            await sync_threshold_variables(
+                db,
+                app_id=app.id,
+                definition=defn,
+                target_table=app.target_table,
+                pack_hints=ad_data.get("threshold_defaults"),
+            )
 
 
 async def _create_connector_versions(
