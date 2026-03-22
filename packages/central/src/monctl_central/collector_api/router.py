@@ -1414,7 +1414,7 @@ def _filter_config_rows(
 
     filtered = []
     for row in config_rows:
-        lookup = (row.get("component_type", ""), row.get("component", ""), key)
+        lookup = (row.get("component_type", ""), row.get("component", ""), row.get("config_key", ""))
         existing_hash = existing_hashes.get(lookup)
         if existing_hash is None or existing_hash != row.get("config_hash", ""):
             filtered.append(row)
