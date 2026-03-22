@@ -3696,7 +3696,7 @@ function AlertsTab({ deviceId }: { deviceId: string }) {
                       {inst.current_value != null ? Number(inst.current_value).toFixed(1) : "\u2014"}
                     </TableCell>
                     <TableCell className="text-zinc-500 text-xs">
-                      {inst.state === "firing" && inst.started_at ? timeAgo(inst.started_at) : "\u2014"}
+                      {inst.state === "firing" && inst.started_firing_at ? timeAgo(inst.started_firing_at) : "\u2014"}
                     </TableCell>
                     <TableCell className="text-center">
                       <input

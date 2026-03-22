@@ -15,7 +15,7 @@ from sqlalchemy.orm import selectinload
 
 from monctl_central.dependencies import get_clickhouse, get_db, require_auth
 from monctl_central.storage.clickhouse import ClickHouseClient
-from monctl_central.storage.models import AppAlertDefinition, EventPolicy
+from monctl_central.storage.models import AlertDefinition, EventPolicy
 from monctl_common.utils import utc_now
 
 router = APIRouter()
@@ -288,7 +288,7 @@ async def create_event_policy(
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
-    defn = await db.get(AppAlertDefinition, uuid.UUID(req.definition_id))
+    defn = await db.get(AlertDefinition, uuid.UUID(req.definition_id))
     if not defn:
         raise HTTPException(status_code=404, detail="Alert definition not found")
 

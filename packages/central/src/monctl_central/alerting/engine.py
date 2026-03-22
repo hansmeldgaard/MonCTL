@@ -1,11 +1,13 @@
-"""Alert engine — evaluates AlertInstances via DSL compiler against ClickHouse.
+"""Alert engine — evaluates AlertEntities via DSL compiler against ClickHouse.
 
 Runs periodically on the leader-elected scheduler instance.
+Writes fire/clear records to the ClickHouse alert_log table.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -18,8 +20,8 @@ from monctl_central.alerting.dsl import compile_to_sql, parse_expression
 from monctl_central.alerting.notifier import send_notifications
 from monctl_central.storage.clickhouse import ClickHouseClient
 from monctl_central.storage.models import (
-    AlertInstance,
-    AppAlertDefinition,
+    AlertEntity,
+    AlertDefinition,
     ThresholdOverride,
 )
 
@@ -27,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 class AlertEngine:
-    """Evaluates all enabled AlertInstances against ClickHouse data."""
+    """Evaluates all enabled AlertEntities against ClickHouse data."""
 
     def __init__(self, session_factory, ch_client: ClickHouseClient):
         self._session_factory = session_factory
@@ -35,18 +37,21 @@ class AlertEngine:
 
     async def evaluate_all(self) -> None:
         """Main evaluation loop. Called every 30s by the scheduler."""
+        alert_log_records: list[dict] = []
+
         async with self._session_factory() as session:
             definitions = (
                 await session.execute(
-                    select(AppAlertDefinition)
-                    .where(AppAlertDefinition.enabled == True)  # noqa: E712
-                    .options(selectinload(AppAlertDefinition.app))
+                    select(AlertDefinition)
+                    .where(AlertDefinition.enabled == True)  # noqa: E712
+                    .options(selectinload(AlertDefinition.app))
                 )
             ).scalars().all()
 
             for defn in definitions:
                 try:
-                    await self._evaluate_definition(session, defn)
+                    records = await self._evaluate_definition(session, defn)
+                    alert_log_records.extend(records)
                 except Exception:
                     logger.exception(
                         "alert_def_eval_error",
@@ -56,10 +61,20 @@ class AlertEngine:
 
             await session.commit()
 
+        # Batch insert all fire/clear records to ClickHouse
+        if alert_log_records:
+            try:
+                await asyncio.to_thread(
+                    self._ch.insert_alert_log, alert_log_records
+                )
+                logger.info("alert_log_inserted count=%d", len(alert_log_records))
+            except Exception:
+                logger.exception("alert_log_insert_error")
+
     async def _evaluate_definition(
-        self, session: AsyncSession, defn: AppAlertDefinition
-    ) -> None:
-        """Evaluate one alert definition across all its enabled instances."""
+        self, session: AsyncSession, defn: AlertDefinition
+    ) -> list[dict]:
+        """Evaluate one alert definition. Returns alert_log records."""
         target_table = defn.app.target_table
 
         # Parse and compile expression
@@ -68,21 +83,21 @@ class AlertEngine:
             compiled = compile_to_sql(ast, target_table, defn.window)
         except Exception:
             logger.exception("dsl_compile_error", definition_id=str(defn.id))
-            return
+            return []
 
         # Load enabled instances
         instances = (
             await session.execute(
-                select(AlertInstance)
+                select(AlertEntity)
                 .where(
-                    AlertInstance.definition_id == defn.id,
-                    AlertInstance.enabled == True,  # noqa: E712
+                    AlertEntity.definition_id == defn.id,
+                    AlertEntity.enabled == True,  # noqa: E712
                 )
             )
         ).scalars().all()
 
         if not instances:
-            return
+            return []
 
         # Load threshold overrides
         overrides = (
@@ -107,7 +122,9 @@ class AlertEngine:
                 compiled, instances, overrides_by_device
             )
 
-        # Update instance states
+        # Build alert_log records and update instance states
+        log_records: list[dict] = []
+
         for inst in instances:
             key = (str(inst.assignment_id), inst.entity_key)
             is_firing = key in firing_keys
@@ -123,23 +140,92 @@ class AlertEngine:
 
                 if inst.state != "firing":
                     inst.state = "firing"
-                    inst.started_at = now
+                    inst.started_firing_at = now
                     inst.fire_count = 1
-                    inst.event_created = False
                     await send_notifications(defn, str(inst.assignment_id), "firing")
                 else:
                     inst.fire_count += 1
+
+                # Write "fire" record to alert_log
+                log_records.append(self._build_log_record(
+                    defn, inst, "fire", now
+                ))
             else:
                 if inst.state == "firing":
                     inst.state = "resolved"
-                    inst.resolved_at = now
+                    inst.last_cleared_at = now
                     inst.fire_count = 0
                     await send_notifications(defn, str(inst.assignment_id), "resolved")
+
+                    # Write exactly one "clear" record
+                    log_records.append(self._build_log_record(
+                        defn, inst, "clear", now
+                    ))
+
+        return log_records
+
+    def _build_log_record(
+        self,
+        defn: AlertDefinition,
+        inst: AlertEntity,
+        action: str,
+        now: datetime,
+    ) -> dict:
+        """Build an alert_log record for ClickHouse."""
+        labels = inst.entity_labels or {}
+        _zero = "00000000-0000-0000-0000-000000000000"
+        return {
+            "definition_id": str(defn.id),
+            "definition_name": defn.name,
+            "entity_key": inst.entity_key or "",
+            "action": action,
+            "severity": defn.severity,
+            "current_value": float(inst.current_value) if inst.current_value is not None else 0.0,
+            "threshold_value": 0.0,
+            "expression": defn.expression,
+            "device_id": str(inst.device_id) if inst.device_id else _zero,
+            "device_name": labels.get("device_name", ""),
+            "assignment_id": str(inst.assignment_id),
+            "app_id": str(defn.app_id),
+            "app_name": labels.get("app_name", ""),
+            "tenant_id": labels.get("tenant_id", _zero),
+            "entity_labels": json.dumps(labels),
+            "fire_count": inst.fire_count,
+            "message": self._build_message(defn, inst, action),
+            "occurred_at": now,
+        }
+
+    def _build_message(
+        self, defn: AlertDefinition, inst: AlertEntity, action: str
+    ) -> str:
+        """Build alert message from template or defaults."""
+        labels = inst.entity_labels or {}
+        device = labels.get("device_name", "unknown")
+        entity = labels.get("if_name") or labels.get("component") or inst.entity_key or ""
+        value = inst.current_value
+
+        if action == "clear":
+            return f"Cleared: {defn.name} on {device} {entity}".strip()
+
+        if defn.message_template:
+            try:
+                return defn.message_template.format(
+                    device_name=device,
+                    value=round(value, 2) if value is not None else "N/A",
+                    threshold="",
+                    fire_count=inst.fire_count,
+                    **{k: v for k, v in labels.items() if k != "device_name"},
+                )
+            except (KeyError, IndexError, TypeError):
+                pass
+
+        val_str = f" = {round(value, 2)}" if value is not None else ""
+        return f"{defn.name}{val_str} on {device} {entity} [{inst.fire_count}x]".strip()
 
     async def _execute_compiled_query(
         self,
         compiled,
-        instances: list[AlertInstance],
+        instances: list[AlertEntity],
         overrides_by_device: dict,
     ) -> dict[tuple[str, str], dict]:
         """Execute compiled ClickHouse query and return firing entity keys."""
@@ -208,8 +294,8 @@ class AlertEngine:
 
     async def _evaluate_config_changed(
         self,
-        defn: AppAlertDefinition,
-        instances: list[AlertInstance],
+        defn: AlertDefinition,
+        instances: list[AlertEntity],
         config_key: str,
     ) -> dict[tuple[str, str], dict]:
         """Evaluate config CHANGED expressions."""

@@ -15,7 +15,7 @@ from monctl_central.dependencies import apply_tenant_filter, get_db, require_aut
 from monctl_common.validators import validate_semver, validate_uuid
 from monctl_central.storage.models import (
     App,
-    AppAlertDefinition,
+    AlertDefinition,
     AppAssignment,
     AppConnectorBinding,
     AppVersion,
@@ -1463,7 +1463,7 @@ async def clone_app_version(
     """Clone an existing app version into a new draft version.
 
     Copies source_code, requirements, entry_class, display_template,
-    and all AppAlertDefinition records. The new version is NOT set as
+    and all AlertDefinition records. The new version is NOT set as
     is_latest.
     """
     import hashlib
@@ -1498,14 +1498,14 @@ async def clone_app_version(
 
     # Clone alert definitions from the source version
     source_defs = (await db.execute(
-        select(AppAlertDefinition).where(
-            AppAlertDefinition.app_version_id == source.id,
+        select(AlertDefinition).where(
+            AlertDefinition.app_version_id == source.id,
         )
     )).scalars().all()
 
     cloned_def_count = 0
     for defn in source_defs:
-        cloned_def = AppAlertDefinition(
+        cloned_def = AlertDefinition(
             app_id=defn.app_id,
             app_version_id=cloned.id,
             name=defn.name,
@@ -1515,9 +1515,7 @@ async def clone_app_version(
             severity=defn.severity,
             enabled=defn.enabled,
             message_template=defn.message_template,
-            notification_channels=defn.notification_channels,
             pack_origin=defn.pack_origin,
-            pack_id=defn.pack_id,
         )
         db.add(cloned_def)
         cloned_def_count += 1

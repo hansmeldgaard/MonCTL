@@ -2,37 +2,76 @@
 
 Grammar:
     expression     := condition (("AND" | "OR") condition)*
-    condition      := agg_call COMPARE_OP value
+
+    condition      := arith_expr COMPARE_OP value
                    |  identifier "CHANGED"
                    |  identifier "IN" "(" value_list ")"
+                   |  identifier "NOT" "IN" "(" value_list ")"
                    |  identifier COMPARE_OP string_value
                    |  "(" expression ")"
+
+    arith_expr     := arith_term (("+" | "-") arith_term)*
+    arith_term     := arith_atom (("*" | "/") arith_atom)*
+    arith_atom     := agg_call
+                   |  number
+                   |  "(" arith_expr ")"
+
     agg_call       := AGG_FUNC "(" identifier ")"
-    AGG_FUNC       := "avg" | "max" | "min" | "sum" | "count" | "last"
+    AGG_FUNC       := "avg" | "max" | "min" | "sum" | "count" | "last" | "rate"
     COMPARE_OP     := ">" | "<" | ">=" | "<=" | "==" | "!="
 """
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field
+from typing import Union
+
+# ── Safety limits ────────────────────────────────────────
+
+MAX_EXPRESSION_LENGTH = 2000
+MAX_TOKEN_COUNT = 200
+MAX_NESTING_DEPTH = 10
+MAX_AGG_CALLS = 20
+MAX_ARITH_OPS = 30
+IDENTIFIER_MAX_LENGTH = 100
+
 
 # ── AST Nodes ────────────────────────────────────────────
 
 @dataclass
 class AggCall:
-    func: str
+    func: str   # "avg", "max", "min", "sum", "count", "last", "rate"
     metric: str
+
+
+@dataclass
+class ArithOp:
+    op: str          # "+", "-", "*", "/"
+    left: "ArithNode"
+    right: "ArithNode"
+
+
+@dataclass
+class NumericLiteral:
+    value: float
+
+
+ArithNode = Union[AggCall, ArithOp, NumericLiteral]
+
 
 @dataclass
 class Comparison:
-    left: AggCall | str
+    left: ArithNode | str       # ArithNode for numeric, str for config string
     op: str
     right: float | str
+
 
 @dataclass
 class Changed:
     identifier: str
+
 
 @dataclass
 class InList:
@@ -40,11 +79,13 @@ class InList:
     values: list[str]
     negated: bool = False  # True for NOT IN
 
+
 @dataclass
 class BoolOp:
     op: str  # "AND" | "OR"
     left: "ASTNode"
     right: "ASTNode"
+
 
 ASTNode = Comparison | Changed | InList | BoolOp
 
@@ -57,6 +98,7 @@ _TOKEN_RE = re.compile(
     |(?P<RPAREN>\))
     |(?P<COMMA>,)
     |(?P<OP>[><!]=?|==)
+    |(?P<ARITH>[+\-*/])
     |(?P<NUMBER>-?\d+(?:\.\d+)?)
     |(?P<STRING>'[^']*'|"[^"]*")
     |(?P<WORD>[a-zA-Z_]\w*)
@@ -65,7 +107,7 @@ _TOKEN_RE = re.compile(
     re.VERBOSE,
 )
 
-_AGG_FUNCS = {"avg", "max", "min", "sum", "count", "last"}
+_AGG_FUNCS = {"avg", "max", "min", "sum", "count", "last", "rate"}
 _KEYWORDS = {"AND", "OR", "IN", "NOT", "CHANGED"}
 
 
@@ -94,6 +136,8 @@ def _tokenize(expr: str) -> list[tuple[str, str]]:
             tokens.append(("NUMBER", value))
         elif m.lastgroup == "OP":
             tokens.append(("OP", value))
+        elif m.lastgroup == "ARITH":
+            tokens.append(("ARITH", value))
         else:
             tokens.append((m.lastgroup, value))  # type: ignore[arg-type]
     return tokens
@@ -109,6 +153,9 @@ class _Parser:
     def __init__(self, tokens: list[tuple[str, str]]):
         self.tokens = tokens
         self.pos = 0
+        self._depth = 0
+        self._agg_count = 0
+        self._arith_count = 0
 
     def peek(self) -> tuple[str, str] | None:
         if self.pos < len(self.tokens):
@@ -130,6 +177,24 @@ class _Parser:
             raise ParseError(f"Unexpected token: '{self.tokens[self.pos][1]}'")
         return node
 
+    def _enter_depth(self) -> None:
+        self._depth += 1
+        if self._depth > MAX_NESTING_DEPTH:
+            raise ParseError(f"Maximum nesting depth ({MAX_NESTING_DEPTH}) exceeded")
+
+    def _exit_depth(self) -> None:
+        self._depth -= 1
+
+    def _count_agg(self) -> None:
+        self._agg_count += 1
+        if self._agg_count > MAX_AGG_CALLS:
+            raise ParseError(f"Maximum aggregation calls ({MAX_AGG_CALLS}) exceeded")
+
+    def _count_arith(self) -> None:
+        self._arith_count += 1
+        if self._arith_count > MAX_ARITH_OPS:
+            raise ParseError(f"Maximum arithmetic operations ({MAX_ARITH_OPS}) exceeded")
+
     def _parse_expression(self) -> ASTNode:
         left = self._parse_condition()
         while True:
@@ -147,60 +212,146 @@ class _Parser:
         if tok is None:
             raise ParseError("Expected condition, got end of expression")
 
-        # Parenthesized sub-expression
+        # Parenthesized: could be boolean sub-expression OR start of arithmetic.
+        # Use backtracking: try arithmetic first (since `(avg(x)+avg(y))*2 > 100`
+        # needs to parse the `(` as arithmetic grouping, not boolean grouping).
         if tok[0] == "LPAREN":
+            save_pos = self.pos
+            save_depth = self._depth
+            save_agg = self._agg_count
+            save_arith = self._arith_count
+            try:
+                return self._parse_arith_comparison()
+            except ParseError:
+                # Restore state and try as boolean sub-expression
+                self.pos = save_pos
+                self._depth = save_depth
+                self._agg_count = save_agg
+                self._arith_count = save_arith
+            self._enter_depth()
             self.consume()
             node = self._parse_expression()
             self.consume("RPAREN")
+            self._exit_depth()
             return node
 
-        # Aggregation call: avg(metric) > value
-        if tok[0] == "AGG_FUNC":
-            return self._parse_agg_comparison()
-
-        # Identifier: could be CHANGED, IN, or comparison with string
+        # Bare identifier: could be CHANGED, IN, NOT IN, or string comparison
         if tok[0] == "IDENT":
-            ident = self.consume()[1]
-            next_tok = self.peek()
-            if next_tok and next_tok[0] == "KEYWORD" and next_tok[1] == "CHANGED":
-                self.consume()
-                return Changed(identifier=ident)
-            if next_tok and next_tok[0] == "KEYWORD" and next_tok[1] == "NOT":
-                # NOT IN (...)
-                self.consume()  # consume NOT
-                nin_tok = self.peek()
-                if nin_tok and nin_tok[0] == "KEYWORD" and nin_tok[1] == "IN":
-                    self.consume()  # consume IN
-                    self.consume("LPAREN")
-                    values = self._parse_value_list()
-                    self.consume("RPAREN")
-                    return InList(identifier=ident, values=values, negated=True)
-                raise ParseError(f"Expected 'IN' after 'NOT', got '{nin_tok[1] if nin_tok else 'end'}'")
-            if next_tok and next_tok[0] == "KEYWORD" and next_tok[1] == "IN":
-                self.consume()
-                self.consume("LPAREN")
-                values = self._parse_value_list()
-                self.consume("RPAREN")
-                return InList(identifier=ident, values=values)
-            if next_tok and next_tok[0] == "OP":
-                op = self.consume()[1]
-                right = self._parse_value()
-                return Comparison(left=ident, op=op, right=right)
-            raise ParseError(f"Expected operator after '{ident}'")
+            return self._parse_ident_condition()
+
+        # Aggregation call or arithmetic expression starting with agg/number
+        if tok[0] in ("AGG_FUNC", "NUMBER"):
+            return self._parse_arith_comparison()
 
         raise ParseError(f"Unexpected token: '{tok[1]}'")
 
-    def _parse_agg_comparison(self) -> Comparison:
+    def _parse_ident_condition(self) -> ASTNode:
+        """Parse a condition starting with a bare identifier."""
+        ident = self.consume("IDENT")[1]
+        if len(ident) > IDENTIFIER_MAX_LENGTH:
+            raise ParseError(f"Identifier '{ident[:20]}...' exceeds max length ({IDENTIFIER_MAX_LENGTH})")
+
+        next_tok = self.peek()
+        if next_tok and next_tok[0] == "KEYWORD" and next_tok[1] == "CHANGED":
+            self.consume()
+            return Changed(identifier=ident)
+        if next_tok and next_tok[0] == "KEYWORD" and next_tok[1] == "NOT":
+            # NOT IN (...)
+            self.consume()  # consume NOT
+            nin_tok = self.peek()
+            if nin_tok and nin_tok[0] == "KEYWORD" and nin_tok[1] == "IN":
+                self.consume()  # consume IN
+                self.consume("LPAREN")
+                values = self._parse_value_list()
+                self.consume("RPAREN")
+                return InList(identifier=ident, values=values, negated=True)
+            raise ParseError(
+                f"Expected 'IN' after 'NOT', got '{nin_tok[1] if nin_tok else 'end'}'"
+            )
+        if next_tok and next_tok[0] == "KEYWORD" and next_tok[1] == "IN":
+            self.consume()
+            self.consume("LPAREN")
+            values = self._parse_value_list()
+            self.consume("RPAREN")
+            return InList(identifier=ident, values=values)
+        if next_tok and next_tok[0] == "OP":
+            op = self.consume()[1]
+            right = self._parse_value()
+            return Comparison(left=ident, op=op, right=right)
+        raise ParseError(f"Expected operator after '{ident}'")
+
+    def _parse_arith_comparison(self) -> Comparison:
+        """Parse: arith_expr COMPARE_OP value."""
+        arith = self._parse_arith_expr()
+        op = self.consume("OP")[1]
+        right = self._parse_value()
+        return Comparison(left=arith, op=op, right=right)
+
+    # ── Arithmetic expression parsing (precedence climbing) ──
+
+    def _parse_arith_expr(self) -> ArithNode:
+        """arith_expr := arith_term (("+" | "-") arith_term)*"""
+        left = self._parse_arith_term()
+        while True:
+            tok = self.peek()
+            if tok and tok[0] == "ARITH" and tok[1] in ("+", "-"):
+                self._count_arith()
+                self.consume()
+                right = self._parse_arith_term()
+                left = ArithOp(op=tok[1], left=left, right=right)
+            else:
+                break
+        return left
+
+    def _parse_arith_term(self) -> ArithNode:
+        """arith_term := arith_atom (("*" | "/") arith_atom)*"""
+        left = self._parse_arith_atom()
+        while True:
+            tok = self.peek()
+            if tok and tok[0] == "ARITH" and tok[1] in ("*", "/"):
+                self._count_arith()
+                self.consume()
+                right = self._parse_arith_atom()
+                left = ArithOp(op=tok[1], left=left, right=right)
+            else:
+                break
+        return left
+
+    def _parse_arith_atom(self) -> ArithNode:
+        """arith_atom := agg_call | number | "(" arith_expr ")" """
+        tok = self.peek()
+        if tok is None:
+            raise ParseError("Expected arithmetic operand, got end of expression")
+
+        if tok[0] == "AGG_FUNC":
+            return self._parse_agg_call()
+
+        if tok[0] == "NUMBER":
+            self.consume()
+            return NumericLiteral(value=float(tok[1]))
+
+        if tok[0] == "LPAREN":
+            self._enter_depth()
+            self.consume()
+            expr = self._parse_arith_expr()
+            self.consume("RPAREN")
+            self._exit_depth()
+            return expr
+
+        raise ParseError(f"Expected aggregation, number, or '(', got '{tok[1]}'")
+
+    def _parse_agg_call(self) -> AggCall:
         func = self.consume("AGG_FUNC")[1]
         self.consume("LPAREN")
         metric_tok = self.peek()
         if metric_tok is None or metric_tok[0] != "IDENT":
             raise ParseError("Expected metric name inside aggregation function")
         metric = self.consume("IDENT")[1]
+        if len(metric) > IDENTIFIER_MAX_LENGTH:
+            raise ParseError(f"Identifier '{metric[:20]}...' exceeds max length ({IDENTIFIER_MAX_LENGTH})")
         self.consume("RPAREN")
-        op = self.consume("OP")[1]
-        right = self._parse_value()
-        return Comparison(left=AggCall(func=func, metric=metric), op=op, right=right)
+        self._count_agg()
+        return AggCall(func=func, metric=metric)
 
     def _parse_value(self) -> float | str:
         tok = self.peek()
@@ -208,7 +359,7 @@ class _Parser:
             raise ParseError("Expected value")
         if tok[0] == "NUMBER":
             self.consume()
-            return float(tok[1]) if "." in tok[1] else float(tok[1])
+            return float(tok[1])
         if tok[0] == "STRING":
             self.consume()
             return tok[1]
@@ -244,10 +395,67 @@ def parse_expression(expression: str) -> ASTNode:
     expression = expression.strip()
     if not expression:
         raise ParseError("Empty expression")
+    if len(expression) > MAX_EXPRESSION_LENGTH:
+        raise ParseError(f"Expression exceeds maximum length ({MAX_EXPRESSION_LENGTH} characters)")
     tokens = _tokenize(expression)
     if not tokens:
         raise ParseError("Empty expression")
+    if len(tokens) > MAX_TOKEN_COUNT:
+        raise ParseError(f"Expression exceeds maximum token count ({MAX_TOKEN_COUNT})")
     return _Parser(tokens).parse()
+
+
+# ── AST helpers ──────────────────────────────────────────
+
+def _collect_agg_calls(node: ArithNode) -> list[AggCall]:
+    """Recursively collect all AggCall nodes from an arithmetic tree."""
+    if isinstance(node, AggCall):
+        return [node]
+    if isinstance(node, ArithOp):
+        return _collect_agg_calls(node.left) + _collect_agg_calls(node.right)
+    return []
+
+
+def _has_agg_call(node: ArithNode) -> bool:
+    """Check if an arithmetic tree contains at least one AggCall."""
+    if isinstance(node, AggCall):
+        return True
+    if isinstance(node, ArithOp):
+        return _has_agg_call(node.left) or _has_agg_call(node.right)
+    return False
+
+
+def _has_division(node: ArithNode) -> bool:
+    """Check if an arithmetic tree contains division."""
+    if isinstance(node, ArithOp):
+        if node.op == "/":
+            return True
+        return _has_division(node.left) or _has_division(node.right)
+    return False
+
+
+def _has_self_div(node: ArithNode) -> bool:
+    """Check for self-referencing division like avg(x) / avg(x)."""
+    if isinstance(node, ArithOp) and node.op == "/":
+        left_aggs = _collect_agg_calls(node.left)
+        right_aggs = _collect_agg_calls(node.right)
+        for la in left_aggs:
+            for ra in right_aggs:
+                if la.func == ra.func and la.metric == ra.metric:
+                    return True
+    if isinstance(node, ArithOp):
+        return _has_self_div(node.left) or _has_self_div(node.right)
+    return False
+
+
+def _has_div_by_zero_constant(node: ArithNode) -> bool:
+    """Check for division by a zero numeric literal."""
+    if isinstance(node, ArithOp) and node.op == "/":
+        if isinstance(node.right, NumericLiteral) and node.right.value == 0:
+            return True
+    if isinstance(node, ArithOp):
+        return _has_div_by_zero_constant(node.left) or _has_div_by_zero_constant(node.right)
+    return False
 
 
 # ── Compiler: AST → ClickHouse SQL ────────────────────────
@@ -265,6 +473,18 @@ _TABLE_LABEL_COLUMNS = {
     "interface": ["any(device_name) AS device_name", "any(if_name) AS if_name"],
     "config": ["any(device_name) AS device_name"],
 }
+
+# Columns in the interface table that already have a _rate companion
+_INTERFACE_RATE_COLUMNS = {
+    "in_octets", "out_octets", "in_ucast_pkts", "out_ucast_pkts",
+    "in_mcast_pkts", "out_mcast_pkts", "in_bcast_pkts", "out_bcast_pkts",
+    "in_errors", "out_errors", "in_discards", "out_discards",
+}
+
+_COUNTER_SUFFIXES = ("_octets", "_pkts", "_bytes", "_count", "_total")
+
+_VALID_WINDOWS = {"30s", "1m", "5m", "15m", "1h"}
+_VALID_SEVERITIES = {"info", "warning", "critical", "emergency"}
 
 
 @dataclass
@@ -286,44 +506,98 @@ class CompiledQuery:
 @dataclass
 class ValidationResult:
     valid: bool
-    error: str | None = None
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
     referenced_metrics: list[str] = field(default_factory=list)
     threshold_params: list[ThresholdParam] = field(default_factory=list)
     has_aggregation: bool = True
+    has_arithmetic: bool = False
+    has_division: bool = False
+
+    @property
+    def error(self) -> str | None:
+        """Backward compatibility: return first error or None."""
+        return self.errors[0] if self.errors else None
 
 
-def validate_expression(expression: str, target_table: str) -> ValidationResult:
-    """Validate a DSL expression and extract metadata."""
+def validate_expression(
+    expression: str,
+    target_table: str,
+    *,
+    window: str | None = None,
+    severity: str | None = None,
+    name: str | None = None,
+) -> ValidationResult:
+    """Validate a DSL expression and extract metadata.
+
+    Parameters beyond expression/target_table are optional; when provided they
+    trigger additional validation checks.
+    """
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    # ── Basic checks ─────────────────────────────────────
+    if not expression or not expression.strip():
+        return ValidationResult(valid=False, errors=["Expression must not be empty"])
+
+    if len(expression) > MAX_EXPRESSION_LENGTH:
+        return ValidationResult(
+            valid=False,
+            errors=[f"Expression exceeds maximum length ({MAX_EXPRESSION_LENGTH} characters)"],
+        )
+
+    # ── Parse ────────────────────────────────────────────
     try:
         ast = parse_expression(expression)
     except ParseError as e:
-        return ValidationResult(valid=False, error=str(e))
+        return ValidationResult(valid=False, errors=[str(e)])
 
+    # ── Walk AST to collect metadata ─────────────────────
     metrics: list[str] = []
     thresholds: list[ThresholdParam] = []
     has_agg = False
+    has_arith = False
+    has_div = False
     _counter = [0]
+
+    def _walk_arith(node: ArithNode) -> None:
+        nonlocal has_agg, has_arith, has_div
+        if isinstance(node, AggCall):
+            has_agg = True
+            metrics.append(node.metric)
+        elif isinstance(node, ArithOp):
+            has_arith = True
+            if node.op == "/":
+                has_div = True
+            _walk_arith(node.left)
+            _walk_arith(node.right)
+        # NumericLiteral: nothing to collect
 
     def _walk(node: ASTNode) -> None:
         nonlocal has_agg
         if isinstance(node, Comparison):
-            if isinstance(node.left, AggCall):
-                has_agg = True
-                metrics.append(node.left.metric)
+            if isinstance(node.left, str):
+                # Config string comparison
+                metrics.append(node.left)
+            else:
+                # ArithNode (AggCall, ArithOp, NumericLiteral)
+                _walk_arith(node.left)
                 if isinstance(node.right, (int, float)):
                     key = f"_threshold_{_counter[0]}"
-                    name = f"{node.left.metric}_{node.left.func}_threshold"
+                    # Build threshold name from first agg_call found
+                    agg_calls = _collect_agg_calls(node.left) if not isinstance(node.left, str) else []
+                    if agg_calls:
+                        first = agg_calls[0]
+                        tname = f"{first.metric}_{first.func}_threshold"
+                    else:
+                        tname = f"threshold_{_counter[0]}"
                     thresholds.append(ThresholdParam(
-                        name=name, default_value=float(node.right), param_key=key
+                        name=tname, default_value=float(node.right), param_key=key,
                     ))
                     _counter[0] += 1
-            elif isinstance(node.left, str):
-                metrics.append(node.left)
         elif isinstance(node, Changed):
-            has_agg = False
             metrics.append(node.identifier)
         elif isinstance(node, InList):
-            has_agg = False
             metrics.append(node.identifier)
         elif isinstance(node, BoolOp):
             _walk(node.left)
@@ -331,11 +605,139 @@ def validate_expression(expression: str, target_table: str) -> ValidationResult:
 
     _walk(ast)
 
+    # ── Semantic validations ─────────────────────────────
+    # CHANGED/IN/string ops only for config table
+    def _check_config_only(n: ASTNode) -> None:
+        if isinstance(n, Changed) and target_table != "config":
+            errors.append("CHANGED operator is only allowed for config table")
+        elif isinstance(n, InList) and target_table != "config":
+            errors.append("IN operator is only allowed for config table")
+        elif isinstance(n, Comparison) and isinstance(n.left, str) and target_table != "config":
+            errors.append("String comparisons are only allowed for config table")
+        elif isinstance(n, BoolOp):
+            _check_config_only(n.left)
+            _check_config_only(n.right)
+
+    _check_config_only(ast)
+
+    # Non-config must have at least one agg_call
+    if target_table != "config" and not has_agg:
+        errors.append("Non-config expressions must contain at least one aggregation call")
+
+    # No bare number/number without agg_call
+    def _check_bare_arith(n: ASTNode) -> None:
+        if isinstance(n, Comparison) and not isinstance(n.left, str):
+            arith = n.left
+            if isinstance(arith, (ArithOp, NumericLiteral)) and not _has_agg_call(arith):
+                errors.append("Arithmetic expression must contain at least one aggregation call")
+        elif isinstance(n, BoolOp):
+            _check_bare_arith(n.left)
+            _check_bare_arith(n.right)
+
+    _check_bare_arith(ast)
+
+    # Self-referencing division
+    def _check_self_div(n: ASTNode) -> None:
+        if isinstance(n, Comparison) and not isinstance(n.left, str):
+            if _has_self_div(n.left):
+                errors.append("Self-referencing division detected (e.g. avg(x) / avg(x))")
+        elif isinstance(n, BoolOp):
+            _check_self_div(n.left)
+            _check_self_div(n.right)
+
+    _check_self_div(ast)
+
+    # Division by zero constant
+    def _check_div_zero(n: ASTNode) -> None:
+        if isinstance(n, Comparison) and not isinstance(n.left, str):
+            if _has_div_by_zero_constant(n.left):
+                errors.append("Division by zero constant detected")
+        elif isinstance(n, BoolOp):
+            _check_div_zero(n.left)
+            _check_div_zero(n.right)
+
+    _check_div_zero(ast)
+
+    # Threshold is finite number
+    for tp in thresholds:
+        if not math.isfinite(tp.default_value):
+            errors.append(f"Threshold value must be a finite number (got {tp.default_value})")
+
+    # Percent metrics: threshold 0-100 with > or >=
+    def _check_pct(n: ASTNode) -> None:
+        if isinstance(n, Comparison) and not isinstance(n.left, str):
+            agg_calls = _collect_agg_calls(n.left)
+            for ac in agg_calls:
+                if ac.metric.endswith("_pct") or ac.metric.endswith("_percent"):
+                    if isinstance(n.right, (int, float)):
+                        if not (0 <= n.right <= 100):
+                            errors.append(
+                                f"Threshold for percentage metric '{ac.metric}' must be 0-100"
+                            )
+                        if n.op not in (">", ">="):
+                            errors.append(
+                                f"Percentage metric '{ac.metric}' should use > or >= operator"
+                            )
+        elif isinstance(n, BoolOp):
+            _check_pct(n.left)
+            _check_pct(n.right)
+
+    _check_pct(ast)
+
+    # Try compile to catch any compilation errors
+    if not errors:
+        try:
+            compile_to_sql(ast, target_table, window or "5m")
+        except Exception as e:
+            errors.append(f"Expression compilation failed: {e}")
+
+    # ── Optional field validations ───────────────────────
+    if window is not None and window not in _VALID_WINDOWS:
+        errors.append(f"Window must be one of: {', '.join(sorted(_VALID_WINDOWS))}")
+
+    if severity is not None and severity not in _VALID_SEVERITIES:
+        errors.append(f"Severity must be one of: {', '.join(sorted(_VALID_SEVERITIES))}")
+
+    if name is not None:
+        if not (1 <= len(name) <= 255):
+            errors.append("Name must be 1-255 characters")
+
+    # ── Warnings ─────────────────────────────────────────
+    if has_div:
+        warnings.append("Entities where divisor = 0 are automatically skipped")
+
+    # rate() on non-counter metric
+    def _check_rate_metrics(n: ASTNode) -> None:
+        if isinstance(n, Comparison) and not isinstance(n.left, str):
+            for ac in _collect_agg_calls(n.left):
+                if ac.func == "rate" and not ac.metric.endswith(_COUNTER_SUFFIXES):
+                    warnings.append(
+                        f"rate() on '{ac.metric}' — consider using on counter metrics "
+                        f"(ending in {', '.join(_COUNTER_SUFFIXES)})"
+                    )
+        elif isinstance(n, BoolOp):
+            _check_rate_metrics(n.left)
+            _check_rate_metrics(n.right)
+
+    _check_rate_metrics(ast)
+
+    if window == "30s":
+        warnings.append("Window '30s' is a single poll cycle, consider '5m' for stability")
+
+    if len(metrics) >= 5:
+        warnings.append(
+            f"Expression references {len(metrics)} metrics — consider splitting into separate alerts"
+        )
+
     return ValidationResult(
-        valid=True,
+        valid=len(errors) == 0,
+        errors=errors,
+        warnings=warnings,
         referenced_metrics=metrics,
         threshold_params=thresholds,
         has_aggregation=has_agg,
+        has_arithmetic=has_arith,
+        has_division=has_div,
     )
 
 
@@ -349,6 +751,13 @@ class _Compiler:
         self.threshold_params: list[ThresholdParam] = []
         self._threshold_idx = 0
         self._str_idx = 0
+        self._arith_idx = 0
+        self._agg_idx = 0
+        # Collected during compilation
+        self._agg_selects: list[str] = []
+        self._having_parts: list[str] = []
+        self._where_extras: list[str] = []
+        self._finite_checks: list[str] = []
 
     def compile(self, ast: ASTNode) -> CompiledQuery:
         # Config CHANGED special case
@@ -364,32 +773,30 @@ class _Compiler:
         group_by = _TABLE_GROUP_BY.get(self.target_table, ["assignment_id"])
         label_cols = _TABLE_LABEL_COLUMNS.get(self.target_table, [])
 
-        # Collect aggregation selects and HAVING clauses
-        agg_selects: list[str] = []
-        having_parts: list[str] = []
-        where_extras: list[str] = []
-
-        self._build_query_parts(ast, agg_selects, having_parts, where_extras)
+        self._build_query_parts(ast)
 
         # Build SELECT columns
         select_cols = [f"toString({col}) AS {col}" for col in group_by]
-        select_cols.extend(agg_selects)
+        select_cols.extend(self._agg_selects)
         select_cols.extend(label_cols)
 
         # For config table with string comparisons (not CHANGED)
-        if self.target_table == "config" and not agg_selects:
+        if self.target_table == "config" and not self._agg_selects:
             return self._compile_config_string(ast, group_by, label_cols)
 
         interval = _parse_interval(self.window)
 
-        # Performance table needs has() filter
         table = self.target_table
         where_clause = f"executed_at > now() - INTERVAL {interval}"
-        if where_extras:
-            where_clause += " AND " + " AND ".join(where_extras)
+        if self._where_extras:
+            where_clause += " AND " + " AND ".join(self._where_extras)
 
         group_by_str = ", ".join(group_by)
-        having_str = " AND ".join(having_parts) if having_parts else "1"
+
+        having_clauses = list(self._having_parts)
+        if self._finite_checks:
+            having_clauses.extend(self._finite_checks)
+        having_str = " AND ".join(having_clauses) if having_clauses else "1"
 
         sql = (
             f"SELECT {', '.join(select_cols)} "
@@ -405,46 +812,95 @@ class _Compiler:
             threshold_params=self.threshold_params,
         )
 
-    def _build_query_parts(
-        self,
-        node: ASTNode,
-        agg_selects: list[str],
-        having_parts: list[str],
-        where_extras: list[str],
-    ) -> None:
-        if isinstance(node, Comparison) and isinstance(node.left, AggCall):
-            agg = node.left
-            idx = self._threshold_idx
-
-            # Performance table: metric_values[indexOf(metric_names, 'metric')]
-            if self.target_table == "performance":
-                agg_expr = (
-                    f"{agg.func}(metric_values[indexOf(metric_names, '{agg.metric}')])"
-                )
-                where_extras.append(f"has(metric_names, '{agg.metric}')")
-            else:
-                agg_expr = f"{agg.func}({agg.metric})"
-
-            alias = f"_agg_{idx}"
-            agg_selects.append(f"{agg_expr} AS {alias}")
+    def _build_query_parts(self, node: ASTNode) -> None:
+        if isinstance(node, Comparison) and not isinstance(node.left, str):
+            # Arithmetic / aggregation comparison
+            arith_alias = self._compile_arith_select(node.left)
 
             ch_op = "=" if node.op == "==" else node.op
-            param_key = f"_threshold_{idx}"
-            having_parts.append(f"{alias} {ch_op} {{{param_key}:Float64}}")
+            param_key = f"_threshold_{self._threshold_idx}"
+            self._having_parts.append(f"{arith_alias} {ch_op} {{{param_key}:Float64}}")
 
-            self.params[param_key] = float(node.right) if isinstance(node.right, (int, float)) else 0.0
+            threshold_val = float(node.right) if isinstance(node.right, (int, float)) else 0.0
+            self.params[param_key] = threshold_val
 
-            name = f"{agg.metric}_{agg.func}_threshold"
+            # Build threshold name from first agg call
+            agg_calls = _collect_agg_calls(node.left)
+            if agg_calls:
+                first = agg_calls[0]
+                tname = f"{first.metric}_{first.func}_threshold"
+            else:
+                tname = f"threshold_{self._threshold_idx}"
             self.threshold_params.append(ThresholdParam(
-                name=name,
-                default_value=self.params[param_key],
+                name=tname,
+                default_value=threshold_val,
                 param_key=param_key,
             ))
             self._threshold_idx += 1
 
         elif isinstance(node, BoolOp):
-            self._build_query_parts(node.left, agg_selects, having_parts, where_extras)
-            self._build_query_parts(node.right, agg_selects, having_parts, where_extras)
+            self._build_query_parts(node.left)
+            self._build_query_parts(node.right)
+
+    def _compile_arith_select(self, node: ArithNode) -> str:
+        """Compile an ArithNode into a SQL expression, add to SELECT, return alias."""
+        sql_expr = self._arith_to_sql(node)
+        alias = f"_arith_{self._arith_idx}"
+        self._agg_selects.append(f"{sql_expr} AS {alias}")
+        self._arith_idx += 1
+
+        # If the expression contains division, add isFinite check
+        if isinstance(node, ArithOp) and _has_division(node):
+            self._finite_checks.append(f"isFinite({alias})")
+
+        return alias
+
+    def _arith_to_sql(self, node: ArithNode) -> str:
+        """Recursively compile an ArithNode to SQL."""
+        if isinstance(node, AggCall):
+            return self._agg_to_sql(node)
+        elif isinstance(node, NumericLiteral):
+            return str(node.value)
+        elif isinstance(node, ArithOp):
+            left_sql = self._arith_to_sql(node.left)
+            right_sql = self._arith_to_sql(node.right)
+            if node.op == "/":
+                return f"if(({right_sql}) = 0, nan, ({left_sql}) / ({right_sql}))"
+            return f"({left_sql}) {node.op} ({right_sql})"
+        raise ParseError(f"Unknown ArithNode type: {type(node)}")
+
+    def _agg_to_sql(self, agg: AggCall) -> str:
+        """Compile a single AggCall to SQL, registering WHERE extras as needed."""
+        metric = agg.metric
+        func = agg.func
+
+        if func == "rate":
+            return self._rate_to_sql(metric)
+
+        if self.target_table == "performance":
+            expr = f"{func}(metric_values[indexOf(metric_names, '{metric}')])"
+            self._where_extras.append(f"has(metric_names, '{metric}')")
+        else:
+            expr = f"{func}({metric})"
+
+        return expr
+
+    def _rate_to_sql(self, metric: str) -> str:
+        """Compile rate(metric) to SQL."""
+        # Interface table: use pre-computed _rate column if available
+        if self.target_table == "interface" and metric in _INTERFACE_RATE_COLUMNS:
+            return f"last({metric}_rate)"
+
+        # Fallback: (max - min) / time_delta with div/0 safety
+        if self.target_table == "performance":
+            metric_ref = f"metric_values[indexOf(metric_names, '{metric}')]"
+            self._where_extras.append(f"has(metric_names, '{metric}')")
+        else:
+            metric_ref = metric
+
+        time_delta = "(toUnixTimestamp(max(executed_at)) - toUnixTimestamp(min(executed_at)))"
+        value_delta = f"(max({metric_ref}) - min({metric_ref}))"
+        return f"if({time_delta} = 0, nan, {value_delta} / {time_delta})"
 
     def _compile_config_string(
         self,
@@ -524,13 +980,27 @@ _INVERT_OPS = {
 }
 
 
+def _arith_to_string(node: ArithNode) -> str:
+    """Convert an ArithNode back to a DSL expression string."""
+    if isinstance(node, AggCall):
+        return f"{node.func}({node.metric})"
+    elif isinstance(node, NumericLiteral):
+        v = node.value
+        return str(int(v)) if v == int(v) else str(v)
+    elif isinstance(node, ArithOp):
+        left = _arith_to_string(node.left)
+        right = _arith_to_string(node.right)
+        return f"{left} {node.op} {right}"
+    return str(node)
+
+
 def _ast_to_string(node: ASTNode) -> str:
     """Convert an AST node back to a DSL expression string."""
     if isinstance(node, Comparison):
-        if isinstance(node.left, AggCall):
-            left_str = f"{node.left.func}({node.left.metric})"
-        else:
+        if isinstance(node.left, str):
             left_str = node.left
+        else:
+            left_str = _arith_to_string(node.left)
         if isinstance(node.right, str):
             right_str = f"'{node.right}'"
         else:

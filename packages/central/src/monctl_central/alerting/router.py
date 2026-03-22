@@ -14,11 +14,11 @@ from sqlalchemy.orm import selectinload
 
 from monctl_central.alerting.dsl import invert_expression, validate_expression
 from monctl_central.alerting.instance_sync import sync_instances_for_definition
-from monctl_central.dependencies import get_db, require_auth
+from monctl_central.dependencies import get_clickhouse, get_db, require_auth
 from monctl_central.storage.models import (
-    AlertInstance,
+    AlertEntity,
     App,
-    AppAlertDefinition,
+    AlertDefinition,
     AppAssignment,
     ThresholdOverride,
 )
@@ -29,7 +29,7 @@ router = APIRouter()
 
 # ── Formatters ───────────────────────────────────────────
 
-def _fmt_definition(d: AppAlertDefinition, instance_counts: dict | None = None) -> dict:
+def _fmt_definition(d: AlertDefinition, instance_counts: dict | None = None) -> dict:
     result = {
         "id": str(d.id),
         "app_id": str(d.app_id),
@@ -41,7 +41,6 @@ def _fmt_definition(d: AppAlertDefinition, instance_counts: dict | None = None) 
         "severity": d.severity,
         "enabled": d.enabled,
         "message_template": d.message_template,
-        "notification_channels": d.notification_channels,
         "pack_origin": d.pack_origin,
         "created_at": d.created_at.isoformat() if d.created_at else None,
         "updated_at": d.updated_at.isoformat() if d.updated_at else None,
@@ -52,7 +51,7 @@ def _fmt_definition(d: AppAlertDefinition, instance_counts: dict | None = None) 
     return result
 
 
-def _fmt_instance(i: AlertInstance) -> dict:
+def _fmt_entity(i: AlertEntity) -> dict:
     return {
         "id": str(i.id),
         "definition_id": str(i.definition_id),
@@ -64,9 +63,8 @@ def _fmt_instance(i: AlertInstance) -> dict:
         "fire_count": i.fire_count,
         "fire_history": i.fire_history,
         "last_evaluated_at": i.last_evaluated_at.isoformat() if i.last_evaluated_at else None,
-        "started_at": i.started_at.isoformat() if i.started_at else None,
-        "resolved_at": i.resolved_at.isoformat() if i.resolved_at else None,
-        "event_created": i.event_created,
+        "started_firing_at": i.started_firing_at.isoformat() if i.started_firing_at else None,
+        "last_cleared_at": i.last_cleared_at.isoformat() if i.last_cleared_at else None,
         "entity_key": i.entity_key,
         "entity_labels": i.entity_labels,
         "created_at": i.created_at.isoformat() if i.created_at else None,
@@ -97,7 +95,6 @@ class CreateAlertDefinitionRequest(BaseModel):
     severity: str = Field(default="warning", max_length=20, description="info, warning, critical, emergency")
     enabled: bool = True
     message_template: str | None = Field(default=None, max_length=2000)
-    notification_channels: list[dict] = Field(default_factory=list)
 
     @field_validator("app_id")
     @classmethod
@@ -198,32 +195,32 @@ async def list_alert_definitions(
     # Build filters
     filters = []
     if app_id:
-        filters.append(AppAlertDefinition.app_id == uuid.UUID(app_id))
+        filters.append(AlertDefinition.app_id == uuid.UUID(app_id))
     if name:
-        filters.append(AppAlertDefinition.name.ilike(f"%{name}%"))
+        filters.append(AlertDefinition.name.ilike(f"%{name}%"))
     if severity:
-        filters.append(AppAlertDefinition.severity == severity)
+        filters.append(AlertDefinition.severity == severity)
     if expression:
-        filters.append(AppAlertDefinition.expression.ilike(f"%{expression}%"))
+        filters.append(AlertDefinition.expression.ilike(f"%{expression}%"))
 
     # Count total
-    count_stmt = select(sa.func.count()).select_from(AppAlertDefinition)
+    count_stmt = select(sa.func.count()).select_from(AlertDefinition)
     for f in filters:
         count_stmt = count_stmt.where(f)
     total = (await db.execute(count_stmt)).scalar() or 0
 
     # Main query
-    stmt = select(AppAlertDefinition)
+    stmt = select(AlertDefinition)
     for f in filters:
         stmt = stmt.where(f)
 
     SORT_MAP = {
-        "name": AppAlertDefinition.name,
-        "severity": AppAlertDefinition.severity,
-        "enabled": AppAlertDefinition.enabled,
-        "created_at": AppAlertDefinition.created_at,
+        "name": AlertDefinition.name,
+        "severity": AlertDefinition.severity,
+        "enabled": AlertDefinition.enabled,
+        "created_at": AlertDefinition.created_at,
     }
-    sort_col = SORT_MAP.get(sort_by, AppAlertDefinition.name)
+    sort_col = SORT_MAP.get(sort_by, AlertDefinition.name)
     stmt = stmt.order_by(sort_col.desc() if sort_dir == "desc" else sort_col.asc())
     stmt = stmt.limit(limit).offset(offset)
 
@@ -232,11 +229,11 @@ async def list_alert_definitions(
     # Get instance counts per definition
     count_stmt = (
         select(
-            AlertInstance.definition_id,
+            AlertEntity.definition_id,
             func.count().label("total"),
-            func.count().filter(AlertInstance.state == "firing").label("firing"),
+            func.count().filter(AlertEntity.state == "firing").label("firing"),
         )
-        .group_by(AlertInstance.definition_id)
+        .group_by(AlertEntity.definition_id)
     )
     count_rows = (await db.execute(count_stmt)).all()
     counts = {
@@ -274,7 +271,7 @@ async def create_alert_definition(
             detail=f"Severity must be one of: {', '.join(sorted(_VALID_SEVERITIES))}",
         )
 
-    defn = AppAlertDefinition(
+    defn = AlertDefinition(
         app_id=uuid.UUID(request.app_id),
         app_version_id=uuid.UUID(request.app_version_id),
         name=request.name,
@@ -284,7 +281,6 @@ async def create_alert_definition(
         severity=request.severity,
         enabled=request.enabled,
         message_template=request.message_template,
-        notification_channels=request.notification_channels,
     )
     db.add(defn)
     await db.flush()
@@ -304,15 +300,15 @@ async def get_alert_definition(
 ):
     """Get a single alert definition with its instances."""
     defn = await db.get(
-        AppAlertDefinition,
+        AlertDefinition,
         uuid.UUID(definition_id),
-        options=[selectinload(AppAlertDefinition.instances)],
+        options=[selectinload(AlertDefinition.entities)],
     )
     if not defn:
         raise HTTPException(status_code=404, detail="Not found")
 
     data = _fmt_definition(defn)
-    data["instances"] = [_fmt_instance(i) for i in defn.instances]
+    data["entities"] = [_fmt_entity(i) for i in defn.entities]
     return {"status": "success", "data": data}
 
 
@@ -324,7 +320,7 @@ async def update_alert_definition(
     auth: dict = Depends(require_auth),
 ):
     """Update an alert definition."""
-    defn = await db.get(AppAlertDefinition, uuid.UUID(definition_id))
+    defn = await db.get(AlertDefinition, uuid.UUID(definition_id))
     if not defn:
         raise HTTPException(status_code=404, detail="Not found")
 
@@ -367,7 +363,7 @@ async def delete_alert_definition(
     auth: dict = Depends(require_auth),
 ):
     """Delete an alert definition (CASCADE deletes instances)."""
-    defn = await db.get(AppAlertDefinition, uuid.UUID(definition_id))
+    defn = await db.get(AlertDefinition, uuid.UUID(definition_id))
     if not defn:
         raise HTTPException(status_code=404, detail="Not found")
     await db.delete(defn)
@@ -380,7 +376,7 @@ async def invert_alert_definition(
     auth: dict = Depends(require_auth),
 ):
     """Generate inverted expression for a recovery alert."""
-    defn = await db.get(AppAlertDefinition, uuid.UUID(definition_id))
+    defn = await db.get(AlertDefinition, uuid.UUID(definition_id))
     if defn is None:
         raise HTTPException(status_code=404, detail="Definition not found")
 
@@ -415,25 +411,25 @@ async def list_alert_instances(
 ):
     """List alert instances with optional filters."""
     stmt = (
-        select(AlertInstance)
-        .join(AppAlertDefinition, AlertInstance.definition_id == AppAlertDefinition.id)
-        .join(App, AppAlertDefinition.app_id == App.id)
+        select(AlertEntity)
+        .join(AlertDefinition, AlertEntity.definition_id == AlertDefinition.id)
+        .join(App, AlertDefinition.app_id == App.id)
     )
     if state:
-        stmt = stmt.where(AlertInstance.state == state)
+        stmt = stmt.where(AlertEntity.state == state)
     if device_id:
-        stmt = stmt.where(AlertInstance.device_id == uuid.UUID(device_id))
+        stmt = stmt.where(AlertEntity.device_id == uuid.UUID(device_id))
     if definition_id:
-        stmt = stmt.where(AlertInstance.definition_id == uuid.UUID(definition_id))
+        stmt = stmt.where(AlertEntity.definition_id == uuid.UUID(definition_id))
 
     instances = (await db.execute(stmt)).scalars().all()
 
     # Enrich with definition and app info
     result = []
     for inst in instances:
-        data = _fmt_instance(inst)
+        data = _fmt_entity(inst)
         # Load definition for enrichment
-        defn = await db.get(AppAlertDefinition, inst.definition_id)
+        defn = await db.get(AlertDefinition, inst.definition_id)
         if defn:
             data["definition_name"] = defn.name
             data["definition_severity"] = defn.severity
@@ -457,13 +453,13 @@ async def list_active_instances(
     auth: dict = Depends(require_auth),
 ):
     """List all currently firing alert instances."""
-    stmt = select(AlertInstance).where(AlertInstance.state == "firing")
+    stmt = select(AlertEntity).where(AlertEntity.state == "firing")
     instances = (await db.execute(stmt)).scalars().all()
 
     result = []
     for inst in instances:
-        data = _fmt_instance(inst)
-        defn = await db.get(AppAlertDefinition, inst.definition_id)
+        data = _fmt_entity(inst)
+        defn = await db.get(AlertDefinition, inst.definition_id)
         if defn:
             data["definition_name"] = defn.name
             data["definition_severity"] = defn.severity
@@ -497,23 +493,23 @@ async def list_resolved_instances(
     cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
 
     stmt = (
-        select(AlertInstance)
+        select(AlertEntity)
         .where(
-            AlertInstance.state == "resolved",
-            AlertInstance.resolved_at >= cutoff,
+            AlertEntity.state == "resolved",
+            AlertEntity.last_cleared_at >= cutoff,
         )
-        .order_by(AlertInstance.resolved_at.desc())
+        .order_by(AlertEntity.last_cleared_at.desc())
         .limit(limit)
     )
     if device_id:
-        stmt = stmt.where(AlertInstance.device_id == uuid.UUID(device_id))
+        stmt = stmt.where(AlertEntity.device_id == uuid.UUID(device_id))
 
     instances = (await db.execute(stmt)).scalars().all()
 
     result = []
     for inst in instances:
-        data = _fmt_instance(inst)
-        defn = await db.get(AppAlertDefinition, inst.definition_id)
+        data = _fmt_entity(inst)
+        defn = await db.get(AlertDefinition, inst.definition_id)
         if defn:
             data["definition_name"] = defn.name
             data["definition_severity"] = defn.severity
@@ -535,23 +531,23 @@ async def list_resolved_instances(
     }
 
 
-class UpdateAlertInstanceRequest(BaseModel):
+class UpdateAlertEntityRequest(BaseModel):
     enabled: bool
 
 
 @router.put("/instances/{instance_id}")
 async def update_alert_instance(
     instance_id: str,
-    request: UpdateAlertInstanceRequest,
+    request: UpdateAlertEntityRequest,
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
     """Enable or disable an alert instance."""
-    instance = await db.get(AlertInstance, uuid.UUID(instance_id))
+    instance = await db.get(AlertEntity, uuid.UUID(instance_id))
     if not instance:
         raise HTTPException(status_code=404, detail="Not found")
     instance.enabled = request.enabled
-    return {"status": "success", "data": _fmt_instance(instance)}
+    return {"status": "success", "data": _fmt_entity(instance)}
 
 
 # ── Expression Validation ────────────────────────────────
@@ -567,13 +563,17 @@ async def validate_expression_endpoint(
         "status": "success",
         "data": {
             "valid": result.valid,
-            "error": result.error,
+            "errors": result.errors,
+            "warnings": result.warnings,
+            "error": result.error,  # backward compat
             "referenced_metrics": result.referenced_metrics,
             "threshold_params": [
-                {"name": tp.name, "default_value": tp.default_value}
+                {"name": tp.name, "default_value": tp.default_value, "param_key": tp.param_key}
                 for tp in result.threshold_params
             ],
             "has_aggregation": result.has_aggregation,
+            "has_arithmetic": result.has_arithmetic,
+            "has_division": result.has_division,
         },
     }
 
@@ -643,3 +643,56 @@ async def delete_threshold_override(
     if not override:
         raise HTTPException(status_code=404, detail="Not found")
     await db.delete(override)
+
+
+# ── Alert Log (ClickHouse history) ──────────────────────
+
+@router.get("/log")
+async def query_alert_log(
+    definition_id: str | None = Query(default=None),
+    entity_key: str | None = Query(default=None),
+    device_id: str | None = Query(default=None),
+    action: str | None = Query(default=None),
+    from_ts: str | None = Query(default=None, alias="from"),
+    to_ts: str | None = Query(default=None, alias="to"),
+    sort_by: str = Query(default="occurred_at"),
+    sort_dir: str = Query(default="DESC"),
+    limit: int = Query(default=100, le=1000),
+    offset: int = Query(default=0, ge=0),
+    auth: dict = Depends(require_auth),
+    ch=Depends(get_clickhouse),
+):
+    """Query the alert fire/clear log from ClickHouse."""
+    tenant_id = auth.get("tenant_id")
+    rows = ch.query_alert_log(
+        definition_id=definition_id,
+        entity_key=entity_key,
+        device_id=device_id,
+        action=action,
+        tenant_id=tenant_id,
+        from_ts=from_ts,
+        to_ts=to_ts,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+        limit=limit,
+        offset=offset,
+    )
+    total = ch.count_alert_log(
+        definition_id=definition_id,
+        entity_key=entity_key,
+        device_id=device_id,
+        action=action,
+        tenant_id=tenant_id,
+        from_ts=from_ts,
+        to_ts=to_ts,
+    )
+    return {
+        "status": "success",
+        "data": rows,
+        "meta": {
+            "limit": limit,
+            "offset": offset,
+            "count": len(rows),
+            "total": total,
+        },
+    }

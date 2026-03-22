@@ -1,8 +1,11 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiDelete, apiGet, apiGetRaw, apiPatch, apiPost, apiPostFormData, apiPut } from "@/api/client.ts";
 import type {
+  AlertEntity,
   AlertInstance,
+  AlertLogEntry,
   AlertMetric,
+  AlertDefinition,
   AppAlertDefinition,
   AppDetail,
   AppSummary,
@@ -423,6 +426,31 @@ export function useValidateExpression() {
   return useMutation({
     mutationFn: (data: { expression: string; target_table: string }) =>
       apiPost<ExpressionValidation>("/alerts/validate-expression", data),
+  });
+}
+
+// ── Alert Log (ClickHouse fire/clear history) ───────────
+
+export function useAlertLog(params?: {
+  definition_id?: string; entity_key?: string; device_id?: string;
+  action?: string; from?: string; to?: string;
+  limit?: number; offset?: number;
+}) {
+  return useQuery({
+    queryKey: ["alert-log", params],
+    queryFn: () => {
+      const search = new URLSearchParams();
+      if (params?.definition_id) search.set("definition_id", params.definition_id);
+      if (params?.entity_key) search.set("entity_key", params.entity_key);
+      if (params?.device_id) search.set("device_id", params.device_id);
+      if (params?.action) search.set("action", params.action);
+      if (params?.from) search.set("from", params.from);
+      if (params?.to) search.set("to", params.to);
+      if (params?.limit) search.set("limit", String(params.limit));
+      if (params?.offset) search.set("offset", String(params.offset));
+      return apiGet<AlertLogEntry[]>(`/alerts/log?${search.toString()}`);
+    },
+    placeholderData: keepPreviousData,
   });
 }
 

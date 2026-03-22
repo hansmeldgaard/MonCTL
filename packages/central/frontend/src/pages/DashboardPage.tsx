@@ -158,7 +158,7 @@ export function DashboardPage() {
                         {alert.definition_name ?? alert.definition_id}
                       </TableCell>
                       <TableCell className="text-zinc-500">
-                        {timeAgo(alert.started_at)}
+                        {timeAgo(alert.started_firing_at)}
                       </TableCell>
                     </TableRow>
                   ))}

@@ -877,9 +877,9 @@ async def get_device_thresholds(
     """Get all alert definitions applicable to this device with their override status."""
     from monctl_central.alerting.dsl import validate_expression
     from monctl_central.storage.models import (
-        AlertInstance,
+        AlertEntity,
         App,
-        AppAlertDefinition,
+        AlertDefinition,
         AppAssignment,
         AppVersion,
         ThresholdOverride,
@@ -915,8 +915,8 @@ async def get_device_thresholds(
 
         definitions = (
             await db.execute(
-                select(AppAlertDefinition)
-                .where(AppAlertDefinition.app_version_id == version_id)
+                select(AlertDefinition)
+                .where(AlertDefinition.app_version_id == version_id)
             )
         ).scalars().all()
 
@@ -936,10 +936,10 @@ async def get_device_thresholds(
 
             instance = (
                 await db.execute(
-                    select(AlertInstance)
+                    select(AlertEntity)
                     .where(
-                        AlertInstance.definition_id == defn.id,
-                        AlertInstance.assignment_id == assignment.id,
+                        AlertEntity.definition_id == defn.id,
+                        AlertEntity.assignment_id == assignment.id,
                     )
                 )
             ).scalar_one_or_none()

@@ -1,4 +1,4 @@
-"""Auto-create/delete AlertInstances on assignment or definition changes."""
+"""Auto-create/delete AlertEntities on assignment or definition changes."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from monctl_central.storage.models import (
-    AlertInstance,
-    AppAlertDefinition,
+    AlertEntity,
+    AlertDefinition,
     AppAssignment,
     AppVersion,
     ThresholdOverride,
@@ -31,7 +31,7 @@ async def sync_instances_for_assignment(
     session: AsyncSession,
     assignment: AppAssignment,
 ) -> None:
-    """Create AlertInstances for all definitions on this assignment's app version."""
+    """Create AlertEntities for all definitions on this assignment's app version."""
     version_id = assignment.app_version_id
     if assignment.use_latest:
         latest = await _get_latest_version(session, assignment.app_id)
@@ -40,18 +40,18 @@ async def sync_instances_for_assignment(
 
     definitions = (
         await session.execute(
-            select(AppAlertDefinition)
-            .where(AppAlertDefinition.app_version_id == version_id)
+            select(AlertDefinition)
+            .where(AlertDefinition.app_version_id == version_id)
         )
     ).scalars().all()
 
     for defn in definitions:
         existing = (
             await session.execute(
-                select(AlertInstance)
+                select(AlertEntity)
                 .where(
-                    AlertInstance.definition_id == defn.id,
-                    AlertInstance.assignment_id == assignment.id,
+                    AlertEntity.definition_id == defn.id,
+                    AlertEntity.assignment_id == assignment.id,
                 )
             )
         ).scalar_one_or_none()
@@ -59,7 +59,7 @@ async def sync_instances_for_assignment(
         if existing:
             continue
 
-        instance = AlertInstance(
+        instance = AlertEntity(
             definition_id=defn.id,
             assignment_id=assignment.id,
             device_id=assignment.device_id,
@@ -71,9 +71,9 @@ async def sync_instances_for_assignment(
 
 async def sync_instances_for_definition(
     session: AsyncSession,
-    definition: AppAlertDefinition,
+    definition: AlertDefinition,
 ) -> None:
-    """Create AlertInstances for all existing assignments of this app."""
+    """Create AlertEntities for all existing assignments of this app."""
     assignments = (
         await session.execute(
             select(AppAssignment)
@@ -87,10 +87,10 @@ async def sync_instances_for_definition(
     for assignment in assignments:
         existing = (
             await session.execute(
-                select(AlertInstance)
+                select(AlertEntity)
                 .where(
-                    AlertInstance.definition_id == definition.id,
-                    AlertInstance.assignment_id == assignment.id,
+                    AlertEntity.definition_id == definition.id,
+                    AlertEntity.assignment_id == assignment.id,
                 )
             )
         ).scalar_one_or_none()
@@ -98,7 +98,7 @@ async def sync_instances_for_definition(
         if existing:
             continue
 
-        instance = AlertInstance(
+        instance = AlertEntity(
             definition_id=definition.id,
             assignment_id=assignment.id,
             device_id=assignment.device_id,
@@ -119,15 +119,15 @@ async def migrate_threshold_overrides_by_name(
     Returns the number of overrides migrated.
     """
     old_defs = (await session.execute(
-        select(AppAlertDefinition).where(
-            AppAlertDefinition.app_version_id == old_version_id,
+        select(AlertDefinition).where(
+            AlertDefinition.app_version_id == old_version_id,
         )
     )).scalars().all()
     old_by_name = {d.name: d for d in old_defs}
 
     new_defs = (await session.execute(
-        select(AppAlertDefinition).where(
-            AppAlertDefinition.app_version_id == new_version_id,
+        select(AlertDefinition).where(
+            AlertDefinition.app_version_id == new_version_id,
         )
     )).scalars().all()
     new_by_name = {d.name: d for d in new_defs}

@@ -1,7 +1,7 @@
 """Event engine — promotes alerts to events based on event policies.
 
 Runs after AlertEngine in the scheduler loop.  Evaluates all enabled
-EventPolicies against AlertInstance fire_count / fire_history and inserts
+EventPolicies against AlertEntity fire_count / fire_history and inserts
 new events into ClickHouse.
 """
 
@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -18,8 +19,9 @@ from sqlalchemy.orm import selectinload
 
 from monctl_central.storage.clickhouse import ClickHouseClient
 from monctl_central.storage.models import (
-    AlertInstance,
-    AppAlertDefinition,
+    ActiveEvent,
+    AlertEntity,
+    AlertDefinition,
     EventPolicy,
 )
 
@@ -71,38 +73,55 @@ class EventEngine:
         if not defn or not defn.enabled:
             return []
 
-        instances = (
+        entities = (
             await session.execute(
-                select(AlertInstance).where(
-                    AlertInstance.definition_id == defn.id,
-                    AlertInstance.enabled == True,  # noqa: E712
+                select(AlertEntity).where(
+                    AlertEntity.definition_id == defn.id,
+                    AlertEntity.enabled == True,  # noqa: E712
                 )
             )
         ).scalars().all()
 
+        # Load existing active events for this policy
+        active_events = (
+            await session.execute(
+                select(ActiveEvent).where(ActiveEvent.policy_id == policy.id)
+            )
+        ).scalars().all()
+        active_by_key = {ae.entity_key: ae for ae in active_events}
+
         now = datetime.now(timezone.utc)
         new_events: list[dict] = []
 
-        for inst in instances:
-            if inst.state == "firing" and not inst.event_created:
+        for inst in entities:
+            entity_key = f"{inst.assignment_id}|{inst.entity_key}"
+            has_active = entity_key in active_by_key
+
+            if inst.state == "firing" and not has_active:
                 if self._check_criteria(policy, inst):
                     event_row = self._build_event(policy, defn, inst, now)
                     new_events.append(event_row)
-                    inst.event_created = True
+                    # Track in active_events table
+                    ae = ActiveEvent(
+                        policy_id=policy.id,
+                        entity_key=entity_key,
+                        clickhouse_event_id=str(uuid.uuid4()),
+                    )
+                    session.add(ae)
                     logger.info(
                         "event_promoted policy=%s defn=%s entity=%s fire_count=%d",
                         policy.name, defn.name, inst.entity_key, inst.fire_count,
                     )
 
-            elif inst.state == "resolved" and inst.event_created:
+            elif inst.state == "resolved" and has_active:
                 if policy.auto_clear_on_resolve:
                     resolve_event = self._build_resolve_event(policy, defn, inst, now)
                     new_events.append(resolve_event)
-                inst.event_created = False
+                await session.delete(active_by_key[entity_key])
 
         return new_events
 
-    def _check_criteria(self, policy: EventPolicy, inst: AlertInstance) -> bool:
+    def _check_criteria(self, policy: EventPolicy, inst: AlertEntity) -> bool:
         if policy.mode == "consecutive":
             return (inst.fire_count or 0) >= policy.fire_count_threshold
 
@@ -115,7 +134,7 @@ class EventEngine:
         return False
 
     def _build_message(
-        self, policy: EventPolicy, defn: AppAlertDefinition, inst: AlertInstance
+        self, policy: EventPolicy, defn: AlertDefinition, inst: AlertEntity
     ) -> str:
         template = policy.message_template or defn.message_template
         labels = inst.entity_labels or {}
@@ -140,8 +159,8 @@ class EventEngine:
     def _build_event(
         self,
         policy: EventPolicy,
-        defn: AppAlertDefinition,
-        inst: AlertInstance,
+        defn: AlertDefinition,
+        inst: AlertEntity,
         now: datetime,
     ) -> dict:
         labels = inst.entity_labels or {}
@@ -175,8 +194,8 @@ class EventEngine:
     def _build_resolve_event(
         self,
         policy: EventPolicy,
-        defn: AppAlertDefinition,
-        inst: AlertInstance,
+        defn: AlertDefinition,
+        inst: AlertEntity,
         now: datetime,
     ) -> dict:
         labels = inst.entity_labels or {}

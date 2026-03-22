@@ -512,6 +512,82 @@ _EVENTS_INSERT_COLUMNS = [
 ]
 
 # ---------------------------------------------------------------------------
+# Alert log table
+# ---------------------------------------------------------------------------
+
+_ALERT_LOG_DDL = """
+CREATE TABLE IF NOT EXISTS alert_log ON CLUSTER '{cluster}'
+(
+    id                 UUID          DEFAULT generateUUIDv4(),
+    definition_id      UUID,
+    definition_name    String        DEFAULT '',
+    entity_key         String,
+    action             String,
+    severity           String        DEFAULT 'warning',
+    current_value      Float64       DEFAULT 0,
+    threshold_value    Float64       DEFAULT 0,
+    expression         String        DEFAULT '',
+    device_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    device_name        String        DEFAULT '',
+    assignment_id      UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    app_id             UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    app_name           String        DEFAULT '',
+    tenant_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    entity_labels      String        DEFAULT '{{}}',
+    fire_count         UInt32        DEFAULT 0,
+    message            String        DEFAULT '',
+    occurred_at        DateTime64(3, 'UTC'),
+    received_at        DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplicatedMergeTree(
+    '/clickhouse/tables/{{shard}}/alert_log', '{{replica}}'
+)
+PARTITION BY toYYYYMM(occurred_at)
+ORDER BY (tenant_id, definition_id, entity_key, occurred_at)
+SETTINGS index_granularity = 8192
+"""
+
+_ALERT_LOG_DDL_LOCAL = """
+CREATE TABLE IF NOT EXISTS alert_log
+(
+    id                 UUID          DEFAULT generateUUIDv4(),
+    definition_id      UUID,
+    definition_name    String        DEFAULT '',
+    entity_key         String,
+    action             String,
+    severity           String        DEFAULT 'warning',
+    current_value      Float64       DEFAULT 0,
+    threshold_value    Float64       DEFAULT 0,
+    expression         String        DEFAULT '',
+    device_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    device_name        String        DEFAULT '',
+    assignment_id      UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    app_id             UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    app_name           String        DEFAULT '',
+    tenant_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    entity_labels      String        DEFAULT '{}',
+    fire_count         UInt32        DEFAULT 0,
+    message            String        DEFAULT '',
+    occurred_at        DateTime64(3, 'UTC'),
+    received_at        DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = MergeTree()
+PARTITION BY toYYYYMM(occurred_at)
+ORDER BY (tenant_id, definition_id, entity_key, occurred_at)
+SETTINGS index_granularity = 8192
+"""
+
+_ALERT_LOG_INSERT_COLUMNS = [
+    "definition_id", "definition_name", "entity_key",
+    "action", "severity",
+    "current_value", "threshold_value", "expression",
+    "device_id", "device_name",
+    "assignment_id", "app_id", "app_name", "tenant_id",
+    "entity_labels", "fire_count", "message",
+    "occurred_at",
+]
+
+# ---------------------------------------------------------------------------
 # Insert column definitions per table
 # ---------------------------------------------------------------------------
 
@@ -860,6 +936,7 @@ class ClickHouseClient:
                 _INTERFACE_DDL,
                 _CONFIG_DDL,
                 _EVENTS_DDL,
+                _ALERT_LOG_DDL,
                 _INTERFACE_HOURLY_DDL,
                 _INTERFACE_DAILY_DDL,
                 _PERFORMANCE_HOURLY_DDL,
@@ -881,6 +958,7 @@ class ClickHouseClient:
                 _INTERFACE_DDL_LOCAL,
                 _CONFIG_DDL_LOCAL,
                 _EVENTS_DDL_LOCAL,
+                _ALERT_LOG_DDL_LOCAL,
                 _INTERFACE_HOURLY_DDL_LOCAL,
                 _INTERFACE_DAILY_DDL_LOCAL,
                 _PERFORMANCE_HOURLY_DDL_LOCAL,
@@ -939,6 +1017,12 @@ class ClickHouseClient:
             "ALTER TABLE events ADD INDEX IF NOT EXISTS idx_policy bloom_filter(policy_id) GRANULARITY 4",
             "ALTER TABLE events ADD INDEX IF NOT EXISTS idx_state set(state) GRANULARITY 4",
             "ALTER TABLE events ADD INDEX IF NOT EXISTS idx_severity set(severity) GRANULARITY 4",
+            # alert_log
+            "ALTER TABLE alert_log ADD INDEX IF NOT EXISTS idx_definition bloom_filter(definition_id) GRANULARITY 4",
+            "ALTER TABLE alert_log ADD INDEX IF NOT EXISTS idx_device bloom_filter(device_id) GRANULARITY 4",
+            "ALTER TABLE alert_log ADD INDEX IF NOT EXISTS idx_tenant bloom_filter(tenant_id) GRANULARITY 4",
+            "ALTER TABLE alert_log ADD INDEX IF NOT EXISTS idx_action set(action) GRANULARITY 4",
+            "ALTER TABLE alert_log ADD INDEX IF NOT EXISTS idx_severity set(severity) GRANULARITY 4",
         ]
         for idx_sql in _INDEXES:
             try:
@@ -946,7 +1030,7 @@ class ClickHouseClient:
             except Exception:
                 pass
 
-        logger.info("ClickHouse tables ensured (4 domain tables + events + materialized views)")
+        logger.info("ClickHouse tables ensured (4 domain tables + events + alert_log + materialized views)")
 
     # ------------------------------------------------------------------
     # Insert methods
@@ -1632,3 +1716,124 @@ class ClickHouseClient:
             return
 
         client.command(sql)
+
+    # ------------------------------------------------------------------
+    # Alert log methods
+    # ------------------------------------------------------------------
+
+    def insert_alert_log(self, records: list[dict]) -> None:
+        """Batch insert alert fire/clear records."""
+        if not records:
+            return
+        client = self._get_client()
+        data = [[r.get(col) for col in _ALERT_LOG_INSERT_COLUMNS] for r in records]
+        client.insert("alert_log", data, column_names=_ALERT_LOG_INSERT_COLUMNS)
+
+    def _build_alert_log_filters(
+        self,
+        *,
+        definition_id: str | None = None,
+        entity_key: str | None = None,
+        device_id: str | None = None,
+        action: str | None = None,
+        tenant_id: str | None = None,
+        from_ts: str | None = None,
+        to_ts: str | None = None,
+    ) -> tuple[list[str], dict[str, Any]]:
+        """Build WHERE clauses and params for alert_log queries."""
+        wheres: list[str] = []
+        params: dict[str, Any] = {}
+
+        if definition_id:
+            wheres.append("definition_id = {definition_id:UUID}")
+            params["definition_id"] = definition_id
+        if entity_key:
+            wheres.append("entity_key = {entity_key:String}")
+            params["entity_key"] = entity_key
+        if device_id:
+            wheres.append("device_id = {device_id:UUID}")
+            params["device_id"] = device_id
+        if action:
+            wheres.append("action = {action:String}")
+            params["action"] = action
+        if tenant_id:
+            wheres.append("tenant_id = {tenant_id:UUID}")
+            params["tenant_id"] = tenant_id
+        if from_ts:
+            wheres.append("occurred_at >= {from_ts:DateTime64(3)}")
+            params["from_ts"] = from_ts
+        if to_ts:
+            wheres.append("occurred_at <= {to_ts:DateTime64(3)}")
+            params["to_ts"] = to_ts
+
+        return wheres, params
+
+    def query_alert_log(
+        self,
+        *,
+        definition_id: str | None = None,
+        entity_key: str | None = None,
+        device_id: str | None = None,
+        action: str | None = None,
+        tenant_id: str | None = None,
+        from_ts: str | None = None,
+        to_ts: str | None = None,
+        sort_by: str = "occurred_at",
+        sort_dir: str = "DESC",
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict]:
+        """Query alert log records with filters."""
+        wheres, params = self._build_alert_log_filters(
+            definition_id=definition_id, entity_key=entity_key,
+            device_id=device_id, action=action, tenant_id=tenant_id,
+            from_ts=from_ts, to_ts=to_ts,
+        )
+
+        sql = "SELECT * FROM alert_log"
+        if wheres:
+            sql += " WHERE " + " AND ".join(wheres)
+
+        VALID_SORT = {"occurred_at", "severity", "action", "definition_name", "device_name"}
+        sort_col = sort_by if sort_by in VALID_SORT else "occurred_at"
+        sort_direction = "DESC" if sort_dir.upper() == "DESC" else "ASC"
+        sql += f" ORDER BY {sort_col} {sort_direction}"
+        sql += f" LIMIT {limit} OFFSET {offset}"
+
+        try:
+            client = self._get_client()
+            result = client.query(sql, parameters=params)
+            return list(result.named_results())
+        except Exception as exc:
+            if self._is_connection_error(exc):
+                client = self._reconnect()
+                result = client.query(sql, parameters=params)
+                return list(result.named_results())
+            raise
+
+    def count_alert_log(
+        self,
+        *,
+        definition_id: str | None = None,
+        entity_key: str | None = None,
+        device_id: str | None = None,
+        action: str | None = None,
+        tenant_id: str | None = None,
+        from_ts: str | None = None,
+        to_ts: str | None = None,
+    ) -> int:
+        """Count alert log records matching the given filters."""
+        wheres, params = self._build_alert_log_filters(
+            definition_id=definition_id, entity_key=entity_key,
+            device_id=device_id, action=action, tenant_id=tenant_id,
+            from_ts=from_ts, to_ts=to_ts,
+        )
+        sql = "SELECT count() FROM alert_log"
+        if wheres:
+            sql += " WHERE " + " AND ".join(wheres)
+        try:
+            client = self._get_client()
+            result = client.query(sql, parameters=params)
+            return result.result_rows[0][0] if result.result_rows else 0
+        except Exception:
+            return 0

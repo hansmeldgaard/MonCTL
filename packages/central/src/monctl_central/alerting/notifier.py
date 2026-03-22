@@ -6,45 +6,27 @@ import logging
 
 import httpx
 
-from monctl_central.storage.models import AppAlertDefinition
+from monctl_central.storage.models import AlertDefinition
 
 logger = logging.getLogger(__name__)
 
 
 async def send_notifications(
-    defn: AppAlertDefinition, assignment_id: str, state: str
+    defn: AlertDefinition, assignment_id: str, state: str
 ) -> None:
     """Send notifications for a firing or resolved alert.
 
-    Iterates over defn.notification_channels and dispatches accordingly.
-    Each channel is a dict like:
-        {"type": "webhook", "url": "https://...", "secret": "..."}
-        {"type": "email", "to": "ops@example.com"}
+    Notification channels were removed from alert definitions in the redesign.
+    This is now a placeholder for future notification system integration.
     """
-    for channel in (defn.notification_channels or []):
-        try:
-            channel_type = channel.get("type", "")
-            if channel_type == "webhook":
-                await _send_webhook(channel, defn, assignment_id, state)
-            elif channel_type == "email":
-                logger.info(
-                    "email_notification_skipped",
-                    reason="email not implemented yet",
-                    definition=defn.name,
-                    assignment_id=assignment_id,
-                )
-            else:
-                logger.warning("unknown_notification_type", type=channel_type)
-        except Exception:
-            logger.exception(
-                "notification_send_error",
-                channel_type=channel.get("type"),
-                definition_id=str(defn.id),
-            )
+    logger.debug(
+        "notification_placeholder defn=%s assignment=%s state=%s",
+        defn.name, assignment_id, state,
+    )
 
 
 async def _send_webhook(
-    channel: dict, defn: AppAlertDefinition, assignment_id: str, state: str
+    channel: dict, defn: AlertDefinition, assignment_id: str, state: str
 ) -> None:
     """POST alert payload to a webhook URL."""
     url = channel.get("url")

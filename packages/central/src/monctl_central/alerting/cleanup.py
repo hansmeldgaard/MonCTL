@@ -1,4 +1,4 @@
-"""Cleanup resolved AlertInstances past the retention window."""
+"""Cleanup resolved AlertEntities past the retention window."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from monctl_central.storage.models import AlertInstance, SystemSetting
+from monctl_central.storage.models import AlertEntity, SystemSetting
 
 logger = logging.getLogger(__name__)
 
@@ -23,19 +23,18 @@ async def cleanup_resolved_instances(session: AsyncSession) -> int:
     cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
 
     stmt = (
-        update(AlertInstance)
+        update(AlertEntity)
         .where(
-            AlertInstance.state == "resolved",
-            AlertInstance.resolved_at < cutoff,
+            AlertEntity.state == "resolved",
+            AlertEntity.last_cleared_at < cutoff,
         )
         .values(
             state="ok",
-            resolved_at=None,
-            started_at=None,
+            last_cleared_at=None,
+            started_firing_at=None,
             current_value=None,
             fire_count=0,
             fire_history=[],
-            event_created=False,
         )
     )
 

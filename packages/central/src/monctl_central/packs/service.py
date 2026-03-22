@@ -12,7 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from monctl_central.storage.models import (
     App,
-    AppAlertDefinition,
+    AlertDefinition,
     AppVersion,
     Connector,
     ConnectorVersion,
@@ -619,14 +619,13 @@ async def _sync_version_alert_definitions(
     - Creates missing definitions
     - Updates existing definitions (matched by name within version)
     - Does NOT delete definitions not in the pack (user may have added custom ones)
-    - Never overwrites notification_channels
     """
     if not alert_defs_data:
         return
 
     existing_defs = (await db.execute(
-        select(AppAlertDefinition).where(
-            AppAlertDefinition.app_version_id == version.id,
+        select(AlertDefinition).where(
+            AlertDefinition.app_version_id == version.id,
         )
     )).scalars().all()
     existing_by_name = {d.name: d for d in existing_defs}
@@ -634,7 +633,6 @@ async def _sync_version_alert_definitions(
     for ad_data in alert_defs_data:
         name = ad_data["name"]
         if name in existing_by_name:
-            # Update existing — but NEVER overwrite notification_channels
             existing_def = existing_by_name[name]
             existing_def.expression = ad_data["expression"]
             existing_def.window = ad_data.get("window", "5m")
@@ -643,11 +641,9 @@ async def _sync_version_alert_definitions(
             existing_def.description = ad_data.get("description")
             existing_def.message_template = ad_data.get("message_template")
             existing_def.pack_origin = pack_uid
-            if pack_id:
-                existing_def.pack_id = pack_id
         else:
             # Create new definition
-            new_def = AppAlertDefinition(
+            new_def = AlertDefinition(
                 app_id=app.id,
                 app_version_id=version.id,
                 name=name,
@@ -657,14 +653,11 @@ async def _sync_version_alert_definitions(
                 enabled=ad_data.get("enabled", True),
                 description=ad_data.get("description"),
                 message_template=ad_data.get("message_template"),
-                notification_channels=[],
                 pack_origin=pack_uid,
             )
-            if pack_id:
-                new_def.pack_id = pack_id
             db.add(new_def)
             await db.flush()
-            # Auto-create AlertInstances for existing assignments
+            # Auto-create AlertEntities for existing assignments
             from monctl_central.alerting.instance_sync import sync_instances_for_definition
             await sync_instances_for_definition(db, new_def)
 
@@ -739,8 +732,9 @@ async def get_entity_counts(pack_id: uuid.UUID, db: AsyncSession) -> dict:
     # Count alert definitions on apps belonging to this pack
     alert_count = (await db.execute(
         select(func.count())
-        .select_from(AppAlertDefinition)
-        .where(AppAlertDefinition.pack_id == pack_id)
+        .select_from(AlertDefinition)
+        .join(App, AlertDefinition.app_id == App.id)
+        .where(App.pack_id == pack_id)
     )).scalar() or 0
     counts["alert_definitions"] = alert_count
 

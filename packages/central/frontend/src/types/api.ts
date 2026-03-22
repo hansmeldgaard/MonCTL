@@ -381,7 +381,7 @@ export interface CredentialTemplate {
 
 // ── Alerts ────────────────────────────────────────────────
 
-export interface AppAlertDefinition {
+export interface AlertDefinition {
   id: string;
   app_id: string;
   app_version_id: string;
@@ -392,7 +392,6 @@ export interface AppAlertDefinition {
   severity: "info" | "warning" | "critical" | "emergency" | "recovery";
   enabled: boolean;
   message_template: string | null;
-  notification_channels: Record<string, unknown>[];
   pack_origin: string | null;
   created_at: string;
   updated_at: string;
@@ -400,7 +399,10 @@ export interface AppAlertDefinition {
   firing_count?: number;
 }
 
-export interface AlertInstance {
+/** @deprecated Use AlertDefinition */
+export type AppAlertDefinition = AlertDefinition;
+
+export interface AlertEntity {
   id: string;
   definition_id: string;
   assignment_id: string;
@@ -411,9 +413,8 @@ export interface AlertInstance {
   fire_count: number;
   fire_history: boolean[];
   last_evaluated_at: string | null;
-  started_at: string | null;
-  resolved_at: string | null;
-  event_created: boolean;
+  started_firing_at: string | null;
+  last_cleared_at: string | null;
   entity_key: string;
   entity_labels: Record<string, string>;
   created_at: string;
@@ -422,6 +423,28 @@ export interface AlertInstance {
   definition_expression?: string;
   app_name?: string;
   device_name?: string;
+}
+
+/** @deprecated Use AlertEntity */
+export type AlertInstance = AlertEntity;
+
+export interface AlertLogEntry {
+  id: string;
+  definition_id: string;
+  definition_name: string;
+  entity_key: string;
+  action: "fire" | "clear";
+  severity: string;
+  current_value: number;
+  threshold_value: number;
+  expression: string;
+  device_id: string;
+  device_name: string;
+  app_name: string;
+  entity_labels: Record<string, string>;
+  fire_count: number;
+  message: string;
+  occurred_at: string;
 }
 
 export interface ThresholdOverride {
@@ -442,10 +465,14 @@ export interface AlertMetric {
 
 export interface ExpressionValidation {
   valid: boolean;
-  error: string | null;
+  errors: string[];
+  warnings: string[];
+  error: string | null;  // backward compat
   referenced_metrics: string[];
-  threshold_params: { name: string; default_value: number | string }[];
+  threshold_params: { name: string; default_value: number | string; param_key?: string }[];
   has_aggregation: boolean;
+  has_arithmetic: boolean;
+  has_division: boolean;
 }
 
 export interface DeviceThresholdRow {
@@ -537,8 +564,8 @@ export interface EventPolicy {
 }
 
 // Legacy aliases for backward compat with DashboardPage
-export type ActiveAlert = AlertInstance;
-export type AlertRule = AppAlertDefinition;
+export type ActiveAlert = AlertEntity;
+export type AlertRule = AlertDefinition;
 
 // ── Health ────────────────────────────────────────────────
 

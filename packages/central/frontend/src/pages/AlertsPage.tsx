@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Bell, Clock, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
+import { Bell, Clock, FileText, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
@@ -13,8 +13,8 @@ import {
 } from "@/components/ui/table.tsx";
 import {
   useActiveAlerts,
+  useAlertLog,
   useAlertRules,
-  useResolvedAlertInstances,
   useInvertAlertDefinition,
   useCreateAlertDefinition,
 } from "@/api/hooks.ts";
@@ -23,9 +23,9 @@ import { useTimezone } from "@/hooks/useTimezone.ts";
 import { useListState } from "@/hooks/useListState.ts";
 import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
-import type { AlertInstance, AppAlertDefinition } from "@/types/api.ts";
+import type { AlertEntity, AlertDefinition, AlertLogEntry } from "@/types/api.ts";
 
-type Tab = "active" | "history" | "definitions";
+type Tab = "active" | "log" | "definitions";
 
 const severityVariant = (severity: string) => {
   switch (severity?.toLowerCase()) {
@@ -56,11 +56,22 @@ export function AlertsPage() {
   const { data: defsResponse, isLoading: defsLoading } = useAlertRules(defsListState.params);
   const definitions = defsResponse?.data ?? [];
   const defsMeta = (defsResponse as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
-  const { data: resolvedData, isLoading: resolvedLoading } = useResolvedAlertInstances();
+
+  // Alert log state
+  const [logPage, setLogPage] = useState(0);
+  const [logAction, setLogAction] = useState<string>("");
+  const LOG_PAGE_SIZE = 50;
+  const { data: logResponse, isLoading: logLoading } = useAlertLog({
+    action: logAction || undefined,
+    limit: LOG_PAGE_SIZE,
+    offset: logPage * LOG_PAGE_SIZE,
+  });
+  const logEntries = logResponse?.data ?? [];
+  const logMeta = (logResponse as any)?.meta ?? { limit: LOG_PAGE_SIZE, offset: 0, count: 0, total: 0 };
 
   const isLoading =
     tab === "active" ? alertsLoading :
-    tab === "history" ? resolvedLoading :
+    tab === "log" ? logLoading :
     defsLoading;
 
   return (
@@ -81,12 +92,12 @@ export function AlertsPage() {
           )}
         </Button>
         <Button
-          variant={tab === "history" ? "secondary" : "ghost"}
+          variant={tab === "log" ? "secondary" : "ghost"}
           size="sm"
-          onClick={() => setTab("history")}
+          onClick={() => setTab("log")}
         >
-          <Clock className="h-3.5 w-3.5" />
-          History
+          <FileText className="h-3.5 w-3.5" />
+          Alert Log
         </Button>
         <Button
           variant={tab === "definitions" ? "secondary" : "ghost"}
@@ -104,10 +115,14 @@ export function AlertsPage() {
         </div>
       ) : tab === "active" ? (
         <ActiveAlertsTab alerts={alerts ?? []} />
-      ) : tab === "history" ? (
-        <HistoryTab
-          instances={resolvedData?.data ?? []}
-          retentionDays={resolvedData?.meta?.retention_days ?? 7}
+      ) : tab === "log" ? (
+        <AlertLogTab
+          entries={logEntries}
+          meta={logMeta}
+          page={logPage}
+          onPageChange={setLogPage}
+          action={logAction}
+          onActionChange={(v) => { setLogAction(v); setLogPage(0); }}
         />
       ) : (
         <DefinitionsTab definitions={definitions} listState={defsListState} meta={defsMeta} />
@@ -116,7 +131,7 @@ export function AlertsPage() {
   );
 }
 
-function ActiveAlertsTab({ alerts }: { alerts: AlertInstance[] }) {
+function ActiveAlertsTab({ alerts }: { alerts: AlertEntity[] }) {
   return (
     <Card>
       <CardHeader>
@@ -177,7 +192,7 @@ function ActiveAlertsTab({ alerts }: { alerts: AlertInstance[] }) {
                     {alert.fire_count}
                   </TableCell>
                   <TableCell className="text-zinc-500">
-                    {alert.started_at ? timeAgo(alert.started_at) : "—"}
+                    {alert.started_firing_at ? timeAgo(alert.started_firing_at) : "—"}
                   </TableCell>
                 </TableRow>
               ))}
@@ -189,97 +204,110 @@ function ActiveAlertsTab({ alerts }: { alerts: AlertInstance[] }) {
   );
 }
 
-function HistoryTab({
-  instances,
-  retentionDays,
+function AlertLogTab({
+  entries,
+  meta,
+  page,
+  onPageChange,
+  action,
+  onActionChange,
 }: {
-  instances: AlertInstance[];
-  retentionDays: number;
+  entries: AlertLogEntry[];
+  meta: { limit: number; offset: number; count: number; total: number };
+  page: number;
+  onPageChange: (p: number) => void;
+  action: string;
+  onActionChange: (v: string) => void;
 }) {
   const tz = useTimezone();
-
-  const duration = (start: string | null, end: string | null) => {
-    if (!start || !end) return "—";
-    const ms = new Date(end).getTime() - new Date(start).getTime();
-    if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
-    if (ms < 3_600_000) return `${Math.round(ms / 60_000)} min`;
-    return `${(ms / 3_600_000).toFixed(1)}h`;
-  };
 
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <Clock className="h-4 w-4" />
-          Resolved Alerts ({instances.length})
+          <FileText className="h-4 w-4" />
+          Alert Log ({meta.total})
+          <div className="ml-auto flex items-center gap-1">
+            {["", "fire", "clear"].map((v) => (
+              <Button
+                key={v}
+                variant={action === v ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => onActionChange(v)}
+              >
+                {v === "" ? "All" : v === "fire" ? "Fire" : "Clear"}
+              </Button>
+            ))}
+          </div>
         </CardTitle>
       </CardHeader>
       <CardContent>
-        {instances.length === 0 ? (
+        {entries.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
-            <Clock className="mb-2 h-8 w-8 text-zinc-600" />
-            <p className="text-sm">No resolved alerts in the last {retentionDays} days</p>
+            <FileText className="mb-2 h-8 w-8 text-zinc-600" />
+            <p className="text-sm">No alert log entries</p>
           </div>
         ) : (
           <>
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Severity</TableHead>
-                  <TableHead>Alert Name</TableHead>
-                  <TableHead>App</TableHead>
+                  <TableHead>Time</TableHead>
+                  <TableHead>Action</TableHead>
+                  <TableHead>Alert</TableHead>
                   <TableHead>Device</TableHead>
                   <TableHead>Entity</TableHead>
-                  <TableHead>Peak Value</TableHead>
-                  <TableHead>Fired At</TableHead>
-                  <TableHead>Resolved At</TableHead>
-                  <TableHead>Duration</TableHead>
+                  <TableHead>Value</TableHead>
+                  <TableHead>Fire Count</TableHead>
+                  <TableHead>Message</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {instances.map((inst) => (
-                  <TableRow key={inst.id}>
-                    <TableCell>
-                      <Badge variant={severityVariant(inst.definition_severity ?? "")}>
-                        {inst.definition_severity ?? "unknown"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="font-medium text-zinc-100">
-                      {inst.definition_name ?? inst.definition_id}
-                    </TableCell>
-                    <TableCell className="text-zinc-400">
-                      {inst.app_name ?? ""}
-                    </TableCell>
-                    <TableCell className="text-zinc-300">
-                      {inst.device_name ?? ""}
-                    </TableCell>
-                    <TableCell className="text-zinc-400 text-xs font-mono">
-                      {inst.entity_labels?.if_name ||
-                        inst.entity_labels?.component ||
-                        inst.entity_key ||
-                        "—"}
-                    </TableCell>
-                    <TableCell className="text-zinc-300">
-                      {inst.current_value != null
-                        ? Number(inst.current_value).toFixed(1)
-                        : "—"}
-                    </TableCell>
-                    <TableCell className="text-zinc-500 text-xs">
-                      {inst.started_at ? formatDate(inst.started_at, tz) : "—"}
-                    </TableCell>
-                    <TableCell className="text-zinc-500 text-xs">
-                      {inst.resolved_at ? formatDate(inst.resolved_at, tz) : "—"}
-                    </TableCell>
-                    <TableCell className="text-zinc-400">
-                      {duration(inst.started_at, inst.resolved_at)}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {entries.map((entry, i) => {
+                  const labels = typeof entry.entity_labels === "string"
+                    ? JSON.parse(entry.entity_labels) : entry.entity_labels || {};
+                  return (
+                    <TableRow key={`${entry.id ?? i}`}>
+                      <TableCell className="text-zinc-500 text-xs whitespace-nowrap">
+                        {formatDate(entry.occurred_at, tz)}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={entry.action === "fire" ? "destructive" : "success"}>
+                          {entry.action}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="font-medium text-zinc-100">
+                        {entry.definition_name}
+                      </TableCell>
+                      <TableCell className="text-zinc-300">
+                        {entry.device_name}
+                      </TableCell>
+                      <TableCell className="text-zinc-400 text-xs font-mono">
+                        {labels.if_name || labels.component || entry.entity_key || "—"}
+                      </TableCell>
+                      <TableCell className="text-zinc-300">
+                        {entry.action === "fire" && entry.current_value != null
+                          ? Number(entry.current_value).toFixed(1)
+                          : "—"}
+                      </TableCell>
+                      <TableCell className="text-zinc-400">
+                        {entry.fire_count}
+                      </TableCell>
+                      <TableCell className="text-zinc-400 text-xs max-w-xs truncate">
+                        {entry.message}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
-            <p className="mt-3 text-xs text-zinc-600">
-              Showing resolved alerts from the last {retentionDays} days
-            </p>
+            <PaginationBar
+              page={page}
+              pageSize={meta.limit}
+              total={meta.total}
+              count={meta.count}
+              onPageChange={onPageChange}
+            />
           </>
         )}
       </CardContent>
@@ -292,7 +320,7 @@ function DefinitionsTab({
   listState,
   meta,
 }: {
-  definitions: AppAlertDefinition[];
+  definitions: AlertDefinition[];
   listState: ReturnType<typeof useListState>;
   meta: { limit: number; offset: number; count: number; total: number };
 }) {
