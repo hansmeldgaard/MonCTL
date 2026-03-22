@@ -1209,9 +1209,14 @@ function ConfigurationTab({ deviceId }: { deviceId: string }) {
     }
   }, [tsData, compareTimeA, compareTimeB]);
 
-  // Recent changes badge
+  // Recent changes badge — stable timestamp to prevent infinite re-fetch loop
+  const recentCutoff = useMemo(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0); // start of today — stable across renders
+    return d.toISOString();
+  }, []);
   const { data: recentResp } = useConfigChangelog(deviceId, {
-    from_ts: new Date(Date.now() - 86400000).toISOString(),
+    from_ts: recentCutoff,
     limit: 1,
   });
   const hasRecentChanges = (recentResp?.data?.length ?? 0) > 0;
