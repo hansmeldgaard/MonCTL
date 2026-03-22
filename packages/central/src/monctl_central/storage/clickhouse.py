@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS performance ON CLUSTER '{cluster}'
 
     metric_names       Array(String)   DEFAULT [],
     metric_values      Array(Float64)  DEFAULT [],
+    metric_types       Array(String)   DEFAULT [],
 
     executed_at        DateTime64(3, 'UTC'),
     received_at        DateTime64(3, 'UTC') DEFAULT now64(3),
@@ -288,6 +289,7 @@ CREATE TABLE IF NOT EXISTS performance
 
     metric_names       Array(String)   DEFAULT [],
     metric_values      Array(Float64)  DEFAULT [],
+    metric_types       Array(String)   DEFAULT [],
 
     executed_at        DateTime64(3, 'UTC'),
     received_at        DateTime64(3, 'UTC') DEFAULT now64(3),
@@ -525,7 +527,7 @@ _PERF_INSERT_COLUMNS = [
     "assignment_id", "collector_id", "app_id", "device_id",
     "component", "component_type",
     "state", "output", "error_message",
-    "metric_names", "metric_values",
+    "metric_names", "metric_values", "metric_types",
     "executed_at", "execution_time", "started_at",
     "collector_name", "device_name", "app_name", "tenant_id", "tenant_name",
 ]
@@ -625,6 +627,53 @@ ORDER BY (device_id, interface_id, day)
 SETTINGS index_granularity = 8192
 """
 
+_PERF_ROLLUP_COLUMNS = """
+    device_id          UUID,
+    app_id             UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    component_type     String        DEFAULT '',
+    component          String        DEFAULT '',
+    metric_name        String        DEFAULT '',
+    metric_type        String        DEFAULT 'gauge',
+    {time_col}         DateTime('UTC'),
+
+    val_min            Float64       DEFAULT 0,
+    val_max            Float64       DEFAULT 0,
+    val_avg            Float64       DEFAULT 0,
+    val_p95            Float64       DEFAULT 0,
+    sample_count       UInt16        DEFAULT 0,
+
+    device_name        String        DEFAULT '',
+    app_name           String        DEFAULT '',
+    tenant_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    tenant_name        String        DEFAULT ''
+"""
+
+_PERFORMANCE_HOURLY_DDL = """
+CREATE TABLE IF NOT EXISTS performance_hourly ON CLUSTER '{cluster}'
+(
+""" + _PERF_ROLLUP_COLUMNS.format(time_col="hour") + """
+)
+ENGINE = ReplicatedMergeTree(
+    '/clickhouse/tables/{{shard}}/performance_hourly', '{{replica}}'
+)
+PARTITION BY toYYYYMM(hour)
+ORDER BY (device_id, component_type, component, metric_name, hour)
+SETTINGS index_granularity = 8192
+"""
+
+_PERFORMANCE_DAILY_DDL = """
+CREATE TABLE IF NOT EXISTS performance_daily ON CLUSTER '{cluster}'
+(
+""" + _PERF_ROLLUP_COLUMNS.format(time_col="day") + """
+)
+ENGINE = ReplicatedMergeTree(
+    '/clickhouse/tables/{{shard}}/performance_daily', '{{replica}}'
+)
+PARTITION BY toYear(day)
+ORDER BY (device_id, component_type, component, metric_name, day)
+SETTINGS index_granularity = 8192
+"""
+
 _INTERFACE_HOURLY_DDL_LOCAL = """
 CREATE TABLE IF NOT EXISTS interface_hourly
 (
@@ -644,6 +693,28 @@ CREATE TABLE IF NOT EXISTS interface_daily
 ENGINE = ReplacingMergeTree(day)
 PARTITION BY toYear(day)
 ORDER BY (device_id, interface_id, day)
+SETTINGS index_granularity = 8192
+"""
+
+_PERFORMANCE_HOURLY_DDL_LOCAL = """
+CREATE TABLE IF NOT EXISTS performance_hourly
+(
+""" + _PERF_ROLLUP_COLUMNS.format(time_col="hour") + """
+)
+ENGINE = MergeTree()
+PARTITION BY toYYYYMM(hour)
+ORDER BY (device_id, component_type, component, metric_name, hour)
+SETTINGS index_granularity = 8192
+"""
+
+_PERFORMANCE_DAILY_DDL_LOCAL = """
+CREATE TABLE IF NOT EXISTS performance_daily
+(
+""" + _PERF_ROLLUP_COLUMNS.format(time_col="day") + """
+)
+ENGINE = MergeTree()
+PARTITION BY toYear(day)
+ORDER BY (device_id, component_type, component, metric_name, day)
 SETTINGS index_granularity = 8192
 """
 
@@ -791,6 +862,8 @@ class ClickHouseClient:
                 _EVENTS_DDL,
                 _INTERFACE_HOURLY_DDL,
                 _INTERFACE_DAILY_DDL,
+                _PERFORMANCE_HOURLY_DDL,
+                _PERFORMANCE_DAILY_DDL,
             ]:
                 client.command(ddl.format(cluster=self._cluster_name))
             for mv_ddl in [
@@ -810,6 +883,8 @@ class ClickHouseClient:
                 _EVENTS_DDL_LOCAL,
                 _INTERFACE_HOURLY_DDL_LOCAL,
                 _INTERFACE_DAILY_DDL_LOCAL,
+                _PERFORMANCE_HOURLY_DDL_LOCAL,
+                _PERFORMANCE_DAILY_DDL_LOCAL,
             ]:
                 client.command(ddl)
             for mv_ddl in [
@@ -828,6 +903,8 @@ class ClickHouseClient:
             "ALTER TABLE config ADD COLUMN IF NOT EXISTS tenant_name String DEFAULT ''",
             "ALTER TABLE interface_hourly ADD COLUMN IF NOT EXISTS tenant_name String DEFAULT ''",
             "ALTER TABLE interface_daily ADD COLUMN IF NOT EXISTS tenant_name String DEFAULT ''",
+            # Add metric_types to performance tables
+            "ALTER TABLE performance ADD COLUMN IF NOT EXISTS metric_types Array(String) DEFAULT [] AFTER metric_values",
         ]
         for alter_sql in _TENANT_NAME_ALTERS:
             try:
@@ -1339,6 +1416,51 @@ class ClickHouseClient:
             params["app_id"] = app_id
 
         sql += f" ORDER BY executed_at DESC LIMIT {limit}"
+
+        try:
+            client = self._get_client()
+            result = client.query(sql, parameters=params)
+            return list(result.named_results())
+        except Exception as exc:
+            if self._is_table_missing_error(exc):
+                return []
+            if self._is_connection_error(exc):
+                client = self._reconnect()
+                result = client.query(sql, parameters=params)
+                return list(result.named_results())
+            raise
+
+    def query_config_snapshot_at_time(
+        self,
+        device_id: str,
+        at_time: str,
+        *,
+        app_id: str | None = None,
+    ) -> list[dict]:
+        """Return the config state at a specific point in time.
+
+        Uses argMax to get the latest value for each key at or before `at_time`.
+        """
+        app_filter = ""
+        params: dict[str, Any] = {"device_id": device_id, "at_time": at_time}
+        if app_id:
+            app_filter = " AND app_id = {app_id:UUID}"
+            params["app_id"] = app_id
+
+        sql = (
+            "SELECT "
+            "  component_type, component, config_key, "
+            "  argMax(config_value, executed_at) AS config_value, "
+            "  argMax(config_hash, executed_at) AS config_hash, "
+            "  argMax(app_name, executed_at) AS resolved_app_name, "
+            "  argMax(app_id, executed_at) AS resolved_app_id, "
+            "  max(executed_at) AS latest_ts "
+            "FROM config "
+            "WHERE device_id = {device_id:UUID} "
+            f"  AND executed_at <= {{at_time:DateTime64(3)}}{app_filter}"
+            " GROUP BY component_type, component, config_key"
+            " ORDER BY component_type, component, config_key"
+        )
 
         try:
             client = self._get_client()
