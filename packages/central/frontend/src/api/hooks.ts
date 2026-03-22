@@ -838,6 +838,34 @@ export function useDeviceHistory(
   });
 }
 
+/**
+ * Fetch history from the availability_latency table ONLY.
+ * Used by the Overview tab's AvailabilityChart.
+ */
+export function useAvailabilityHistory(
+  deviceId: string | undefined,
+  fromTs: string | null,
+  toTs: string | null = null,
+  limit = 5000,
+) {
+  return useQuery({
+    queryKey: ["availability-history", deviceId, fromTs, toTs, limit],
+    queryFn: () => {
+      const params = new URLSearchParams({
+        device_id: deviceId!,
+        table: "availability_latency",
+        limit: String(limit),
+        ...(fromTs ? { from_ts: fromTs } : {}),
+        ...(toTs ? { to_ts: toTs } : {}),
+      });
+      return apiGet<ResultRecord[]>(`/results?${params}`);
+    },
+    select: (res) => res.data,
+    enabled: !!deviceId,
+    refetchInterval: POLL_DETAIL,
+  });
+}
+
 // ── Interface Data ───────────────────────────────────────
 
 export function useInterfaceLatest(deviceId: string | undefined) {

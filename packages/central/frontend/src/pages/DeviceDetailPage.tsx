@@ -67,6 +67,7 @@ import {
   useDeviceAssignments,
   useDeviceConfigData,
   useDeviceConfigTemplates,
+  useAvailabilityHistory,
   useDeviceHistory,
   useDeviceMonitoring,
   useDeviceResults,
@@ -811,16 +812,43 @@ function OverviewTab({ deviceId }: { deviceId: string }) {
   const [timeRange, setTimeRange] = useState<TimeRangeValue>(DEFAULT_RANGE);
   const { fromTs, toTs } = useMemo(() => rangeToTimestamps(timeRange), [timeRange]);
   const { data: deviceResults } = useDeviceResults(deviceId);
-  const { data: history, isLoading: histLoading } = useDeviceHistory(
+  const { data: history, isLoading: histLoading } = useAvailabilityHistory(
     deviceId,
     fromTs,
     toTs,
     5000,
-    "availability_latency",
   );
+
+  // ── Staleness detection ───────────────────────────────────
+  const STALE_THRESHOLD_MS = 15 * 60 * 1000; // 15 minutes
+  const staleSince = useMemo(() => {
+    if (!deviceResults?.checks?.length) return null;
+    const latest = deviceResults.checks.reduce((newest: number, check: any) => {
+      const ts = new Date(check.executed_at).getTime();
+      return ts > newest ? ts : newest;
+    }, 0);
+    if (latest === 0) return null;
+    const ageMs = Date.now() - latest;
+    return ageMs > STALE_THRESHOLD_MS ? new Date(latest) : null;
+  }, [deviceResults]);
 
   return (
     <div className="space-y-4">
+      {/* Staleness warning */}
+      {staleSince && (
+        <div className="flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-300">
+          <Clock className="h-4 w-4 flex-shrink-0" />
+          <span>
+            No data received since{" "}
+            <span className="font-medium text-amber-200">
+              {formatDate(staleSince.toISOString(), tz)}
+            </span>
+            {" "}({timeAgo(staleSince.toISOString())}).
+            Check collector connectivity and assignment status.
+          </span>
+        </div>
+      )}
+
       {/* Chart header + time picker */}
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-medium text-zinc-400">Availability &amp; Latency</h3>
