@@ -141,7 +141,7 @@ export function useDeviceConfigData(deviceId: string | undefined) {
   return useQuery({
     queryKey: ["device-config-data", deviceId],
     queryFn: () =>
-      apiGet<Record<string, unknown>[]>(`/results?table=config&device_id=${deviceId}&limit=1000`),
+      apiGet<Record<string, unknown>[]>(`/results/latest?table=config&device_id=${deviceId}`),
     select: (res) => res.data,
     enabled: !!deviceId,
     refetchInterval: POLL_DETAIL,
