@@ -142,6 +142,8 @@ export interface BulkUpdateAssignmentsRequest {
   schedule_value?: string | null;
   credential_id?: string | null;
   enabled?: boolean | null;
+  app_version_id?: string | null;
+  use_latest?: boolean | null;
 }
 
 export interface DeviceListParams {

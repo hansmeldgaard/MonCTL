@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { ChevronDown, ListChecks, Loader2 } from "lucide-react";
 import { CredentialCell } from "@/components/CredentialCell.tsx";
@@ -15,16 +15,18 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table.tsx";
-import { useAssignments, useBulkUpdateAssignments, useCredentials } from "@/api/hooks.ts";
+import { useAssignments, useAppDetail, useBulkUpdateAssignments, useCredentials } from "@/api/hooks.ts";
 import { formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 import { useListState } from "@/hooks/useListState.ts";
+import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
 import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
 import type { BulkUpdateAssignmentsRequest } from "@/types/api.ts";
 
 export function AssignmentsPage() {
   const tz = useTimezone();
+  const { pageSize } = useTablePreferences();
   const listState = useListState({
     columns: [
       { key: "app_name", label: "App" },
@@ -32,6 +34,7 @@ export function AssignmentsPage() {
       { key: "device_address", label: "Device Address", sortable: false },
     ],
     defaultSortBy: "app_name",
+    defaultPageSize: pageSize,
   });
   const { data: response, isLoading } = useAssignments(listState.params);
   const assignments = response?.data ?? [];
@@ -46,9 +49,25 @@ export function AssignmentsPage() {
   const [bulkScheduleValue, setBulkScheduleValue] = useState("");
   const [bulkCredentialId, setBulkCredentialId] = useState("");
   const [bulkEnabled, setBulkEnabled] = useState("");
+  const [bulkVersionMode, setBulkVersionMode] = useState("");
   const bulkUpdate = useBulkUpdateAssignments();
   const { data: credentials } = useCredentials();
   const bulkRef = useRef<HTMLDivElement>(null);
+
+  // Determine if all selected assignments belong to the same app
+  const selectedApps = useMemo(() => {
+    if (selected.size === 0) return { singleApp: false, appId: null as string | null, appName: null as string | null };
+    const selectedAssignments = (assignments ?? []).filter((a: any) => selected.has(a.id));
+    const uniqueAppIds = new Set(selectedAssignments.map((a: any) => a.app.id));
+    if (uniqueAppIds.size === 1) {
+      const first = selectedAssignments[0];
+      return { singleApp: true, appId: first.app.id as string, appName: first.app.name as string };
+    }
+    return { singleApp: false, appId: null, appName: null };
+  }, [selected, assignments]);
+
+  // Fetch app versions when a single app is selected
+  const { data: bulkAppDetail } = useAppDetail(selectedApps.singleApp ? selectedApps.appId! : undefined);
 
   // Close bulk popover on outside click
   useEffect(() => {
@@ -97,12 +116,18 @@ export function AssignmentsPage() {
     if (bulkEnabled !== "") {
       payload.enabled = bulkEnabled === "true";
     }
+    if (bulkVersionMode === "latest") {
+      payload.use_latest = true;
+    } else if (bulkVersionMode !== "") {
+      payload.app_version_id = bulkVersionMode;
+    }
     await bulkUpdate.mutateAsync(payload);
     setBulkOpen(false);
     setBulkScheduleType("");
     setBulkScheduleValue("");
     setBulkCredentialId("");
     setBulkEnabled("");
+    setBulkVersionMode("");
     setSelected(new Set());
   }
 
@@ -178,6 +203,29 @@ export function AssignmentsPage() {
                         <option key={c.id} value={c.id}>{c.name}</option>
                       ))}
                     </Select>
+                  </div>
+
+                  {/* Version */}
+                  <div>
+                    <label className="text-xs text-zinc-500 block mb-1">Version</label>
+                    <select
+                      value={bulkVersionMode}
+                      onChange={(e) => setBulkVersionMode(e.target.value)}
+                      className="w-full text-xs h-7 bg-zinc-800 border border-zinc-700 rounded px-2 text-zinc-300"
+                    >
+                      <option value="">— No change —</option>
+                      <option value="latest">Latest</option>
+                      {selectedApps.singleApp && bulkAppDetail?.versions?.map((v: any) => (
+                        <option key={v.id} value={v.id}>
+                          {v.version}{v.is_latest ? " (latest)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                    {!selectedApps.singleApp && selected.size > 0 && (
+                      <p className="text-[10px] text-zinc-600 mt-1">
+                        Multiple apps selected — only "Latest" available
+                      </p>
+                    )}
                   </div>
 
                   {/* Enabled */}

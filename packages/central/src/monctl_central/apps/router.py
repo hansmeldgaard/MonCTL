@@ -635,6 +635,18 @@ class BulkUpdateAssignmentsRequest(BaseModel):
     schedule_value: str | None = None
     credential_id: str | None = None
     enabled: bool | None = None
+    app_version_id: str | None = None
+    use_latest: bool | None = None
+
+    @field_validator("app_version_id")
+    @classmethod
+    def _validate_app_version_id(cls, v: str | None) -> str | None:
+        if v is not None and v != "":
+            try:
+                uuid.UUID(v)
+            except ValueError:
+                raise ValueError(f"Invalid UUID for app_version_id: '{v}'")
+        return v
 
 
 @router.put("/assignments/bulk-update")
@@ -672,6 +684,18 @@ async def bulk_update_assignments(
             a.credential_id = uuid.UUID(request.credential_id) if request.credential_id else None
         if request.enabled is not None:
             a.enabled = request.enabled
+        if request.use_latest is not None:
+            a.use_latest = request.use_latest
+        if request.app_version_id is not None:
+            new_version_id = uuid.UUID(request.app_version_id)
+            version = await db.get(AppVersion, new_version_id)
+            if version is None or version.app_id != a.app_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Version {request.app_version_id} does not belong to app of assignment {a.id}",
+                )
+            a.app_version_id = new_version_id
+            a.use_latest = False
 
         if a.collector_id:
             collector_ids_to_bump.add(a.collector_id)
