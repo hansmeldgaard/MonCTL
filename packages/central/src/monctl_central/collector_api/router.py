@@ -1397,22 +1397,23 @@ def _filter_config_rows(
     volatile_keys: set[str],
     ch,
 ) -> list[dict]:
-    """Suppress unchanged non-volatile config keys. Volatile keys always written."""
+    """Suppress unchanged config keys. Volatile keys are skipped entirely."""
     if not config_rows:
         return []
 
+    # Filter out volatile keys — they change every cycle and should not
+    # create change history entries or be written to ClickHouse at all.
+    if volatile_keys:
+        config_rows = [r for r in config_rows if r.get("config_key", "") not in volatile_keys]
+
     existing_hashes = _get_cached_config_hashes(ch, device_id, app_id)
 
-    # First-ever poll — write everything
+    # First-ever poll — write everything (non-volatile only)
     if not existing_hashes:
         return config_rows
 
     filtered = []
     for row in config_rows:
-        key = row.get("config_key", "")
-        if key in volatile_keys:
-            filtered.append(row)
-            continue
         lookup = (row.get("component_type", ""), row.get("component", ""), key)
         existing_hash = existing_hashes.get(lookup)
         if existing_hash is None or existing_hash != row.get("config_hash", ""):
