@@ -11,37 +11,20 @@ from monctl_central.storage.models import (
     AlertEntity,
     AlertDefinition,
     AppAssignment,
-    AppVersion,
-    ThresholdOverride,
 )
 
 logger = logging.getLogger(__name__)
-
-
-async def _get_latest_version(session: AsyncSession, app_id) -> AppVersion | None:
-    return (
-        await session.execute(
-            select(AppVersion)
-            .where(AppVersion.app_id == app_id, AppVersion.is_latest == True)  # noqa: E712
-        )
-    ).scalar_one_or_none()
 
 
 async def sync_instances_for_assignment(
     session: AsyncSession,
     assignment: AppAssignment,
 ) -> None:
-    """Create AlertEntities for all definitions on this assignment's app version."""
-    version_id = assignment.app_version_id
-    if assignment.use_latest:
-        latest = await _get_latest_version(session, assignment.app_id)
-        if latest:
-            version_id = latest.id
-
+    """Create AlertEntities for all definitions on this assignment's app."""
     definitions = (
         await session.execute(
             select(AlertDefinition)
-            .where(AlertDefinition.app_version_id == version_id)
+            .where(AlertDefinition.app_id == assignment.app_id)
         )
     ).scalars().all()
 
@@ -106,56 +89,3 @@ async def sync_instances_for_definition(
             state="ok",
         )
         session.add(instance)
-
-
-async def migrate_threshold_overrides_by_name(
-    session: AsyncSession,
-    old_version_id,
-    new_version_id,
-) -> int:
-    """Migrate ThresholdOverrides from old version definitions to new version definitions.
-
-    Matches definitions by name within the same app.
-    Returns the number of overrides migrated.
-    """
-    old_defs = (await session.execute(
-        select(AlertDefinition).where(
-            AlertDefinition.app_version_id == old_version_id,
-        )
-    )).scalars().all()
-    old_by_name = {d.name: d for d in old_defs}
-
-    new_defs = (await session.execute(
-        select(AlertDefinition).where(
-            AlertDefinition.app_version_id == new_version_id,
-        )
-    )).scalars().all()
-    new_by_name = {d.name: d for d in new_defs}
-
-    migrated = 0
-
-    for name, old_def in old_by_name.items():
-        new_def = new_by_name.get(name)
-        if new_def is None:
-            continue
-
-        overrides = (await session.execute(
-            select(ThresholdOverride).where(
-                ThresholdOverride.definition_id == old_def.id,
-            )
-        )).scalars().all()
-
-        for override in overrides:
-            existing = (await session.execute(
-                select(ThresholdOverride).where(
-                    ThresholdOverride.definition_id == new_def.id,
-                    ThresholdOverride.device_id == override.device_id,
-                    ThresholdOverride.entity_key == override.entity_key,
-                )
-            )).scalar_one_or_none()
-
-            if existing is None:
-                override.definition_id = new_def.id
-                migrated += 1
-
-    return migrated

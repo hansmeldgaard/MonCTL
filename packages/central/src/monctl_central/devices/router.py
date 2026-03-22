@@ -881,7 +881,6 @@ async def get_device_thresholds(
         App,
         AlertDefinition,
         AppAssignment,
-        AppVersion,
         ThresholdOverride,
     )
 
@@ -898,25 +897,10 @@ async def get_device_thresholds(
 
     results = []
     for assignment in assignments:
-        # Determine version
-        version_id = assignment.app_version_id
-        if assignment.use_latest:
-            latest = (
-                await db.execute(
-                    select(AppVersion)
-                    .where(
-                        AppVersion.app_id == assignment.app_id,
-                        AppVersion.is_latest == True,  # noqa: E712
-                    )
-                )
-            ).scalar_one_or_none()
-            if latest:
-                version_id = latest.id
-
         definitions = (
             await db.execute(
                 select(AlertDefinition)
-                .where(AlertDefinition.app_version_id == version_id)
+                .where(AlertDefinition.app_id == assignment.app_id)
             )
         ).scalars().all()
 

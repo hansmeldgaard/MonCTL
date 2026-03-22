@@ -318,7 +318,6 @@ export function useCreateAlertDefinition() {
   return useMutation({
     mutationFn: (data: {
       app_id: string;
-      app_version_id: string;
       name: string;
       expression: string;
       window?: string;
@@ -366,7 +365,6 @@ export function useInvertAlertDefinition() {
         window: string;
         severity: string;
         app_id: string;
-        app_version_id: string;
       }>(`/alerts/definitions/${definitionId}/invert`, {}),
   });
 }
@@ -1684,7 +1682,6 @@ export function useCloneAppVersion() {
         checksum: string;
         is_latest: boolean;
         cloned_from: { version_id: string; version: string };
-        alert_definitions_cloned: number;
       }>(`/apps/${appId}/versions/${versionId}/clone`, {}),
     onSuccess: (_res, { appId }) => {
       qc.invalidateQueries({ queryKey: ["app-detail", appId] });

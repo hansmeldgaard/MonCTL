@@ -974,8 +974,6 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
   const [formEnabled, setFormEnabled] = useState(true);
   const [formError, setFormError] = useState<string | null>(null);
 
-  const latestVersion = app.versions.find((v) => v.is_latest) ?? app.versions[0];
-
   const openCreate = (prefill?: { name?: string; expression?: string; window?: string; severity?: string }) => {
     setFormMode("create");
     setEditId(null);
@@ -1021,13 +1019,8 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
           enabled: formEnabled,
         });
       } else {
-        if (!latestVersion) {
-          setFormError("No versions found. Create a version first.");
-          return;
-        }
         await createDef.mutateAsync({
           app_id: appId,
-          app_version_id: latestVersion.id,
           name: formNameField.value,
           expression: formExpression,
           window: formWindowField.value,

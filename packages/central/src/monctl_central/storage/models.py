@@ -151,11 +151,6 @@ class AppVersion(Base):
     volatile_keys: Mapped[list | None] = mapped_column(JSONB, server_default="[]")
 
     app: Mapped[App] = relationship(back_populates="versions")
-    alert_definitions: Mapped[list["AlertDefinition"]] = relationship(
-        back_populates="app_version",
-        cascade="all, delete-orphan",
-        foreign_keys="[AlertDefinition.app_version_id]",
-    )
 
 
 class DeviceType(Base):
@@ -390,18 +385,15 @@ class ApiKey(Base):
 
 
 class AlertDefinition(Base):
-    """Alert definition attached to an app version."""
+    """Alert definition attached to an app."""
     __tablename__ = "alert_definitions"
     __table_args__ = (
-        UniqueConstraint("app_version_id", "name", name="uq_alert_def_version_name"),
+        UniqueConstraint("app_id", "name", name="uq_alert_def_app_name"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     app_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("apps.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    app_version_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("app_versions.id", ondelete="CASCADE"), nullable=False, index=True
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
@@ -419,7 +411,6 @@ class AlertDefinition(Base):
     )
 
     app: Mapped["App"] = relationship()
-    app_version: Mapped["AppVersion"] = relationship(back_populates="alert_definitions")
     entities: Mapped[list["AlertEntity"]] = relationship(
         back_populates="definition", cascade="all, delete-orphan"
     )

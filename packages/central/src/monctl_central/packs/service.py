@@ -82,13 +82,17 @@ async def export_pack(pack_id: uuid.UUID, db: AsyncSession) -> dict:
     # Apps with versions and alert definitions
     apps = (await db.execute(
         select(App)
-        .options(
-            selectinload(App.versions).selectinload(AppVersion.alert_definitions),
-        )
+        .options(selectinload(App.versions))
         .where(App.pack_id == pack.id)
     )).scalars().all()
     if apps:
-        result["contents"]["apps"] = [_export_app(a) for a in apps]
+        app_exports = []
+        for a in apps:
+            app_alert_defs = (await db.execute(
+                select(AlertDefinition).where(AlertDefinition.app_id == a.id)
+            )).scalars().all()
+            app_exports.append(_export_app(a, app_alert_defs))
+        result["contents"]["apps"] = app_exports
 
     # Credential templates
     creds = (await db.execute(
@@ -135,7 +139,7 @@ async def export_pack(pack_id: uuid.UUID, db: AsyncSession) -> dict:
     return result
 
 
-def _export_app(a: App) -> dict:
+def _export_app(a: App, alert_definitions: list | None = None) -> dict:
     d: dict = {
         "name": a.name,
         "description": a.description,
@@ -153,10 +157,11 @@ def _export_app(a: App) -> dict:
             "is_latest": v.is_latest,
             "display_template": v.display_template,
         }
-        # Nest alert definitions into the version
-        alert_defs = []
-        for ad in getattr(v, "alert_definitions", []):
-            alert_defs.append({
+        d["versions"].append(ver_data)
+    # Export alert definitions at the app level
+    if alert_definitions:
+        d["alert_definitions"] = [
+            {
                 "name": ad.name,
                 "expression": ad.expression,
                 "window": ad.window,
@@ -164,10 +169,9 @@ def _export_app(a: App) -> dict:
                 "enabled": ad.enabled,
                 "description": ad.description,
                 "message_template": ad.message_template,
-            })
-        if alert_defs:
-            ver_data["alert_definitions"] = alert_defs
-        d["versions"].append(ver_data)
+            }
+            for ad in alert_definitions
+        ]
     return d
 
 
@@ -261,11 +265,9 @@ async def preview_import(data: dict, db: AsyncSession) -> dict:
 
             entities.append(entry)
 
-    # Count alert definitions across all app versions (informational entries)
+    # Count alert definitions at app level (informational entries)
     for app_item in data.get("contents", {}).get("apps", []):
-        alert_count = 0
-        for ver in app_item.get("versions", []):
-            alert_count += len(ver.get("alert_definitions", []))
+        alert_count = len(app_item.get("alert_definitions", []))
         if alert_count > 0:
             entities.append({
                 "section": "alert_definitions",
@@ -356,6 +358,7 @@ async def import_pack(
                     await _sync_app_versions(
                         db, existing, item.get("versions", []),
                         pack_uid=pack_uid, pack_id=pack.id, skip_app_update=True,
+                        alert_defs_data=item.get("alert_definitions", []),
                     )
                 continue
             elif existing and resolution == "overwrite":
@@ -364,6 +367,7 @@ async def import_pack(
                     await _sync_app_versions(
                         db, existing, item.get("versions", []),
                         pack_uid=pack_uid, pack_id=pack.id,
+                        alert_defs_data=item.get("alert_definitions", []),
                     )
                 elif section == "connectors":
                     await _sync_connector_versions(db, existing, item.get("versions", []))
@@ -378,6 +382,7 @@ async def import_pack(
                     await _create_app_versions(
                         db, entity, item.get("versions", []),
                         pack_uid=pack_uid, pack_id=pack.id,
+                        alert_defs_data=item.get("alert_definitions", []),
                     )
                 elif section == "connectors":
                     await _create_connector_versions(db, entity, item.get("versions", []))
@@ -390,6 +395,7 @@ async def import_pack(
                     await _create_app_versions(
                         db, entity, item.get("versions", []),
                         pack_uid=pack_uid, pack_id=pack.id,
+                        alert_defs_data=item.get("alert_definitions", []),
                     )
                 elif section == "connectors":
                     await _create_connector_versions(db, entity, item.get("versions", []))
@@ -408,12 +414,11 @@ def _build_manifest(data: dict) -> dict:
         if items:
             if section == "apps":
                 manifest[section] = [item["name"] for item in items]
-                # Also count nested alert definitions
+                # Also count app-level alert definitions
                 alert_names: list[str] = []
                 for app_item in items:
-                    for ver in app_item.get("versions", []):
-                        for ad in ver.get("alert_definitions", []):
-                            alert_names.append(f"{app_item['name']}/{ad['name']}")
+                    for ad in app_item.get("alert_definitions", []):
+                        alert_names.append(f"{app_item['name']}/{ad['name']}")
                 if alert_names:
                     manifest["alert_definitions"] = alert_names
             else:
@@ -515,6 +520,7 @@ async def _create_app_versions(
     versions_data: list[dict],
     pack_uid: str | None = None,
     pack_id: uuid.UUID | None = None,
+    alert_defs_data: list[dict] | None = None,
 ) -> None:
     for vdata in versions_data:
         checksum = hashlib.sha256((vdata.get("source_code") or "").encode()).hexdigest()
@@ -530,10 +536,9 @@ async def _create_app_versions(
         )
         db.add(v)
         await db.flush()
-        # Create alert definitions for the new version
-        await _sync_version_alert_definitions(
-            db, app, v, vdata.get("alert_definitions", []), pack_uid, pack_id,
-        )
+    # Sync alert definitions at app level
+    if alert_defs_data:
+        await _sync_app_alert_definitions(db, app, alert_defs_data, pack_uid)
 
 
 async def _sync_app_versions(
@@ -543,14 +548,12 @@ async def _sync_app_versions(
     pack_uid: str | None = None,
     pack_id: uuid.UUID | None = None,
     skip_app_update: bool = False,
+    alert_defs_data: list[dict] | None = None,
 ) -> None:
     existing = (await db.execute(
         select(AppVersion).where(AppVersion.app_id == app.id)
     )).scalars().all()
     existing_by_ver = {v.version: v for v in existing}
-
-    # Track old is_latest for threshold override migration
-    old_latest = next((v for v in existing if v.is_latest), None)
 
     for vdata in versions_data:
         ver_str = vdata["version"]
@@ -566,10 +569,6 @@ async def _sync_app_versions(
                 ev.entry_class = vdata.get("entry_class", ev.entry_class)
                 if vdata.get("display_template") is not None:
                     ev.display_template = vdata["display_template"]
-            # Sync alert definitions for this existing version
-            await _sync_version_alert_definitions(
-                db, app, ev, vdata.get("alert_definitions", []), pack_uid, pack_id,
-            )
         else:
             checksum = hashlib.sha256(
                 (vdata.get("source_code") or "").encode()
@@ -586,10 +585,6 @@ async def _sync_app_versions(
             )
             db.add(new_ver)
             await db.flush()
-            # Create alert definitions for the new version
-            await _sync_version_alert_definitions(
-                db, app, new_ver, vdata.get("alert_definitions", []), pack_uid, pack_id,
-            )
 
     await db.flush()
     all_v = (await db.execute(
@@ -599,25 +594,21 @@ async def _sync_app_versions(
         matching = next((vd for vd in versions_data if vd["version"] == v.version), None)
         v.is_latest = matching.get("is_latest", False) if matching else False
 
-    # Migrate threshold overrides if is_latest changed
-    new_latest = next((v for v in all_v if v.is_latest), None)
-    if new_latest and old_latest and new_latest.id != old_latest.id:
-        from monctl_central.alerting.instance_sync import migrate_threshold_overrides_by_name
-        await migrate_threshold_overrides_by_name(db, old_latest.id, new_latest.id)
+    # Sync alert definitions at app level
+    if alert_defs_data:
+        await _sync_app_alert_definitions(db, app, alert_defs_data, pack_uid)
 
 
-async def _sync_version_alert_definitions(
+async def _sync_app_alert_definitions(
     db: AsyncSession,
     app: App,
-    version: AppVersion,
     alert_defs_data: list[dict],
     pack_uid: str | None = None,
-    pack_id: uuid.UUID | None = None,
 ) -> None:
-    """Sync alert definitions for a specific app version from pack data.
+    """Sync alert definitions for an app from pack data.
 
     - Creates missing definitions
-    - Updates existing definitions (matched by name within version)
+    - Updates existing definitions if expression differs (matched by name)
     - Does NOT delete definitions not in the pack (user may have added custom ones)
     """
     if not alert_defs_data:
@@ -625,7 +616,7 @@ async def _sync_version_alert_definitions(
 
     existing_defs = (await db.execute(
         select(AlertDefinition).where(
-            AlertDefinition.app_version_id == version.id,
+            AlertDefinition.app_id == app.id,
         )
     )).scalars().all()
     existing_by_name = {d.name: d for d in existing_defs}
@@ -634,18 +625,19 @@ async def _sync_version_alert_definitions(
         name = ad_data["name"]
         if name in existing_by_name:
             existing_def = existing_by_name[name]
-            existing_def.expression = ad_data["expression"]
-            existing_def.window = ad_data.get("window", "5m")
-            existing_def.severity = ad_data.get("severity", "warning")
-            existing_def.enabled = ad_data.get("enabled", True)
-            existing_def.description = ad_data.get("description")
-            existing_def.message_template = ad_data.get("message_template")
-            existing_def.pack_origin = pack_uid
+            # Update if expression differs
+            if existing_def.expression != ad_data["expression"]:
+                existing_def.expression = ad_data["expression"]
+                existing_def.window = ad_data.get("window", "5m")
+                existing_def.severity = ad_data.get("severity", "warning")
+                existing_def.enabled = ad_data.get("enabled", True)
+                existing_def.description = ad_data.get("description")
+                existing_def.message_template = ad_data.get("message_template")
+                existing_def.pack_origin = pack_uid
         else:
             # Create new definition
             new_def = AlertDefinition(
                 app_id=app.id,
-                app_version_id=version.id,
                 name=name,
                 expression=ad_data["expression"],
                 window=ad_data.get("window", "5m"),

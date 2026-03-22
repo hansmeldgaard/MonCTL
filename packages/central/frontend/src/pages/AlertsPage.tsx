@@ -335,7 +335,6 @@ function DefinitionsTab({
       const data = res.data;
       await createDef.mutateAsync({
         app_id: data.app_id,
-        app_version_id: data.app_version_id,
         name: data.suggested_name,
         expression: data.inverted_expression,
         window: data.window,

@@ -33,7 +33,6 @@ def _fmt_definition(d: AlertDefinition, instance_counts: dict | None = None) -> 
     result = {
         "id": str(d.id),
         "app_id": str(d.app_id),
-        "app_version_id": str(d.app_version_id),
         "name": d.name,
         "description": d.description,
         "expression": d.expression,
@@ -87,7 +86,6 @@ def _fmt_override(o: ThresholdOverride) -> dict:
 
 class CreateAlertDefinitionRequest(BaseModel):
     app_id: str
-    app_version_id: str
     name: str = Field(min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=2000)
     expression: str = Field(min_length=1, max_length=2000)
@@ -100,12 +98,6 @@ class CreateAlertDefinitionRequest(BaseModel):
     @classmethod
     def check_app_id(cls, v: str) -> str:
         validate_uuid(v, "app_id")
-        return v
-
-    @field_validator("app_version_id")
-    @classmethod
-    def check_app_version_id(cls, v: str) -> str:
-        validate_uuid(v, "app_version_id")
         return v
 
     @field_validator("severity")
@@ -273,7 +265,6 @@ async def create_alert_definition(
 
     defn = AlertDefinition(
         app_id=uuid.UUID(request.app_id),
-        app_version_id=uuid.UUID(request.app_version_id),
         name=request.name,
         description=request.description,
         expression=request.expression,
@@ -394,7 +385,6 @@ async def invert_alert_definition(
             "window": defn.window,
             "severity": "recovery",
             "app_id": str(defn.app_id),
-            "app_version_id": str(defn.app_version_id),
         },
     }
 
