@@ -26,23 +26,27 @@ def upgrade() -> None:
         )
     """)
 
-    # Drop the old unique constraint (app_version_id, name)
-    op.drop_constraint("uq_alert_def_version_name", "alert_definitions", type_="unique")
+    # Drop the old unique constraint (may have different names depending on env)
+    op.execute("ALTER TABLE alert_definitions DROP CONSTRAINT IF EXISTS uq_alert_def_version_name")
 
-    # Drop FK to app_versions
-    op.drop_constraint(
-        "alert_definitions_app_version_id_fkey", "alert_definitions", type_="foreignkey"
-    )
+    # Drop FK to app_versions (constraint name may vary)
+    op.execute("ALTER TABLE alert_definitions DROP CONSTRAINT IF EXISTS alert_definitions_app_version_id_fkey")
+    op.execute("ALTER TABLE alert_definitions DROP CONSTRAINT IF EXISTS app_alert_definitions_app_version_id_fkey")
 
     # Drop the column
-    op.drop_column("alert_definitions", "app_version_id")
+    op.execute("ALTER TABLE alert_definitions DROP COLUMN IF EXISTS app_version_id")
 
     # Add new unique constraint (app_id, name)
-    op.create_unique_constraint("uq_alert_def_app_name", "alert_definitions", ["app_id", "name"])
+    op.execute("""
+        DO $$ BEGIN
+            ALTER TABLE alert_definitions ADD CONSTRAINT uq_alert_def_app_name UNIQUE (app_id, name);
+        EXCEPTION WHEN duplicate_table THEN NULL;
+        END $$;
+    """)
 
 
 def downgrade() -> None:
-    op.drop_constraint("uq_alert_def_app_name", "alert_definitions", type_="unique")
+    op.execute("ALTER TABLE alert_definitions DROP CONSTRAINT IF EXISTS uq_alert_def_app_name")
     op.add_column(
         "alert_definitions",
         sa.Column("app_version_id", UUID(as_uuid=True), nullable=True),

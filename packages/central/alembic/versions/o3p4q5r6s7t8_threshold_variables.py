@@ -15,8 +15,8 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Drop old threshold_overrides table
-    op.drop_table("threshold_overrides")
+    # Drop old threshold_overrides table (may not exist in all envs)
+    op.execute("DROP TABLE IF EXISTS threshold_overrides CASCADE")
 
     # Create threshold_variables table
     op.create_table(
