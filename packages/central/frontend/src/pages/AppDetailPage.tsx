@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
 import { validateName, validateSemver, validateAlertWindow } from "@/lib/validation.ts";
-import { ArrowLeft, AppWindow, Bell, Code2, Layout, Loader2, Pencil, Plug, Plus, RefreshCw, Star, Trash2, X } from "lucide-react";
+import { ArrowLeft, AppWindow, Bell, Code2, Layout, Loader2, Pencil, Plug, Plus, RefreshCw, Star, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
@@ -37,6 +37,7 @@ import {
   useAddAppConnector,
   useDeleteAppConnector,
   useConnectors,
+  useAppConfigKeys,
 } from "@/api/hooks.ts";
 import { apiGet } from "@/api/client.ts";
 import type { AppAlertDefinition, DisplayTemplate } from "@/types/api.ts";
@@ -82,7 +83,6 @@ export function AppDetailPage() {
   const [newVersionTab, setNewVersionTab] = useState("code");
   const [newVersionTemplate, setNewVersionTemplate] = useState<DisplayTemplate | null>(null);
   const [versionVolatileKeys, setVersionVolatileKeys] = useState<string[]>([]);
-  const [volatileKeyInput, setVolatileKeyInput] = useState("");
 
   // Version detail viewer
   const [viewVersion, setViewVersion] = useState<VersionDetail | null>(null);
@@ -95,7 +95,6 @@ export function AppDetailPage() {
   const [editVersionEntry, setEditVersionEntry] = useState("");
   const [editVersionError, setEditVersionError] = useState<string | null>(null);
   const [editVersionVolatileKeys, setEditVersionVolatileKeys] = useState<string[]>([]);
-  const [editVolatileKeyInput, setEditVolatileKeyInput] = useState("");
 
   // Version dialog tab (for config apps)
   const [viewDialogTab, setViewDialogTab] = useState("code");
@@ -566,8 +565,8 @@ export function AppDetailPage() {
                 onCancel={() => setVersionOpen(false)}
                 isPending={createVersion.isPending}
                 volatileKeys={versionVolatileKeys} setVolatileKeys={setVersionVolatileKeys}
-                volatileKeyInput={volatileKeyInput} setVolatileKeyInput={setVolatileKeyInput}
                 isConfigApp={true}
+                appId={id!}
               />
             </TabsContent>
             <TabsContent value="template">
@@ -651,8 +650,8 @@ export function AppDetailPage() {
                 onCancel={() => setEditVersionTarget(null)}
                 isPending={updateVersion.isPending}
                 volatileKeys={editVersionVolatileKeys} setVolatileKeys={setEditVersionVolatileKeys}
-                volatileKeyInput={editVolatileKeyInput} setVolatileKeyInput={setEditVolatileKeyInput}
                 isConfigApp={true}
+                appId={id!}
               />
             </TabsContent>
             <TabsContent value="template">
@@ -735,48 +734,77 @@ function VersionCodeView({ version }: { version: VersionDetail }) {
   );
 }
 
-function VolatileKeysEditor({
+function VolatileKeyPicker({
+  appId,
   keys,
   setKeys,
-  inputVal,
-  setInputVal,
 }: {
+  appId: string;
   keys: string[];
   setKeys: (v: string[]) => void;
-  inputVal: string;
-  setInputVal: (v: string) => void;
 }) {
+  const [customInput, setCustomInput] = useState("");
+  const { data: configKeys } = useAppConfigKeys(appId);
+
+  const allKeys = useMemo(() => {
+    const detected = configKeys?.all_keys ?? [];
+    const extra = keys.filter((k) => !detected.includes(k));
+    const merged = [...new Set([...detected, ...extra])];
+    // Sort: volatile keys first, then alphabetical
+    return merged.sort((a, b) => {
+      const aVol = keys.includes(a);
+      const bVol = keys.includes(b);
+      if (aVol !== bVol) return aVol ? -1 : 1;
+      return a.localeCompare(b);
+    });
+  }, [configKeys, keys]);
+
+  const toggleKey = useCallback((key: string) => {
+    if (keys.includes(key)) {
+      setKeys(keys.filter((k) => k !== key));
+    } else {
+      setKeys([...keys, key]);
+    }
+  }, [keys, setKeys]);
+
   return (
-    <div className="space-y-1.5">
-      <Label>Volatile Keys</Label>
+    <div className="space-y-2">
+      <Label className="text-sm">Volatile Keys</Label>
       <p className="text-xs text-zinc-500">
-        Keys that change every poll cycle (e.g. uptime, timestamps) — excluded from change detection.
+        Keys excluded from change detection. Volatile keys change every poll cycle and won't create change history entries.
       </p>
-      <div className="flex flex-wrap gap-1.5 min-h-[28px]">
-        {keys.map((k) => (
-          <span key={k} className="inline-flex items-center gap-1 rounded-md bg-zinc-800 border border-zinc-700 px-2 py-0.5 text-xs font-mono text-zinc-300">
-            {k}
-            <button type="button" onClick={() => setKeys(keys.filter((x) => x !== k))} className="text-zinc-500 hover:text-zinc-300">
-              <X className="h-3 w-3" />
-            </button>
-          </span>
+
+      <div className="border border-zinc-800 rounded-lg max-h-[300px] overflow-auto">
+        {allKeys.map((key) => (
+          <div key={key} className="flex items-center justify-between px-3 py-1.5 border-b border-zinc-800/50 last:border-0 hover:bg-zinc-800/30">
+            <span className="font-mono text-xs text-zinc-300">{key}</span>
+            <input
+              type="checkbox"
+              checked={keys.includes(key)}
+              onChange={() => toggleKey(key)}
+              className="accent-brand-500 cursor-pointer"
+            />
+          </div>
         ))}
+        {allKeys.length === 0 && (
+          <p className="text-xs text-zinc-600 py-4 text-center">No config keys detected yet. Run the app once to populate.</p>
+        )}
       </div>
+
       <div className="flex gap-2">
         <Input
-          value={inputVal}
-          onChange={(e) => setInputVal(e.target.value)}
+          placeholder="Add custom key..."
+          value={customInput}
+          onChange={(e) => setCustomInput(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter") {
+            if (e.key === "Enter" && customInput.trim()) {
               e.preventDefault();
-              const v = inputVal.trim();
-              if (v && !keys.includes(v)) {
-                setKeys([...keys, v]);
-                setInputVal("");
+              if (!keys.includes(customInput.trim())) {
+                setKeys([...keys, customInput.trim()]);
               }
+              setCustomInput("");
             }
           }}
-          placeholder="Add key and press Enter"
           className="text-xs"
         />
       </div>
@@ -796,8 +824,8 @@ function EditVersionCodeForm({
   onCancel,
   isPending,
   volatileKeys, setVolatileKeys,
-  volatileKeyInput, setVolatileKeyInput,
   isConfigApp,
+  appId,
 }: {
   editVersionCode: string;
   setEditVersionCode: (v: string) => void;
@@ -810,8 +838,8 @@ function EditVersionCodeForm({
   onCancel: () => void;
   isPending: boolean;
   volatileKeys?: string[]; setVolatileKeys?: (v: string[]) => void;
-  volatileKeyInput?: string; setVolatileKeyInput?: (v: string) => void;
   isConfigApp?: boolean;
+  appId?: string;
 }) {
   const reqsList = useMemo(
     () => editVersionReqs.trim() ? editVersionReqs.trim().split("\n").filter(Boolean) : [],
@@ -835,12 +863,11 @@ function EditVersionCodeForm({
           onChange={(reqs) => setEditVersionReqs(reqs.join("\n"))}
         />
       </div>
-      {isConfigApp && volatileKeys && setVolatileKeys && setVolatileKeyInput && (
-        <VolatileKeysEditor
+      {isConfigApp && volatileKeys && setVolatileKeys && appId && (
+        <VolatileKeyPicker
+          appId={appId}
           keys={volatileKeys}
           setKeys={setVolatileKeys}
-          inputVal={volatileKeyInput!}
-          setInputVal={setVolatileKeyInput}
         />
       )}
       {editVersionError && <p className="text-sm text-red-400">{editVersionError}</p>}
@@ -864,8 +891,8 @@ function NewVersionCodeForm({
   onCancel,
   isPending,
   volatileKeys, setVolatileKeys,
-  volatileKeyInput, setVolatileKeyInput,
   isConfigApp,
+  appId,
 }: {
   versionField: { value: string; onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => void; onBlur: () => void; error: string | null };
   versionCode: string; setVersionCode: (v: string) => void;
@@ -876,8 +903,8 @@ function NewVersionCodeForm({
   onCancel: () => void;
   isPending: boolean;
   volatileKeys?: string[]; setVolatileKeys?: (v: string[]) => void;
-  volatileKeyInput?: string; setVolatileKeyInput?: (v: string) => void;
   isConfigApp?: boolean;
+  appId?: string;
 }) {
   const reqsList = useMemo(
     () => versionReqs.trim() ? versionReqs.trim().split("\n").filter(Boolean) : [],
@@ -908,12 +935,11 @@ function NewVersionCodeForm({
           onChange={(reqs) => setVersionReqs(reqs.join("\n"))}
         />
       </div>
-      {isConfigApp && volatileKeys && setVolatileKeys && setVolatileKeyInput && (
-        <VolatileKeysEditor
+      {isConfigApp && volatileKeys && setVolatileKeys && appId && (
+        <VolatileKeyPicker
+          appId={appId}
           keys={volatileKeys}
           setKeys={setVolatileKeys}
-          inputVal={volatileKeyInput!}
-          setInputVal={setVolatileKeyInput}
         />
       )}
       {versionError && <p className="text-sm text-red-400">{versionError}</p>}
