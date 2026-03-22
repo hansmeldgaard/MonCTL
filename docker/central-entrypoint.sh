@@ -26,7 +26,10 @@ if not sync_url:
 from sqlalchemy import create_engine
 from monctl_central.storage.models import Base
 engine = create_engine(sync_url)
-Base.metadata.create_all(engine, checkfirst=True)
+try:
+    Base.metadata.create_all(engine, checkfirst=True)
+except Exception as e:
+    print(f'Note: create_all skipped ({e.__class__.__name__}), migrations will handle it.')
 engine.dispose()
 print('Base schema ensured.')
 "
