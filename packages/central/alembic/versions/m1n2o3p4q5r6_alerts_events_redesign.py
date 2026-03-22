@@ -17,27 +17,24 @@ depends_on = None
 def upgrade() -> None:
     # ── 1. Rename app_alert_definitions → alert_definitions ──────────────
 
-    # Drop FKs that reference app_alert_definitions BEFORE renaming
-    op.drop_constraint(
-        "alert_instances_definition_id_fkey", "alert_instances", type_="foreignkey"
-    )
-    op.drop_constraint(
-        "threshold_overrides_definition_id_fkey", "threshold_overrides", type_="foreignkey"
-    )
-    op.drop_constraint(
-        "event_policies_definition_id_fkey", "event_policies", type_="foreignkey"
-    )
+    # Drop FKs that reference app_alert_definitions BEFORE renaming (IF EXISTS for safety)
+    op.execute("ALTER TABLE alert_instances DROP CONSTRAINT IF EXISTS alert_instances_definition_id_fkey")
+    op.execute("ALTER TABLE threshold_overrides DROP CONSTRAINT IF EXISTS threshold_overrides_definition_id_fkey")
+    op.execute("ALTER TABLE event_policies DROP CONSTRAINT IF EXISTS event_policies_definition_id_fkey")
 
-    # Drop the pack_id FK before dropping the column
-    op.drop_constraint(
-        "app_alert_definitions_pack_id_fkey", "app_alert_definitions", type_="foreignkey"
-    )
+    # Drop the pack_id FK before dropping the column (may not exist in all envs)
+    op.execute("""
+        DO $$ BEGIN
+            ALTER TABLE app_alert_definitions DROP CONSTRAINT IF EXISTS app_alert_definitions_pack_id_fkey;
+        EXCEPTION WHEN undefined_object THEN NULL;
+        END $$;
+    """)
 
     op.rename_table("app_alert_definitions", "alert_definitions")
 
-    # Drop columns from alert_definitions
-    op.drop_column("alert_definitions", "notification_channels")
-    op.drop_column("alert_definitions", "pack_id")
+    # Drop columns from alert_definitions (may not exist in all envs)
+    op.execute("ALTER TABLE alert_definitions DROP COLUMN IF EXISTS notification_channels")
+    op.execute("ALTER TABLE alert_definitions DROP COLUMN IF EXISTS pack_id")
 
     # Recreate FKs pointing to the renamed table
     op.create_foreign_key(
@@ -78,8 +75,8 @@ def upgrade() -> None:
     op.alter_column("alert_entities", "started_at", new_column_name="started_firing_at")
     op.alter_column("alert_entities", "resolved_at", new_column_name="last_cleared_at")
 
-    # Drop columns
-    op.drop_column("alert_entities", "event_created")
+    # Drop columns (may not exist in all envs)
+    op.execute("ALTER TABLE alert_entities DROP COLUMN IF EXISTS event_created")
 
     # Recreate FK on the renamed table
     op.create_foreign_key(
