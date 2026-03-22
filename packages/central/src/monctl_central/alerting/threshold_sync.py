@@ -66,36 +66,33 @@ async def sync_threshold_variables(
                 vname, str(app_id), definition.name,
             )
 
-    # Auto-create ThresholdVariables for implicit threshold params (not $variable refs)
-    for param in validation.threshold_params:
-        # Skip $variable-ref params — those should be pre-created by the user
-        if param.name in variable_ref_names:
-            continue
-
-        hint = hints.get(param.name, {})
-        existing = existing_vars.get(param.name)
-        if existing is None:
-            var = ThresholdVariable(
-                app_id=app_id,
-                name=param.name,
-                display_name=hint.get("display_name") or _auto_display_name(param.name),
-                default_value=param.default_value,
-                unit=hint.get("unit") or _auto_detect_unit(param.name),
-                description=hint.get("description"),
-            )
-            db.add(var)
-        else:
-            if existing.default_value != param.default_value:
-                existing.default_value = param.default_value
-                existing.updated_at = datetime.now(timezone.utc)
-            # Update display_name/unit/description from pack hints if provided
-            # Only override auto-generated values, never user-edited ones
-            if hint.get("display_name") and existing.display_name == _auto_display_name(param.name):
-                existing.display_name = hint["display_name"]
-            if hint.get("unit") and existing.unit == _auto_detect_unit(param.name):
-                existing.unit = hint["unit"]
-            if hint.get("description") and not existing.description:
-                existing.description = hint["description"]
+    # Auto-create ThresholdVariables for implicit threshold params
+    # ONLY if the expression has NO $variable references — if user uses $variable
+    # syntax, they've opted into explicit mode and we don't create implicit variables
+    if not variable_ref_names:
+        for param in validation.threshold_params:
+            hint = hints.get(param.name, {})
+            existing = existing_vars.get(param.name)
+            if existing is None:
+                var = ThresholdVariable(
+                    app_id=app_id,
+                    name=param.name,
+                    display_name=hint.get("display_name") or _auto_display_name(param.name),
+                    default_value=param.default_value,
+                    unit=hint.get("unit") or _auto_detect_unit(param.name),
+                    description=hint.get("description"),
+                )
+                db.add(var)
+            else:
+                if existing.default_value != param.default_value:
+                    existing.default_value = param.default_value
+                    existing.updated_at = datetime.now(timezone.utc)
+                if hint.get("display_name") and existing.display_name == _auto_display_name(param.name):
+                    existing.display_name = hint["display_name"]
+                if hint.get("unit") and existing.unit == _auto_detect_unit(param.name):
+                    existing.unit = hint["unit"]
+                if hint.get("description") and not existing.description:
+                    existing.description = hint["description"]
 
     return warnings
 

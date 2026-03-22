@@ -1441,34 +1441,37 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
                     Functions: <span className="font-mono text-zinc-500">avg</span>, <span className="font-mono text-zinc-500">max</span>, <span className="font-mono text-zinc-500">min</span>, <span className="font-mono text-zinc-500">sum</span>, <span className="font-mono text-zinc-500">count</span>, <span className="font-mono text-zinc-500">last</span>
                     {" · "}Operators: <span className="font-mono text-zinc-500">{">"}</span>, <span className="font-mono text-zinc-500">{"<"}</span>, <span className="font-mono text-zinc-500">{">="}</span>, <span className="font-mono text-zinc-500">{"<="}</span>, <span className="font-mono text-zinc-500">==</span>, <span className="font-mono text-zinc-500">!=</span>
                     {" · "}Combine: <span className="font-mono text-zinc-500">AND</span>, <span className="font-mono text-zinc-500">OR</span>
+                    {" · "}Thresholds: <span className="font-mono text-zinc-500">$name</span>
                     {app.target_table === "config" && (
                       <> · String: <span className="font-mono text-zinc-500">CHANGED</span>, <span className="font-mono text-zinc-500">IN ('a', 'b')</span></>
                     )}
                   </p>
                 </div>
               )}
-              {/* Threshold variable insertion */}
+              {/* Available threshold variables */}
               {variables && variables.length > 0 && (
-                <div className="flex items-center gap-2 mt-1">
-                  <span className="text-xs text-zinc-500">Insert threshold:</span>
-                  <select
-                    className="text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-zinc-300"
-                    value=""
-                    onChange={(e) => {
-                      if (e.target.value) {
-                        const varRef = `$${e.target.value}`;
-                        setFormExpression(prev => prev ? `${prev}${varRef}` : varRef);
-                        e.target.value = "";
-                      }
-                    }}
-                  >
-                    <option value="">-- Select --</option>
+                <div className="rounded-md border border-amber-500/20 bg-zinc-900 p-3 space-y-2">
+                  <p className="text-xs text-amber-400/70 font-medium">
+                    Available thresholds — click to insert
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
                     {variables.map(v => (
-                      <option key={v.id} value={v.name}>
-                        {v.display_name || v.name} ({v.default_value}{v.unit === "percent" ? "%" : v.unit === "ms" ? "ms" : ""})
-                      </option>
+                      <button
+                        key={v.id}
+                        type="button"
+                        className="inline-flex items-center gap-1 rounded-md border border-amber-500/30 bg-zinc-800 px-2 py-1 text-xs font-mono text-amber-300 hover:bg-amber-500/10 hover:text-amber-200 cursor-pointer transition-colors"
+                        onClick={() => {
+                          setFormExpression(prev => prev ? `${prev}$${v.name}` : `$${v.name}`);
+                        }}
+                      >
+                        <span className="text-amber-500">$</span>
+                        {v.name}
+                        <span className="text-zinc-500 text-[10px] ml-0.5">
+                          ({v.default_value}{v.unit === "percent" ? "%" : v.unit === "ms" ? "ms" : ""})
+                        </span>
+                      </button>
                     ))}
-                  </select>
+                  </div>
                 </div>
               )}
               {/* Show resolved threshold variables */}

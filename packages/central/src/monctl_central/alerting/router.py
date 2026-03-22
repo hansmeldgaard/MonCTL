@@ -699,3 +699,44 @@ async def query_alert_log(
             "total": total,
         },
     }
+
+
+# ── Orphan Threshold Cleanup ────────────────────────────
+
+@router.post("/cleanup-orphan-thresholds")
+async def cleanup_orphan_threshold_variables(
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Remove threshold variables not referenced by any alert definition and with no overrides."""
+    all_vars = (await db.execute(select(ThresholdVariable))).scalars().all()
+    removed = 0
+
+    for var in all_vars:
+        defs = (await db.execute(
+            select(AlertDefinition).where(AlertDefinition.app_id == var.app_id)
+        )).scalars().all()
+
+        referenced = False
+        for d in defs:
+            if f"${var.name}" in d.expression:
+                referenced = True
+                break
+            validation = validate_expression(d.expression, "")
+            for tp in validation.threshold_params:
+                if tp.name == var.name:
+                    referenced = True
+                    break
+            if referenced:
+                break
+
+        if not referenced:
+            override_count = (await db.execute(
+                select(func.count()).select_from(ThresholdOverride)
+                .where(ThresholdOverride.variable_id == var.id)
+            )).scalar()
+            if override_count == 0:
+                await db.delete(var)
+                removed += 1
+
+    return {"status": "success", "data": {"removed": removed}}
