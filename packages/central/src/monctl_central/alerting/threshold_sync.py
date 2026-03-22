@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -11,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from monctl_central.alerting.dsl import validate_expression
 from monctl_central.storage.models import AlertDefinition, ThresholdVariable
 
+logger = logging.getLogger(__name__)
+
 
 async def sync_threshold_variables(
     db: AsyncSession,
@@ -18,17 +21,22 @@ async def sync_threshold_variables(
     definition: AlertDefinition,
     target_table: str,
     pack_hints: list[dict] | None = None,
-) -> None:
+) -> list[str]:
     """Ensure threshold variables exist for all extracted params from a definition.
 
     Args:
         pack_hints: Optional list of threshold_defaults from pack JSON.
                     Each dict has: param_key, default_value, display_name, unit, description.
                     When provided, these override the heuristic auto-detection.
+
+    Returns:
+        List of warning messages (e.g. missing $variable references).
     """
+    warnings: list[str] = []
+
     validation = validate_expression(definition.expression, target_table)
     if not validation.valid:
-        return
+        return warnings
 
     # Build hint lookup: param_key → hint dict
     hints: dict[str, dict] = {}
@@ -45,7 +53,25 @@ async def sync_threshold_variables(
         ).scalars().all()
     }
 
+    # Check explicit $variable references — warn if not pre-created
+    variable_ref_names = set(validation.variable_refs)
+    for vname in variable_ref_names:
+        if vname not in existing_vars:
+            warnings.append(
+                f"Expression references ${{${vname}}} but no ThresholdVariable "
+                f"'{vname}' exists on this app. Create it first for proper defaults."
+            )
+            logger.warning(
+                "threshold_variable_missing variable=%s app_id=%s definition=%s",
+                vname, str(app_id), definition.name,
+            )
+
+    # Auto-create ThresholdVariables for implicit threshold params (not $variable refs)
     for param in validation.threshold_params:
+        # Skip $variable-ref params — those should be pre-created by the user
+        if param.name in variable_ref_names:
+            continue
+
         hint = hints.get(param.name, {})
         existing = existing_vars.get(param.name)
         if existing is None:
@@ -70,6 +96,8 @@ async def sync_threshold_variables(
                 existing.unit = hint["unit"]
             if hint.get("description") and not existing.description:
                 existing.description = hint["description"]
+
+    return warnings
 
 
 def _auto_display_name(param_name: str) -> str:

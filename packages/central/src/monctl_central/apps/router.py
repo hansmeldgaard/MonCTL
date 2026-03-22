@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from monctl_central.dependencies import apply_tenant_filter, get_db, require_auth
 from monctl_common.validators import validate_semver, validate_uuid
 from monctl_central.storage.models import (
+    AlertDefinition,
     App,
     AppAssignment,
     AppConnectorBinding,
@@ -1702,6 +1703,28 @@ def _fmt_threshold_variable(v: ThresholdVariable) -> dict:
     }
 
 
+class CreateThresholdVariableRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    default_value: float
+    display_name: str | None = Field(default=None, max_length=255)
+    unit: str | None = None
+    description: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("name")
+    @classmethod
+    def check_name(cls, v: str) -> str:
+        if not re.match(r"^[a-z_][a-z0-9_]*$", v):
+            raise ValueError("name must be lowercase letters, digits, and underscores only")
+        return v
+
+    @field_validator("unit")
+    @classmethod
+    def check_unit(cls, v: str | None) -> str | None:
+        if v is not None and v not in {"percent", "ms", "bytes", "count", "ratio"}:
+            raise ValueError("unit must be one of: percent, ms, bytes, count, ratio")
+        return v
+
+
 class UpdateThresholdVariableRequest(BaseModel):
     app_value: float | None = None
     display_name: str | None = Field(default=None, max_length=255)
@@ -1726,6 +1749,77 @@ async def list_app_thresholds(
     )
     variables = (await db.execute(stmt)).scalars().all()
     return {"status": "success", "data": [_fmt_threshold_variable(v) for v in variables]}
+
+
+@router.post("/{app_id}/thresholds", status_code=201)
+async def create_app_threshold(
+    app_id: str,
+    request: CreateThresholdVariableRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Create a new threshold variable for an app."""
+    app = await db.get(App, uuid.UUID(app_id))
+    if not app:
+        raise HTTPException(status_code=404, detail="App not found")
+
+    # Check uniqueness
+    existing = (await db.execute(
+        select(ThresholdVariable).where(
+            ThresholdVariable.app_id == uuid.UUID(app_id),
+            ThresholdVariable.name == request.name,
+        )
+    )).scalar_one_or_none()
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Threshold variable '{request.name}' already exists on this app",
+        )
+
+    var = ThresholdVariable(
+        app_id=uuid.UUID(app_id),
+        name=request.name,
+        default_value=request.default_value,
+        display_name=request.display_name,
+        unit=request.unit,
+        description=request.description,
+    )
+    db.add(var)
+    await db.flush()
+    return {"status": "success", "data": _fmt_threshold_variable(var)}
+
+
+@router.delete("/{app_id}/thresholds/{var_id}")
+async def delete_app_threshold(
+    app_id: str,
+    var_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Delete a threshold variable. Fails if referenced by alert definitions."""
+    app = await db.get(App, uuid.UUID(app_id))
+    if not app:
+        raise HTTPException(status_code=404, detail="App not found")
+
+    variable = await db.get(ThresholdVariable, uuid.UUID(var_id))
+    if not variable or str(variable.app_id) != app_id:
+        raise HTTPException(status_code=404, detail="Threshold variable not found")
+
+    # Check if any alert definitions reference $variable_name
+    alert_defs = (await db.execute(
+        select(AlertDefinition).where(AlertDefinition.app_id == uuid.UUID(app_id))
+    )).scalars().all()
+    for ad in alert_defs:
+        if f"${variable.name}" in ad.expression:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot delete: alert definition '{ad.name}' references "
+                       f"${variable.name} in its expression",
+            )
+
+    await db.delete(variable)
+    await db.flush()
+    return {"status": "success", "data": None}
 
 
 @router.put("/{app_id}/thresholds/{var_id}")

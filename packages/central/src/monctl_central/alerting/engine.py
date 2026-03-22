@@ -263,13 +263,17 @@ class AlertEngine:
         )
 
         # Resolve effective thresholds — use app_value from ThresholdVariable
-        # if set, otherwise fall back to default (compiled) params
+        # if set, otherwise fall back to default_value from ThresholdVariable,
+        # then to the compiled default param value
         params = dict(compiled.params)
         if var_by_name and compiled.threshold_params:
             for tp in compiled.threshold_params:
                 var = var_by_name.get(tp.name)
-                if var is not None and var.app_value is not None:
-                    params[tp.param_key] = var.app_value
+                if var is not None:
+                    if var.app_value is not None:
+                        params[tp.param_key] = var.app_value
+                    elif var.default_value is not None:
+                        params[tp.param_key] = var.default_value
 
         try:
             rows = await asyncio.to_thread(

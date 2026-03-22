@@ -495,6 +495,30 @@ export function useUpdateThresholdVariable() {
   });
 }
 
+export function useCreateThresholdVariable() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ appId, ...data }: {
+      appId: string; name: string; default_value: number;
+      display_name?: string; unit?: string; description?: string
+    }) => apiPost(`/apps/${appId}/thresholds`, data),
+    onSuccess: (_, vars) => {
+      qc.invalidateQueries({ queryKey: ["app-thresholds", vars.appId] });
+    },
+  });
+}
+
+export function useDeleteThresholdVariable() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ appId, varId }: { appId: string; varId: string }) =>
+      apiDelete(`/apps/${appId}/thresholds/${varId}`),
+    onSuccess: (_, vars) => {
+      qc.invalidateQueries({ queryKey: ["app-thresholds", vars.appId] });
+    },
+  });
+}
+
 export function useCreateThresholdOverride() {
   const qc = useQueryClient();
   return useMutation({

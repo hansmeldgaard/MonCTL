@@ -42,6 +42,8 @@ import {
   useAppConfigKeys,
   useAppThresholds,
   useUpdateThresholdVariable,
+  useCreateThresholdVariable,
+  useDeleteThresholdVariable,
 } from "@/api/hooks.ts";
 import { apiGet } from "@/api/client.ts";
 import type { AppAlertDefinition, DisplayTemplate } from "@/types/api.ts";
@@ -964,23 +966,39 @@ function NewVersionCodeForm({
 
 function ThresholdsTab({ appId }: { appId: string }) {
   const { data: variables, isLoading } = useAppThresholds(appId);
+  const { data: definitionsResp } = useAlertDefinitions(appId);
+  const definitions = definitionsResp?.data ?? [];
   const updateVar = useUpdateThresholdVariable();
+  const createVar = useCreateThresholdVariable();
+  const deleteVar = useDeleteThresholdVariable();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newDefault, setNewDefault] = useState("");
+  const [newUnit, setNewUnit] = useState("");
+  const [newDisplayName, setNewDisplayName] = useState("");
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  // Build a map: variable name -> list of definitions that reference $variable_name
+  const variableUsage = useMemo(() => {
+    const usage: Record<string, { definition_id: string; definition_name: string }[]> = {};
+    if (variables && definitions) {
+      for (const v of variables) {
+        const refs: { definition_id: string; definition_name: string }[] = [];
+        for (const d of definitions) {
+          if (d.expression && d.expression.includes(`$${v.name}`)) {
+            refs.push({ definition_id: d.id, definition_name: d.name });
+          }
+        }
+        usage[v.id] = refs;
+      }
+    }
+    return usage;
+  }, [variables, definitions]);
 
   if (isLoading) return <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-zinc-500" /></div>;
-
-  if (!variables || variables.length === 0) {
-    return (
-      <Card>
-        <CardContent className="py-12 text-center">
-          <SlidersHorizontal className="h-8 w-8 text-zinc-600 mx-auto mb-2" />
-          <p className="text-sm text-zinc-500">No threshold variables defined.</p>
-          <p className="text-xs text-zinc-600 mt-1">Variables are auto-created when alert definitions with threshold expressions are added.</p>
-        </CardContent>
-      </Card>
-    );
-  }
 
   const handleSave = (varId: string) => {
     const val = parseFloat(editValue);
@@ -994,6 +1012,40 @@ function ThresholdsTab({ appId }: { appId: string }) {
     updateVar.mutate({ appId, varId, app_value: null });
   };
 
+  const handleCreate = () => {
+    setCreateError(null);
+    const name = newName.trim();
+    if (!name) { setCreateError("Name is required"); return; }
+    if (!/^[a-z][a-z0-9_]*$/.test(name)) { setCreateError("Name must be lowercase alphanumeric with underscores, starting with a letter"); return; }
+    const defaultVal = parseFloat(newDefault);
+    if (isNaN(defaultVal) || !isFinite(defaultVal)) { setCreateError("Default value must be a valid number"); return; }
+    createVar.mutate({
+      appId,
+      name,
+      default_value: defaultVal,
+      display_name: newDisplayName.trim() || undefined,
+      unit: newUnit.trim() || undefined,
+    }, {
+      onSuccess: () => {
+        setCreating(false);
+        setNewName("");
+        setNewDefault("");
+        setNewUnit("");
+        setNewDisplayName("");
+        setCreateError(null);
+      },
+      onError: (err: unknown) => {
+        setCreateError(err instanceof Error ? err.message : "Failed to create variable");
+      },
+    });
+  };
+
+  const handleDelete = (varId: string) => {
+    deleteVar.mutate({ appId, varId }, {
+      onSuccess: () => setConfirmDeleteId(null),
+    });
+  };
+
   const formatUnit = (value: number, unit: string | null) => {
     if (unit === "percent") return `${value}%`;
     if (unit === "ms") return `${value} ms`;
@@ -1001,73 +1053,184 @@ function ThresholdsTab({ appId }: { appId: string }) {
     return String(value);
   };
 
+  const isEmpty = !variables || variables.length === 0;
+
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-sm flex items-center gap-2">
           <SlidersHorizontal className="h-4 w-4" />
-          Threshold Variables ({variables.length})
+          Threshold Variables {variables && variables.length > 0 ? `(${variables.length})` : ""}
+          <Button size="sm" variant="secondary" className="ml-auto gap-1.5" onClick={() => { setCreating(true); setCreateError(null); }}>
+            <Plus className="h-3 w-3" /> New Variable
+          </Button>
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Expression Default</TableHead>
-              <TableHead>App Value</TableHead>
-              <TableHead>Unit</TableHead>
-              <TableHead className="w-24"></TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {variables.map((v) => (
-              <TableRow key={v.id}>
-                <TableCell className="font-medium text-zinc-100">
-                  {v.display_name || v.name}
-                  {v.description && (
-                    <p className="text-xs text-zinc-500 mt-0.5">{v.description}</p>
-                  )}
-                </TableCell>
-                <TableCell className="text-zinc-400 font-mono text-sm">
-                  {formatUnit(v.default_value, v.unit)}
-                </TableCell>
-                <TableCell>
-                  {editingId === v.id ? (
-                    <div className="flex items-center gap-1">
+        {isEmpty && !creating ? (
+          <div className="py-8 text-center">
+            <SlidersHorizontal className="h-8 w-8 text-zinc-600 mx-auto mb-2" />
+            <p className="text-sm text-zinc-500">No threshold variables defined.</p>
+            <p className="text-xs text-zinc-600 mt-1">Variables are auto-created when alert definitions use $variable syntax, or create one manually.</p>
+          </div>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Expression Default</TableHead>
+                <TableHead>App Value</TableHead>
+                <TableHead>Unit</TableHead>
+                <TableHead>Used By</TableHead>
+                <TableHead className="w-24"></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {variables?.map((v) => {
+                const usedBy = variableUsage[v.id] ?? [];
+                const isReferenced = usedBy.length > 0;
+                return (
+                  <TableRow key={v.id}>
+                    <TableCell className="font-medium text-zinc-100">
+                      <span className="font-mono text-sm">${v.name}</span>
+                      {v.display_name && (
+                        <span className="text-zinc-400 text-xs ml-2">({v.display_name})</span>
+                      )}
+                      {v.description && (
+                        <p className="text-xs text-zinc-500 mt-0.5">{v.description}</p>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-zinc-400 font-mono text-sm">
+                      {formatUnit(v.default_value, v.unit)}
+                    </TableCell>
+                    <TableCell>
+                      {editingId === v.id ? (
+                        <div className="flex items-center gap-1">
+                          <Input
+                            type="number"
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === "Enter") handleSave(v.id); if (e.key === "Escape") setEditingId(null); }}
+                            className="w-24 h-7 text-sm"
+                            autoFocus
+                          />
+                          <Button size="sm" variant="ghost" onClick={() => handleSave(v.id)}>
+                            <Check className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <span
+                          className={`font-mono text-sm cursor-pointer hover:text-brand-400 ${v.app_value != null ? "text-brand-300" : "text-zinc-500"}`}
+                          onClick={() => { setEditingId(v.id); setEditValue(String(v.app_value ?? v.default_value)); }}
+                        >
+                          {v.app_value != null ? formatUnit(v.app_value, v.unit) : "\u2014"}
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-zinc-500 text-xs">{v.unit || "\u2014"}</TableCell>
+                    <TableCell>
+                      {usedBy.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {usedBy.map((u) => (
+                            <Badge key={u.definition_id} variant="default" className="text-xs">
+                              {u.definition_name}
+                            </Badge>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-zinc-600">Unused</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1">
+                        {v.app_value != null && (
+                          <Button size="sm" variant="ghost" className="text-zinc-500 hover:text-zinc-300" onClick={() => handleReset(v.id)}>
+                            Reset
+                          </Button>
+                        )}
+                        {confirmDeleteId === v.id ? (
+                          <div className="flex items-center gap-1">
+                            <Button size="sm" variant="destructive" onClick={() => handleDelete(v.id)} disabled={deleteVar.isPending}>
+                              Confirm
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={() => setConfirmDeleteId(null)}>
+                              Cancel
+                            </Button>
+                          </div>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-zinc-500 hover:text-red-400"
+                            title={isReferenced ? `Cannot delete: used by ${usedBy.map(u => u.definition_name).join(", ")}` : "Delete variable"}
+                            disabled={isReferenced}
+                            onClick={() => setConfirmDeleteId(v.id)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+              {creating && (
+                <TableRow>
+                  <TableCell>
+                    <div className="space-y-1">
                       <Input
-                        type="number"
-                        value={editValue}
-                        onChange={(e) => setEditValue(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === "Enter") handleSave(v.id); if (e.key === "Escape") setEditingId(null); }}
-                        className="w-24 h-7 text-sm"
+                        placeholder="variable_name"
+                        value={newName}
+                        onChange={(e) => setNewName(e.target.value)}
+                        className="h-7 text-sm font-mono"
                         autoFocus
                       />
-                      <Button size="sm" variant="ghost" onClick={() => handleSave(v.id)}>
-                        <Check className="h-3.5 w-3.5" />
-                      </Button>
+                      <Input
+                        placeholder="Display name (optional)"
+                        value={newDisplayName}
+                        onChange={(e) => setNewDisplayName(e.target.value)}
+                        className="h-7 text-xs"
+                      />
                     </div>
-                  ) : (
-                    <span
-                      className={`font-mono text-sm cursor-pointer hover:text-brand-400 ${v.app_value != null ? "text-brand-300" : "text-zinc-500"}`}
-                      onClick={() => { setEditingId(v.id); setEditValue(String(v.app_value ?? v.default_value)); }}
+                  </TableCell>
+                  <TableCell>
+                    <Input
+                      type="number"
+                      placeholder="Default"
+                      value={newDefault}
+                      onChange={(e) => setNewDefault(e.target.value)}
+                      className="w-24 h-7 text-sm"
+                      onKeyDown={(e) => { if (e.key === "Enter") handleCreate(); if (e.key === "Escape") setCreating(false); }}
+                    />
+                  </TableCell>
+                  <TableCell />
+                  <TableCell>
+                    <select
+                      value={newUnit}
+                      onChange={(e) => setNewUnit(e.target.value)}
+                      className="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-100"
                     >
-                      {v.app_value != null ? formatUnit(v.app_value, v.unit) : "—"}
-                    </span>
-                  )}
-                </TableCell>
-                <TableCell className="text-zinc-500 text-xs">{v.unit || "—"}</TableCell>
-                <TableCell>
-                  {v.app_value != null && (
-                    <Button size="sm" variant="ghost" className="text-zinc-500 hover:text-zinc-300" onClick={() => handleReset(v.id)}>
-                      Reset
-                    </Button>
-                  )}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+                      <option value="">None</option>
+                      <option value="percent">%</option>
+                      <option value="ms">ms</option>
+                      <option value="bytes">bytes</option>
+                    </select>
+                  </TableCell>
+                  <TableCell />
+                  <TableCell>
+                    <div className="flex items-center gap-1">
+                      <Button size="sm" onClick={handleCreate} disabled={createVar.isPending}>
+                        {createVar.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => { setCreating(false); setCreateError(null); }}>Cancel</Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        )}
+        {createError && <p className="text-sm text-red-400 mt-2">{createError}</p>}
       </CardContent>
     </Card>
   );
@@ -1080,6 +1243,7 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
   const { data: definitionsResp, isLoading } = useAlertDefinitions(appId);
   const definitions = definitionsResp?.data ?? [];
   const { data: metrics } = useAlertMetrics(appId);
+  const { data: variables } = useAppThresholds(appId);
   const createDef = useCreateAlertDefinition();
   const updateDef = useUpdateAlertDefinition();
   const deleteDef = useDeleteAlertDefinition();
@@ -1281,6 +1445,49 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
                       <> · String: <span className="font-mono text-zinc-500">CHANGED</span>, <span className="font-mono text-zinc-500">IN ('a', 'b')</span></>
                     )}
                   </p>
+                </div>
+              )}
+              {/* Threshold variable insertion */}
+              {variables && variables.length > 0 && (
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-xs text-zinc-500">Insert threshold:</span>
+                  <select
+                    className="text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-zinc-300"
+                    value=""
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        const varRef = `$${e.target.value}`;
+                        setFormExpression(prev => prev ? `${prev}${varRef}` : varRef);
+                        e.target.value = "";
+                      }
+                    }}
+                  >
+                    <option value="">-- Select --</option>
+                    {variables.map(v => (
+                      <option key={v.id} value={v.name}>
+                        {v.display_name || v.name} ({v.default_value}{v.unit === "percent" ? "%" : v.unit === "ms" ? "ms" : ""})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {/* Show resolved threshold variables */}
+              {formExpression && formExpression.includes("$") && variables && variables.length > 0 && (
+                <div className="mt-2 space-y-0.5">
+                  {variables
+                    .filter(v => formExpression.includes(`$${v.name}`))
+                    .map(v => (
+                      <div key={v.id} className="flex items-center gap-1.5 text-xs">
+                        <span className="text-emerald-500 font-mono">ok</span>
+                        <span className="text-zinc-400 font-mono">${v.name}</span>
+                        <span className="text-zinc-500">&rarr;</span>
+                        <span className="text-zinc-300">{v.display_name || v.name}</span>
+                        <span className="text-zinc-500">=</span>
+                        <span className="text-zinc-200 font-medium">
+                          {v.default_value}{v.unit === "percent" ? "%" : v.unit === "ms" ? " ms" : ""}
+                        </span>
+                      </div>
+                    ))}
                 </div>
               )}
             </div>

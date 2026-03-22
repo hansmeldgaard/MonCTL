@@ -166,7 +166,19 @@ def _export_app(
             "display_template": v.display_template,
         }
         d["versions"].append(ver_data)
-    # Export alert definitions at the app level with threshold_defaults
+    # Export threshold variables at the app level
+    if threshold_vars:
+        d["threshold_variables"] = [
+            {
+                "name": v.name,
+                "default_value": v.default_value,
+                "display_name": v.display_name,
+                "unit": v.unit,
+                "description": v.description,
+            }
+            for v in threshold_vars
+        ]
+    # Export alert definitions at the app level with threshold_defaults (backward compat)
     if alert_definitions:
         from monctl_central.alerting.dsl import validate_expression
         tv_by_name = {v.name: v for v in (threshold_vars or [])}
@@ -181,7 +193,7 @@ def _export_app(
                 "description": ad.description,
                 "message_template": ad.message_template,
             }
-            # Include threshold_defaults from threshold variables
+            # Include threshold_defaults from threshold variables (backward compat)
             if tv_by_name:
                 validation = validate_expression(ad.expression, a.target_table)
                 if validation.valid and validation.threshold_params:
@@ -386,6 +398,7 @@ async def import_pack(
                         db, existing, item.get("versions", []),
                         pack_uid=pack_uid, pack_id=pack.id, skip_app_update=True,
                         alert_defs_data=item.get("alert_definitions", []),
+                        threshold_vars_data=item.get("threshold_variables", []),
                     )
                 continue
             elif existing and resolution == "overwrite":
@@ -395,6 +408,7 @@ async def import_pack(
                         db, existing, item.get("versions", []),
                         pack_uid=pack_uid, pack_id=pack.id,
                         alert_defs_data=item.get("alert_definitions", []),
+                        threshold_vars_data=item.get("threshold_variables", []),
                     )
                 elif section == "connectors":
                     await _sync_connector_versions(db, existing, item.get("versions", []))
@@ -410,6 +424,7 @@ async def import_pack(
                         db, entity, item.get("versions", []),
                         pack_uid=pack_uid, pack_id=pack.id,
                         alert_defs_data=item.get("alert_definitions", []),
+                        threshold_vars_data=item.get("threshold_variables", []),
                     )
                 elif section == "connectors":
                     await _create_connector_versions(db, entity, item.get("versions", []))
@@ -423,6 +438,7 @@ async def import_pack(
                         db, entity, item.get("versions", []),
                         pack_uid=pack_uid, pack_id=pack.id,
                         alert_defs_data=item.get("alert_definitions", []),
+                        threshold_vars_data=item.get("threshold_variables", []),
                     )
                 elif section == "connectors":
                     await _create_connector_versions(db, entity, item.get("versions", []))
@@ -548,6 +564,7 @@ async def _create_app_versions(
     pack_uid: str | None = None,
     pack_id: uuid.UUID | None = None,
     alert_defs_data: list[dict] | None = None,
+    threshold_vars_data: list[dict] | None = None,
 ) -> None:
     for vdata in versions_data:
         checksum = hashlib.sha256((vdata.get("source_code") or "").encode()).hexdigest()
@@ -563,6 +580,9 @@ async def _create_app_versions(
         )
         db.add(v)
         await db.flush()
+    # Import threshold variables BEFORE alert definitions
+    if threshold_vars_data:
+        await _import_threshold_variables(db, app, threshold_vars_data)
     # Sync alert definitions at app level
     if alert_defs_data:
         await _sync_app_alert_definitions(db, app, alert_defs_data, pack_uid)
@@ -576,6 +596,7 @@ async def _sync_app_versions(
     pack_id: uuid.UUID | None = None,
     skip_app_update: bool = False,
     alert_defs_data: list[dict] | None = None,
+    threshold_vars_data: list[dict] | None = None,
 ) -> None:
     existing = (await db.execute(
         select(AppVersion).where(AppVersion.app_id == app.id)
@@ -621,9 +642,47 @@ async def _sync_app_versions(
         matching = next((vd for vd in versions_data if vd["version"] == v.version), None)
         v.is_latest = matching.get("is_latest", False) if matching else False
 
+    # Import threshold variables BEFORE alert definitions
+    if threshold_vars_data:
+        await _import_threshold_variables(db, app, threshold_vars_data)
     # Sync alert definitions at app level
     if alert_defs_data:
         await _sync_app_alert_definitions(db, app, alert_defs_data, pack_uid)
+
+
+async def _import_threshold_variables(
+    db: AsyncSession,
+    app: App,
+    threshold_vars_data: list[dict],
+) -> None:
+    """Import threshold variables for an app from pack data."""
+    for tv_data in threshold_vars_data:
+        existing = (await db.execute(
+            select(ThresholdVariable).where(
+                ThresholdVariable.app_id == app.id,
+                ThresholdVariable.name == tv_data["name"],
+            )
+        )).scalar_one_or_none()
+        if existing is None:
+            new_var = ThresholdVariable(
+                app_id=app.id,
+                name=tv_data["name"],
+                default_value=tv_data["default_value"],
+                display_name=tv_data.get("display_name"),
+                unit=tv_data.get("unit"),
+                description=tv_data.get("description"),
+            )
+            db.add(new_var)
+        else:
+            # Update default_value, but preserve app_value (user override)
+            if existing.default_value != tv_data["default_value"]:
+                existing.default_value = tv_data["default_value"]
+            # Update display_name/unit/description only if not yet set
+            if tv_data.get("display_name") and not existing.display_name:
+                existing.display_name = tv_data["display_name"]
+            if tv_data.get("description") and not existing.description:
+                existing.description = tv_data["description"]
+    await db.flush()
 
 
 async def _sync_app_alert_definitions(

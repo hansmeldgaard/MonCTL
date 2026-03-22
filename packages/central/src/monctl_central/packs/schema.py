@@ -123,6 +123,33 @@ def validate_pack_schema(data: dict) -> None:
                 )
             _validate_threshold_defaults(alert_def)
 
+        # App-level threshold_variables
+        for tv in app.get("threshold_variables", []):
+            app_name = app.get("name", "?")
+            if not tv.get("name"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"threshold_variables entry in app '{app_name}' requires name",
+                )
+            if not re.match(r"^[a-z_][a-z0-9_]*$", tv["name"]):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"threshold_variables name '{tv['name']}' in app '{app_name}' "
+                           "must be lowercase letters, digits, and underscores only",
+                )
+            if "default_value" not in tv:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"threshold_variables entry '{tv['name']}' in app "
+                           f"'{app_name}' requires default_value",
+                )
+            if tv.get("unit") and tv["unit"] not in _VALID_UNITS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"threshold_variables unit '{tv['unit']}' in app '{app_name}' "
+                           f"must be one of: {', '.join(sorted(_VALID_UNITS))}",
+                )
+
     for conn in contents.get("connectors", []):
         if not conn.get("name"):
             raise HTTPException(status_code=400, detail="Connector name is required")

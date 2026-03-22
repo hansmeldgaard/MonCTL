@@ -14,6 +14,7 @@ Grammar:
     arith_term     := arith_atom (("*" | "/") arith_atom)*
     arith_atom     := agg_call
                    |  number
+                   |  "$" variable_name
                    |  "(" arith_expr ")"
 
     agg_call       := AGG_FUNC "(" identifier ")"
@@ -58,14 +59,20 @@ class NumericLiteral:
     value: float
 
 
-ArithNode = Union[AggCall, ArithOp, NumericLiteral]
+@dataclass
+class VariableRef:
+    """Reference to a named threshold variable: $rtt_ms_warn"""
+    variable_name: str
+
+
+ArithNode = Union[AggCall, ArithOp, NumericLiteral, VariableRef]
 
 
 @dataclass
 class Comparison:
     left: ArithNode | str       # ArithNode for numeric, str for config string
     op: str
-    right: float | str
+    right: float | str | VariableRef
 
 
 @dataclass
@@ -101,6 +108,7 @@ _TOKEN_RE = re.compile(
     |(?P<ARITH>[+\-*/])
     |(?P<NUMBER>-?\d+(?:\.\d+)?)
     |(?P<STRING>'[^']*'|"[^"]*")
+    |(?P<VARIABLE>\$[a-z_][a-z0-9_]*)
     |(?P<WORD>[a-zA-Z_]\w*)
     |(?P<WS>\s+)
     """,
@@ -130,6 +138,8 @@ def _tokenize(expr: str) -> list[tuple[str, str]]:
                 tokens.append(("AGG_FUNC", value.lower()))
             else:
                 tokens.append(("IDENT", value))
+        elif m.lastgroup == "VARIABLE":
+            tokens.append(("VARIABLE", value))
         elif m.lastgroup == "STRING":
             tokens.append(("STRING", value[1:-1]))
         elif m.lastgroup == "NUMBER":
@@ -239,8 +249,8 @@ class _Parser:
         if tok[0] == "IDENT":
             return self._parse_ident_condition()
 
-        # Aggregation call or arithmetic expression starting with agg/number
-        if tok[0] in ("AGG_FUNC", "NUMBER"):
+        # Aggregation call or arithmetic expression starting with agg/number/$variable
+        if tok[0] in ("AGG_FUNC", "NUMBER", "VARIABLE"):
             return self._parse_arith_comparison()
 
         raise ParseError(f"Unexpected token: '{tok[1]}'")
@@ -318,7 +328,7 @@ class _Parser:
         return left
 
     def _parse_arith_atom(self) -> ArithNode:
-        """arith_atom := agg_call | number | "(" arith_expr ")" """
+        """arith_atom := agg_call | number | $variable | "(" arith_expr ")" """
         tok = self.peek()
         if tok is None:
             raise ParseError("Expected arithmetic operand, got end of expression")
@@ -330,6 +340,11 @@ class _Parser:
             self.consume()
             return NumericLiteral(value=float(tok[1]))
 
+        if tok[0] == "VARIABLE":
+            self.consume()
+            # Strip the leading '$' to get the variable name
+            return VariableRef(variable_name=tok[1][1:])
+
         if tok[0] == "LPAREN":
             self._enter_depth()
             self.consume()
@@ -338,7 +353,7 @@ class _Parser:
             self._exit_depth()
             return expr
 
-        raise ParseError(f"Expected aggregation, number, or '(', got '{tok[1]}'")
+        raise ParseError(f"Expected aggregation, number, variable, or '(', got '{tok[1]}'")
 
     def _parse_agg_call(self) -> AggCall:
         func = self.consume("AGG_FUNC")[1]
@@ -353,7 +368,7 @@ class _Parser:
         self._count_agg()
         return AggCall(func=func, metric=metric)
 
-    def _parse_value(self) -> float | str:
+    def _parse_value(self) -> float | str | VariableRef:
         tok = self.peek()
         if tok is None:
             raise ParseError("Expected value")
@@ -363,6 +378,9 @@ class _Parser:
         if tok[0] == "STRING":
             self.consume()
             return tok[1]
+        if tok[0] == "VARIABLE":
+            self.consume()
+            return VariableRef(variable_name=tok[1][1:])
         raise ParseError(f"Expected number or string, got '{tok[1]}'")
 
     def _parse_value_list(self) -> list[str]:
@@ -422,6 +440,7 @@ def _has_agg_call(node: ArithNode) -> bool:
         return True
     if isinstance(node, ArithOp):
         return _has_agg_call(node.left) or _has_agg_call(node.right)
+    # NumericLiteral and VariableRef: no agg
     return False
 
 
@@ -513,6 +532,7 @@ class ValidationResult:
     has_aggregation: bool = True
     has_arithmetic: bool = False
     has_division: bool = False
+    variable_refs: list[str] = field(default_factory=list)
 
     @property
     def error(self) -> str | None:
@@ -555,6 +575,7 @@ def validate_expression(
     # ── Walk AST to collect metadata ─────────────────────
     metrics: list[str] = []
     thresholds: list[ThresholdParam] = []
+    var_refs: list[str] = []
     has_agg = False
     has_arith = False
     has_div = False
@@ -571,6 +592,9 @@ def validate_expression(
                 has_div = True
             _walk_arith(node.left)
             _walk_arith(node.right)
+        elif isinstance(node, VariableRef):
+            if node.variable_name not in var_refs:
+                var_refs.append(node.variable_name)
         # NumericLiteral: nothing to collect
 
     def _walk(node: ASTNode) -> None:
@@ -580,9 +604,17 @@ def validate_expression(
                 # Config string comparison
                 metrics.append(node.left)
             else:
-                # ArithNode (AggCall, ArithOp, NumericLiteral)
+                # ArithNode (AggCall, ArithOp, NumericLiteral, VariableRef)
                 _walk_arith(node.left)
-                if isinstance(node.right, (int, float)):
+                if isinstance(node.right, VariableRef):
+                    # Explicit $variable reference as threshold
+                    vname = node.right.variable_name
+                    if vname not in var_refs:
+                        var_refs.append(vname)
+                    thresholds.append(ThresholdParam(
+                        name=vname, default_value=0.0, param_key=vname,
+                    ))
+                elif isinstance(node.right, (int, float)):
                     key = f"_threshold_{_counter[0]}"
                     # Build threshold name from first agg_call found
                     agg_calls = _collect_agg_calls(node.left) if not isinstance(node.left, str) else []
@@ -658,8 +690,11 @@ def validate_expression(
 
     _check_div_zero(ast)
 
-    # Threshold is finite number
+    # Threshold is finite number (skip for $variable refs with default 0.0)
     for tp in thresholds:
+        # Skip variable-ref thresholds (they have name == param_key)
+        if tp.name == tp.param_key and tp.default_value == 0.0:
+            continue
         if not math.isfinite(tp.default_value):
             errors.append(f"Threshold value must be a finite number (got {tp.default_value})")
 
@@ -669,6 +704,7 @@ def validate_expression(
             agg_calls = _collect_agg_calls(n.left)
             for ac in agg_calls:
                 if ac.metric.endswith("_pct") or ac.metric.endswith("_percent"):
+                    # Skip range check for $variable refs (resolved at runtime)
                     if isinstance(n.right, (int, float)):
                         if not (0 <= n.right <= 100):
                             errors.append(
@@ -738,6 +774,7 @@ def validate_expression(
         has_aggregation=has_agg,
         has_arithmetic=has_arith,
         has_division=has_div,
+        variable_refs=var_refs,
     )
 
 
@@ -818,25 +855,37 @@ class _Compiler:
             arith_alias = self._compile_arith_select(node.left)
 
             ch_op = "=" if node.op == "==" else node.op
-            param_key = f"_threshold_{self._threshold_idx}"
-            self._having_parts.append(f"{arith_alias} {ch_op} {{{param_key}:Float64}}")
 
-            threshold_val = float(node.right) if isinstance(node.right, (int, float)) else 0.0
-            self.params[param_key] = threshold_val
-
-            # Build threshold name from first agg call
-            agg_calls = _collect_agg_calls(node.left)
-            if agg_calls:
-                first = agg_calls[0]
-                tname = f"{first.metric}_{first.func}_threshold"
+            if isinstance(node.right, VariableRef):
+                # Explicit $variable reference — use variable name as param key
+                vname = node.right.variable_name
+                self._having_parts.append(f"{arith_alias} {ch_op} {{{vname}:Float64}}")
+                self.params[vname] = 0.0  # default, resolved at runtime
+                self.threshold_params.append(ThresholdParam(
+                    name=vname,
+                    default_value=0.0,
+                    param_key=vname,
+                ))
             else:
-                tname = f"threshold_{self._threshold_idx}"
-            self.threshold_params.append(ThresholdParam(
-                name=tname,
-                default_value=threshold_val,
-                param_key=param_key,
-            ))
-            self._threshold_idx += 1
+                param_key = f"_threshold_{self._threshold_idx}"
+                self._having_parts.append(f"{arith_alias} {ch_op} {{{param_key}:Float64}}")
+
+                threshold_val = float(node.right) if isinstance(node.right, (int, float)) else 0.0
+                self.params[param_key] = threshold_val
+
+                # Build threshold name from first agg call
+                agg_calls = _collect_agg_calls(node.left)
+                if agg_calls:
+                    first = agg_calls[0]
+                    tname = f"{first.metric}_{first.func}_threshold"
+                else:
+                    tname = f"threshold_{self._threshold_idx}"
+                self.threshold_params.append(ThresholdParam(
+                    name=tname,
+                    default_value=threshold_val,
+                    param_key=param_key,
+                ))
+                self._threshold_idx += 1
 
         elif isinstance(node, BoolOp):
             self._build_query_parts(node.left)
@@ -861,6 +910,8 @@ class _Compiler:
             return self._agg_to_sql(node)
         elif isinstance(node, NumericLiteral):
             return str(node.value)
+        elif isinstance(node, VariableRef):
+            return f"{{{node.variable_name}:Float64}}"
         elif isinstance(node, ArithOp):
             left_sql = self._arith_to_sql(node.left)
             right_sql = self._arith_to_sql(node.right)
@@ -987,6 +1038,8 @@ def _arith_to_string(node: ArithNode) -> str:
     elif isinstance(node, NumericLiteral):
         v = node.value
         return str(int(v)) if v == int(v) else str(v)
+    elif isinstance(node, VariableRef):
+        return f"${node.variable_name}"
     elif isinstance(node, ArithOp):
         left = _arith_to_string(node.left)
         right = _arith_to_string(node.right)
@@ -1001,7 +1054,9 @@ def _ast_to_string(node: ASTNode) -> str:
             left_str = node.left
         else:
             left_str = _arith_to_string(node.left)
-        if isinstance(node.right, str):
+        if isinstance(node.right, VariableRef):
+            right_str = f"${node.right.variable_name}"
+        elif isinstance(node.right, str):
             right_str = f"'{node.right}'"
         else:
             # Format number without trailing .0 if integer
