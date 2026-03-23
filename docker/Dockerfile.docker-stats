@@ -6,4 +6,4 @@ COPY docker-stats-server.py /app/server.py
 
 EXPOSE 9100
 
-CMD ["python", "/app/server.py"]
+CMD ["python", "-u", "/app/server.py"]

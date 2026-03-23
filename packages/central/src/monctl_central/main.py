@@ -701,6 +701,10 @@ app.include_router(api_router, prefix="/v1")
 from monctl_central.collector_api.router import router as collector_api_router  # noqa: E402
 app.include_router(collector_api_router, prefix="/api/v1")
 
+# Docker stats push endpoint (worker sidecars → central)
+from monctl_central.collector_api.docker_push import router as docker_push_router  # noqa: E402
+app.include_router(docker_push_router, prefix="/api/v1")
+
 
 # ---------------------------------------------------------------------------
 # Serve the frontend SPA (built React app)

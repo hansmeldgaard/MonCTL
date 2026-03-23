@@ -632,11 +632,58 @@ function SystemTab() {
   );
 }
 
+function formatRetentionDays(days: number): string {
+  if (days >= 730) return `${Math.round(days / 365)} years`;
+  if (days >= 365) return "1 year";
+  return `${days} days`;
+}
+
+function RetentionTriple({
+  rawValue, rawOnChange, rawOptions, rawDefault,
+  hourlyValue, hourlyOnChange, hourlyOptions, hourlyDefault,
+  dailyValue, dailyOnChange, dailyOptions, dailyDefault,
+}: {
+  rawValue: string; rawOnChange: (v: string) => void; rawOptions: number[]; rawDefault: number;
+  hourlyValue: string; hourlyOnChange: (v: string) => void; hourlyOptions: number[]; hourlyDefault: number;
+  dailyValue: string; dailyOnChange: (v: string) => void; dailyOptions: number[]; dailyDefault: number;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <div className="grid grid-cols-3 gap-3">
+        <div className="space-y-0.5">
+          <span className="text-xs text-zinc-600">Raw</span>
+          <Select value={rawValue} onChange={(e) => rawOnChange(e.target.value)}>
+            {rawOptions.map((o) => (
+              <option key={o} value={String(o)}>{formatRetentionDays(o)}{o === rawDefault ? " (default)" : ""}</option>
+            ))}
+          </Select>
+        </div>
+        <div className="space-y-0.5">
+          <span className="text-xs text-zinc-600">Hourly rollup</span>
+          <Select value={hourlyValue} onChange={(e) => hourlyOnChange(e.target.value)}>
+            {hourlyOptions.map((o) => (
+              <option key={o} value={String(o)}>{formatRetentionDays(o)}{o === hourlyDefault ? " (default)" : ""}</option>
+            ))}
+          </Select>
+        </div>
+        <div className="space-y-0.5">
+          <span className="text-xs text-zinc-600">Daily rollup</span>
+          <Select value={dailyValue} onChange={(e) => dailyOnChange(e.target.value)}>
+            {dailyOptions.map((o) => (
+              <option key={o} value={String(o)}>{formatRetentionDays(o)}{o === dailyDefault ? " (default)" : ""}</option>
+            ))}
+          </Select>
+        </div>
+      </div>
+      <p className="text-xs text-zinc-600">Full-resolution → hourly aggregated → daily aggregated for long-term trends.</p>
+    </div>
+  );
+}
+
 function DataRetentionTab() {
   const { data: settings, isLoading } = useSystemSettings();
   const updateSettings = useUpdateSystemSettings();
   const [jobRetention, setJobRetention] = useState("");
-  const [resultsRetention, setResultsRetention] = useState("");
   const [ifaceInterval, setIfaceInterval] = useState("300");
   const [ifaceMetaRefresh, setIfaceMetaRefresh] = useState("3600");
   const [ifaceRawRetention, setIfaceRawRetention] = useState("7");
@@ -646,13 +693,15 @@ function DataRetentionTab() {
   const [perfRawRetention, setPerfRawRetention] = useState("7");
   const [perfHourlyRetention, setPerfHourlyRetention] = useState("90");
   const [perfDailyRetention, setPerfDailyRetention] = useState("730");
+  const [availRawRetention, setAvailRawRetention] = useState("30");
+  const [availHourlyRetention, setAvailHourlyRetention] = useState("365");
+  const [availDailyRetention, setAvailDailyRetention] = useState("1825");
   const [idleTimeoutDefault, setIdleTimeoutDefault] = useState("60");
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     if (settings) {
       setJobRetention(settings.job_status_retention_days ?? "7");
-      setResultsRetention(settings.check_results_retention_days ?? "90");
       setIfaceInterval(settings.interface_poll_interval_seconds ?? "300");
       setIfaceMetaRefresh(settings.interface_metadata_refresh_seconds ?? "3600");
       setIfaceRawRetention(settings.interface_raw_retention_days ?? "7");
@@ -662,13 +711,15 @@ function DataRetentionTab() {
       setPerfRawRetention(settings.perf_raw_retention_days ?? "7");
       setPerfHourlyRetention(settings.perf_hourly_retention_days ?? "90");
       setPerfDailyRetention(settings.perf_daily_retention_days ?? "730");
+      setAvailRawRetention(settings.avail_raw_retention_days ?? "30");
+      setAvailHourlyRetention(settings.avail_hourly_retention_days ?? "365");
+      setAvailDailyRetention(settings.avail_daily_retention_days ?? "1825");
       setIdleTimeoutDefault(settings.session_idle_timeout_minutes ?? "60");
     }
   }, [settings]);
 
   const modified = settings && (
     jobRetention !== (settings.job_status_retention_days ?? "7") ||
-    resultsRetention !== (settings.check_results_retention_days ?? "90") ||
     ifaceInterval !== (settings.interface_poll_interval_seconds ?? "300") ||
     ifaceMetaRefresh !== (settings.interface_metadata_refresh_seconds ?? "3600") ||
     ifaceRawRetention !== (settings.interface_raw_retention_days ?? "7") ||
@@ -678,6 +729,9 @@ function DataRetentionTab() {
     perfRawRetention !== (settings.perf_raw_retention_days ?? "7") ||
     perfHourlyRetention !== (settings.perf_hourly_retention_days ?? "90") ||
     perfDailyRetention !== (settings.perf_daily_retention_days ?? "730") ||
+    availRawRetention !== (settings.avail_raw_retention_days ?? "30") ||
+    availHourlyRetention !== (settings.avail_hourly_retention_days ?? "365") ||
+    availDailyRetention !== (settings.avail_daily_retention_days ?? "1825") ||
     idleTimeoutDefault !== (settings.session_idle_timeout_minutes ?? "60")
   );
 
@@ -685,7 +739,6 @@ function DataRetentionTab() {
     await updateSettings.mutateAsync({
       settings: {
         job_status_retention_days: jobRetention,
-        check_results_retention_days: resultsRetention,
         interface_poll_interval_seconds: ifaceInterval,
         interface_metadata_refresh_seconds: ifaceMetaRefresh,
         interface_raw_retention_days: ifaceRawRetention,
@@ -695,6 +748,9 @@ function DataRetentionTab() {
         perf_raw_retention_days: perfRawRetention,
         perf_hourly_retention_days: perfHourlyRetention,
         perf_daily_retention_days: perfDailyRetention,
+        avail_raw_retention_days: availRawRetention,
+        avail_hourly_retention_days: availHourlyRetention,
+        avail_daily_retention_days: availDailyRetention,
         session_idle_timeout_minutes: idleTimeoutDefault,
       },
     });
@@ -707,97 +763,54 @@ function DataRetentionTab() {
   }
 
   return (
-    <div className="max-w-lg space-y-6">
+    <div className="max-w-2xl space-y-6">
+      {/* Interface Monitoring */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Database className="h-4 w-4" />
-            Data Retention
+            Interface Monitoring
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="space-y-1.5">
-            <label className="text-sm text-zinc-400">Job Status Retention (days)</label>
-            <Input type="number" value={jobRetention} onChange={e => setJobRetention(e.target.value)} className="max-w-32" />
-            <p className="text-xs text-zinc-600">How long to keep job execution status records.</p>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-sm text-zinc-400">Default Poll Interval</label>
+              <Select value={ifaceInterval} onChange={(e) => setIfaceInterval(e.target.value)}>
+                <option value="60">1 minute</option>
+                <option value="120">2 minutes</option>
+                <option value="300">5 minutes (default)</option>
+                <option value="600">10 minutes</option>
+                <option value="900">15 minutes</option>
+                <option value="1800">30 minutes</option>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm text-zinc-400">Metadata Refresh</label>
+              <Select value={ifaceMetaRefresh} onChange={(e) => setIfaceMetaRefresh(e.target.value)}>
+                <option value="900">15 minutes</option>
+                <option value="1800">30 minutes</option>
+                <option value="3600">1 hour (default)</option>
+                <option value="7200">2 hours</option>
+                <option value="14400">4 hours</option>
+                <option value="21600">6 hours</option>
+                <option value="43200">12 hours</option>
+                <option value="86400">24 hours</option>
+              </Select>
+            </div>
           </div>
-          <div className="space-y-1.5">
-            <label className="text-sm text-zinc-400">Check Results Retention (days)</label>
-            <Input type="number" value={resultsRetention} onChange={e => setResultsRetention(e.target.value)} className="max-w-32" />
-            <p className="text-xs text-zinc-600">How long to keep check results in ClickHouse.</p>
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-sm text-zinc-400">Default Interface Poll Interval</label>
-            <Select value={ifaceInterval} onChange={(e) => setIfaceInterval(e.target.value)} className="max-w-48">
-              <option value="60">1 minute</option>
-              <option value="120">2 minutes</option>
-              <option value="300">5 minutes (default)</option>
-              <option value="600">10 minutes</option>
-              <option value="900">15 minutes</option>
-              <option value="1800">30 minutes</option>
-            </Select>
-            <p className="text-xs text-zinc-600">Default polling interval for interface monitoring. Can be overridden per device.</p>
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-sm text-zinc-400">Interface Metadata Refresh</label>
-            <Select value={ifaceMetaRefresh} onChange={(e) => setIfaceMetaRefresh(e.target.value)} className="max-w-48">
-              <option value="900">15 minutes</option>
-              <option value="1800">30 minutes</option>
-              <option value="3600">1 hour (default)</option>
-              <option value="7200">2 hours</option>
-              <option value="14400">4 hours</option>
-              <option value="21600">6 hours</option>
-              <option value="43200">12 hours</option>
-              <option value="86400">24 hours</option>
-            </Select>
-            <p className="text-xs text-zinc-600">How often to refresh interface metadata (name, alias, speed) from devices.</p>
-          </div>
+          <RetentionTriple
+            rawValue={ifaceRawRetention} rawOnChange={setIfaceRawRetention}
+            rawOptions={[3, 7, 14, 30, 60, 90]} rawDefault={7}
+            hourlyValue={ifaceHourlyRetention} hourlyOnChange={setIfaceHourlyRetention}
+            hourlyOptions={[30, 60, 90, 180, 365]} hourlyDefault={90}
+            dailyValue={ifaceDailyRetention} dailyOnChange={setIfaceDailyRetention}
+            dailyOptions={[180, 365, 730, 1095, 1825]} dailyDefault={730}
+          />
         </CardContent>
       </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Database className="h-4 w-4" />
-            Interface Data Retention
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-1.5">
-            <label className="text-sm text-zinc-400">Raw Data</label>
-            <Select value={ifaceRawRetention} onChange={(e) => setIfaceRawRetention(e.target.value)} className="max-w-48">
-              <option value="3">3 days</option>
-              <option value="7">7 days (default)</option>
-              <option value="14">14 days</option>
-              <option value="30">30 days</option>
-              <option value="60">60 days</option>
-              <option value="90">90 days</option>
-            </Select>
-            <p className="text-xs text-zinc-600">Full-resolution interface data (every poll interval).</p>
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-sm text-zinc-400">Hourly Rollup</label>
-            <Select value={ifaceHourlyRetention} onChange={(e) => setIfaceHourlyRetention(e.target.value)} className="max-w-48">
-              <option value="30">30 days</option>
-              <option value="60">60 days</option>
-              <option value="90">90 days (default)</option>
-              <option value="180">180 days</option>
-              <option value="365">1 year</option>
-            </Select>
-            <p className="text-xs text-zinc-600">Hourly aggregated data (avg, max, p95).</p>
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-sm text-zinc-400">Daily Rollup</label>
-            <Select value={ifaceDailyRetention} onChange={(e) => setIfaceDailyRetention(e.target.value)} className="max-w-48">
-              <option value="180">180 days</option>
-              <option value="365">1 year</option>
-              <option value="730">2 years (default)</option>
-              <option value="1095">3 years</option>
-              <option value="1825">5 years</option>
-            </Select>
-            <p className="text-xs text-zinc-600">Daily aggregated data for long-term trends.</p>
-          </div>
-        </CardContent>
-      </Card>
+
+      {/* Performance Data Retention */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -805,62 +818,66 @@ function DataRetentionTab() {
             Performance Data Retention
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-1.5">
-            <label className="text-sm text-zinc-400">Raw Data</label>
-            <Select value={perfRawRetention} onChange={(e) => setPerfRawRetention(e.target.value)} className="max-w-48">
-              <option value="3">3 days</option>
-              <option value="7">7 days (default)</option>
-              <option value="14">14 days</option>
-              <option value="30">30 days</option>
-              <option value="60">60 days</option>
-              <option value="90">90 days</option>
-            </Select>
-            <p className="text-xs text-zinc-600">Full-resolution performance data (every poll interval).</p>
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-sm text-zinc-400">Hourly Rollup</label>
-            <Select value={perfHourlyRetention} onChange={(e) => setPerfHourlyRetention(e.target.value)} className="max-w-48">
-              <option value="30">30 days</option>
-              <option value="60">60 days</option>
-              <option value="90">90 days (default)</option>
-              <option value="180">180 days</option>
-              <option value="365">1 year</option>
-            </Select>
-            <p className="text-xs text-zinc-600">Hourly aggregated data (avg, max, p95).</p>
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-sm text-zinc-400">Daily Rollup</label>
-            <Select value={perfDailyRetention} onChange={(e) => setPerfDailyRetention(e.target.value)} className="max-w-48">
-              <option value="180">180 days</option>
-              <option value="365">1 year</option>
-              <option value="730">2 years (default)</option>
-              <option value="1095">3 years</option>
-              <option value="1825">5 years</option>
-            </Select>
-            <p className="text-xs text-zinc-600">Daily aggregated data for long-term trends.</p>
-          </div>
+        <CardContent>
+          <RetentionTriple
+            rawValue={perfRawRetention} rawOnChange={setPerfRawRetention}
+            rawOptions={[3, 7, 14, 30, 60, 90]} rawDefault={7}
+            hourlyValue={perfHourlyRetention} hourlyOnChange={setPerfHourlyRetention}
+            hourlyOptions={[30, 60, 90, 180, 365]} hourlyDefault={90}
+            dailyValue={perfDailyRetention} dailyOnChange={setPerfDailyRetention}
+            dailyOptions={[180, 365, 730, 1095, 1825]} dailyDefault={730}
+          />
         </CardContent>
       </Card>
+
+      {/* Availability & Latency Retention */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Activity className="h-4 w-4" />
+            Availability & Latency Retention
+          </CardTitle>
+          <p className="text-xs text-zinc-600">Ping, port check, and HTTP check data. Daily rollups enable years of device health history.</p>
+        </CardHeader>
+        <CardContent>
+          <RetentionTriple
+            rawValue={availRawRetention} rawOnChange={setAvailRawRetention}
+            rawOptions={[7, 14, 30, 60, 90]} rawDefault={30}
+            hourlyValue={availHourlyRetention} hourlyOnChange={setAvailHourlyRetention}
+            hourlyOptions={[90, 180, 365, 730]} hourlyDefault={365}
+            dailyValue={availDailyRetention} dailyOnChange={setAvailDailyRetention}
+            dailyOptions={[365, 730, 1095, 1825, 2555]} dailyDefault={1825}
+          />
+        </CardContent>
+      </Card>
+
+      {/* Other Retention */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Database className="h-4 w-4" />
-            Config Data Retention
+            Other Retention
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-1.5">
-            <label className="text-sm text-zinc-400">Config Change History</label>
-            <Select value={configRetention} onChange={(e) => setConfigRetention(e.target.value)} className="max-w-48">
-              <option value="30">30 days</option>
-              <option value="60">60 days</option>
-              <option value="90">90 days (default)</option>
-              <option value="180">180 days</option>
-              <option value="365">1 year</option>
-              <option value="730">2 years</option>
-            </Select>
-            <p className="text-xs text-zinc-600">How long to keep configuration change history in ClickHouse.</p>
+        <CardContent>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-sm text-zinc-400">Config Data</label>
+              <Select value={configRetention} onChange={(e) => setConfigRetention(e.target.value)}>
+                <option value="30">30 days</option>
+                <option value="60">60 days</option>
+                <option value="90">90 days (default)</option>
+                <option value="180">180 days</option>
+                <option value="365">1 year</option>
+                <option value="730">2 years</option>
+              </Select>
+              <p className="text-xs text-zinc-600">Configuration change history.</p>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm text-zinc-400">Job Status</label>
+              <Input type="number" value={jobRetention} onChange={e => setJobRetention(e.target.value)} className="max-w-32" />
+              <p className="text-xs text-zinc-600">Job execution status records.</p>
+            </div>
           </div>
         </CardContent>
       </Card>

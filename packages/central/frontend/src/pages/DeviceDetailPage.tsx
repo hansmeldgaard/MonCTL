@@ -1764,157 +1764,166 @@ const DATA_TYPE_COLORS: Record<string, string> = {
   interface: "bg-cyan-500/20 text-cyan-400",
 };
 
+function RetentionOverrideSelect({
+  label, systemDefault, value, options, onChange,
+}: {
+  label: string;
+  systemDefault: string;
+  value: string | undefined;
+  options: number[];
+  onChange: (v: string | undefined) => void;
+}) {
+  const isOverridden = value != null && value !== "";
+  function fmtDays(d: number): string {
+    if (d >= 730) return `${Math.round(d / 365)} years`;
+    if (d >= 365) return "1 year";
+    return `${d} days`;
+  }
+  return (
+    <div className="space-y-0.5">
+      <span className="text-xs text-zinc-600">{label}</span>
+      <Select
+        value={value ?? ""}
+        onChange={(e) => onChange(e.target.value || undefined)}
+        className={isOverridden ? "border-brand-500/50" : ""}
+      >
+        <option value="">System default ({fmtDays(Number(systemDefault))})</option>
+        {options.map((o) => (
+          <option key={o} value={String(o)}>{fmtDays(o)}</option>
+        ))}
+      </Select>
+    </div>
+  );
+}
+
+function RetentionOverrideTriple({
+  rawKey, hourlyKey, dailyKey,
+  overrides, systemSettings, onChange,
+  rawOptions, hourlyOptions, dailyOptions,
+  rawDefault, hourlyDefault, dailyDefault,
+}: {
+  rawKey: string; hourlyKey: string; dailyKey: string;
+  overrides: Record<string, string>;
+  systemSettings: Record<string, string>;
+  onChange: (key: string, value: string | undefined) => void;
+  rawOptions: number[]; hourlyOptions: number[]; dailyOptions: number[];
+  rawDefault: string; hourlyDefault: string; dailyDefault: string;
+}) {
+  return (
+    <div className="grid grid-cols-3 gap-4">
+      <RetentionOverrideSelect label="Raw" systemDefault={systemSettings[rawKey] ?? rawDefault} value={overrides[rawKey]} options={rawOptions} onChange={(v) => onChange(rawKey, v)} />
+      <RetentionOverrideSelect label="Hourly rollup" systemDefault={systemSettings[hourlyKey] ?? hourlyDefault} value={overrides[hourlyKey]} options={hourlyOptions} onChange={(v) => onChange(hourlyKey, v)} />
+      <RetentionOverrideSelect label="Daily rollup" systemDefault={systemSettings[dailyKey] ?? dailyDefault} value={overrides[dailyKey]} options={dailyOptions} onChange={(v) => onChange(dailyKey, v)} />
+    </div>
+  );
+}
+
 function RetentionTab({ deviceId }: { deviceId: string }) {
-  const { data: entries, isLoading } = useDeviceRetention(deviceId);
-  const setRetention = useSetDeviceRetention();
-  const deleteRetention = useDeleteDeviceRetention();
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editValue, setEditValue] = useState("");
+  const { data: device } = useDevice(deviceId);
+  const { data: systemSettings } = useSystemSettings();
+  const updateDevice = useUpdateDevice();
 
-  if (isLoading) {
-    return (
-      <div className="flex h-32 items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-brand-500" />
-      </div>
-    );
-  }
+  const [overrides, setOverrides] = useState<Record<string, string>>({});
+  const [modified, setModified] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
 
-  if (!entries || entries.length === 0) {
-    return (
-      <Card>
-        <CardContent className="py-12 flex flex-col items-center gap-3 text-zinc-600">
-          <Database className="h-8 w-8 text-zinc-700" />
-          <p className="text-sm text-zinc-500">No apps assigned to this device.</p>
-          <p className="text-xs text-zinc-700">Assign apps on the Assignments tab to configure data retention.</p>
-        </CardContent>
-      </Card>
-    );
-  }
+  useEffect(() => {
+    if (device?.retention_overrides) {
+      setOverrides(device.retention_overrides);
+      setModified(false);
+    }
+  }, [device]);
 
-  // Group by data_type
-  const grouped = new Map<string, DeviceRetentionEntry[]>();
-  for (const e of entries) {
-    const list = grouped.get(e.data_type) ?? [];
-    list.push(e);
-    grouped.set(e.data_type, list);
-  }
-
-  async function handleSave(entry: DeviceRetentionEntry) {
-    const days = parseInt(editValue, 10);
-    if (isNaN(days) || days < 1) return;
-    await setRetention.mutateAsync({
-      deviceId,
-      app_id: entry.app_id,
-      data_type: entry.data_type,
-      retention_days: days,
+  function handleChange(key: string, value: string | undefined) {
+    setOverrides((prev) => {
+      const next = { ...prev };
+      if (value == null || value === "") {
+        delete next[key];
+      } else {
+        next[key] = value;
+      }
+      return next;
     });
-    setEditingId(null);
+    setModified(true);
   }
 
-  async function handleReset(entry: DeviceRetentionEntry) {
-    if (!entry.override_id) return;
-    await deleteRetention.mutateAsync({ deviceId, overrideId: entry.override_id });
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await updateDevice.mutateAsync({
+        id: deviceId,
+        data: { retention_overrides: overrides },
+      });
+      setModified(false);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!device || !systemSettings) {
+    return <div className="flex h-32 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-brand-500" /></div>;
   }
 
   return (
     <div className="space-y-4">
-      <div className="rounded-md border border-blue-800/40 bg-blue-950/20 px-4 py-3">
-        <p className="text-xs text-blue-300">
-          Device-specific retention overrides the global default.
-          Edit a value to customize, or reset to inherit from global settings.
-        </p>
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-zinc-400">Override system-wide retention for this device. Empty fields inherit the system default.</p>
+        <div className="flex items-center gap-2">
+          {saved && <span className="text-sm text-emerald-400">Saved.</span>}
+          {modified && (
+            <Button size="sm" onClick={handleSave} disabled={saving}>
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              Save
+            </Button>
+          )}
+        </div>
       </div>
 
-      {[...grouped.entries()].map(([dataType, items]) => (
-        <Card key={dataType}>
-          <CardHeader className="py-3">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <Badge className={`text-[10px] ${DATA_TYPE_COLORS[dataType] ?? ""}`}>
-                {DATA_TYPE_LABELS[dataType] ?? dataType}
-              </Badge>
-              data retention
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>App</TableHead>
-                  <TableHead className="w-36">Retention</TableHead>
-                  <TableHead className="w-32">Source</TableHead>
-                  <TableHead className="w-20"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {items.map((entry) => {
-                  const isEditing = editingId === `${entry.app_id}-${entry.data_type}`;
-                  return (
-                    <TableRow key={`${entry.app_id}-${entry.data_type}`}>
-                      <TableCell className="text-xs font-medium">{entry.app_name}</TableCell>
-                      <TableCell>
-                        {isEditing ? (
-                          <div className="flex items-center gap-1.5">
-                            <Input
-                              type="number"
-                              value={editValue}
-                              onChange={(e) => setEditValue(e.target.value)}
-                              className="w-20 h-7 text-xs"
-                              autoFocus
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") handleSave(entry);
-                                if (e.key === "Escape") setEditingId(null);
-                              }}
-                            />
-                            <span className="text-xs text-zinc-500">days</span>
-                            <Button size="sm" className="h-6 px-2 text-xs" onClick={() => handleSave(entry)}
-                              disabled={setRetention.isPending}>
-                              <Save className="h-3 w-3" />
-                            </Button>
-                            <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => setEditingId(null)}>
-                              <X className="h-3 w-3" />
-                            </Button>
-                          </div>
-                        ) : (
-                          <button
-                            className="text-xs text-zinc-200 hover:text-brand-400 cursor-pointer"
-                            onClick={() => {
-                              setEditingId(`${entry.app_id}-${entry.data_type}`);
-                              setEditValue(String(entry.retention_days));
-                            }}
-                          >
-                            {entry.retention_days} days
-                          </button>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={entry.source === "device_override" ? "info" : "default"}
-                          className="text-[10px]"
-                        >
-                          {entry.source === "device_override" ? "device override" : "global default"}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        {entry.source === "device_override" && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 px-2 text-xs text-zinc-500 hover:text-zinc-300"
-                            onClick={() => handleReset(entry)}
-                            disabled={deleteRetention.isPending}
-                          >
-                            Reset
-                          </Button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      ))}
+      <Card>
+        <CardHeader className="py-3">
+          <CardTitle className="text-sm flex items-center gap-2"><Database className="h-4 w-4" /> Interface Data</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <RetentionOverrideTriple
+            rawKey="interface_raw_retention_days" hourlyKey="interface_hourly_retention_days" dailyKey="interface_daily_retention_days"
+            overrides={overrides} systemSettings={systemSettings} onChange={handleChange}
+            rawOptions={[3, 7, 14, 30, 60, 90]} hourlyOptions={[30, 60, 90, 180, 365]} dailyOptions={[180, 365, 730, 1095, 1825]}
+            rawDefault="7" hourlyDefault="90" dailyDefault="730"
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="py-3">
+          <CardTitle className="text-sm flex items-center gap-2"><Database className="h-4 w-4" /> Performance Data</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <RetentionOverrideTriple
+            rawKey="perf_raw_retention_days" hourlyKey="perf_hourly_retention_days" dailyKey="perf_daily_retention_days"
+            overrides={overrides} systemSettings={systemSettings} onChange={handleChange}
+            rawOptions={[3, 7, 14, 30, 60, 90]} hourlyOptions={[30, 60, 90, 180, 365]} dailyOptions={[180, 365, 730, 1095, 1825]}
+            rawDefault="7" hourlyDefault="90" dailyDefault="730"
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="py-3">
+          <CardTitle className="text-sm flex items-center gap-2"><Activity className="h-4 w-4" /> Availability & Latency</CardTitle>
+          <p className="text-xs text-zinc-600">Ping, port, and HTTP check data. Keep daily rollups for years of device health history.</p>
+        </CardHeader>
+        <CardContent>
+          <RetentionOverrideTriple
+            rawKey="avail_raw_retention_days" hourlyKey="avail_hourly_retention_days" dailyKey="avail_daily_retention_days"
+            overrides={overrides} systemSettings={systemSettings} onChange={handleChange}
+            rawOptions={[7, 14, 30, 60, 90]} hourlyOptions={[90, 180, 365, 730]} dailyOptions={[365, 730, 1095, 1825, 2555]}
+            rawDefault="30" hourlyDefault="365" dailyDefault="1825"
+          />
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -3092,13 +3101,6 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
   const [labelsSaveSuccess, setLabelsSaveSuccess] = useState(false);
   const [labelError, setLabelError] = useState<string | null>(null);
 
-  // Retention overrides
-  const { data: systemSettings } = useSystemSettings();
-  const [retentionOverrides, setRetentionOverrides] = useState<Record<string, string>>({});
-  const [retentionModified, setRetentionModified] = useState(false);
-  const [retentionSaving, setRetentionSaving] = useState(false);
-  const [retentionSaveSuccess, setRetentionSaveSuccess] = useState(false);
-  const [retentionError, setRetentionError] = useState<string | null>(null);
 
   // Initialize form fields when device loads
   useEffect(() => {
@@ -3109,8 +3111,6 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
       setTenantId(device.tenant_id ?? "");
       setCollectorGroupId(device.collector_group_id ?? "");
       setLabels(device.labels ?? {});
-      setRetentionOverrides(device.retention_overrides ?? {});
-      setRetentionModified(false);
       // Build credentials state from resolved credentials
       const cmap: Record<string, string> = {};
       for (const [ctype, info] of Object.entries(device.credentials ?? {})) {
@@ -3209,28 +3209,6 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
     }
   }
 
-  async function handleSaveRetention() {
-    setRetentionError(null);
-    setRetentionSaving(true);
-    setRetentionSaveSuccess(false);
-    try {
-      const cleanOverrides: Record<string, string> = {};
-      for (const [k, v] of Object.entries(retentionOverrides)) {
-        if (v != null && v !== "") cleanOverrides[k] = v;
-      }
-      await updateDevice.mutateAsync({
-        id: deviceId,
-        data: { retention_overrides: cleanOverrides },
-      });
-      setRetentionModified(false);
-      setRetentionSaveSuccess(true);
-      setTimeout(() => setRetentionSaveSuccess(false), 3000);
-    } catch (err) {
-      setRetentionError(err instanceof Error ? err.message : "Failed to save retention overrides");
-    } finally {
-      setRetentionSaving(false);
-    }
-  }
 
   if (deviceLoading) {
     return (
@@ -3437,39 +3415,6 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
         </CardContent>
       </Card>
 
-      {/* Data Retention Overrides */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Database className="h-4 w-4" />
-            Data Retention Overrides
-            {retentionModified && (
-              <Button size="sm" className="ml-auto gap-1.5" onClick={handleSaveRetention} disabled={retentionSaving}>
-                {retentionSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                Save Retention
-              </Button>
-            )}
-            {retentionSaveSuccess && <span className="ml-auto text-sm text-emerald-400">Saved.</span>}
-          </CardTitle>
-          <p className="text-xs text-zinc-600">Override system-wide retention settings for this device. Leave empty to use the system default.</p>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <span className="text-sm font-medium text-zinc-300">Interface Data</span>
-            <RetentionOverrideRow label="Raw Data" settingKey="interface_raw_retention_days" systemDefault={systemSettings?.interface_raw_retention_days ?? "7"} value={retentionOverrides.interface_raw_retention_days} onChange={(v) => { setRetentionOverrides(prev => ({ ...prev, interface_raw_retention_days: v ?? "" })); setRetentionModified(true); }} options={[3, 7, 14, 30, 60, 90]} />
-            <RetentionOverrideRow label="Hourly Rollup" settingKey="interface_hourly_retention_days" systemDefault={systemSettings?.interface_hourly_retention_days ?? "90"} value={retentionOverrides.interface_hourly_retention_days} onChange={(v) => { setRetentionOverrides(prev => ({ ...prev, interface_hourly_retention_days: v ?? "" })); setRetentionModified(true); }} options={[30, 60, 90, 180, 365]} />
-            <RetentionOverrideRow label="Daily Rollup" settingKey="interface_daily_retention_days" systemDefault={systemSettings?.interface_daily_retention_days ?? "730"} value={retentionOverrides.interface_daily_retention_days} onChange={(v) => { setRetentionOverrides(prev => ({ ...prev, interface_daily_retention_days: v ?? "" })); setRetentionModified(true); }} options={[365, 730, 1095, 1825]} />
-          </div>
-          <div className="space-y-2">
-            <span className="text-sm font-medium text-zinc-300">Performance Data</span>
-            <RetentionOverrideRow label="Raw Data" settingKey="perf_raw_retention_days" systemDefault={systemSettings?.perf_raw_retention_days ?? "7"} value={retentionOverrides.perf_raw_retention_days} onChange={(v) => { setRetentionOverrides(prev => ({ ...prev, perf_raw_retention_days: v ?? "" })); setRetentionModified(true); }} options={[3, 7, 14, 30, 60, 90]} />
-            <RetentionOverrideRow label="Hourly Rollup" settingKey="perf_hourly_retention_days" systemDefault={systemSettings?.perf_hourly_retention_days ?? "90"} value={retentionOverrides.perf_hourly_retention_days} onChange={(v) => { setRetentionOverrides(prev => ({ ...prev, perf_hourly_retention_days: v ?? "" })); setRetentionModified(true); }} options={[30, 60, 90, 180, 365]} />
-            <RetentionOverrideRow label="Daily Rollup" settingKey="perf_daily_retention_days" systemDefault={systemSettings?.perf_daily_retention_days ?? "730"} value={retentionOverrides.perf_daily_retention_days} onChange={(v) => { setRetentionOverrides(prev => ({ ...prev, perf_daily_retention_days: v ?? "" })); setRetentionModified(true); }} options={[365, 730, 1095, 1825]} />
-          </div>
-          {retentionError && <p className="text-xs text-red-400">{retentionError}</p>}
-        </CardContent>
-      </Card>
-
       {/* Monitoring Configuration */}
       <MonitoringCard deviceId={deviceId} device={device} />
     </div>
@@ -3477,28 +3422,6 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
 }
 
 
-function RetentionOverrideRow({ label, systemDefault, value, onChange, options }: {
-  label: string;
-  settingKey: string;
-  systemDefault: string;
-  value: string | undefined;
-  onChange: (v: string | undefined) => void;
-  options: number[];
-}) {
-  const isOverridden = value != null && value !== "";
-  return (
-    <div className="flex items-center gap-3">
-      <span className="text-xs text-zinc-400 w-28">{label}</span>
-      <Select value={value ?? ""} onChange={(e) => onChange(e.target.value || undefined)} className="max-w-52">
-        <option value="">System default ({systemDefault}d)</option>
-        {options.map((d) => <option key={d} value={String(d)}>{d} days</option>)}
-      </Select>
-      {isOverridden && (
-        <button className="text-xs text-zinc-600 hover:text-zinc-400" onClick={() => onChange(undefined)}>Reset</button>
-      )}
-    </div>
-  );
-}
 
 
 // ── Sortable Header helper ───────────────────────────────

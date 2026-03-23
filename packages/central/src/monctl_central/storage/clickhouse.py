@@ -794,6 +794,81 @@ ORDER BY (device_id, component_type, component, metric_name, day)
 SETTINGS index_granularity = 8192
 """
 
+# ---------------------------------------------------------------------------
+# Availability/Latency rollup tables
+# ---------------------------------------------------------------------------
+
+_AVAIL_ROLLUP_COLUMNS = """
+    device_id          UUID,
+    assignment_id      UUID,
+    app_id             UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    {time_col}         DateTime('UTC'),
+    rtt_min            Float64       DEFAULT 0,
+    rtt_max            Float64       DEFAULT 0,
+    rtt_avg            Float64       DEFAULT 0,
+    rtt_p95            Float64       DEFAULT 0,
+    response_time_min  Float64       DEFAULT 0,
+    response_time_max  Float64       DEFAULT 0,
+    response_time_avg  Float64       DEFAULT 0,
+    response_time_p95  Float64       DEFAULT 0,
+    availability_pct   Float32       DEFAULT 0,
+    sample_count       UInt16        DEFAULT 0,
+    device_name        String        DEFAULT '',
+    app_name           String        DEFAULT '',
+    tenant_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    tenant_name        String        DEFAULT ''
+"""
+
+_AVAIL_HOURLY_DDL = """
+CREATE TABLE IF NOT EXISTS availability_latency_hourly ON CLUSTER '{cluster}'
+(
+""" + _AVAIL_ROLLUP_COLUMNS.format(time_col="hour") + """
+)
+ENGINE = ReplicatedReplacingMergeTree(
+    '/clickhouse/tables/{{shard}}/availability_latency_hourly', '{{replica}}',
+    hour
+)
+PARTITION BY toYYYYMM(hour)
+ORDER BY (device_id, assignment_id, hour)
+SETTINGS index_granularity = 8192
+"""
+
+_AVAIL_DAILY_DDL = """
+CREATE TABLE IF NOT EXISTS availability_latency_daily ON CLUSTER '{cluster}'
+(
+""" + _AVAIL_ROLLUP_COLUMNS.format(time_col="day") + """
+)
+ENGINE = ReplicatedReplacingMergeTree(
+    '/clickhouse/tables/{{shard}}/availability_latency_daily', '{{replica}}',
+    day
+)
+PARTITION BY toYear(day)
+ORDER BY (device_id, assignment_id, day)
+SETTINGS index_granularity = 8192
+"""
+
+_AVAIL_HOURLY_DDL_LOCAL = """
+CREATE TABLE IF NOT EXISTS availability_latency_hourly
+(
+""" + _AVAIL_ROLLUP_COLUMNS.format(time_col="hour") + """
+)
+ENGINE = ReplacingMergeTree(hour)
+PARTITION BY toYYYYMM(hour)
+ORDER BY (device_id, assignment_id, hour)
+SETTINGS index_granularity = 8192
+"""
+
+_AVAIL_DAILY_DDL_LOCAL = """
+CREATE TABLE IF NOT EXISTS availability_latency_daily
+(
+""" + _AVAIL_ROLLUP_COLUMNS.format(time_col="day") + """
+)
+ENGINE = ReplacingMergeTree(day)
+PARTITION BY toYear(day)
+ORDER BY (device_id, assignment_id, day)
+SETTINGS index_granularity = 8192
+"""
+
 
 class ClickHouseClient:
     """Thin wrapper around clickhouse-connect for MonCTL operations."""
@@ -941,6 +1016,8 @@ class ClickHouseClient:
                 _INTERFACE_DAILY_DDL,
                 _PERFORMANCE_HOURLY_DDL,
                 _PERFORMANCE_DAILY_DDL,
+                _AVAIL_HOURLY_DDL,
+                _AVAIL_DAILY_DDL,
             ]:
                 client.command(ddl.format(cluster=self._cluster_name))
             for mv_ddl in [
@@ -963,6 +1040,8 @@ class ClickHouseClient:
                 _INTERFACE_DAILY_DDL_LOCAL,
                 _PERFORMANCE_HOURLY_DDL_LOCAL,
                 _PERFORMANCE_DAILY_DDL_LOCAL,
+                _AVAIL_HOURLY_DDL_LOCAL,
+                _AVAIL_DAILY_DDL_LOCAL,
             ]:
                 client.command(ddl)
             for mv_ddl in [

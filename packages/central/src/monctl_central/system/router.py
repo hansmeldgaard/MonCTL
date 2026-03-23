@@ -947,12 +947,45 @@ async def _check_docker_infrastructure() -> dict:
                 *[_fetch(client, h) for h in sidecar_hosts]
             ))
 
-    # Worker tier: read from ClickHouse
+    # Worker tier: prefer Redis push data, fall back to ClickHouse
+    from monctl_central.cache import get_docker_push, get_pushed_docker_hosts
+
+    pushed_hosts = await get_pushed_docker_hosts()
+    pushed_labels = set()
+    worker_results: list[dict] = []
+    for meta in pushed_hosts:
+        label = meta["host_label"]
+        pushed_labels.add(label)
+        stats = await get_docker_push(label, "stats")
+        system = await get_docker_push(label, "system")
+        if stats:
+            # Inject host system summary (same as central tier)
+            if system:
+                host_info = system.get("host", {})
+                stats.setdefault("host", {})
+                stats["host"]["load_avg"] = host_info.get("load_avg")
+                stats["host"]["mem_total_bytes"] = host_info.get("mem_total_bytes")
+                stats["host"]["mem_available_bytes"] = host_info.get("mem_available_bytes")
+                stats["host"]["uptime_seconds"] = host_info.get("uptime_seconds")
+                stats["docker_version"] = system.get("docker", {}).get("version")
+            worker_results.append({
+                "label": label, "status": "ok", "source": "push", "data": stats,
+            })
+        else:
+            worker_results.append({
+                "label": label, "status": "stale", "source": "push", "data": None,
+                "error": "No recent data",
+            })
+
+    # ClickHouse fallback for workers not using push mode
     collector_results = await asyncio.to_thread(_fetch_collector_docker_stats_from_ch)
+    for cr in collector_results:
+        if cr["label"] not in pushed_labels:
+            worker_results.append(cr)
 
     latency_ms = round((time.monotonic() - t0) * 1000, 2)
 
-    all_hosts = sidecar_results + collector_results
+    all_hosts = sidecar_results + worker_results
 
     if not all_hosts:
         return {

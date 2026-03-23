@@ -18,11 +18,21 @@ from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
+import ssl
+from urllib.request import Request, urlopen
+from urllib.error import URLError
+
 import docker
 
 client = docker.from_env()
 HOSTNAME = os.environ.get("MONCTL_HOST_LABEL", socket.gethostname())
 COLLECT_INTERVAL = int(os.environ.get("COLLECT_INTERVAL", "15"))
+
+# ── Push mode (worker → central) ────────────────────────────────────────────
+PUSH_URL = os.environ.get("MONCTL_PUSH_URL", "")
+PUSH_API_KEY = os.environ.get("MONCTL_PUSH_API_KEY", "")
+PUSH_INTERVAL = int(os.environ.get("MONCTL_PUSH_INTERVAL", "15"))
+PUSH_VERIFY_SSL = os.environ.get("MONCTL_PUSH_VERIFY_SSL", "false").lower() in ("true", "1", "yes")
 
 _cached_stats: dict = {}
 _cached_stats_lock = threading.Lock()
@@ -555,6 +565,195 @@ class StatsHandler(BaseHTTPRequestHandler):
         pass
 
 
+# ── Push loop (worker → central) ────────────────────────────────────────────
+
+def _build_system_payload() -> dict:
+    """Build /system response payload without HTTP overhead."""
+    info = client.info()
+    load_avg = None
+    cpu_count = info.get("NCPU", 1)
+    try:
+        with open("/host_root/proc/loadavg") as f:
+            parts = f.read().split()
+            load_avg = {"1m": float(parts[0]), "5m": float(parts[1]), "15m": float(parts[2])}
+    except Exception:
+        pass
+
+    mem = {}
+    try:
+        with open("/host_root/proc/meminfo") as f:
+            for line in f:
+                parts = line.split()
+                key = parts[0].rstrip(":")
+                if key in ("MemTotal", "MemFree", "MemAvailable", "Buffers", "Cached",
+                           "SwapTotal", "SwapFree"):
+                    mem[key] = int(parts[1]) * 1024
+    except Exception:
+        pass
+
+    uptime_seconds = None
+    try:
+        with open("/host_root/proc/uptime") as f:
+            uptime_seconds = float(f.read().split()[0])
+    except Exception:
+        pass
+
+    disk = shutil.disk_usage("/host_root") if os.path.exists("/host_root") else None
+
+    return {
+        "hostname": HOSTNAME,
+        "docker": {
+            "version": info.get("ServerVersion", ""),
+            "api_version": info.get("ApiVersion", ""),
+            "storage_driver": info.get("Driver", ""),
+            "os": info.get("OperatingSystem", ""),
+            "kernel": info.get("KernelVersion", ""),
+            "architecture": info.get("Architecture", ""),
+            "cpus": cpu_count,
+            "memory_bytes": info.get("MemTotal", 0),
+        },
+        "host": {
+            "load_avg": load_avg,
+            "cpu_count": cpu_count,
+            "mem_total_bytes": mem.get("MemTotal"),
+            "mem_available_bytes": mem.get("MemAvailable"),
+            "mem_free_bytes": mem.get("MemFree"),
+            "mem_buffers_bytes": mem.get("Buffers"),
+            "mem_cached_bytes": mem.get("Cached"),
+            "swap_total_bytes": mem.get("SwapTotal"),
+            "swap_free_bytes": mem.get("SwapFree"),
+            "uptime_seconds": uptime_seconds,
+            "disk_total_bytes": disk.total if disk else None,
+            "disk_used_bytes": disk.used if disk else None,
+            "disk_free_bytes": disk.free if disk else None,
+        },
+        "containers": {
+            "running": info.get("ContainersRunning", 0),
+            "paused": info.get("ContainersPaused", 0),
+            "stopped": info.get("ContainersStopped", 0),
+            "total": info.get("Containers", 0),
+        },
+    }
+
+
+def _build_images_payload() -> dict:
+    """Build /images response payload without HTTP overhead."""
+    images = []
+    for img in client.images.list(all=True):
+        tags = img.tags or []
+        images.append({
+            "id": img.short_id, "tags": tags,
+            "size_bytes": img.attrs.get("Size", 0),
+            "created": img.attrs.get("Created", ""),
+            "dangling": len(tags) == 0,
+        })
+
+    volumes = []
+    for vol in client.volumes.list():
+        volumes.append({
+            "name": vol.name, "driver": vol.attrs.get("Driver", ""),
+            "mountpoint": vol.attrs.get("Mountpoint", ""),
+            "created": vol.attrs.get("CreatedAt", ""),
+        })
+
+    try:
+        df = client.df()
+        space_summary = {
+            "images_total_bytes": sum(i.get("Size", 0) for i in df.get("Images", [])),
+            "images_reclaimable_bytes": sum(
+                i.get("Size", 0) for i in df.get("Images", []) if i.get("Containers", 0) == 0
+            ),
+            "volumes_total_bytes": sum(
+                v.get("UsageData", {}).get("Size", 0) for v in df.get("Volumes", [])
+            ),
+            "build_cache_bytes": sum(b.get("Size", 0) for b in df.get("BuildCache", [])),
+        }
+    except Exception:
+        space_summary = None
+
+    return {
+        "images": sorted(images, key=lambda i: i["size_bytes"], reverse=True),
+        "volumes": sorted(volumes, key=lambda v: v["name"]),
+        "space_summary": space_summary,
+        "image_count": len(images),
+        "dangling_count": sum(1 for i in images if i["dangling"]),
+        "volume_count": len(volumes),
+    }
+
+
+def _push_loop():
+    """Background thread: push consolidated payload to central VIP."""
+    ssl_ctx = None
+    if not PUSH_VERIFY_SSL:
+        ssl_ctx = ssl.create_default_context()
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.CERT_NONE
+
+    _last_event_time = 0.0
+    _last_log_counts: dict[str, int] = {}  # container → last pushed deque length
+    _cycle = 0
+
+    print(f"Push mode enabled → {PUSH_URL} (interval={PUSH_INTERVAL}s, verify_ssl={PUSH_VERIFY_SSL})")
+
+    while True:
+        time.sleep(PUSH_INTERVAL)
+        _cycle += 1
+        try:
+            # Stats (from cached collector data)
+            with _cached_stats_lock:
+                stats = _cached_stats.copy() if _cached_stats else {}
+
+            # System info
+            system = _build_system_payload()
+
+            # Logs: only new lines since last push
+            logs: dict[str, list[str]] = {}
+            with _log_lock:
+                for name, buf in _log_buffers.items():
+                    current_len = len(buf)
+                    prev_len = _last_log_counts.get(name, 0)
+                    if current_len > prev_len:
+                        # Get new lines (deque grew since last push)
+                        new_lines = list(buf)[prev_len:]
+                        logs[name] = new_lines
+                    elif current_len < prev_len:
+                        # Buffer wrapped or container restarted — send all
+                        logs[name] = list(buf)
+                    _last_log_counts[name] = current_len
+
+            # Events: only new since last push
+            with _event_lock:
+                events = [e for e in _event_buffer if e["time"] > _last_event_time]
+                if _event_buffer:
+                    _last_event_time = _event_buffer[-1]["time"]
+
+            # Images: every 4th cycle (60s)
+            images = _build_images_payload() if _cycle % 4 == 1 else None
+
+            payload = {
+                "host_label": HOSTNAME,
+                "timestamp": time.time(),
+                "stats": stats,
+                "system": system,
+                "logs": logs,
+                "events": events,
+                "images": images,
+            }
+
+            data = json.dumps(payload).encode()
+            req = Request(PUSH_URL, data=data, method="POST")
+            req.add_header("Content-Type", "application/json")
+            req.add_header("Authorization", f"Bearer {PUSH_API_KEY}")
+
+            resp = urlopen(req, timeout=10, context=ssl_ctx)
+            resp.read()
+
+        except URLError as e:
+            print(f"Push failed: {e.reason}")
+        except Exception as e:
+            print(f"Push error: {e}")
+
+
 if __name__ == "__main__":
     print(f"Docker stats sidecar starting (host={HOSTNAME}, interval={COLLECT_INTERVAL}s)")
     _cached_stats = _collect_stats()
@@ -563,6 +762,8 @@ if __name__ == "__main__":
     threading.Thread(target=_background_collector, daemon=True).start()
     threading.Thread(target=_log_collector, daemon=True).start()
     threading.Thread(target=_event_listener, daemon=True).start()
+    if PUSH_URL:
+        threading.Thread(target=_push_loop, daemon=True).start()
 
     server = HTTPServer(("0.0.0.0", 9100), StatsHandler)
     print("Listening on :9100")

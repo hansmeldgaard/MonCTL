@@ -179,6 +179,7 @@ class SchedulerRunner:
             try:
                 await self._hourly_rollup()
                 await self._perf_hourly_rollup()
+                await self._avail_hourly_rollup()
                 self._last_hourly_rollup = now
             except Exception:
                 logger.exception("hourly_rollup_error")
@@ -191,6 +192,7 @@ class SchedulerRunner:
             try:
                 await self._daily_rollup()
                 await self._perf_daily_rollup()
+                await self._avail_daily_rollup()
                 await self._retention_cleanup()
                 # Alert history cleanup — reset old resolved instances to ok
                 from monctl_central.alerting.cleanup import cleanup_resolved_instances
@@ -381,6 +383,84 @@ class SchedulerRunner:
                 "monctl:scheduler:last_perf_daily_rollup", utc_now().isoformat()
             )
 
+    async def _avail_hourly_rollup(self) -> None:
+        """Aggregate raw availability_latency data into availability_latency_hourly."""
+        sql = """
+        INSERT INTO availability_latency_hourly
+        SELECT
+            device_id,
+            assignment_id,
+            app_id,
+            toStartOfHour(executed_at)    AS hour,
+            min(rtt_ms)                   AS rtt_min,
+            max(rtt_ms)                   AS rtt_max,
+            avg(rtt_ms)                   AS rtt_avg,
+            quantile(0.95)(rtt_ms)        AS rtt_p95,
+            min(response_time_ms)         AS response_time_min,
+            max(response_time_ms)         AS response_time_max,
+            avg(response_time_ms)         AS response_time_avg,
+            quantile(0.95)(response_time_ms) AS response_time_p95,
+            toFloat32(avg(reachable) * 100) AS availability_pct,
+            toUInt16(count())             AS sample_count,
+            any(device_name)              AS device_name,
+            any(app_name)                 AS app_name,
+            any(tenant_id)                AS tenant_id,
+            any(tenant_name)              AS tenant_name
+        FROM availability_latency
+        WHERE executed_at >= toStartOfHour(now() - INTERVAL 2 HOUR)
+          AND executed_at < toStartOfHour(now())
+        GROUP BY device_id, assignment_id, app_id, hour
+        """
+        self._ch.execute_rollup(sql)
+        logger.info("avail_hourly_rollup_complete")
+
+        from monctl_central.cache import _redis
+        from monctl_common.utils import utc_now
+
+        if _redis:
+            await _redis.set(
+                "monctl:scheduler:last_avail_hourly_rollup", utc_now().isoformat()
+            )
+
+    async def _avail_daily_rollup(self) -> None:
+        """Aggregate availability_latency_hourly into availability_latency_daily."""
+        sql = """
+        INSERT INTO availability_latency_daily
+        SELECT
+            device_id,
+            assignment_id,
+            app_id,
+            toStartOfDay(hour)            AS day,
+            min(rtt_min)                   AS rtt_min,
+            max(rtt_max)                   AS rtt_max,
+            avg(rtt_avg)                   AS rtt_avg,
+            quantile(0.95)(rtt_p95)        AS rtt_p95,
+            min(response_time_min)         AS response_time_min,
+            max(response_time_max)         AS response_time_max,
+            avg(response_time_avg)         AS response_time_avg,
+            quantile(0.95)(response_time_p95) AS response_time_p95,
+            avg(availability_pct)          AS availability_pct,
+            toUInt16(sum(sample_count))    AS sample_count,
+            any(device_name)               AS device_name,
+            any(app_name)                  AS app_name,
+            any(tenant_id)                 AS tenant_id,
+            any(tenant_name)               AS tenant_name
+        FROM availability_latency_hourly
+        WHERE hour >= toStartOfDay(now() - INTERVAL 1 DAY)
+          AND hour < toStartOfDay(now())
+        GROUP BY device_id, assignment_id, app_id, day
+        """
+        self._ch.execute_rollup(sql)
+        logger.info("avail_daily_rollup_complete")
+
+        from monctl_central.cache import _redis
+        from monctl_common.utils import utc_now
+
+        if _redis:
+            await _redis.set(
+                "monctl:scheduler:last_avail_daily_rollup", utc_now().isoformat()
+            )
+
     async def _retention_cleanup(self) -> None:
         """Delete data older than configured retention periods.
 
@@ -400,6 +480,8 @@ class SchedulerRunner:
         avail_days = 30
         perf_hourly_days = 90
         perf_daily_days = 730
+        avail_hourly_days = 365
+        avail_daily_days = 1825
 
         try:
             async with self._session_factory() as session:
@@ -445,16 +527,28 @@ class SchedulerRunner:
                             raw_days = val
 
                 # Performance rollup retention
-                for key, attr in [
-                    ("perf_hourly_retention_days", None),
-                    ("perf_daily_retention_days", None),
-                ]:
+                for key in ["perf_hourly_retention_days", "perf_daily_retention_days"]:
                     setting = await session.get(SystemSetting, key)
                     if setting:
                         if key == "perf_hourly_retention_days":
                             perf_hourly_days = int(setting.value)
                         elif key == "perf_daily_retention_days":
                             perf_daily_days = int(setting.value)
+
+                # Availability rollup retention
+                for key in [
+                    "avail_raw_retention_days",
+                    "avail_hourly_retention_days",
+                    "avail_daily_retention_days",
+                ]:
+                    setting = await session.get(SystemSetting, key)
+                    if setting:
+                        if key == "avail_raw_retention_days":
+                            avail_days = int(setting.value)
+                        elif key == "avail_hourly_retention_days":
+                            avail_hourly_days = int(setting.value)
+                        elif key == "avail_daily_retention_days":
+                            avail_daily_days = int(setting.value)
 
                 # Process per-device overrides
                 overrides = (await session.execute(select(DataRetentionOverride))).scalars().all()
@@ -502,6 +596,8 @@ class SchedulerRunner:
             f"ALTER TABLE performance_hourly DELETE WHERE hour < now() - INTERVAL {perf_hourly_days} DAY",
             f"ALTER TABLE performance_daily DELETE WHERE day < today() - INTERVAL {perf_daily_days} DAY",
             f"ALTER TABLE availability_latency DELETE WHERE executed_at < now() - INTERVAL {avail_days} DAY{_exclude_clause('availability_latency')}",
+            f"ALTER TABLE availability_latency_hourly DELETE WHERE hour < now() - INTERVAL {avail_hourly_days} DAY",
+            f"ALTER TABLE availability_latency_daily DELETE WHERE day < today() - INTERVAL {avail_daily_days} DAY",
         ]
 
         for sql in cleanup_sqls:
@@ -510,7 +606,13 @@ class SchedulerRunner:
             except Exception:
                 logger.debug("Cleanup query failed: %s", sql, exc_info=True)
 
-        logger.info("retention_cleanup_complete raw_days=%s hourly_days=%s daily_days=%s config_days=%s perf_days=%s perf_hourly_days=%s perf_daily_days=%s avail_days=%s override_count=%s", raw_days, hourly_days, daily_days, config_days, perf_days, perf_hourly_days, perf_daily_days, avail_days, len(overrides))
+        logger.info(
+            "retention_cleanup_complete iface=%s/%s/%s perf=%s/%s/%s avail=%s/%s/%s config=%s overrides=%s",
+            raw_days, hourly_days, daily_days,
+            perf_days, perf_hourly_days, perf_daily_days,
+            avail_days, avail_hourly_days, avail_daily_days,
+            config_days, len(overrides),
+        )
 
         from monctl_central.cache import _redis
         from monctl_common.utils import utc_now

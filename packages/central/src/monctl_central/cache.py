@@ -379,3 +379,130 @@ async def get_and_clear_interface_refresh_flag(device_id: str) -> bool:
         result = await _redis.getdel(f"{_IFACE_REFRESH_PREFIX}{device_id}")
         return result is not None
     return False
+
+
+# ---------------------------------------------------------------------------
+# Docker push cache (worker docker-stats → central via push)
+# ---------------------------------------------------------------------------
+
+_DOCKER_PUSH_PREFIX = "docker_push:"
+_DOCKER_PUSH_TTL = 300      # 5 min — generous buffer for slow stats collection + missed pushes
+_DOCKER_PUSH_IMG_TTL = 600  # 10 min — images pushed every 4th cycle (~60s)
+
+
+async def store_docker_push(label: str, section: str, data) -> None:
+    """Store a pushed docker-stats section in Redis."""
+    if _redis is None:
+        return
+    ttl = _DOCKER_PUSH_IMG_TTL if section == "images" else _DOCKER_PUSH_TTL
+    try:
+        await _redis.setex(
+            f"{_DOCKER_PUSH_PREFIX}{label}:{section}", ttl, json.dumps(data),
+        )
+    except Exception:
+        logger.debug("docker_push_store_failed section=%s label=%s", section, label)
+
+
+async def get_docker_push(label: str, section: str):
+    """Retrieve pushed docker-stats section from Redis."""
+    if _redis is None:
+        return None
+    try:
+        cached = await _redis.get(f"{_DOCKER_PUSH_PREFIX}{label}:{section}")
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass
+    return None
+
+
+async def get_pushed_docker_hosts() -> list[dict]:
+    """Discover all worker hosts that have pushed docker-stats data recently."""
+    if _redis is None:
+        return []
+    try:
+        hosts = []
+        cursor = "0"
+        pattern = f"{_DOCKER_PUSH_PREFIX}*:_meta"
+        while True:
+            cursor, keys = await _redis.scan(cursor=cursor, match=pattern, count=50)
+            for key in keys:
+                raw = await _redis.get(key)
+                if raw:
+                    hosts.append(json.loads(raw))
+            if cursor == 0 or cursor == "0":
+                break
+        return hosts
+    except Exception:
+        logger.debug("docker_push_scan_failed", exc_info=True)
+        return []
+
+
+async def append_docker_push_events(label: str, events: list[dict]) -> None:
+    """Append events to a per-host Redis list, trimmed to 500."""
+    if _redis is None or not events:
+        return
+    key = f"{_DOCKER_PUSH_PREFIX}{label}:event_list"
+    try:
+        pipe = _redis.pipeline()
+        for ev in events:
+            pipe.rpush(key, json.dumps(ev))
+        pipe.ltrim(key, -500, -1)
+        pipe.expire(key, _DOCKER_PUSH_TTL)
+        await pipe.execute()
+    except Exception:
+        logger.debug("docker_push_events_append_failed label=%s", label)
+
+
+async def get_docker_push_events(
+    label: str, since: float = 0, limit: int = 100,
+) -> list[dict]:
+    """Read events from Redis list, filtered by timestamp."""
+    if _redis is None:
+        return []
+    key = f"{_DOCKER_PUSH_PREFIX}{label}:event_list"
+    try:
+        raw_list = await _redis.lrange(key, 0, -1)
+        events = [json.loads(r) for r in raw_list]
+        if since > 0:
+            events = [e for e in events if e.get("time", 0) >= since]
+        return events[-limit:]
+    except Exception:
+        return []
+
+
+async def append_docker_push_logs(label: str, logs: dict[str, list[str]]) -> None:
+    """Store log lines per container. Replaces previous buffer each push."""
+    if _redis is None or not logs:
+        return
+    # Store as a single JSON blob — simpler than per-container keys
+    key = f"{_DOCKER_PUSH_PREFIX}{label}:logs"
+    try:
+        # Merge with existing logs
+        existing = await _redis.get(key)
+        merged = json.loads(existing) if existing else {}
+        for container, lines in logs.items():
+            prev = merged.get(container, [])
+            prev.extend(lines)
+            merged[container] = prev[-500:]  # cap at 500 per container
+        await _redis.setex(key, _DOCKER_PUSH_TTL, json.dumps(merged))
+    except Exception:
+        logger.debug("docker_push_logs_store_failed label=%s", label)
+
+
+async def get_docker_push_logs(
+    label: str, container: str, tail: int = 100,
+) -> list[str]:
+    """Read last N log lines for a container from Redis."""
+    if _redis is None:
+        return []
+    key = f"{_DOCKER_PUSH_PREFIX}{label}:logs"
+    try:
+        raw = await _redis.get(key)
+        if raw:
+            all_logs = json.loads(raw)
+            lines = all_logs.get(container, [])
+            return lines[-tail:]
+    except Exception:
+        pass
+    return []
