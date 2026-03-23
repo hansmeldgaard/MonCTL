@@ -100,7 +100,9 @@ import {
   useDeviceRetention,
   useSetDeviceRetention,
   useDeleteDeviceRetention,
+  useUpdateInterfacePreferences,
 } from "@/api/hooks.ts";
+import { useAuth } from "@/hooks/useAuth.tsx";
 import type { Device as DeviceType, DeviceAssignment, DeviceThresholdRow, ConfigDiffEntry, DeviceRetentionEntry } from "@/types/api.ts";
 import { ConfigDataRenderer } from "@/components/ConfigDataRenderer.tsx";
 import { ApplyTemplateDialog } from "@/components/ApplyTemplateDialog.tsx";
@@ -1943,24 +1945,36 @@ function matchesTextFilter(value: string, filter: string): boolean {
 
 const MAX_CHART_INTERFACES = 8;
 
+type IfaceStatusFilter = "all" | "up" | "down" | "unmonitored";
+
 function InterfacesTab({ deviceId }: { deviceId: string }) {
+  const { user } = useAuth();
   const { data: interfaces, isLoading } = useInterfaceLatest(deviceId);
   const { data: metadata } = useInterfaceMetadata(deviceId);
   const updateSettings = useUpdateInterfaceSettings();
   const bulkUpdate = useBulkUpdateInterfaceSettings();
   const refreshMeta = useRefreshInterfaceMetadata();
+  const updateIfacePrefs = useUpdateInterfacePreferences();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [timeRange, setTimeRange] = useState<TimeRangeValue>(DEFAULT_RANGE);
+  const [timeRange, setTimeRange] = useState<TimeRangeValue>(
+    ({"1h": "1h", "6h": "6h", "24h": "24h", "7d": "7d", "30d": "30d"} as Record<string, TimeRangeValue>)[user?.iface_time_range ?? ""] ?? DEFAULT_RANGE
+  );
   const [sortKey, setSortKey] = useState<IfaceSortKey>("if_index");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
-  const [trafficUnit, setTrafficUnit] = useState<TrafficUnit>("auto");
-  const [chartMetric, setChartMetric] = useState<ChartMetric>("traffic");
+  const [trafficUnit, setTrafficUnit] = useState<TrafficUnit>(
+    (user?.iface_traffic_unit as TrafficUnit) ?? "auto"
+  );
+  const [chartMetric, setChartMetric] = useState<ChartMetric>(
+    (user?.iface_chart_metric as ChartMetric) ?? "traffic"
+  );
   const [chartMode, setChartMode] = useState<ChartMode>("overlaid");
+  const [statusFilter, setStatusFilter] = useState<IfaceStatusFilter>(
+    (user?.iface_status_filter as IfaceStatusFilter) ?? "all"
+  );
   const [filterName, setFilterName] = useState("");
   const [filterAlias, setFilterAlias] = useState("");
   const [filterOperStatus, setFilterOperStatus] = useState<string>("");
   const [filterSpeed, setFilterSpeed] = useState<string>("");
-  const [showUnmonitored, setShowUnmonitored] = useState(true);
   const tz = useTimezone();
   const { data: monitoring } = useDeviceMonitoring(deviceId);
   const { fromTs, toTs } = useMemo(() => rangeToTimestamps(timeRange), [timeRange]);
@@ -2004,12 +2018,17 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
   // Filter
   const filtered = useMemo(() => {
     let data = validInterfaces;
+    // Status badge filter
+    if (statusFilter === "up") data = data.filter(i => i.if_oper_status === "up" && !isUnmonitored(i));
+    else if (statusFilter === "down") data = data.filter(i => i.if_oper_status !== "up" && !isUnmonitored(i));
+    else if (statusFilter === "unmonitored") data = data.filter(i => isUnmonitored(i));
+    // Column filters
     if (filterName) data = data.filter(i => matchesTextFilter(i.if_name, filterName));
     if (filterAlias) data = data.filter(i => matchesTextFilter(i.if_alias || "", filterAlias));
     if (filterOperStatus) data = data.filter(i => i.if_oper_status === filterOperStatus);
     if (filterSpeed) data = data.filter(i => i.if_speed_mbps === Number(filterSpeed));
     return data;
-  }, [validInterfaces, filterName, filterAlias, filterOperStatus, filterSpeed]);
+  }, [validInterfaces, statusFilter, filterName, filterAlias, filterOperStatus, filterSpeed, isUnmonitored]);
 
   // Sort
   const sorted = useMemo(() => {
@@ -2032,12 +2051,6 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
     });
     return arr;
   }, [filtered, sortKey, sortDir]);
-
-  // Apply unmonitored visibility filter
-  const displayList = useMemo(() => {
-    if (showUnmonitored) return sorted;
-    return sorted.filter(iface => !isUnmonitored(iface));
-  }, [sorted, showUnmonitored, isUnmonitored]);
 
   const toggleSort = (key: IfaceSortKey) => {
     if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
@@ -2149,21 +2162,55 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
     );
   }
 
-  const upCount = validInterfaces.filter(i => i.if_oper_status === "up").length;
-  const downCount = validInterfaces.filter(i => i.if_oper_status === "down").length;
+  const upCount = validInterfaces.filter(i => i.if_oper_status === "up" && !isUnmonitored(i)).length;
+  const downCount = validInterfaces.filter(i => i.if_oper_status !== "up" && !isUnmonitored(i)).length;
   const unmonitoredCount = validInterfaces.filter(isUnmonitored).length;
+
+  const handleStatusFilter = (next: IfaceStatusFilter) => {
+    setStatusFilter(next);
+    updateIfacePrefs.mutate({ iface_status_filter: next });
+  };
+  const handleTrafficUnit = (next: TrafficUnit) => {
+    setTrafficUnit(next);
+    updateIfacePrefs.mutate({ iface_traffic_unit: next as any });
+  };
+  const handleChartMetric = (next: ChartMetric) => {
+    setChartMetric(next);
+    updateIfacePrefs.mutate({ iface_chart_metric: next });
+  };
+  const handleTimeRange = (next: TimeRangeValue) => {
+    setTimeRange(next);
+    const stored = ({"1h": "1h", "6h": "6h", "24h": "24h", "7d": "7d", "30d": "30d"} as Record<string, string>)[next];
+    if (stored) updateIfacePrefs.mutate({ iface_time_range: stored as any });
+  };
 
   return (
     <div className="space-y-4">
       {/* Summary bar */}
       <div className="flex items-center gap-4 flex-wrap">
-        <div className="flex items-center gap-2 text-sm">
+        <div className="flex items-center gap-2 text-sm flex-wrap">
           <span className="text-zinc-500">Interfaces:</span>
-          <Badge variant="default">{validInterfaces.length}</Badge>
-          <Badge variant="success">{upCount} up</Badge>
-          {downCount > 0 && <Badge variant="destructive">{downCount} down</Badge>}
+          {([
+            { value: "all" as const, count: validInterfaces.length, label: "all", cls: "bg-zinc-700 text-zinc-200 border-zinc-600" },
+            { value: "up" as const, count: upCount, label: "up", cls: "bg-green-900/60 text-green-400 border-green-700" },
+            { value: "down" as const, count: downCount, label: "down", cls: "bg-red-900/60 text-red-400 border-red-700" },
+            { value: "unmonitored" as const, count: unmonitoredCount, label: "unmonitored", cls: "bg-zinc-800 text-zinc-400 border-zinc-600" },
+          ]).map(({ value, count, label, cls }) => (
+            <button
+              key={value}
+              onClick={() => handleStatusFilter(value)}
+              className={[
+                "inline-flex items-center gap-1 px-2 py-0.5 rounded border text-xs font-medium transition-all",
+                cls,
+                statusFilter === value
+                  ? "ring-2 ring-offset-1 ring-offset-zinc-900 ring-brand-500 opacity-100"
+                  : "opacity-55 hover:opacity-80",
+              ].join(" ")}
+            >
+              {count} {label}
+            </button>
+          ))}
           {activeSelectedCount > 0 && <Badge variant="default">{activeSelectedCount} selected</Badge>}
-          {unmonitoredCount > 0 && <Badge variant="default" className="text-zinc-400 border-zinc-700">{unmonitoredCount} unmonitored</Badge>}
         </div>
         <Button variant="outline" size="sm" className="h-7 text-xs gap-1" disabled={refreshMeta.isPending} onClick={() => refreshMeta.mutate(deviceId)}>
           {refreshMeta.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
@@ -2171,19 +2218,19 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
         </Button>
         {refreshMeta.isSuccess && <span className="text-xs text-emerald-400">Queued</span>}
         <div className="ml-auto flex items-center gap-2">
-          <Select value={trafficUnit} onChange={e => setTrafficUnit(e.target.value as TrafficUnit)} className="h-7 text-xs w-24">
+          <Select value={trafficUnit} onChange={e => handleTrafficUnit(e.target.value as TrafficUnit)} className="h-7 text-xs w-24">
             <option value="auto">Auto</option>
             <option value="kbps">Kbps</option>
             <option value="mbps">Mbps</option>
             <option value="gbps">Gbps</option>
             <option value="pct">% util</option>
           </Select>
-          <Select value={chartMetric} onChange={e => setChartMetric(e.target.value as ChartMetric)} className="h-7 text-xs w-28">
+          <Select value={chartMetric} onChange={e => handleChartMetric(e.target.value as ChartMetric)} className="h-7 text-xs w-28">
             <option value="traffic">Traffic</option>
             <option value="errors">Errors</option>
             <option value="discards">Discards</option>
           </Select>
-          <TimeRangePicker value={timeRange} onChange={setTimeRange} timezone={tz} />
+          <TimeRangePicker value={timeRange} onChange={handleTimeRange} timezone={tz} />
         </div>
       </div>
 
@@ -2276,12 +2323,7 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
                     </Select>
                   )}
                 </TableCell>
-                <TableCell className="text-center">
-                  <label className="flex items-center gap-1.5 cursor-pointer select-none whitespace-nowrap" title="Show interfaces with polling disabled">
-                    <input type="checkbox" checked={showUnmonitored} onChange={() => setShowUnmonitored(v => !v)} className="accent-brand-500 cursor-pointer" />
-                    <span className="text-[10px] text-zinc-500">Unmon.</span>
-                  </label>
-                </TableCell>
+                <TableCell />
                 <TableCell>
                   <ClearableInput placeholder="Filter..." value={filterName} onChange={e => setFilterName(e.target.value)} onClear={() => setFilterName("")} className="h-6 text-[10px]" />
                 </TableCell>
@@ -2301,7 +2343,7 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {displayList.map((iface) => {
+              {sorted.map((iface) => {
                 const meta = metaMap.get(iface.interface_id);
                 const pollingOn = meta?.polling_enabled ?? true;
                 const alertingOn = meta?.alerting_enabled ?? true;
@@ -2361,11 +2403,15 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
                 </TableRow>
                 );
               })}
-              {displayList.length === 0 && (
+              {sorted.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={12} className="text-center py-8 text-zinc-500 text-sm">
-                    {!showUnmonitored
-                      ? "No monitored interfaces. Enable polling on interfaces or toggle \"Unmon.\" to show all."
+                    {statusFilter === "unmonitored"
+                      ? "No unmonitored interfaces."
+                      : statusFilter === "up"
+                      ? "No interfaces are currently up."
+                      : statusFilter === "down"
+                      ? "No interfaces are currently down."
                       : "No interfaces match your filters."}
                   </TableCell>
                 </TableRow>
@@ -4041,16 +4087,16 @@ export function DeviceDetailPage() {
               Overview
             </span>
           </TabTrigger>
-          <TabTrigger value="performance">
-            <span className="flex items-center gap-1.5">
-              <BarChart2 className="h-3.5 w-3.5" />
-              Performance
-            </span>
-          </TabTrigger>
           <TabTrigger value="interfaces">
             <span className="flex items-center gap-1.5">
               <Network className="h-3.5 w-3.5" />
               Interfaces
+            </span>
+          </TabTrigger>
+          <TabTrigger value="performance">
+            <span className="flex items-center gap-1.5">
+              <BarChart2 className="h-3.5 w-3.5" />
+              Performance
             </span>
           </TabTrigger>
           <TabTrigger value="configuration">
@@ -4100,11 +4146,11 @@ export function DeviceDetailPage() {
         <TabsContent value="overview">
           <OverviewTab deviceId={deviceId} />
         </TabsContent>
-        <TabsContent value="performance">
-          <PerformanceTab deviceId={deviceId} />
-        </TabsContent>
         <TabsContent value="interfaces">
           <InterfacesTab deviceId={deviceId} />
+        </TabsContent>
+        <TabsContent value="performance">
+          <PerformanceTab deviceId={deviceId} />
         </TabsContent>
         <TabsContent value="configuration">
           <ConfigurationTab deviceId={deviceId} />

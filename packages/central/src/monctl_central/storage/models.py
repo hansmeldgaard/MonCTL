@@ -551,6 +551,22 @@ class User(Base):
         Integer, nullable=True,
         comment="Per-user idle timeout override. NULL = use system default.",
     )
+    iface_status_filter: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="all",
+        comment="Default interface status filter: all | up | down | unmonitored",
+    )
+    iface_traffic_unit: Mapped[str] = mapped_column(
+        String(8), nullable=False, server_default="auto",
+        comment="Default traffic unit: auto | bps | kbps | mbps | pct",
+    )
+    iface_chart_metric: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="traffic",
+        comment="Default chart metric: traffic | errors | discards",
+    )
+    iface_time_range: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="24h",
+        comment="Default interface time range: 1h | 6h | 24h | 7d | 30d",
+    )
     # Legacy single-tenant FK (kept for backward compat, not used for access control)
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True

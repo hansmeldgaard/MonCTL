@@ -1,5 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiDelete, apiGet, apiGetRaw, apiPatch, apiPost, apiPostFormData, apiPut } from "@/api/client.ts";
+import { useAuth } from "@/hooks/useAuth.tsx";
 import type {
   AlertInstance,
   AlertLogEntry,
@@ -1215,6 +1216,21 @@ export function useUpdateMyIdleTimeout() {
   return useMutation({
     mutationFn: (data: { idle_timeout_minutes: number | null }) =>
       apiPut<{ idle_timeout_minutes: number | null }>("/users/me/idle-timeout", data),
+  });
+}
+
+export function useUpdateInterfacePreferences() {
+  const { refresh } = useAuth();
+  return useMutation({
+    mutationFn: (data: {
+      iface_status_filter?: "all" | "up" | "down" | "unmonitored";
+      iface_traffic_unit?: "auto" | "kbps" | "mbps" | "gbps" | "pct";
+      iface_chart_metric?: "traffic" | "errors" | "discards";
+      iface_time_range?: "1h" | "6h" | "24h" | "7d" | "30d";
+    }) => apiPut("/users/me/interface-preferences", data),
+    onSuccess: async () => {
+      await refresh();
+    },
   });
 }
 

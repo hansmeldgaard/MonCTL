@@ -96,6 +96,10 @@ async def login(
             "table_page_size": user.table_page_size,
             "table_scroll_mode": user.table_scroll_mode,
             "idle_timeout_minutes": idle_timeout,
+            "iface_status_filter": user.iface_status_filter,
+            "iface_traffic_unit": user.iface_traffic_unit,
+            "iface_chart_metric": user.iface_chart_metric,
+            "iface_time_range": user.iface_time_range,
         },
     }
 
@@ -153,6 +157,10 @@ async def refresh(
             "display_name": user.display_name,
             "timezone": user.timezone,
             "idle_timeout_minutes": idle_timeout,
+            "iface_status_filter": user.iface_status_filter,
+            "iface_traffic_unit": user.iface_traffic_unit,
+            "iface_chart_metric": user.iface_chart_metric,
+            "iface_time_range": user.iface_time_range,
         },
     }
 
@@ -219,5 +227,9 @@ async def get_me(request: Request, db: AsyncSession = Depends(get_db)):
             "tenant_ids": tenant_ids,
             "permissions": permissions_list,
             "idle_timeout_minutes": idle_timeout,
+            "iface_status_filter": user.iface_status_filter if user else "all",
+            "iface_traffic_unit": user.iface_traffic_unit if user else "auto",
+            "iface_chart_metric": user.iface_chart_metric if user else "traffic",
+            "iface_time_range": user.iface_time_range if user else "24h",
         },
     }

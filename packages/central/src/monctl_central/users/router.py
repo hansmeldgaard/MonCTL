@@ -120,6 +120,18 @@ class UpdateTablePreferencesRequest(BaseModel):
 
 VALID_IDLE_TIMEOUTS = {15, 30, 60, 120, 240, 480, 0}
 
+VALID_IFACE_STATUS_FILTERS = {"all", "up", "down", "unmonitored"}
+VALID_IFACE_TRAFFIC_UNITS = {"auto", "kbps", "mbps", "gbps", "pct"}
+VALID_IFACE_CHART_METRICS = {"traffic", "errors", "discards"}
+VALID_IFACE_TIME_RANGES = {"1h", "6h", "24h", "7d", "30d"}
+
+
+class UpdateInterfacePreferencesRequest(BaseModel):
+    iface_status_filter: str | None = Field(default=None)
+    iface_traffic_unit: str | None = Field(default=None)
+    iface_chart_metric: str | None = Field(default=None)
+    iface_time_range: str | None = Field(default=None)
+
 
 class UpdateIdleTimeoutRequest(BaseModel):
     idle_timeout_minutes: int | None = Field(
@@ -209,6 +221,45 @@ async def update_my_timezone(
     user.timezone = request.timezone
     user.updated_at = utc_now()
     return {"status": "success", "data": {"timezone": user.timezone}}
+
+
+@router.put("/me/interface-preferences")
+async def update_my_interface_preferences(
+    request: UpdateInterfacePreferencesRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Update the current user's interface tab display preferences."""
+    user = await db.get(User, uuid.UUID(auth["user_id"]))
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    validators = {
+        "iface_status_filter": VALID_IFACE_STATUS_FILTERS,
+        "iface_traffic_unit": VALID_IFACE_TRAFFIC_UNITS,
+        "iface_chart_metric": VALID_IFACE_CHART_METRICS,
+        "iface_time_range": VALID_IFACE_TIME_RANGES,
+    }
+    for field, valid_set in validators.items():
+        val = getattr(request, field)
+        if val is not None:
+            if val not in valid_set:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"{field} must be one of {sorted(valid_set)}",
+                )
+            setattr(user, field, val)
+
+    user.updated_at = utc_now()
+    return {
+        "status": "success",
+        "data": {
+            "iface_status_filter": user.iface_status_filter,
+            "iface_traffic_unit": user.iface_traffic_unit,
+            "iface_chart_metric": user.iface_chart_metric,
+            "iface_time_range": user.iface_time_range,
+        },
+    }
 
 
 @router.get("")

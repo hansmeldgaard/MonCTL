@@ -41,6 +41,7 @@ import {
   useDeployTlsCert,
   useUpdateMyTimezone,
   useUpdateMyIdleTimeout,
+  useUpdateInterfacePreferences,
   useUserApiKeys,
   useCreateUserApiKey,
   useDeleteUserApiKey,
@@ -287,7 +288,91 @@ function ProfileTab() {
           </div>
         </CardContent>
       </Card>
+
+      <InterfaceDefaultsCard />
     </div>
+  );
+}
+
+function InterfaceDefaultsCard() {
+  const { user } = useAuth();
+  const updateIfacePrefs = useUpdateInterfacePreferences();
+  const [saved, setSaved] = useState(false);
+
+  const handleChange = (data: Parameters<typeof updateIfacePrefs.mutate>[0]) => {
+    updateIfacePrefs.mutate(data, {
+      onSuccess: () => { setSaved(true); setTimeout(() => setSaved(false), 2000); },
+    });
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Network className="h-4 w-4" />
+          Interface Tab Defaults
+          {saved && <span className="text-sm text-emerald-400 ml-2">Saved!</span>}
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p className="text-xs text-zinc-500 mb-3">Applied when you open the Interfaces tab on any device.</p>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-1">
+            <label className="text-xs text-zinc-400">Default status filter</label>
+            <Select
+              value={user?.iface_status_filter ?? "all"}
+              onChange={e => handleChange({ iface_status_filter: e.target.value as any })}
+              className="w-full"
+            >
+              <option value="all">All interfaces</option>
+              <option value="up">Up only</option>
+              <option value="down">Down only</option>
+              <option value="unmonitored">Unmonitored only</option>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs text-zinc-400">Default traffic unit</label>
+            <Select
+              value={user?.iface_traffic_unit ?? "auto"}
+              onChange={e => handleChange({ iface_traffic_unit: e.target.value as any })}
+              className="w-full"
+            >
+              <option value="auto">Auto</option>
+              <option value="kbps">Kbps</option>
+              <option value="mbps">Mbps</option>
+              <option value="gbps">Gbps</option>
+              <option value="pct">% utilization</option>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs text-zinc-400">Default chart metric</label>
+            <Select
+              value={user?.iface_chart_metric ?? "traffic"}
+              onChange={e => handleChange({ iface_chart_metric: e.target.value as any })}
+              className="w-full"
+            >
+              <option value="traffic">Traffic</option>
+              <option value="errors">Errors</option>
+              <option value="discards">Discards</option>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs text-zinc-400">Default time range</label>
+            <Select
+              value={user?.iface_time_range ?? "24h"}
+              onChange={e => handleChange({ iface_time_range: e.target.value as any })}
+              className="w-full"
+            >
+              <option value="1h">Last 1 hour</option>
+              <option value="6h">Last 6 hours</option>
+              <option value="24h">Last 24 hours</option>
+              <option value="7d">Last 7 days</option>
+              <option value="30d">Last 30 days</option>
+            </Select>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
