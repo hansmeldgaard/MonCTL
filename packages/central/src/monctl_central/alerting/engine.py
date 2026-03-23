@@ -49,15 +49,16 @@ class AlertEngine:
                 )
             ).scalars().all()
 
+            logger.info("alert_eval_cycle definition_count=%d", len(definitions))
+
             for defn in definitions:
                 try:
                     records = await self._evaluate_definition(session, defn)
                     alert_log_records.extend(records)
                 except Exception:
                     logger.exception(
-                        "alert_def_eval_error",
-                        definition_id=str(defn.id),
-                        name=defn.name,
+                        "alert_def_eval_error definition_id=%s name=%s",
+                        defn.id, defn.name,
                     )
 
             await session.commit()
@@ -83,7 +84,7 @@ class AlertEngine:
             ast = parse_expression(defn.expression)
             compiled = compile_to_sql(ast, target_table, defn.window)
         except Exception:
-            logger.exception("dsl_compile_error", definition_id=str(defn.id))
+            logger.exception("dsl_compile_error definition_id=%s", defn.id)
             return []
 
         # Load enabled instances
@@ -98,7 +99,13 @@ class AlertEngine:
         ).scalars().all()
 
         if not instances:
+            logger.debug("eval_definition_no_instances name=%s", defn.name)
             return []
+
+        logger.debug(
+            "eval_definition name=%s table=%s instances=%d",
+            defn.name, target_table, len(instances),
+        )
 
         # Load threshold variables for this app
         threshold_vars = (
@@ -135,6 +142,11 @@ class AlertEngine:
             firing_keys = await self._execute_compiled_query(
                 compiled, instances, overrides_by_device, var_by_name
             )
+
+        logger.info(
+            "eval_definition_result name=%s firing=%d total_instances=%d",
+            defn.name, len(firing_keys), len(instances),
+        )
 
         # Build alert_log records and update instance states
         log_records: list[dict] = []
@@ -280,7 +292,7 @@ class AlertEngine:
                 self._ch.query_for_alert, scoped_sql, params
             )
         except Exception:
-            logger.exception("ch_query_error", sql=scoped_sql[:200])
+            logger.exception("ch_query_error sql=%s", scoped_sql[:200])
             return {}
 
         firing: dict[tuple[str, str], dict] = {}

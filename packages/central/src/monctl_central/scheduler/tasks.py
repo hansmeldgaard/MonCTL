@@ -117,7 +117,7 @@ class SchedulerRunner:
 
             if stale:
                 await session.commit()
-                logger.info("collector_health_check", marked_down=len(stale))
+                logger.info("collector_health_check marked_down=%d", len(stale))
 
         from monctl_central.cache import _redis
         from monctl_common.utils import utc_now
@@ -551,7 +551,7 @@ class SchedulerRunner:
                 )
                 await session.commit()
                 if result.rowcount:
-                    logger.info("app_cache_cleanup", deleted=result.rowcount)
+                    logger.info("app_cache_cleanup deleted=%d", result.rowcount)
         except Exception:
             logger.exception("app_cache_cleanup_error")
 
@@ -628,7 +628,7 @@ class SchedulerRunner:
                     await _redis.set("monctl:os_updates:count", str(count))
 
                 self._last_os_check = now
-                logger.info("os_update_check_complete", node_count=len(nodes))
+                logger.info("os_update_check_complete node_count=%d", len(nodes))
 
         except Exception:
             logger.exception("os_update_check_error")
