@@ -17,18 +17,19 @@ services:
     network_mode: host
     entrypoint: []
     command: >
-      bash -c "
-        apt-get update && apt-get install -y python3-pip python3-psycopg2 &&
+      sh -c "
+        apk add --no-cache python3 py3-pip py3-psycopg2 su-exec &&
         pip install --break-system-packages patroni[etcd3] &&
-        patroni /etc/patroni/patroni.yml
+        chown -R postgres:postgres /var/lib/postgresql/data &&
+        exec su-exec postgres patroni /etc/patroni/patroni.yml
       "
     environment:
       PATRONI_NAME: ${PATRONI_NAME:-pg1}
       PATRONI_SCOPE: monctl
       PATRONI_RESTAPI_CONNECT_ADDRESS: ${NODE_IP:-10.145.210.41}:8008
       PATRONI_RESTAPI_LISTEN: 0.0.0.0:8008
-      PATRONI_POSTGRESQL_CONNECT_ADDRESS: ${NODE_IP:-10.145.210.41}:5432
-      PATRONI_POSTGRESQL_LISTEN: 0.0.0.0:5432
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: ${NODE_IP:-10.145.210.41}:5433
+      PATRONI_POSTGRESQL_LISTEN: 0.0.0.0:5433
       PATRONI_POSTGRESQL_DATA_DIR: /var/lib/postgresql/data/patroni
       PATRONI_ETCD3_HOSTS: 10.145.210.41:2379,10.145.210.42:2379,10.145.210.43:2379
       PATRONI_SUPERUSER_USERNAME: postgres
