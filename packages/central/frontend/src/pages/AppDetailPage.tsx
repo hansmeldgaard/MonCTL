@@ -1383,6 +1383,7 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
   const [formExpression, setFormExpression] = useState("");
   const formWindowField = useField("5m", validateAlertWindow);
   const [formEnabled, setFormEnabled] = useState(true);
+  const [formMessageTemplate, setFormMessageTemplate] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
 
   const openCreate = (prefill?: { name?: string; expression?: string; window?: string }) => {
@@ -1392,6 +1393,7 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
     setFormExpression(prefill?.expression ?? "");
     formWindowField.reset(prefill?.window ?? "5m");
     setFormEnabled(true);
+    setFormMessageTemplate("");
     setFormError(null);
   };
 
@@ -1402,6 +1404,7 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
     setFormExpression(defn.expression);
     formWindowField.reset(defn.window);
     setFormEnabled(defn.enabled);
+    setFormMessageTemplate(defn.message_template ?? "");
     setFormError(null);
   };
 
@@ -1425,6 +1428,7 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
           expression: formExpression,
           window: formWindowField.value,
           enabled: formEnabled,
+          message_template: formMessageTemplate || undefined,
         });
       } else {
         await createDef.mutateAsync({
@@ -1433,6 +1437,7 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
           expression: formExpression,
           window: formWindowField.value,
           enabled: formEnabled,
+          message_template: formMessageTemplate || undefined,
         });
       }
       closeForm();
@@ -1618,6 +1623,92 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
                   >
                     {formEnabled ? "Enabled" : "Disabled"}
                   </button>
+                </div>
+              )}
+            </div>
+            {/* Message Template */}
+            <div className="space-y-1.5">
+              <Label htmlFor="alert-template">
+                Message Template <span className="font-normal text-zinc-600">(optional)</span>
+              </Label>
+              <textarea
+                id="alert-template"
+                value={formMessageTemplate}
+                onChange={(e) => setFormMessageTemplate(e.target.value)}
+                placeholder="{device_name} {if_name}: {in_utilization_pct}% > {$in_utilization_pct_threshold}%"
+                className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 font-mono resize-y min-h-[2.5rem] focus:outline-none focus:ring-2 focus:ring-brand-500"
+                rows={2}
+              />
+              {/* Variable badges */}
+              <div className="flex flex-wrap gap-1 mt-1">
+                {[
+                  { label: "{device_name}", cls: "text-cyan-400 border-cyan-500/30" },
+                  { label: "{if_name}", cls: "text-cyan-400 border-cyan-500/30" },
+                  { label: "{value}", cls: "text-zinc-300 border-zinc-600" },
+                  { label: "{fire_count}", cls: "text-zinc-300 border-zinc-600" },
+                  { label: "{alert_name}", cls: "text-zinc-300 border-zinc-600" },
+                ].map(({ label, cls }) => (
+                  <button
+                    key={label}
+                    type="button"
+                    className={`rounded border bg-zinc-900 px-1.5 py-0.5 text-[10px] font-mono cursor-pointer hover:bg-zinc-800 transition-colors ${cls}`}
+                    onClick={() => setFormMessageTemplate(prev => prev + label)}
+                  >
+                    {label}
+                  </button>
+                ))}
+                {/* Metric variables from expression */}
+                {metrics?.filter(m => {
+                  const re = new RegExp(`\\b${m.name}\\b`);
+                  return m.type !== "string" && re.test(formExpression);
+                }).map(m => (
+                  <button
+                    key={`m-${m.name}`}
+                    type="button"
+                    className="rounded border border-brand-500/30 bg-zinc-900 px-1.5 py-0.5 text-[10px] font-mono text-brand-400 cursor-pointer hover:bg-zinc-800 transition-colors"
+                    onClick={() => setFormMessageTemplate(prev => prev + `{${m.name}}`)}
+                  >
+                    {`{${m.name}}`}
+                  </button>
+                ))}
+                {/* Threshold variables */}
+                {variables?.filter(v => {
+                  const re = new RegExp(`(?<![a-z_])${v.name}(?![a-z0-9_(])`, 'i');
+                  return re.test(formExpression);
+                }).map(v => (
+                  <button
+                    key={`t-${v.id}`}
+                    type="button"
+                    className="rounded border border-amber-500/30 bg-zinc-900 px-1.5 py-0.5 text-[10px] font-mono text-amber-400 cursor-pointer hover:bg-zinc-800 transition-colors"
+                    onClick={() => setFormMessageTemplate(prev => prev + `{$${v.name}}`)}
+                  >
+                    {`{$${v.name}}`}
+                  </button>
+                ))}
+              </div>
+              {/* Live preview */}
+              {formMessageTemplate && (
+                <div className="rounded border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-xs">
+                  <span className="text-zinc-600 text-[10px] uppercase tracking-wider">Preview: </span>
+                  <span className="text-zinc-300">
+                    {formMessageTemplate
+                      .replace(/\{device_name\}/g, "switch-01")
+                      .replace(/\{if_name\}/g, "Gi0/1")
+                      .replace(/\{component\}/g, "CPU")
+                      .replace(/\{entity_key\}/g, "device|iface")
+                      .replace(/\{value\}/g, "83.2")
+                      .replace(/\{fire_count\}/g, "5")
+                      .replace(/\{alert_name\}/g, formNameField.value || "Alert")
+                      .replace(/\{(\$[^}]+)\}/g, (_, name) => {
+                        const v = variables?.find(v => `$${v.name}` === name);
+                        return v ? String(v.default_value) : name;
+                      })
+                      .replace(/\{([^}]+)\}/g, (match, name) => {
+                        const m = metrics?.find(m => m.name === name);
+                        return m ? "50" : match;
+                      })
+                    }
+                  </span>
                 </div>
               )}
             </div>
