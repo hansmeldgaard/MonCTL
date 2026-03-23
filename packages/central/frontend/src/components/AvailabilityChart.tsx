@@ -99,8 +99,10 @@ function buildChartData(
 } {
   if (!results.length) return { data: [], appNames: [] };
 
-  // Exclude interface-role results — they belong on the Interfaces tab, not here
-  results = results.filter((r) => r.role !== "interface");
+  // Only include results from availability and latency monitoring roles.
+  // General assignments (role="" or null) and interface assignments should NOT
+  // appear on this chart — they have their own dedicated views.
+  results = results.filter((r) => r.role === "availability" || r.role === "latency");
   if (!results.length) return { data: [], appNames: [] };
 
   // Collect unique app names for series
@@ -125,18 +127,12 @@ function buildChartData(
   const bucketMs = chooseBucketMs(spanMs);
 
   // ── Availability carry-forward ─────────────────────────────────────────────
-  // When the device uses role-tagged assignments, the availability strip is
-  // driven EXCLUSIVELY by the availability-role check.  We carry-forward the
-  // last known state into buckets where only the latency check fired, so the
-  // strip is a solid green/red bar — never falsely red due to a failing latency
-  // check.  Legacy devices (no role assignments) keep the original all-results
-  // logic.
-  const usesRoles = results.some((r) => r.role !== null);
-
-  // Sorted (asc) checkpoints from the availability check only (or all for legacy).
-  const availCheckpoints = (
-    usesRoles ? results.filter((r) => r.role === "availability") : results
-  )
+  // The availability strip is driven exclusively by availability-role checks.
+  // We carry-forward the last known state into buckets where only the latency
+  // check fired, so the strip is a solid green/red bar — never falsely red
+  // due to a failing latency check.
+  const availCheckpoints = results
+    .filter((r) => r.role === "availability")
     .map((r) => ({ ts: new Date(r.executed_at).getTime(), reachable: r.reachable }))
     .sort((a, b) => a.ts - b.ts);
 
@@ -227,20 +223,14 @@ function buildChartData(
     const timeLabel = formatAxisLabel(bucketStart, spanMs, timezone);
 
     // Availability strip: carry-forward the last known state from the
-    // availability-role check.  For legacy (no roles), fall back to all results
-    // in the bucket (original behaviour).
+    // availability-role check.
+    const availState = getAvailStateAt(bucketStart + bucketMs - 1);
     let up: 0 | 1 = 0;
     let noAvailData = false;
-    if (usesRoles) {
-      const availState = getAvailStateAt(bucketStart + bucketMs - 1);
-      if (availState === null) {
-        noAvailData = true; // before the first availability check has fired
-      } else {
-        up = availState ? 1 : 0;
-      }
+    if (availState === null) {
+      noAvailData = true; // before the first availability check has fired
     } else {
-      const allResults = [...bucket.values()].flat();
-      up = allResults.length > 0 && allResults.every((r) => r.reachable) ? 1 : 0;
+      up = availState ? 1 : 0;
     }
 
     const point: ChartPoint = {

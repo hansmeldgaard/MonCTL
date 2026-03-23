@@ -28,6 +28,7 @@ _DEFAULTS = {
     "pypi_network_mode": "direct",
     "pypi_proxy_url": "",
     "session_idle_timeout_minutes": "60",
+    "collector_central_url": "",
 }
 
 

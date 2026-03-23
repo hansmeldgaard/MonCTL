@@ -12,7 +12,7 @@ services:
     hostname: ${NODE_ID:-collector-node}
     ports:
       - "50051:50051"
-      - "127.0.0.1:50052:50052"
+      - "127.0.0.1:50052:50052" # status/health endpoints (localhost only)
     environment:
       MONCTL_NODE_ID:           ${NODE_ID}
       MONCTL_CENTRAL_URL:       ${CENTRAL_URL}

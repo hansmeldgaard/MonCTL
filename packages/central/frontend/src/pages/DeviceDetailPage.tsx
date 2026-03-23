@@ -836,7 +836,13 @@ function OverviewTab({ deviceId }: { deviceId: string }) {
   const STALE_THRESHOLD_MS = 15 * 60 * 1000; // 15 minutes
   const staleSince = useMemo(() => {
     if (!deviceResults?.checks?.length) return null;
-    const latest = deviceResults.checks.reduce((newest: number, check: any) => {
+    // Only consider availability/latency checks for staleness — other apps
+    // (config, performance) have their own tabs and should not drive this indicator.
+    const monitoringChecks = deviceResults.checks.filter(
+      (c: any) => c.role === "availability" || c.role === "latency"
+    );
+    if (!monitoringChecks.length) return null;
+    const latest = monitoringChecks.reduce((newest: number, check: any) => {
       const ts = new Date(check.executed_at).getTime();
       return ts > newest ? ts : newest;
     }, 0);

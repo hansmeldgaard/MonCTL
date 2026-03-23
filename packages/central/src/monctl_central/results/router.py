@@ -100,6 +100,7 @@ async def list_results(
     app_id: Optional[str] = Query(default=None, description="Filter by app UUID"),
     device_id: Optional[str] = Query(default=None, description="Filter by device UUID"),
     state: Optional[int] = Query(default=None, description="Filter by state: 0=OK 1=WARN 2=CRIT 3=UNKNOWN"),
+    role: Optional[str] = Query(default=None, description="Filter by assignment role (comma-separated: availability,latency,interface)"),
     from_ts: Optional[str] = Query(default=None, description="ISO datetime — return only results at or after this time"),
     to_ts: Optional[str] = Query(default=None, description="ISO datetime — return only results at or before this time"),
     limit: int = Query(default=50, le=5000),
@@ -158,6 +159,17 @@ async def list_results(
     if tenant_ids is not None and len(tenant_ids) > 1:
         tid_set = set(tenant_ids)
         all_rows = [r for r in all_rows if str(r.get("tenant_id", "")) in tid_set]
+
+    # Role filter — allows frontend to request only availability/latency results
+    if role:
+        _VALID_ROLES = {"availability", "latency", "interface", ""}
+        allowed_roles = {r.strip() for r in role.split(",")}
+        invalid = allowed_roles - _VALID_ROLES
+        if invalid:
+            raise HTTPException(
+                status_code=422, detail=f"Invalid role values: {invalid}"
+            )
+        all_rows = [r for r in all_rows if r.get("role", "") in allowed_roles]
 
     # Sort merged results by executed_at descending and apply limit
     all_rows.sort(key=lambda r: r.get("executed_at", ""), reverse=True)

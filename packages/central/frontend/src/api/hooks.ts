@@ -963,6 +963,7 @@ export function useAvailabilityHistory(
       const params = new URLSearchParams({
         device_id: deviceId!,
         table: "availability_latency",
+        role: "availability,latency",
         limit: String(limit),
         ...(fromTs ? { from_ts: fromTs } : {}),
         ...(toTs ? { to_ts: toTs } : {}),

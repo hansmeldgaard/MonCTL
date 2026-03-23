@@ -756,6 +756,189 @@ function CollectorsCard() {
 // ── Registration Tokens Section ──────────────────────────────────────────────
 
 import { KeyRound, Copy, Check } from "lucide-react";
+import { useSystemSettings } from "@/api/hooks.ts";
+
+// ── Copyable Code Block ──────────────────────────────────────────────────────
+
+function CopyBlock({ content, label }: { content: string; label?: string }) {
+  const [copied, setCopied] = useState(false);
+  function handleCopy() {
+    navigator.clipboard.writeText(content);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+  return (
+    <div className="relative group">
+      {label && <p className="text-xs text-zinc-500 mb-1">{label}</p>}
+      <pre className="rounded-lg bg-zinc-900 border border-zinc-700/50 px-4 py-3 text-xs font-mono text-zinc-300 overflow-x-auto whitespace-pre">{content}</pre>
+      <button
+        type="button"
+        onClick={handleCopy}
+        className="absolute top-2 right-2 rounded p-1 text-zinc-500 hover:text-zinc-200 bg-zinc-800/80 hover:bg-zinc-700 transition-colors cursor-pointer opacity-0 group-hover:opacity-100"
+        title="Copy"
+      >
+        {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+      </button>
+    </div>
+  );
+}
+
+// ── Setup Instructions Dialog ────────────────────────────────────────────────
+
+function SetupInstructionsDialog({ code, onClose }: { code: string; onClose: () => void }) {
+  const { data: settings } = useSystemSettings();
+  const centralUrl = settings?.collector_central_url || window.location.origin;
+  const [codeCopied, setCodeCopied] = useState(false);
+
+  function handleCopyCode() {
+    navigator.clipboard.writeText(code);
+    setCodeCopied(true);
+    setTimeout(() => setCodeCopied(false), 2000);
+  }
+
+  const envContent = `NODE_ID=collector-NEW
+CENTRAL_URL=${centralUrl}
+CENTRAL_API_KEY=<from central .env COLLECTOR_API_KEY>
+VERIFY_SSL=false`;
+
+  const composeContent = `services:
+  cache-node:
+    image: monctl-collector:latest
+    command: monctl-cache-node
+    container_name: cache-node
+    hostname: \${NODE_ID:-collector-node}
+    ports:
+      - "50051:50051"
+      - "127.0.0.1:50052:50052"
+    environment:
+      MONCTL_NODE_ID:           \${NODE_ID}
+      MONCTL_CENTRAL_URL:       \${CENTRAL_URL}
+      MONCTL_CENTRAL_API_KEY:   \${CENTRAL_API_KEY}
+      MONCTL_VERIFY_SSL:        \${VERIFY_SSL:-true}
+      MONCTL_GRPC_ADDRESS:      0.0.0.0:50051
+      MONCTL_DB_PATH:           /data/cache.db
+      MONCTL_COLLECTOR_ID:      \${MONCTL_COLLECTOR_ID:-}
+      MONCTL_COLLECTOR_API_KEY: \${CENTRAL_API_KEY}
+    volumes:
+      - cache_data:/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import socket,sys; s=socket.socket(); s.settimeout(1); r=s.connect_ex(('127.0.0.1',50051)); s.close(); sys.exit(r)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  poll-worker-1:
+    image: monctl-collector:latest
+    command: monctl-poll-worker
+    container_name: poll-worker-1
+    environment:
+      MONCTL_CACHE_NODE:        cache-node:50051
+      MONCTL_WORKER_ID:         \${NODE_ID:-node}-worker-1
+      MONCTL_CENTRAL_URL:       \${CENTRAL_URL}
+      MONCTL_CENTRAL_API_KEY:   \${CENTRAL_API_KEY}
+      MONCTL_VERIFY_SSL:        \${VERIFY_SSL:-true}
+      MONCTL_APPS_DIR:          /data/apps
+      MONCTL_VENVS_DIR:         /data/venvs
+      MONCTL_DB_PATH:           /data/worker.db
+    volumes:
+      - app_data:/data
+    depends_on:
+      cache-node:
+        condition: service_healthy
+    restart: unless-stopped
+
+  forwarder:
+    image: monctl-collector:latest
+    command: monctl-forwarder
+    container_name: forwarder
+    environment:
+      MONCTL_NODE_ID:           \${NODE_ID}
+      MONCTL_CENTRAL_URL:       \${CENTRAL_URL}
+      MONCTL_CENTRAL_API_KEY:   \${CENTRAL_API_KEY}
+      MONCTL_VERIFY_SSL:        \${VERIFY_SSL:-true}
+      MONCTL_DB_PATH:           /data/cache.db
+    volumes:
+      - cache_data:/data
+    depends_on:
+      cache-node:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  cache_data:
+  app_data:`;
+
+  return (
+    <Dialog open onClose={onClose} title="Setup Instructions" size="lg">
+      <div className="space-y-5 max-h-[70vh] overflow-y-auto pr-1">
+        {/* Registration code */}
+        <div className="flex items-center justify-center gap-3 rounded-lg bg-zinc-800 px-4 py-4">
+          <span className="text-xs text-zinc-500 uppercase tracking-wider">Registration Code</span>
+          <code className="text-2xl font-mono font-bold text-emerald-400 tracking-[0.3em]">{code}</code>
+          <button
+            type="button"
+            onClick={handleCopyCode}
+            className="rounded p-1.5 text-zinc-400 hover:text-zinc-100 transition-colors cursor-pointer"
+            title="Copy code"
+          >
+            {codeCopied ? <Check className="h-4 w-4 text-emerald-400" /> : <Copy className="h-4 w-4" />}
+          </button>
+        </div>
+
+        {/* Step 1 */}
+        <div>
+          <h3 className="text-sm font-medium text-zinc-200 mb-2">Step 1: Prepare the server</h3>
+          <CopyBlock content={`sudo mkdir -p /opt/monctl/collector
+sudo chown -R monctl:monctl /opt/monctl`} />
+        </div>
+
+        {/* Step 2 */}
+        <div>
+          <h3 className="text-sm font-medium text-zinc-200 mb-2">Step 2: Create <code className="text-xs bg-zinc-800 px-1 py-0.5 rounded">/opt/monctl/collector/.env</code></h3>
+          <CopyBlock content={envContent} />
+          <p className="text-xs text-zinc-500 mt-1.5">
+            Find <code className="bg-zinc-800 px-1 py-0.5 rounded">COLLECTOR_API_KEY</code> in your central deployment's <code className="bg-zinc-800 px-1 py-0.5 rounded">.env</code> file.
+            Change <code className="bg-zinc-800 px-1 py-0.5 rounded">NODE_ID</code> to a unique name for this collector.
+          </p>
+        </div>
+
+        {/* Step 3 */}
+        <div>
+          <h3 className="text-sm font-medium text-zinc-200 mb-2">Step 3: Create <code className="text-xs bg-zinc-800 px-1 py-0.5 rounded">/opt/monctl/collector/docker-compose.yml</code></h3>
+          <CopyBlock content={composeContent} />
+        </div>
+
+        {/* Step 4 */}
+        <div>
+          <h3 className="text-sm font-medium text-zinc-200 mb-2">Step 4: Load the collector image</h3>
+          <CopyBlock content={`# From your build machine:
+docker save monctl-collector:latest | ssh monctl@<worker-ip> 'docker load'`} />
+        </div>
+
+        {/* Step 5 */}
+        <div>
+          <h3 className="text-sm font-medium text-zinc-200 mb-2">Step 5: Start</h3>
+          <CopyBlock content={`cd /opt/monctl/collector && docker compose up -d`} />
+        </div>
+
+        {/* Step 6 */}
+        <div className="rounded-lg bg-amber-500/10 border border-amber-500/20 px-4 py-3">
+          <p className="text-sm text-amber-400">
+            <strong>Step 6:</strong> Return here and approve the collector when it appears in the Pending list above.
+          </p>
+        </div>
+      </div>
+
+      <DialogFooter>
+        <Button variant="secondary" onClick={onClose}>Done</Button>
+      </DialogFooter>
+    </Dialog>
+  );
+}
 
 function RegistrationTokensCard() {
   const tz = useTimezone();
@@ -771,7 +954,6 @@ function RegistrationTokensCard() {
   const [addError, setAddError] = useState<string | null>(null);
 
   const [createdToken, setCreatedToken] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<RegistrationToken | null>(null);
 
   async function handleCreate(e: React.FormEvent) {
@@ -802,14 +984,6 @@ function RegistrationTokensCard() {
       await deleteToken.mutateAsync(deleteTarget.id);
       setDeleteTarget(null);
     } catch { /* silent */ }
-  }
-
-  function handleCopy() {
-    if (createdToken) {
-      navigator.clipboard.writeText(createdToken);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
   }
 
   return (
@@ -946,31 +1120,13 @@ function RegistrationTokensCard() {
         </form>
       </Dialog>
 
-      {/* Token Created — show registration code */}
-      <Dialog open={!!createdToken} onClose={() => { setCreatedToken(null); setCopied(false); }} title="Registration Code Created">
-        <div className="space-y-4">
-          <p className="text-sm text-zinc-400">
-            Use this code in <span className="font-mono text-zinc-200">monctl-setup</span> on
-            the collector to register it.
-          </p>
-          <div className="flex items-center justify-center gap-3 rounded-lg bg-zinc-800 px-4 py-5">
-            <code className="text-3xl font-mono font-bold text-emerald-400 tracking-[0.3em]">{createdToken}</code>
-            <button
-              type="button"
-              onClick={handleCopy}
-              className="rounded p-1.5 text-zinc-400 hover:text-zinc-100 transition-colors cursor-pointer"
-              title="Copy"
-            >
-              {copied ? <Check className="h-5 w-5 text-emerald-400" /> : <Copy className="h-5 w-5" />}
-            </button>
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="secondary" onClick={() => { setCreatedToken(null); setCopied(false); }}>
-            Done
-          </Button>
-        </DialogFooter>
-      </Dialog>
+      {/* Setup Instructions dialog */}
+      {createdToken && (
+        <SetupInstructionsDialog
+          code={createdToken}
+          onClose={() => setCreatedToken(null)}
+        />
+      )}
 
       {/* Delete Token Dialog */}
       <Dialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)} title="Revoke Token">

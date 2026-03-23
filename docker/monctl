@@ -4,10 +4,6 @@
 #
 # Usage:
 #   monctl status            Show collector status (health, workers, system)
-#   monctl setup             Register collector with central (interactive)
-#   monctl setup --url URL --code CODE   Non-interactive registration
-#   monctl configure --url URL --key KEY   Update central URL / API key
-#   monctl check             Check registration status
 #   monctl raw <endpoint>    Raw GET request to status API (e.g. monctl raw /status)
 
 set -euo pipefail
@@ -81,92 +77,6 @@ cmd_status() {
     fi
 }
 
-cmd_setup() {
-    local url="" code=""
-
-    # Parse args
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --url)  url="$2"; shift 2 ;;
-            --code) code="$2"; shift 2 ;;
-            *)      shift ;;
-        esac
-    done
-
-    # Interactive fallback
-    if [[ -z "$url" ]]; then
-        read -rp "Central URL: " url
-    fi
-    if [[ -z "$code" ]]; then
-        read -rp "Registration Code: " code
-    fi
-
-    if [[ -z "$url" || -z "$code" ]]; then
-        _err "Both URL and registration code are required"
-        exit 1
-    fi
-
-    echo "Registering with $url..."
-    local resp
-    resp=$(curl $CURL_OPTS -X POST "$CACHE_NODE/setup/register" \
-        -H "Content-Type: application/json" \
-        -d "{\"central_url\": \"$url\", \"registration_code\": \"$code\"}" 2>/dev/null) || {
-        _err "Cannot reach cache-node at $CACHE_NODE"
-        exit 1
-    }
-
-    echo "$resp" | _pretty
-
-    # Hint about restart
-    if echo "$resp" | grep -q '"status".*"registered"'; then
-        echo ""
-        echo "Registration successful! Restart collector to apply:"
-        echo "  cd /opt/monctl/collector && docker compose restart"
-    fi
-}
-
-cmd_configure() {
-    local url="" key=""
-
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --url) url="$2"; shift 2 ;;
-            --key) key="$2"; shift 2 ;;
-            *)     shift ;;
-        esac
-    done
-
-    if [[ -z "$url" && -z "$key" ]]; then
-        _err "Provide --url and/or --key"
-        exit 1
-    fi
-
-    local payload="{"
-    [[ -n "$url" ]] && payload+="\"central_url\": \"$url\""
-    [[ -n "$url" && -n "$key" ]] && payload+=", "
-    [[ -n "$key" ]] && payload+="\"api_key\": \"$key\""
-    payload+="}"
-
-    local resp
-    resp=$(curl $CURL_OPTS -X POST "$CACHE_NODE/setup/configure" \
-        -H "Content-Type: application/json" \
-        -d "$payload" 2>/dev/null) || {
-        _err "Cannot reach cache-node at $CACHE_NODE"
-        exit 1
-    }
-
-    echo "$resp" | _pretty
-}
-
-cmd_check() {
-    local resp
-    resp=$(curl $CURL_OPTS "$CACHE_NODE/setup/check" 2>/dev/null) || {
-        _err "Cannot reach cache-node at $CACHE_NODE"
-        exit 1
-    }
-    echo "$resp" | _pretty
-}
-
 cmd_raw() {
     local endpoint="${1:-/status}"
     curl $CURL_OPTS "$CACHE_NODE$endpoint" 2>/dev/null | _pretty
@@ -176,18 +86,12 @@ cmd_raw() {
 
 case "${1:-status}" in
     status)              cmd_status ;;
-    setup)        shift; cmd_setup "$@" ;;
-    configure)    shift; cmd_configure "$@" ;;
-    check)               cmd_check ;;
     raw)          shift; cmd_raw "$@" ;;
     -h|--help|help)
         echo "Usage: monctl <command>"
         echo ""
         echo "Commands:"
         echo "  status              Show collector health, workers, system"
-        echo "  setup [--url URL --code CODE]  Register with central"
-        echo "  configure --url URL --key KEY  Update central connection"
-        echo "  check               Check registration status"
         echo "  raw <endpoint>      Raw GET to status API"
         echo ""
         echo "Environment:"
