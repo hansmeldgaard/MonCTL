@@ -874,10 +874,8 @@ async def get_device_thresholds(
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
-    """Get all alert definitions applicable to this device with threshold variable hierarchy."""
+    """Get flat list of threshold variables for this device with override hierarchy."""
     from monctl_central.storage.models import (
-        AlertEntity,
-        App,
         AlertDefinition,
         AppAssignment,
         ThresholdOverride,
@@ -895,85 +893,111 @@ async def get_device_thresholds(
         )
     ).scalars().all()
 
+    # Collect unique app IDs
+    app_ids = list({a.app_id for a in assignments})
+    if not app_ids:
+        return {"status": "success", "data": []}
+
+    # Load all threshold variables for these apps
+    threshold_vars = (
+        await db.execute(
+            select(ThresholdVariable)
+            .where(ThresholdVariable.app_id.in_(app_ids))
+            .order_by(ThresholdVariable.name)
+        )
+    ).scalars().all()
+    if not threshold_vars:
+        return {"status": "success", "data": []}
+
+    # Load device-level overrides for these variables
+    var_ids = [v.id for v in threshold_vars]
+    device_overrides: dict[str, ThresholdOverride] = {}
+    overrides = (
+        await db.execute(
+            select(ThresholdOverride)
+            .where(
+                ThresholdOverride.variable_id.in_(var_ids),
+                ThresholdOverride.device_id == device_uuid,
+                sa.or_(ThresholdOverride.entity_key.is_(None), ThresholdOverride.entity_key == ""),
+            )
+        )
+    ).scalars().all()
+    for ov in overrides:
+        device_overrides[str(ov.variable_id)] = ov
+
+    # Load entity-level overrides
+    entity_overrides: dict[str, list] = {}
+    e_overrides = (
+        await db.execute(
+            select(ThresholdOverride)
+            .where(
+                ThresholdOverride.variable_id.in_(var_ids),
+                ThresholdOverride.device_id == device_uuid,
+                ThresholdOverride.entity_key.is_not(None),
+                ThresholdOverride.entity_key != "",
+            )
+        )
+    ).scalars().all()
+    for ov in e_overrides:
+        key = str(ov.variable_id)
+        if key not in entity_overrides:
+            entity_overrides[key] = []
+        entity_overrides[key].append({
+            "override_id": str(ov.id),
+            "entity_key": ov.entity_key,
+            "entity_labels": {},
+            "value": ov.value,
+        })
+
+    # Load alert definitions to build used_by mapping
+    alert_defs = (
+        await db.execute(
+            select(AlertDefinition)
+            .where(AlertDefinition.app_id.in_(app_ids))
+        )
+    ).scalars().all()
+
+    # Build app_id -> app_name mapping
+    app_name_map: dict[str, str] = {}
+    for a in assignments:
+        if a.app:
+            app_name_map[str(a.app_id)] = a.app.name
+
+    # Build variable usage: which definitions reference each variable
+    var_usage: dict[str, list] = {}
+    import re as _re
+    for var in threshold_vars:
+        refs = []
+        for d in alert_defs:
+            if d.expression and str(d.app_id) == str(var.app_id):
+                pattern = _re.compile(rf"(?:>|<|>=|<=|==|!=)\s*{_re.escape(var.name)}\b")
+                if pattern.search(d.expression):
+                    refs.append({"definition_id": str(d.id), "definition_name": d.name})
+        var_usage[str(var.id)] = refs
+
+    # Build flat rows
     results = []
-    for assignment in assignments:
-        definitions = (
-            await db.execute(
-                select(AlertDefinition)
-                .where(AlertDefinition.app_id == assignment.app_id)
-            )
-        ).scalars().all()
-
-        # Load threshold variables for this app
-        threshold_vars = (
-            await db.execute(
-                select(ThresholdVariable)
-                .where(ThresholdVariable.app_id == assignment.app_id)
-            )
-        ).scalars().all()
-        var_by_name = {v.name: v for v in threshold_vars}
-
-        # Load overrides for this device and these variables
-        var_ids = [v.id for v in threshold_vars]
-        device_overrides: dict[str, ThresholdOverride] = {}
-        if var_ids:
-            overrides = (
-                await db.execute(
-                    select(ThresholdOverride)
-                    .where(
-                        ThresholdOverride.variable_id.in_(var_ids),
-                        ThresholdOverride.device_id == device_uuid,
-                    )
-                )
-            ).scalars().all()
-            for ov in overrides:
-                device_overrides[str(ov.variable_id)] = ov
-
-        for defn in definitions:
-            instance = (
-                await db.execute(
-                    select(AlertEntity)
-                    .where(
-                        AlertEntity.definition_id == defn.id,
-                        AlertEntity.assignment_id == assignment.id,
-                    )
-                )
-            ).scalar_one_or_none()
-
-            # Build threshold details with hierarchy
-            thresholds = []
-            for var in threshold_vars:
-                override = device_overrides.get(str(var.id))
-                effective = (
-                    override.value if override
-                    else var.app_value if var.app_value is not None
-                    else var.default_value
-                )
-                thresholds.append({
-                    "variable_id": str(var.id),
-                    "name": var.name,
-                    "display_name": var.display_name,
-                    "unit": var.unit,
-                    "default_value": var.default_value,
-                    "app_value": var.app_value,
-                    "device_override": {
-                        "id": str(override.id),
-                        "value": override.value,
-                        "entity_key": override.entity_key,
-                    } if override else None,
-                    "effective_value": effective,
-                })
-
-            results.append({
-                "definition_id": str(defn.id),
-                "name": defn.name,
-                "app_name": assignment.app.name if assignment.app else "",
-                "expression": defn.expression,
-                "severity": defn.severity,
-                "thresholds": thresholds,
-                "instance_id": str(instance.id) if instance else None,
-                "instance_enabled": instance.enabled if instance else None,
-                "instance_state": instance.state if instance else None,
-            })
+    for var in threshold_vars:
+        override = device_overrides.get(str(var.id))
+        device_value = override.value if override else None
+        effective = (
+            device_value if device_value is not None
+            else var.app_value if var.app_value is not None
+            else var.default_value
+        )
+        results.append({
+            "variable_id": str(var.id),
+            "name": var.name,
+            "display_name": var.display_name,
+            "unit": var.unit,
+            "app_name": app_name_map.get(str(var.app_id), ""),
+            "expression_default": var.default_value,
+            "app_value": var.app_value,
+            "device_value": device_value,
+            "effective_value": effective,
+            "device_override_id": str(override.id) if override else None,
+            "entity_overrides": entity_overrides.get(str(var.id), []),
+            "used_by_definitions": var_usage.get(str(var.id), []),
+        })
 
     return {"status": "success", "data": results}

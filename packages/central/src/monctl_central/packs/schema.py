@@ -7,7 +7,7 @@ import re
 from fastapi import HTTPException
 
 
-_VALID_UNITS = {"percent", "ms", "bytes", "count", "ratio"}
+_VALID_UNITS = {"percent", "ms", "seconds", "bytes", "count", "ratio", "dBm", "pps", "bps"}
 
 
 def _validate_threshold_defaults(alert_def: dict) -> None:

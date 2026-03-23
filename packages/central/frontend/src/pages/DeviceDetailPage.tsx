@@ -3827,6 +3827,29 @@ function ThresholdsTab({ deviceId }: { deviceId: string }) {
   );
 }
 
+function formatDeviceThresholdValue(value: number | null | undefined, unit: string | null): string {
+  if (value == null) return "\u2014";
+  if (unit === "percent") return `${value}%`;
+  if (unit === "ms") return `${value} ms`;
+  if (unit === "seconds") return `${value}s`;
+  if (unit === "dBm") return `${value} dBm`;
+  if (unit === "pps") return `${value} pps`;
+  if (unit === "bps") {
+    if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)} Gbps`;
+    if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)} Mbps`;
+    if (value >= 1_000) return `${(value / 1_000).toFixed(1)} kbps`;
+    return `${value} bps`;
+  }
+  if (unit === "bytes") {
+    if (value >= 1_073_741_824) return `${(value / 1_073_741_824).toFixed(1)} GB`;
+    if (value >= 1_048_576) return `${(value / 1_048_576).toFixed(1)} MB`;
+    if (value >= 1_024) return `${(value / 1_024).toFixed(1)} KB`;
+    return `${value} B`;
+  }
+  if (unit) return `${value} ${unit}`;
+  return String(value);
+}
+
 function ThresholdRow({
   row,
   onSaveOverride,
@@ -3839,12 +3862,6 @@ function ThresholdRow({
   const [editValue, setEditValue] = useState<string>("");
   const [editing, setEditing] = useState(false);
 
-  const formatUnit = (value: number, unit: string | null) => {
-    if (unit === "percent") return `${value}%`;
-    if (unit === "ms") return `${value} ms`;
-    return String(value);
-  };
-
   const handleSave = () => {
     const val = parseFloat(editValue);
     if (isNaN(val) || !isFinite(val)) return;
@@ -3852,18 +3869,23 @@ function ThresholdRow({
     setEditing(false);
   };
 
+  const effectiveSource =
+    row.device_value != null ? "device" :
+    row.app_value != null ? "app" :
+    "default";
+
   return (
     <TableRow>
       <TableCell className="font-medium text-zinc-100">
         {row.display_name || row.name}
       </TableCell>
       <TableCell className="text-zinc-400 font-mono text-sm">
-        {formatUnit(row.expression_default, row.unit)}
+        {formatDeviceThresholdValue(row.expression_default, row.unit)}
       </TableCell>
       <TableCell className="text-zinc-400 font-mono text-sm">
         {row.app_value != null ? (
-          <span className="text-blue-400">{formatUnit(row.app_value, row.unit)}</span>
-        ) : "—"}
+          <span className="text-blue-400">{formatDeviceThresholdValue(row.app_value, row.unit)}</span>
+        ) : "\u2014"}
       </TableCell>
       <TableCell>
         {editing ? (
@@ -3895,7 +3917,7 @@ function ThresholdRow({
                 setEditing(true);
               }}
             >
-              {row.device_value != null ? formatUnit(row.device_value, row.unit) : "—"}
+              {row.device_value != null ? formatDeviceThresholdValue(row.device_value, row.unit) : "\u2014"}
             </span>
             {row.device_override_id && (
               <Button
@@ -3910,8 +3932,16 @@ function ThresholdRow({
           </div>
         )}
       </TableCell>
-      <TableCell className="font-mono text-sm font-medium text-zinc-200">
-        {formatUnit(row.effective_value, row.unit)}
+      <TableCell>
+        <span className={effectiveSource !== "default" ? "font-mono text-sm text-brand-400 font-medium" : "font-mono text-sm text-zinc-300"}>
+          {formatDeviceThresholdValue(row.effective_value, row.unit)}
+        </span>
+        {effectiveSource === "device" && (
+          <span className="ml-1.5 text-xs text-zinc-500">(device override)</span>
+        )}
+        {effectiveSource === "app" && (
+          <span className="ml-1.5 text-xs text-zinc-500">(app value)</span>
+        )}
       </TableCell>
     </TableRow>
   );

@@ -486,7 +486,12 @@ export function useUpdateThresholdVariable() {
   return useMutation({
     mutationFn: ({
       appId, varId, ...data
-    }: { appId: string; varId: string; app_value?: number | null; display_name?: string; description?: string }) =>
+    }: {
+      appId: string; varId: string;
+      default_value?: number; app_value?: number | null;
+      clear_app_value?: boolean; display_name?: string;
+      description?: string; unit?: string;
+    }) =>
       apiPut(`/apps/${appId}/thresholds/${varId}`, data),
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ["app-thresholds", vars.appId] });

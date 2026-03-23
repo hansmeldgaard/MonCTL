@@ -1744,15 +1744,22 @@ class CreateThresholdVariableRequest(BaseModel):
     @field_validator("unit")
     @classmethod
     def check_unit(cls, v: str | None) -> str | None:
-        if v is not None and v not in {"percent", "ms", "bytes", "count", "ratio"}:
-            raise ValueError("unit must be one of: percent, ms, bytes, count, ratio")
+        if v is not None:
+            v = v.strip()
+            if not v:
+                return None
+            if len(v) > 50:
+                raise ValueError("unit must be at most 50 characters")
         return v
 
 
 class UpdateThresholdVariableRequest(BaseModel):
+    default_value: float | None = None
     app_value: float | None = None
+    clear_app_value: bool = False
     display_name: str | None = Field(default=None, max_length=255)
     description: str | None = Field(default=None, max_length=2000)
+    unit: str | None = Field(default=None, max_length=50)
 
 
 @router.get("/{app_id}/thresholds")
@@ -1865,7 +1872,7 @@ async def update_app_threshold(
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
-    """Update a threshold variable (app_value, display_name, description)."""
+    """Update a threshold variable."""
     app = await db.get(App, uuid.UUID(app_id))
     if not app:
         raise HTTPException(status_code=404, detail="App not found")
@@ -1874,12 +1881,18 @@ async def update_app_threshold(
     if not variable or str(variable.app_id) != app_id:
         raise HTTPException(status_code=404, detail="Threshold variable not found")
 
-    if request.app_value is not None:
+    if request.default_value is not None:
+        variable.default_value = request.default_value
+    if request.clear_app_value:
+        variable.app_value = None
+    elif request.app_value is not None:
         variable.app_value = request.app_value
     if request.display_name is not None:
         variable.display_name = request.display_name
     if request.description is not None:
         variable.description = request.description
+    if request.unit is not None:
+        variable.unit = request.unit.strip() or None
 
     from monctl_common.utils import utc_now
     variable.updated_at = utc_now()

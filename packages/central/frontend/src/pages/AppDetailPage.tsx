@@ -964,6 +964,85 @@ function NewVersionCodeForm({
 
 // ── Thresholds Tab ──────────────────────────────────────
 
+const BUILT_IN_UNITS = [
+  { value: "percent", label: "percent (%)" },
+  { value: "ms", label: "ms (milliseconds)" },
+  { value: "seconds", label: "seconds (s)" },
+  { value: "bytes", label: "bytes (B)" },
+  { value: "count", label: "count" },
+  { value: "ratio", label: "ratio (0\u20131)" },
+  { value: "dBm", label: "dBm (signal strength)" },
+  { value: "pps", label: "pps (packets/sec)" },
+  { value: "bps", label: "bps (bitrate)" },
+];
+
+function UnitSelector({ value, onChange }: { value: string | null; onChange: (v: string | null) => void }) {
+  const isCustom = value != null && value !== "" && !BUILT_IN_UNITS.some((u) => u.value === value);
+  const [showCustom, setShowCustom] = useState(isCustom);
+  const [customValue, setCustomValue] = useState(isCustom ? value ?? "" : "");
+
+  return (
+    <div className="space-y-1">
+      <select
+        value={showCustom ? "__custom__" : (value ?? "")}
+        onChange={(e) => {
+          const sel = e.target.value;
+          if (sel === "__custom__") {
+            setShowCustom(true);
+            onChange(customValue || null);
+          } else {
+            setShowCustom(false);
+            setCustomValue("");
+            onChange(sel || null);
+          }
+        }}
+        className="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-100"
+      >
+        <option value="">None</option>
+        {BUILT_IN_UNITS.map((u) => (
+          <option key={u.value} value={u.value}>{u.label}</option>
+        ))}
+        <option value="__custom__">Custom\u2026</option>
+      </select>
+      {showCustom && (
+        <Input
+          autoFocus
+          placeholder="e.g. RPM, \u00b0C, req/s"
+          value={customValue}
+          onChange={(e) => {
+            setCustomValue(e.target.value);
+            onChange(e.target.value || null);
+          }}
+          className="h-7 text-xs"
+        />
+      )}
+    </div>
+  );
+}
+
+function formatThresholdValue(value: number | null | undefined, unit: string | null): string {
+  if (value == null) return "\u2014";
+  if (unit === "percent") return `${value}%`;
+  if (unit === "ms") return `${value} ms`;
+  if (unit === "seconds") return `${value}s`;
+  if (unit === "dBm") return `${value} dBm`;
+  if (unit === "pps") return `${value} pps`;
+  if (unit === "bps") {
+    if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)} Gbps`;
+    if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)} Mbps`;
+    if (value >= 1_000) return `${(value / 1_000).toFixed(1)} kbps`;
+    return `${value} bps`;
+  }
+  if (unit === "bytes") {
+    if (value >= 1_073_741_824) return `${(value / 1_073_741_824).toFixed(1)} GB`;
+    if (value >= 1_048_576) return `${(value / 1_048_576).toFixed(1)} MB`;
+    if (value >= 1_024) return `${(value / 1_024).toFixed(1)} KB`;
+    return `${value} B`;
+  }
+  if (unit) return `${value} ${unit}`;
+  return String(value);
+}
+
 function ThresholdsTab({ appId }: { appId: string }) {
   const { data: variables, isLoading } = useAppThresholds(appId);
   const { data: definitionsResp } = useAlertDefinitions(appId);
@@ -971,13 +1050,20 @@ function ThresholdsTab({ appId }: { appId: string }) {
   const updateVar = useUpdateThresholdVariable();
   const createVar = useCreateThresholdVariable();
   const deleteVar = useDeleteThresholdVariable();
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editValue, setEditValue] = useState("");
+
+  // Editing states
+  const [editingDefault, setEditingDefault] = useState<string | null>(null);
+  const [defaultDraft, setDefaultDraft] = useState("");
+  const [editingAppValue, setEditingAppValue] = useState<string | null>(null);
+  const [appValueDraft, setAppValueDraft] = useState("");
+
+  // Create form
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
   const [newDefault, setNewDefault] = useState("");
-  const [newUnit, setNewUnit] = useState("");
+  const [newUnit, setNewUnit] = useState<string | null>(null);
   const [newDisplayName, setNewDisplayName] = useState("");
+  const [newDescription, setNewDescription] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
@@ -1003,16 +1089,24 @@ function ThresholdsTab({ appId }: { appId: string }) {
 
   if (isLoading) return <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-zinc-500" /></div>;
 
-  const handleSave = (varId: string) => {
-    const val = parseFloat(editValue);
+  const handleSaveDefault = (varId: string) => {
+    const val = parseFloat(defaultDraft);
+    if (!isNaN(val) && isFinite(val)) {
+      updateVar.mutate({ appId, varId, default_value: val });
+    }
+    setEditingDefault(null);
+  };
+
+  const handleSaveAppValue = (varId: string) => {
+    const val = parseFloat(appValueDraft);
     if (!isNaN(val) && isFinite(val)) {
       updateVar.mutate({ appId, varId, app_value: val });
     }
-    setEditingId(null);
+    setEditingAppValue(null);
   };
 
-  const handleReset = (varId: string) => {
-    updateVar.mutate({ appId, varId, app_value: null });
+  const handleResetAppValue = (varId: string) => {
+    updateVar.mutate({ appId, varId, clear_app_value: true });
   };
 
   const handleCreate = () => {
@@ -1027,14 +1121,16 @@ function ThresholdsTab({ appId }: { appId: string }) {
       name,
       default_value: defaultVal,
       display_name: newDisplayName.trim() || undefined,
-      unit: newUnit.trim() || undefined,
+      description: newDescription.trim() || undefined,
+      unit: newUnit || undefined,
     }, {
       onSuccess: () => {
         setCreating(false);
         setNewName("");
         setNewDefault("");
-        setNewUnit("");
+        setNewUnit(null);
         setNewDisplayName("");
+        setNewDescription("");
         setCreateError(null);
       },
       onError: (err: unknown) => {
@@ -1047,13 +1143,6 @@ function ThresholdsTab({ appId }: { appId: string }) {
     deleteVar.mutate({ appId, varId }, {
       onSuccess: () => setConfirmDeleteId(null),
     });
-  };
-
-  const formatUnit = (value: number, unit: string | null) => {
-    if (unit === "percent") return `${value}%`;
-    if (unit === "ms") return `${value} ms`;
-    if (unit === "bytes") return `${value} B`;
-    return String(value);
   };
 
   const isEmpty = !variables || variables.length === 0;
@@ -1081,7 +1170,7 @@ function ThresholdsTab({ appId }: { appId: string }) {
             <TableHeader>
               <TableRow>
                 <TableHead>Name</TableHead>
-                <TableHead>Expression Default</TableHead>
+                <TableHead>Default</TableHead>
                 <TableHead>App Value</TableHead>
                 <TableHead>Unit</TableHead>
                 <TableHead>Used By</TableHead>
@@ -1103,31 +1192,74 @@ function ThresholdsTab({ appId }: { appId: string }) {
                         <p className="text-xs text-zinc-500 mt-0.5">{v.description}</p>
                       )}
                     </TableCell>
-                    <TableCell className="text-zinc-400 font-mono text-sm">
-                      {formatUnit(v.default_value, v.unit)}
-                    </TableCell>
                     <TableCell>
-                      {editingId === v.id ? (
+                      {editingDefault === v.id ? (
                         <div className="flex items-center gap-1">
                           <Input
-                            type="number"
-                            value={editValue}
-                            onChange={(e) => setEditValue(e.target.value)}
-                            onKeyDown={(e) => { if (e.key === "Enter") handleSave(v.id); if (e.key === "Escape") setEditingId(null); }}
-                            className="w-24 h-7 text-sm"
                             autoFocus
+                            type="number"
+                            value={defaultDraft}
+                            onChange={(e) => setDefaultDraft(e.target.value)}
+                            className="w-24 h-7 text-sm font-mono"
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") handleSaveDefault(v.id);
+                              if (e.key === "Escape") setEditingDefault(null);
+                            }}
+                            onBlur={() => handleSaveDefault(v.id)}
                           />
-                          <Button size="sm" variant="ghost" onClick={() => handleSave(v.id)}>
-                            <Check className="h-3.5 w-3.5" />
-                          </Button>
+                          <span className="text-xs text-zinc-400">{v.unit || ""}</span>
                         </div>
                       ) : (
-                        <span
-                          className={`font-mono text-sm cursor-pointer hover:text-brand-400 ${v.app_value != null ? "text-brand-300" : "text-zinc-500"}`}
-                          onClick={() => { setEditingId(v.id); setEditValue(String(v.app_value ?? v.default_value)); }}
+                        <button
+                          className="font-mono text-sm text-zinc-300 hover:text-zinc-100 flex items-center gap-1 group"
+                          onClick={() => { setEditingDefault(v.id); setDefaultDraft(String(v.default_value)); }}
                         >
-                          {v.app_value != null ? formatUnit(v.app_value, v.unit) : "\u2014"}
-                        </span>
+                          {formatThresholdValue(v.default_value, v.unit)}
+                          <Pencil className="h-3 w-3 opacity-0 group-hover:opacity-50" />
+                        </button>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {editingAppValue === v.id ? (
+                        <div className="flex items-center gap-1">
+                          <Input
+                            autoFocus
+                            type="number"
+                            value={appValueDraft}
+                            onChange={(e) => setAppValueDraft(e.target.value)}
+                            className="w-24 h-7 text-sm font-mono"
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") handleSaveAppValue(v.id);
+                              if (e.key === "Escape") setEditingAppValue(null);
+                            }}
+                            onBlur={() => handleSaveAppValue(v.id)}
+                          />
+                          <span className="text-xs text-zinc-400">{v.unit || ""}</span>
+                        </div>
+                      ) : v.app_value != null ? (
+                        <div className="flex items-center gap-2">
+                          <button
+                            className="font-mono text-sm text-brand-400 hover:text-brand-300 flex items-center gap-1 group"
+                            onClick={() => { setEditingAppValue(v.id); setAppValueDraft(String(v.app_value)); }}
+                          >
+                            {formatThresholdValue(v.app_value, v.unit)}
+                            <Pencil className="h-3 w-3 opacity-0 group-hover:opacity-50" />
+                          </button>
+                          <button
+                            className="text-xs text-zinc-500 hover:text-zinc-300"
+                            onClick={() => handleResetAppValue(v.id)}
+                          >
+                            Reset
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          className="text-zinc-500 hover:text-zinc-300 flex items-center gap-1 group text-sm"
+                          onClick={() => { setEditingAppValue(v.id); setAppValueDraft(""); }}
+                        >
+                          <span>{"\u2014"}</span>
+                          <Pencil className="h-3 w-3 opacity-0 group-hover:opacity-50" />
+                        </button>
                       )}
                     </TableCell>
                     <TableCell className="text-zinc-500 text-xs">{v.unit || "\u2014"}</TableCell>
@@ -1146,11 +1278,6 @@ function ThresholdsTab({ appId }: { appId: string }) {
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1">
-                        {v.app_value != null && (
-                          <Button size="sm" variant="ghost" className="text-zinc-500 hover:text-zinc-300" onClick={() => handleReset(v.id)}>
-                            Reset
-                          </Button>
-                        )}
                         {confirmDeleteId === v.id ? (
                           <div className="flex items-center gap-1">
                             <Button size="sm" variant="destructive" onClick={() => handleDelete(v.id)} disabled={deleteVar.isPending}>
@@ -1194,6 +1321,12 @@ function ThresholdsTab({ appId }: { appId: string }) {
                         onChange={(e) => setNewDisplayName(e.target.value)}
                         className="h-7 text-xs"
                       />
+                      <Input
+                        placeholder="Description (optional)"
+                        value={newDescription}
+                        onChange={(e) => setNewDescription(e.target.value)}
+                        className="h-7 text-xs text-zinc-400"
+                      />
                     </div>
                   </TableCell>
                   <TableCell>
@@ -1208,16 +1341,7 @@ function ThresholdsTab({ appId }: { appId: string }) {
                   </TableCell>
                   <TableCell />
                   <TableCell>
-                    <select
-                      value={newUnit}
-                      onChange={(e) => setNewUnit(e.target.value)}
-                      className="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-100"
-                    >
-                      <option value="">None</option>
-                      <option value="percent">%</option>
-                      <option value="ms">ms</option>
-                      <option value="bytes">bytes</option>
-                    </select>
+                    <UnitSelector value={newUnit} onChange={setNewUnit} />
                   </TableCell>
                   <TableCell />
                   <TableCell>
