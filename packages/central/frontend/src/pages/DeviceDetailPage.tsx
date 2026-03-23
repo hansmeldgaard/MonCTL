@@ -100,9 +100,6 @@ import {
   useConfigDiff,
   useConfigChangeTimestamps,
   useConfigCompare,
-  useDeviceRetention,
-  useSetDeviceRetention,
-  useDeleteDeviceRetention,
   useUpdateInterfacePreferences,
   useDeviceAlertLog,
   useDeviceActiveEvents,
@@ -111,7 +108,7 @@ import {
   useClearEvents,
 } from "@/api/hooks.ts";
 import { useAuth } from "@/hooks/useAuth.tsx";
-import type { Device as DeviceType, DeviceAssignment, DeviceThresholdRow, ConfigDiffEntry, DeviceRetentionEntry, AlertLogEntry, MonitoringEvent } from "@/types/api.ts";
+import type { Device as DeviceType, DeviceAssignment, DeviceThresholdRow, ConfigDiffEntry, AlertLogEntry, MonitoringEvent } from "@/types/api.ts";
 import { useListState } from "@/hooks/useListState.ts";
 import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
@@ -1749,20 +1746,6 @@ function ConfigurationTab({ deviceId }: { deviceId: string }) {
 }
 
 // ── Tab: Retention ────────────────────────────────────────
-
-const DATA_TYPE_LABELS: Record<string, string> = {
-  config: "Config",
-  performance: "Performance",
-  availability_latency: "Availability & Latency",
-  interface: "Interface",
-};
-
-const DATA_TYPE_COLORS: Record<string, string> = {
-  config: "bg-purple-500/20 text-purple-400",
-  performance: "bg-indigo-500/20 text-indigo-400",
-  availability_latency: "bg-emerald-500/20 text-emerald-400",
-  interface: "bg-cyan-500/20 text-cyan-400",
-};
 
 function RetentionOverrideSelect({
   label, systemDefault, value, options, onChange,
