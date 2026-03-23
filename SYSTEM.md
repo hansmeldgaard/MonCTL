@@ -45,6 +45,8 @@ Collectors (worker1-4) → poll jobs fra central → eksekver checks → forward
 
 SSH bruger: `monctl` på alle servere. Compose files: `/opt/monctl/{central,collector}/docker-compose.yml`.
 
+**Central1 special case**: Bruger `central-ha` compose projekt i `/opt/monctl/central-ha/` (inkl. Patroni + Redis på hosten). Deploy: `cd /opt/monctl/central-ha && docker compose down && docker compose up -d`. Central2-4 bruger standard `/opt/monctl/central/`.
+
 ---
 
 ## Package-struktur
@@ -164,7 +166,7 @@ packages/
 | RolePermission | role_permissions | id, role_id, resource, action |
 | AlertDefinition | alert_definitions | id, app_id, name, expression, window, severity, enabled, message_template |
 | AlertEntity | alert_entities | id, definition_id, assignment_id, device_id, state (ok/firing/resolved), enabled, entity_key, entity_labels, fire_count, fire_history |
-| ThresholdVariable | threshold_variables | id, app_id, name, display_name, default_value, app_value, unit |
+| ThresholdVariable | threshold_variables | id, app_id, name, display_name, description, default_value, app_value, unit (free-text, max 50 chars) |
 | ThresholdOverride | threshold_overrides | id, variable_id, device_id, entity_key, value |
 | EventPolicy | event_policies | id, name, definition_id, mode, fire_count_threshold, window_size, event_severity, auto_clear_on_resolve |
 | ActiveEvent | active_events | id, policy_id, entity_key, clickhouse_event_id |
@@ -285,7 +287,13 @@ Hver tabel har en `_latest` materialized view (ReplacingMergeTree) der holder se
 
 **Alert Entities** (`AlertEntity`): Per-assignment per-entity state (ok/firing/resolved). fire_count, fire_history (20-entry ring buffer), current_value.
 
-**Threshold Variables** (`ThresholdVariable`): App-level named parameters auto-synced from DSL. 4-level hierarchy: expression default → app_value → device override → entity override. `ThresholdOverride` references `variable_id` + scalar `value`.
+**Threshold Variables** (`ThresholdVariable`): App-level named parameters auto-synced from DSL. Fields: `name`, `display_name`, `description`, `default_value`, `app_value`, `unit` (free-text string, max 50 chars). 4-level hierarchy: expression default → app_value → device override → entity override. `ThresholdOverride` references `variable_id` + scalar `value`.
+
+**Threshold Units**: Built-in: `percent`, `ms`, `seconds`, `bytes`, `count`, `ratio`, `dBm`, `pps`, `bps`. Custom units allowed via CRUD (any non-empty string up to 50 chars). Pack import validates against built-in list only.
+
+**Device Thresholds API** (`GET /devices/{id}/thresholds`): Returns flat `DeviceThresholdRow[]` — one row per variable across all apps assigned to the device. Each row: `variable_id`, `name`, `display_name`, `unit`, `app_name`, `expression_default`, `app_value`, `device_value`, `effective_value` (never null), `device_override_id`, `entity_overrides[]`, `used_by_definitions[]`.
+
+**Threshold Editing** (`PUT /apps/{id}/thresholds/{var_id}`): Accepts `default_value`, `app_value`, `clear_app_value` (bool, explicitly nulls app_value), `display_name`, `description`, `unit`.
 
 **Alert Log** (`alert_log` ClickHouse): Append-only fire/clear records. Written every 30s by engine.
 
@@ -382,9 +390,9 @@ stmt = apply_tenant_filter(stmt, auth, Device.tenant_id)
 | SystemHealthPage | /system-health | Subsystem-kort (PG, CH, Redis, Collectors, Scheduler) + collector-tabel med filter |
 | DockerInfraPage | /docker-infrastructure | Docker host overview, containers, logs, events, images |
 | DevicesPage | /devices | Server-side pagination/sort/filter, bulk actions (enable/disable/move/delete/template), status dots |
-| DeviceDetailPage | /devices/:id | Tabs: Overview (staleness warning + availability chart), Checks, Assignments, Interfaces, Performance, Config (poll status badge), Alerts, Thresholds (4-level hierarchy) |
+| DeviceDetailPage | /devices/:id | Tabs: Overview (staleness warning + availability chart), Checks, Assignments, Interfaces, Performance, Config (poll status badge), Alerts, Thresholds (flat variable list with effective value highlighting) |
 | AppsPage | /apps | App liste med type/target_table/version count |
-| AppDetailPage | /apps/:id | Tabs: Overview (edit), Versions (CodeEditor+VersionActions), Connector Bindings, Alerts, Thresholds |
+| AppDetailPage | /apps/:id | Tabs: Overview (edit), Versions (CodeEditor+VersionActions), Connector Bindings, Alerts, Thresholds (inline-editable Default+App Value, UnitSelector, Description) |
 | ConnectorsPage | /connectors | Connector liste |
 | ConnectorDetailPage | /connectors/:id | Connector versions + code editor |
 | PythonModulesPage | /python-modules | Package registry, PyPI import, wheel upload |
@@ -507,8 +515,9 @@ for ip in 41 42 43 44; do
   docker save monctl-central:latest | ssh monctl@10.145.210.$ip 'docker load'
 done
 
-# Restart central
-for ip in 41 42 43 44; do
+# Restart central (central1 bruger central-ha, central2-4 bruger central/)
+ssh monctl@10.145.210.41 'cd /opt/monctl/central-ha && docker compose down && docker compose up -d'
+for ip in 42 43 44; do
   ssh monctl@10.145.210.$ip 'cd /opt/monctl/central && docker compose down && docker compose up -d'
 done
 ```

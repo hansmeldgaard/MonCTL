@@ -49,7 +49,7 @@ The central server provides:
 - **Connector system** for protocol-specific communication (SNMP, SSH, etc.)
 - **Collector management** with registration, approval, group assignment, and load balancing
 - **Credential vault** with AES-256-GCM encryption and resolution chain
-- **Alerting engine** with configurable rules, thresholds, and event policies
+- **Alerting engine** with DSL expressions, threshold variables (4-level override hierarchy), custom units, and event policies
 - **Multi-tenant support** with role-based access control (custom RBAC roles)
 - **Time-series storage** in ClickHouse with configurable retention
 - **Config change tracking** with write suppression, changelog, and diff UI
@@ -72,7 +72,8 @@ The central server provides:
 | `performance` | Custom metric results (CPU, memory, disk, etc.) |
 | `interface` | Per-interface SNMP data with hourly/daily rollups |
 | `config` | Configuration tracking (change-only writes) |
-| `events` | Collector events (TTL 30 days) |
+| `alert_log` | Alert fire/clear history |
+| `events` | Event lifecycle (active/ack/cleared) |
 
 Each table has a `*_latest` materialized view (ReplacingMergeTree) for instant latest-per-key lookups.
 
@@ -103,8 +104,11 @@ docker build --platform linux/amd64 --no-cache -t monctl-central:latest \
 # Distribute to central nodes
 docker save monctl-central:latest | ssh monctl@<central-ip> 'docker load'
 
-# Start/restart
+# Start/restart (central2-4)
 ssh monctl@<central-ip> 'cd /opt/monctl/central && docker compose down && docker compose up -d'
+
+# Start/restart (central1 — uses central-ha with Patroni)
+ssh monctl@10.145.210.41 'cd /opt/monctl/central-ha && docker compose down && docker compose up -d'
 ```
 
 ### Build & Deploy Collector

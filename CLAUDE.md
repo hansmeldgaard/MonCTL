@@ -198,7 +198,13 @@ Each table has a `*_latest` materialized view (ReplacingMergeTree) for instant l
 
 **Alert Entities** (`AlertEntity`): Per-assignment per-entity state tracking (ok/firing/resolved). Created dynamically on first encounter. Tracks fire_count, fire_history (ring buffer of 20), current_value.
 
-**Threshold Variables** (`ThresholdVariable`): Named parameters auto-extracted from DSL expressions. 4-level override hierarchy: expression default → app variable (`app_value`) → device override → entity override. Auto-synced when definitions are created/updated.
+**Threshold Variables** (`ThresholdVariable`): Named parameters auto-extracted from DSL expressions. Fields: `name`, `display_name`, `description`, `default_value`, `app_value`, `unit`. 4-level override hierarchy: expression default → app variable (`app_value`) → device override → entity override. Auto-synced when definitions are created/updated.
+
+**Threshold Units**: Free-text `String(50)` column. Built-in units: `percent`, `ms`, `seconds`, `bytes`, `count`, `ratio`, `dBm`, `pps`, `bps`. Custom units allowed via CRUD endpoints (any non-empty string). Pack import schema validates against built-in list only. Frontend `UnitSelector` component offers built-in dropdown + "Custom..." free-text option.
+
+**Threshold Editing** (App Thresholds tab): `Default` column is inline-editable (click to edit). `App Value` column shows pencil icon + Reset button (sends `clear_app_value: true` to explicitly null app_value). `PUT /apps/{id}/thresholds/{var_id}` accepts `default_value`, `app_value`, `clear_app_value`, `display_name`, `description`, `unit`.
+
+**Device Thresholds** (`GET /devices/{id}/thresholds`): Returns flat `DeviceThresholdRow[]` list (one row per variable, not per definition). Each row includes `expression_default`, `app_value`, `device_value`, `effective_value` (never null — resolves device override → app_value → default_value), `entity_overrides[]`, `used_by_definitions[]`. Frontend highlights active level with brand color + source label.
 
 **Threshold Overrides** (`ThresholdOverride`): References `variable_id` (not definition_id). Single `value: Float` per override row.
 
@@ -329,6 +335,8 @@ ssh monctl@10.145.210.31 'cd /opt/monctl/collector && docker compose down && doc
 
 SSH user: `monctl` for all servers. Compose files at `/opt/monctl/{central,collector}/docker-compose.yml`.
 
+**Central1 special case**: Uses `central-ha` compose project at `/opt/monctl/central-ha/docker-compose.yml` (includes Patroni + Redis on host). Deploy with: `cd /opt/monctl/central-ha && docker compose down && docker compose up -d`. Central2-4 use the standard `/opt/monctl/central/` path.
+
 ### Code Style
 
 - Python: ruff with line-length 100, target Python 3.11
@@ -350,3 +358,7 @@ SSH user: `monctl` for all servers. Compose files at `/opt/monctl/{central,colle
 **Staleness warning**: OverviewTab shows an amber banner when no check data received in 15+ minutes.
 
 **List views (server-side search/sort/pagination)**: All list pages use the `useListState` hook for per-column debounced filters (300ms), sort state, and pagination. Column headers use `FilterableSortHead` (sort label + inline `ClearableInput`). Pagination uses `PaginationBar`. All list hooks accept `ListParams` and use `placeholderData: keepPreviousData` to prevent table unmount during refetch.
+
+**Threshold value formatting**: `formatThresholdValue(value, unit)` handles all unit types with auto-scaling: `bps` → kbps/Mbps/Gbps, `bytes` → KB/MB/GB. Null values render as em-dash. Custom units render as `{value} {unit}`. Used in both AppDetailPage and DeviceDetailPage threshold tabs.
+
+**UnitSelector** (`AppDetailPage.tsx`): Combined dropdown + free-text component for threshold variable units. Built-in options (9 units) + "Custom..." option that reveals a text input. Used in New Variable form and inline editing.
