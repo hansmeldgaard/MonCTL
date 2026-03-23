@@ -393,16 +393,19 @@ export function useAlertInstances(params?: {
   state?: string;
   device_id?: string;
   definition_id?: string;
+  [key: string]: string | number | undefined;
 }) {
   const search = new URLSearchParams();
-  if (params?.state) search.set("state", params.state);
-  if (params?.device_id) search.set("device_id", params.device_id);
-  if (params?.definition_id) search.set("definition_id", params.definition_id);
+  if (params) {
+    for (const [key, val] of Object.entries(params)) {
+      if (val !== undefined && val !== "") search.set(key, String(val));
+    }
+  }
   const qs = search.toString();
   return useQuery({
     queryKey: ["alert-instances", params ?? {}],
     queryFn: () => apiGet<AlertInstance[]>(`/alerts/instances${qs ? `?${qs}` : ""}`),
-    select: (res) => res.data,
+    placeholderData: keepPreviousData,
     refetchInterval: POLL_LIST,
   });
 }
@@ -449,6 +452,61 @@ export function useAlertLog(params?: {
       return apiGet<AlertLogEntry[]>(`/alerts/log?${search.toString()}`);
     },
     placeholderData: keepPreviousData,
+  });
+}
+
+export function useDeviceAlertLog(
+  deviceId: string,
+  params: ListParams = {},
+  extra?: { action?: string },
+) {
+  return useQuery({
+    queryKey: ["alert-log", "device", deviceId, params, extra],
+    queryFn: () => {
+      const search = new URLSearchParams();
+      search.set("device_id", deviceId);
+      if (extra?.action) search.set("action", extra.action);
+      for (const [key, val] of Object.entries(params)) {
+        if (val !== undefined && val !== "") search.set(key, String(val));
+      }
+      return apiGet<AlertLogEntry[]>(`/alerts/log?${search.toString()}`);
+    },
+    placeholderData: keepPreviousData,
+    enabled: !!deviceId,
+  });
+}
+
+export function useDeviceActiveEvents(
+  deviceId: string,
+  params: ListParams = {},
+) {
+  return useQuery({
+    queryKey: ["events-active", "device", deviceId, params],
+    queryFn: () => {
+      const qs = buildListQs(params);
+      const sep = qs.includes("?") ? "&" : "?";
+      return apiGet<MonitoringEvent[]>(`/events/active${qs}${sep}device_id=${deviceId}`);
+    },
+    placeholderData: keepPreviousData,
+    enabled: !!deviceId,
+    refetchInterval: POLL_LIST,
+  });
+}
+
+export function useDeviceClearedEvents(
+  deviceId: string,
+  params: ListParams = {},
+) {
+  return useQuery({
+    queryKey: ["events-cleared", "device", deviceId, params],
+    queryFn: () => {
+      const qs = buildListQs(params);
+      const sep = qs.includes("?") ? "&" : "?";
+      return apiGet<MonitoringEvent[]>(`/events/cleared${qs}${sep}device_id=${deviceId}`);
+    },
+    placeholderData: keepPreviousData,
+    enabled: !!deviceId,
+    refetchInterval: POLL_LIST,
   });
 }
 

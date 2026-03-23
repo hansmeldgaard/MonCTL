@@ -1736,6 +1736,8 @@ class ClickHouseClient:
         entity_key: str | None = None,
         device_id: str | None = None,
         action: str | None = None,
+        definition_name: str | None = None,
+        message: str | None = None,
         tenant_id: str | None = None,
         from_ts: str | None = None,
         to_ts: str | None = None,
@@ -1756,6 +1758,12 @@ class ClickHouseClient:
         if action:
             wheres.append("action = {action:String}")
             params["action"] = action
+        if definition_name:
+            wheres.append("definition_name ILIKE {definition_name_pat:String}")
+            params["definition_name_pat"] = f"%{definition_name}%"
+        if message:
+            wheres.append("message ILIKE {message_pat:String}")
+            params["message_pat"] = f"%{message}%"
         if tenant_id:
             wheres.append("tenant_id = {tenant_id:UUID}")
             params["tenant_id"] = tenant_id
@@ -1775,6 +1783,8 @@ class ClickHouseClient:
         entity_key: str | None = None,
         device_id: str | None = None,
         action: str | None = None,
+        definition_name: str | None = None,
+        message: str | None = None,
         tenant_id: str | None = None,
         from_ts: str | None = None,
         to_ts: str | None = None,
@@ -1786,8 +1796,9 @@ class ClickHouseClient:
         """Query alert log records with filters."""
         wheres, params = self._build_alert_log_filters(
             definition_id=definition_id, entity_key=entity_key,
-            device_id=device_id, action=action, tenant_id=tenant_id,
-            from_ts=from_ts, to_ts=to_ts,
+            device_id=device_id, action=action,
+            definition_name=definition_name, message=message,
+            tenant_id=tenant_id, from_ts=from_ts, to_ts=to_ts,
         )
 
         sql = "SELECT * FROM alert_log"
@@ -1818,6 +1829,8 @@ class ClickHouseClient:
         entity_key: str | None = None,
         device_id: str | None = None,
         action: str | None = None,
+        definition_name: str | None = None,
+        message: str | None = None,
         tenant_id: str | None = None,
         from_ts: str | None = None,
         to_ts: str | None = None,
@@ -1825,8 +1838,9 @@ class ClickHouseClient:
         """Count alert log records matching the given filters."""
         wheres, params = self._build_alert_log_filters(
             definition_id=definition_id, entity_key=entity_key,
-            device_id=device_id, action=action, tenant_id=tenant_id,
-            from_ts=from_ts, to_ts=to_ts,
+            device_id=device_id, action=action,
+            definition_name=definition_name, message=message,
+            tenant_id=tenant_id, from_ts=from_ts, to_ts=to_ts,
         )
         sql = "SELECT count() FROM alert_log"
         if wheres:

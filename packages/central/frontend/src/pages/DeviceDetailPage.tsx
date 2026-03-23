@@ -27,9 +27,12 @@ import {
   Tag,
   Pencil,
   Pin,
+  Check,
+  CheckCheck,
   Trash2,
   Wrench,
   X,
+  Zap,
 } from "lucide-react";
 import { InterfaceToggleCell } from "@/components/InterfaceToggleCell";
 import { InterfaceToggleBulkHead } from "@/components/InterfaceToggleBulkHead";
@@ -101,9 +104,17 @@ import {
   useSetDeviceRetention,
   useDeleteDeviceRetention,
   useUpdateInterfacePreferences,
+  useDeviceAlertLog,
+  useDeviceActiveEvents,
+  useDeviceClearedEvents,
+  useAcknowledgeEvents,
+  useClearEvents,
 } from "@/api/hooks.ts";
 import { useAuth } from "@/hooks/useAuth.tsx";
-import type { Device as DeviceType, DeviceAssignment, DeviceThresholdRow, ConfigDiffEntry, DeviceRetentionEntry } from "@/types/api.ts";
+import type { Device as DeviceType, DeviceAssignment, DeviceThresholdRow, ConfigDiffEntry, DeviceRetentionEntry, AlertLogEntry, MonitoringEvent } from "@/types/api.ts";
+import { useListState } from "@/hooks/useListState.ts";
+import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
+import { PaginationBar } from "@/components/PaginationBar.tsx";
 import { ConfigDataRenderer } from "@/components/ConfigDataRenderer.tsx";
 import { ApplyTemplateDialog } from "@/components/ApplyTemplateDialog.tsx";
 import { PerformanceChart } from "@/components/PerformanceChart.tsx";
@@ -3687,112 +3698,335 @@ function SeverityBadge({ severity }: { severity: string }) {
 }
 
 function AlertsTab({ deviceId }: { deviceId: string }) {
-  const { data: instances, isLoading } = useAlertInstances({ device_id: deviceId });
+  const [subTab, setSubTab] = useState<"active" | "history">("active");
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-1">
+        {(["active", "history"] as const).map((t) => (
+          <button key={t} onClick={() => setSubTab(t)}
+            className={`px-3 py-1.5 text-sm rounded-md transition-colors ${subTab === t ? "bg-zinc-700 text-white" : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"}`}
+          >{t === "active" ? "Active" : "History"}</button>
+        ))}
+      </div>
+      {subTab === "active" ? <DeviceActiveAlerts deviceId={deviceId} /> : <DeviceAlertHistory deviceId={deviceId} />}
+    </div>
+  );
+}
+
+function DeviceActiveAlerts({ deviceId }: { deviceId: string }) {
+  const listState = useListState({
+    columns: [
+      { key: "state", label: "State", filterable: false },
+      { key: "definition_name", label: "Alert" },
+      { key: "app_name", label: "App" },
+      { key: "entity_key", label: "Entity" },
+      { key: "current_value", label: "Value", filterable: false },
+      { key: "fire_count", label: "Fires", filterable: false },
+      { key: "started_firing_at", label: "Since", filterable: false },
+    ],
+    defaultSortBy: "state",
+    defaultSortDir: "desc",
+  });
+  const { data: response, isLoading } = useAlertInstances({
+    device_id: deviceId,
+    ...listState.params,
+  });
+  const instances = (response as any)?.data ?? response ?? [];
+  const meta = (response as any)?.meta ?? { limit: 50, offset: 0, count: instances.length, total: instances.length };
   const updateInstance = useUpdateAlertInstance();
 
-  if (isLoading) {
-    return (
-      <div className="flex h-48 items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-brand-500" />
-      </div>
-    );
-  }
+  if (isLoading) return <div className="flex h-48 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-brand-500" /></div>;
 
   if (!instances || instances.length === 0) {
     return (
-      <Card>
-        <CardContent>
-          <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
-            <Bell className="h-10 w-10 mb-3 text-zinc-600" />
-            <p className="text-sm">No alert definitions for this device</p>
-            <p className="text-xs text-zinc-600 mt-1">
-              Alert definitions are created on apps and automatically applied when assigned
-            </p>
-          </div>
-        </CardContent>
-      </Card>
+      <Card><CardContent className="py-12">
+        <div className="flex flex-col items-center justify-center text-zinc-500">
+          <Bell className="h-10 w-10 mb-3 text-zinc-600" />
+          <p className="text-sm">No alert definitions for this device</p>
+          <p className="text-xs text-zinc-600 mt-1">Alert definitions are created on apps and automatically applied when assigned</p>
+        </div>
+      </CardContent></Card>
     );
   }
 
-  // Group by app name
-  const grouped: Record<string, typeof instances> = {};
-  for (const inst of instances) {
-    const key = inst.app_name ?? "Unknown";
-    (grouped[key] ??= []).push(inst);
-  }
+  const firing = instances.filter((i: any) => i.state === "firing");
 
   return (
-    <div className="space-y-4">
-      {Object.entries(grouped).map(([appName, appInstances]) => (
-        <Card key={appName}>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-sm">
-              {appName}
-              <Badge variant="default" className="text-xs">{appInstances.length}</Badge>
-              {appInstances.some((i) => i.state === "firing") && (
-                <Badge variant="destructive" className="text-xs">
-                  {appInstances.filter((i) => i.state === "firing").length} firing
-                </Badge>
-              )}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle className="flex items-center gap-2">
+            <Bell className="h-4 w-4" /> Active Alerts
+            {firing.length > 0 && <Badge variant="destructive" className="ml-1.5 text-xs">{firing.length} firing</Badge>}
+          </CardTitle>
+          <span className="text-xs text-zinc-500">{meta.total} total</span>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <FilterableSortHead col="state" label="State" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterable={false} />
+              <FilterableSortHead col="definition_name" label="Alert" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.definition_name} onFilterChange={(v) => listState.setFilter("definition_name", v)} />
+              <FilterableSortHead col="app_name" label="App" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.app_name} onFilterChange={(v) => listState.setFilter("app_name", v)} />
+              <FilterableSortHead col="entity_key" label="Entity" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.entity_key} onFilterChange={(v) => listState.setFilter("entity_key", v)} />
+              <FilterableSortHead col="current_value" label="Value" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterable={false} />
+              <FilterableSortHead col="fire_count" label="Fires" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterable={false} />
+              <FilterableSortHead col="started_firing_at" label="Since" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterable={false} />
+              <TableHead className="w-16">Enabled</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {instances.map((inst: any) => (
+              <TableRow key={inst.id} className={inst.state === "firing" ? "bg-red-500/5" : ""}>
+                <TableCell><Badge variant={inst.state === "firing" ? "destructive" : inst.state === "resolved" ? "warning" : "success"}>{inst.state}</Badge></TableCell>
+                <TableCell className="font-medium">
+                  {inst.definition_name ?? "\u2014"}
+                  {inst.entity_labels?.if_name && <span className="ml-1.5 text-xs text-zinc-500">({inst.entity_labels.if_name})</span>}
+                </TableCell>
+                <TableCell className="text-zinc-400 text-sm">{inst.app_name ?? "\u2014"}</TableCell>
+                <TableCell className="text-zinc-400 text-xs font-mono">{inst.entity_labels?.if_name || inst.entity_labels?.component || inst.entity_key || "\u2014"}</TableCell>
+                <TableCell className="font-mono text-xs">{inst.current_value != null ? Number(inst.current_value).toFixed(2) : "\u2014"}</TableCell>
+                <TableCell className="font-mono text-xs">{inst.fire_count ?? 0}</TableCell>
+                <TableCell className="text-xs text-zinc-400">{inst.started_firing_at ? timeAgo(inst.started_firing_at) : "\u2014"}</TableCell>
+                <TableCell className="text-center">
+                  <button className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${inst.enabled ? "bg-brand-500" : "bg-zinc-600"}`}
+                    onClick={() => updateInstance.mutate({ id: inst.id, enabled: !inst.enabled })}>
+                    <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${inst.enabled ? "translate-x-4.5" : "translate-x-0.5"}`} />
+                  </button>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+        <PaginationBar page={listState.page} pageSize={listState.pageSize} total={meta.total} count={meta.count} onPageChange={listState.setPage} />
+      </CardContent>
+    </Card>
+  );
+}
+
+function DeviceAlertHistory({ deviceId }: { deviceId: string }) {
+  const [actionFilter, setActionFilter] = useState<string | undefined>(undefined);
+  const listState = useListState({
+    columns: [
+      { key: "definition_name", label: "Alert" },
+      { key: "severity", label: "Severity", filterable: false },
+      { key: "message", label: "Message" },
+      { key: "occurred_at", label: "Time", filterable: false },
+    ],
+    defaultSortBy: "occurred_at",
+    defaultSortDir: "desc",
+  });
+
+  const { data: response, isLoading } = useDeviceAlertLog(deviceId, listState.params, { action: actionFilter });
+  const logEntries = (response as any)?.data ?? [];
+  const meta = (response as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle className="flex items-center gap-2">
+            <Clock className="h-4 w-4" /> Alert History
+            <Badge variant="default" className="ml-1.5 text-xs">{meta.total}</Badge>
+          </CardTitle>
+          <div className="flex items-center gap-1 text-xs">
+            {([
+              { val: undefined, label: "All", cls: "" },
+              { val: "fire", label: "Fires", cls: "bg-red-500/20 text-red-400" },
+              { val: "clear", label: "Clears", cls: "bg-green-500/20 text-green-400" },
+            ] as const).map(({ val, label, cls }) => (
+              <button key={label} onClick={() => setActionFilter(val)}
+                className={`px-2 py-0.5 rounded ${actionFilter === val ? cls || "bg-zinc-700 text-white" : "text-zinc-400 hover:text-zinc-200"}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="flex h-32 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-brand-500" /></div>
+        ) : logEntries.length === 0 ? (
+          <p className="text-sm text-zinc-500 text-center py-8">No alert history for this device</p>
+        ) : (
+          <>
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[80px]">State</TableHead>
-                  <TableHead>Alert Name</TableHead>
-                  <TableHead>Expression</TableHead>
-                  <TableHead className="w-[90px]">Severity</TableHead>
-                  <TableHead className="w-[80px]">Value</TableHead>
-                  <TableHead className="w-[100px]">Firing Since</TableHead>
-                  <TableHead className="w-[70px] text-center">Enabled</TableHead>
+                  <TableHead className="w-16">Action</TableHead>
+                  <FilterableSortHead col="definition_name" label="Alert" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.definition_name} onFilterChange={(v) => listState.setFilter("definition_name", v)} />
+                  <TableHead>Entity</TableHead>
+                  <FilterableSortHead col="severity" label="Severity" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterable={false} />
+                  <TableHead>Value</TableHead>
+                  <FilterableSortHead col="message" label="Message" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.message} onFilterChange={(v) => listState.setFilter("message", v)} sortable={false} />
+                  <FilterableSortHead col="occurred_at" label="Time" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterable={false} />
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {appInstances.map((inst) => (
-                  <TableRow key={inst.id}>
-                    <TableCell>
-                      <Badge variant={inst.state === "firing" ? "destructive" : "success"}>
-                        {inst.state}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="font-medium text-zinc-200">
-                      {inst.definition_name ?? "\u2014"}
-                      {inst.entity_labels?.if_name && (
-                        <span className="ml-1.5 text-xs text-zinc-500">
-                          ({inst.entity_labels.if_name})
-                        </span>
-                      )}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-zinc-400 max-w-[250px] truncate">
-                      {inst.definition_expression ?? "\u2014"}
-                    </TableCell>
-                    <TableCell>
-                      <SeverityBadge severity={inst.definition_severity ?? "warning"} />
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-zinc-300">
-                      {inst.current_value != null ? Number(inst.current_value).toFixed(1) : "\u2014"}
-                    </TableCell>
-                    <TableCell className="text-zinc-500 text-xs">
-                      {inst.state === "firing" && inst.started_firing_at ? timeAgo(inst.started_firing_at) : "\u2014"}
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <input
-                        type="checkbox"
-                        checked={inst.enabled}
-                        onChange={() => updateInstance.mutate({ id: inst.id, enabled: !inst.enabled })}
-                        className="accent-brand-500 cursor-pointer"
-                      />
-                    </TableCell>
+                {logEntries.map((entry: AlertLogEntry, idx: number) => (
+                  <TableRow key={`${entry.definition_id}-${entry.occurred_at}-${idx}`} className={entry.action === "fire" ? "bg-red-500/5" : "bg-green-500/5"}>
+                    <TableCell><Badge variant={entry.action === "fire" ? "destructive" : "success"}>{entry.action}</Badge></TableCell>
+                    <TableCell className="font-medium">{entry.definition_name}</TableCell>
+                    <TableCell className="text-zinc-400 text-xs font-mono">{entry.entity_key || "\u2014"}</TableCell>
+                    <TableCell><SeverityBadge severity={entry.severity} /></TableCell>
+                    <TableCell className="font-mono text-xs">{entry.current_value != null ? Number(entry.current_value).toFixed(2) : "\u2014"}</TableCell>
+                    <TableCell className="text-xs text-zinc-400 max-w-[200px] truncate" title={entry.message}>{entry.message || "\u2014"}</TableCell>
+                    <TableCell className="text-xs text-zinc-400 whitespace-nowrap">{timeAgo(entry.occurred_at)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
-          </CardContent>
-        </Card>
-      ))}
+            <PaginationBar page={listState.page} pageSize={listState.pageSize} total={meta.total} count={meta.count} onPageChange={listState.setPage} />
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function EventsTab({ deviceId }: { deviceId: string }) {
+  const [subTab, setSubTab] = useState<"active" | "cleared">("active");
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-1">
+        {(["active", "cleared"] as const).map((t) => (
+          <button key={t} onClick={() => setSubTab(t)}
+            className={`px-3 py-1.5 text-sm rounded-md transition-colors ${subTab === t ? "bg-zinc-700 text-white" : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"}`}
+          >{t === "active" ? "Active" : "Cleared"}</button>
+        ))}
+      </div>
+      {subTab === "active" ? <DeviceActiveEvents deviceId={deviceId} /> : <DeviceClearedEvents deviceId={deviceId} />}
     </div>
+  );
+}
+
+function DeviceActiveEvents({ deviceId }: { deviceId: string }) {
+  const listState = useListState({
+    columns: [
+      { key: "severity", label: "Severity", filterable: false },
+      { key: "source", label: "Source" },
+      { key: "policy_name", label: "Policy", sortable: false },
+      { key: "message", label: "Message", sortable: false },
+      { key: "occurred_at", label: "Occurred", filterable: false },
+    ],
+    defaultSortBy: "occurred_at",
+    defaultSortDir: "desc",
+  });
+  const { data: response, isLoading } = useDeviceActiveEvents(deviceId, listState.params);
+  const events = (response as any)?.data ?? [];
+  const meta = (response as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const ackMut = useAcknowledgeEvents();
+  const clearMut = useClearEvents();
+
+  const toggle = (id: string) => setSelected((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const toggleAll = () => selected.size === events.length ? setSelected(new Set()) : setSelected(new Set(events.map((e: any) => e.id)));
+
+  if (isLoading) return <Card><CardContent className="py-12"><div className="flex h-32 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-brand-500" /></div></CardContent></Card>;
+  if (events.length === 0) return <Card><CardContent className="py-12"><div className="flex flex-col items-center justify-center text-zinc-500"><Zap className="h-10 w-10 mb-3 text-zinc-600" /><p className="text-sm">No active events for this device</p></div></CardContent></Card>;
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle className="flex items-center gap-2"><Zap className="h-4 w-4" /> Active Events ({meta.total})</CardTitle>
+          {selected.size > 0 && (
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" disabled={ackMut.isPending} onClick={async () => { await ackMut.mutateAsync([...selected]); setSelected(new Set()); }}>
+                <Check className="h-3.5 w-3.5" /> Acknowledge ({selected.size})
+              </Button>
+              <Button size="sm" variant="outline" disabled={clearMut.isPending} onClick={async () => { await clearMut.mutateAsync([...selected]); setSelected(new Set()); }}>
+                <CheckCheck className="h-3.5 w-3.5" /> Clear ({selected.size})
+              </Button>
+            </div>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-10"><input type="checkbox" checked={selected.size === events.length && events.length > 0} onChange={toggleAll} className="accent-brand-500 cursor-pointer" /></TableHead>
+              <FilterableSortHead col="severity" label="Severity" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterable={false} />
+              <FilterableSortHead col="source" label="Source" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.source} onFilterChange={(v) => listState.setFilter("source", v)} />
+              <FilterableSortHead col="policy_name" label="Policy" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.policy_name} onFilterChange={(v) => listState.setFilter("policy_name", v)} sortable={false} />
+              <FilterableSortHead col="message" label="Message" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.message} onFilterChange={(v) => listState.setFilter("message", v)} sortable={false} />
+              <TableHead>State</TableHead>
+              <FilterableSortHead col="occurred_at" label="Occurred" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterable={false} />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {events.map((evt: MonitoringEvent) => (
+              <TableRow key={evt.id}>
+                <TableCell><input type="checkbox" checked={selected.has(evt.id)} onChange={() => toggle(evt.id)} className="accent-brand-500 cursor-pointer" /></TableCell>
+                <TableCell><SeverityBadge severity={evt.severity} /></TableCell>
+                <TableCell className="text-xs text-zinc-400">{evt.source}</TableCell>
+                <TableCell className="text-xs">{evt.policy_name}</TableCell>
+                <TableCell className="text-xs text-zinc-300 max-w-[300px] truncate" title={evt.message}>{evt.message}</TableCell>
+                <TableCell><Badge variant={evt.state === "acknowledged" ? "warning" : "default"}>{evt.state}</Badge></TableCell>
+                <TableCell className="text-xs text-zinc-400 whitespace-nowrap">{timeAgo(evt.occurred_at)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+        <PaginationBar page={listState.page} pageSize={listState.pageSize} total={meta.total} count={meta.count} onPageChange={listState.setPage} />
+      </CardContent>
+    </Card>
+  );
+}
+
+function DeviceClearedEvents({ deviceId }: { deviceId: string }) {
+  const listState = useListState({
+    columns: [
+      { key: "severity", label: "Severity", filterable: false },
+      { key: "source", label: "Source" },
+      { key: "policy_name", label: "Policy", sortable: false },
+      { key: "occurred_at", label: "Occurred", filterable: false },
+    ],
+    defaultSortBy: "occurred_at",
+    defaultSortDir: "desc",
+  });
+  const { data: response, isLoading } = useDeviceClearedEvents(deviceId, listState.params);
+  const events = (response as any)?.data ?? [];
+  const meta = (response as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
+
+  if (isLoading) return <Card><CardContent className="py-12"><div className="flex h-32 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-brand-500" /></div></CardContent></Card>;
+  if (events.length === 0) return <Card><CardContent className="py-12"><div className="flex flex-col items-center justify-center text-zinc-500"><Zap className="h-10 w-10 mb-3 text-zinc-600" /><p className="text-sm">No cleared events for this device</p></div></CardContent></Card>;
+
+  return (
+    <Card>
+      <CardHeader><CardTitle className="flex items-center gap-2"><Clock className="h-4 w-4" /> Cleared Events ({meta.total})</CardTitle></CardHeader>
+      <CardContent>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <FilterableSortHead col="severity" label="Severity" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterable={false} />
+              <FilterableSortHead col="source" label="Source" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.source} onFilterChange={(v) => listState.setFilter("source", v)} />
+              <FilterableSortHead col="policy_name" label="Policy" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.policy_name} onFilterChange={(v) => listState.setFilter("policy_name", v)} sortable={false} />
+              <TableHead>Message</TableHead>
+              <FilterableSortHead col="occurred_at" label="Occurred" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterable={false} />
+              <TableHead>Cleared</TableHead>
+              <TableHead>Cleared By</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {events.map((evt: MonitoringEvent) => (
+              <TableRow key={evt.id}>
+                <TableCell><SeverityBadge severity={evt.severity} /></TableCell>
+                <TableCell className="text-xs text-zinc-400">{evt.source}</TableCell>
+                <TableCell className="text-xs">{evt.policy_name}</TableCell>
+                <TableCell className="text-xs text-zinc-300 max-w-[300px] truncate" title={evt.message}>{evt.message}</TableCell>
+                <TableCell className="text-xs text-zinc-400 whitespace-nowrap">{timeAgo(evt.occurred_at)}</TableCell>
+                <TableCell className="text-xs text-zinc-400 whitespace-nowrap">{evt.cleared_at ? timeAgo(evt.cleared_at) : "\u2014"}</TableCell>
+                <TableCell className="text-xs text-zinc-400">{evt.cleared_by || (evt.event_type === "alert_resolved" ? "auto" : "\u2014")}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+        <PaginationBar page={listState.page} pageSize={listState.pageSize} total={meta.total} count={meta.count} onPageChange={listState.setPage} />
+      </CardContent>
+    </Card>
   );
 }
 
@@ -4122,6 +4356,12 @@ export function DeviceDetailPage() {
               Alerts
             </span>
           </TabTrigger>
+          <TabTrigger value="events">
+            <span className="flex items-center gap-1.5">
+              <Zap className="h-3.5 w-3.5" />
+              Events
+            </span>
+          </TabTrigger>
           <TabTrigger value="thresholds">
             <span className="flex items-center gap-1.5">
               <Gauge className="h-3.5 w-3.5" />
@@ -4165,6 +4405,9 @@ export function DeviceDetailPage() {
         </TabsContent>
         <TabsContent value="alerts">
           <AlertsTab deviceId={deviceId} />
+        </TabsContent>
+        <TabsContent value="events">
+          <EventsTab deviceId={deviceId} />
         </TabsContent>
         <TabsContent value="thresholds">
           <ThresholdsTab deviceId={deviceId} />
