@@ -54,7 +54,7 @@ import { StatusBadge } from "@/components/StatusBadge.tsx";
 import { AvailabilityChart } from "@/components/AvailabilityChart.tsx";
 import { LabelEditor } from "@/components/LabelEditor.tsx";
 import { TimeRangePicker, rangeToTimestamps } from "@/components/TimeRangePicker.tsx";
-import type { TimeRangeValue } from "@/components/TimeRangePicker.tsx";
+import type { TimeRangeValue, TimeRangePreset } from "@/components/TimeRangePicker.tsx";
 import {
   useCollectorGroups,
   useCollectors,
@@ -1956,9 +1956,13 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
   const refreshMeta = useRefreshInterfaceMetadata();
   const updateIfacePrefs = useUpdateInterfacePreferences();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [timeRange, setTimeRange] = useState<TimeRangeValue>(
-    ({"1h": "1h", "6h": "6h", "24h": "24h", "7d": "7d", "30d": "30d"} as Record<string, TimeRangeValue>)[user?.iface_time_range ?? ""] ?? DEFAULT_RANGE
-  );
+  const [timeRange, setTimeRange] = useState<TimeRangeValue>(() => {
+    const pref = user?.iface_time_range;
+    if (pref && ["1h", "6h", "24h", "7d", "30d"].includes(pref)) {
+      return { type: "preset", preset: pref as TimeRangePreset };
+    }
+    return DEFAULT_RANGE;
+  });
   const [sortKey, setSortKey] = useState<IfaceSortKey>("if_index");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [trafficUnit, setTrafficUnit] = useState<TrafficUnit>(
@@ -2180,8 +2184,9 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
   };
   const handleTimeRange = (next: TimeRangeValue) => {
     setTimeRange(next);
-    const stored = ({"1h": "1h", "6h": "6h", "24h": "24h", "7d": "7d", "30d": "30d"} as Record<string, string>)[next];
-    if (stored) updateIfacePrefs.mutate({ iface_time_range: stored as any });
+    if (next.type === "preset" && ["1h", "6h", "24h", "7d", "30d"].includes(next.preset)) {
+      updateIfacePrefs.mutate({ iface_time_range: next.preset as any });
+    }
   };
 
   return (
