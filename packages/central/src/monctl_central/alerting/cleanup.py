@@ -41,5 +41,5 @@ async def cleanup_resolved_instances(session: AsyncSession) -> int:
     result = await session.execute(stmt)
     count = result.rowcount
     if count > 0:
-        logger.info("alert_history_cleanup", cleaned=count, retention_days=retention_days)
+        logger.info("alert_history_cleanup cleaned=%d retention_days=%d", count, retention_days)
     return count

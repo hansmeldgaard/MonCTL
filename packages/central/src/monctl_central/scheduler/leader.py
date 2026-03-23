@@ -74,7 +74,7 @@ class LeaderElection:
         )
         if acquired:
             if not self._is_leader:
-                logger.info("leader_acquired", instance_id=self._instance_id)
+                logger.info("leader_acquired instance_id=%s", self._instance_id)
             self._is_leader = True
             return
 
@@ -86,5 +86,5 @@ class LeaderElection:
             self._is_leader = True
         else:
             if self._is_leader:
-                logger.info("leader_lost", instance_id=self._instance_id)
+                logger.info("leader_lost instance_id=%s", self._instance_id)
             self._is_leader = False

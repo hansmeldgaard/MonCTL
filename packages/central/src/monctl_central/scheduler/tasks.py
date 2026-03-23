@@ -96,11 +96,7 @@ class SchedulerRunner:
             for c in stale:
                 c.status = "DOWN"
                 c.updated_at = utc_now()
-                logger.info(
-                    "collector_marked_down",
-                    collector_id=str(c.id),
-                    name=c.name,
-                )
+                logger.info("collector_marked_down collector_id=%s name=%s", str(c.id), c.name)
                 if c.group_id:
                     await session.execute(
                         update(Collector)
@@ -514,18 +510,7 @@ class SchedulerRunner:
             except Exception:
                 logger.debug("Cleanup query failed: %s", sql, exc_info=True)
 
-        logger.info(
-            "retention_cleanup_complete",
-            raw_days=raw_days,
-            hourly_days=hourly_days,
-            daily_days=daily_days,
-            config_days=config_days,
-            perf_days=perf_days,
-            perf_hourly_days=perf_hourly_days,
-            perf_daily_days=perf_daily_days,
-            avail_days=avail_days,
-            override_count=len(overrides),
-        )
+        logger.info("retention_cleanup_complete raw_days=%s hourly_days=%s daily_days=%s config_days=%s perf_days=%s perf_hourly_days=%s perf_daily_days=%s avail_days=%s override_count=%s", raw_days, hourly_days, daily_days, config_days, perf_days, perf_hourly_days, perf_daily_days, avail_days, len(overrides))
 
         from monctl_central.cache import _redis
         from monctl_common.utils import utc_now
@@ -587,11 +572,7 @@ class SchedulerRunner:
                     try:
                         updates = await check_node_updates(node.node_ip)
                     except Exception as exc:
-                        logger.warning(
-                            "os_update_check_node_failed",
-                            node=node.node_hostname,
-                            error=str(exc),
-                        )
+                        logger.warning("os_update_check_node_failed node=%s error=%s", node.node_hostname, str(exc))
                         continue
 
                     # Delete old entries for this node
