@@ -145,13 +145,17 @@ async def lifespan(app: FastAPI):
             "name": "snmp",
             "description": "SNMP v2c/v3 connector — polls OIDs via PySNMP",
             "connector_type": "snmp",
-            "version": "1.2.0",
+            "version": "1.3.0",
             "entry_class": "SnmpConnector",
             "requirements": ["pysnmp>=7.1"],
             "source_code": '''\
 """Built-in SNMP connector for MonCTL.
 
 Supports SNMP v1, v2c, and v3 via pysnmp 7.x async API.
+
+v1.3.0: Fix UDP socket leak — reuse SnmpEngine + UdpTransportTarget across
+        all operations within a single connect/close lifecycle instead of
+        creating new ones per get/walk call.
 
 Credential keys (v1/v2c):
     snmp_version   "1" or "2c" (default "2c")
@@ -208,6 +212,9 @@ class SnmpConnector:
         self.timeout = int(self.settings.get("timeout", 5))
         self.retries = int(self.settings.get("retries", 2))
         self._host: str = ""
+        self._engine = None
+        self._transport = None
+        self._auth = None
 
     def _build_auth(self):
         """Build the appropriate pysnmp auth object for the configured version."""
@@ -256,24 +263,24 @@ class SnmpConnector:
         return UsmUserData(**kwargs)
 
     async def connect(self, host: str) -> None:
-        """Prepare SNMP transport for the given host."""
+        """Create SNMP engine + transport — reused for all operations until close()."""
+        from pysnmp.hlapi.v3arch.asyncio import SnmpEngine, UdpTransportTarget
         self._host = host
+        self._engine = SnmpEngine()
+        self._transport = await UdpTransportTarget.create(
+            (host, self.port), timeout=self.timeout, retries=self.retries,
+        )
+        self._auth = self._build_auth()
         logger.debug("snmp_connect host=%s port=%s version=%s", host, self.port, self.version)
 
     async def get(self, oids: list[str]) -> dict[str, Any]:
         """Perform SNMP GET for a list of OID strings."""
         from pysnmp.hlapi.v3arch.asyncio import (
-            ContextData, ObjectIdentity, ObjectType, SnmpEngine,
-            UdpTransportTarget, get_cmd,
+            ContextData, ObjectIdentity, ObjectType, get_cmd,
         )
-        engine = SnmpEngine()
-        transport = await UdpTransportTarget.create(
-            (self._host, self.port), timeout=self.timeout, retries=self.retries,
-        )
-        auth = self._build_auth()
         obj_types = [ObjectType(ObjectIdentity(oid)) for oid in oids]
         error_indication, error_status, error_index, var_binds = await get_cmd(
-            engine, auth, transport, ContextData(), *obj_types,
+            self._engine, self._auth, self._transport, ContextData(), *obj_types,
         )
         if error_indication:
             raise RuntimeError(f"SNMP error: {error_indication}")
@@ -287,20 +294,14 @@ class SnmpConnector:
     async def get_many(self, oid_batches: list[list[str]]) -> dict[str, Any]:
         """Execute multiple SNMP GET batches reusing the same session."""
         from pysnmp.hlapi.v3arch.asyncio import (
-            ContextData, ObjectIdentity, ObjectType, SnmpEngine,
-            UdpTransportTarget, get_cmd,
+            ContextData, ObjectIdentity, ObjectType, get_cmd,
         )
-        engine = SnmpEngine()
-        transport = await UdpTransportTarget.create(
-            (self._host, self.port), timeout=self.timeout, retries=self.retries,
-        )
-        auth = self._build_auth()
         result: dict[str, Any] = {}
         for batch in oid_batches:
             try:
                 obj_types = [ObjectType(ObjectIdentity(oid)) for oid in batch]
                 err_ind, err_st, err_idx, var_binds = await get_cmd(
-                    engine, auth, transport, ContextData(), *obj_types,
+                    self._engine, self._auth, self._transport, ContextData(), *obj_types,
                 )
                 if not err_ind and not err_st:
                     for oid_val, val in var_binds:
@@ -312,14 +313,8 @@ class SnmpConnector:
     async def walk(self, oid: str) -> list[tuple[str, Any]]:
         """Perform SNMP WALK (GETBULK) with numeric OID boundary checking."""
         from pysnmp.hlapi.v3arch.asyncio import (
-            ContextData, ObjectIdentity, ObjectType, SnmpEngine,
-            UdpTransportTarget, bulk_cmd,
+            ContextData, ObjectIdentity, ObjectType, bulk_cmd,
         )
-        engine = SnmpEngine()
-        transport = await UdpTransportTarget.create(
-            (self._host, self.port), timeout=self.timeout, retries=self.retries,
-        )
-        auth = self._build_auth()
         rows: list[tuple[str, Any]] = []
         current_oid = oid
         base_tuple = tuple(int(x) for x in oid.split("."))
@@ -327,7 +322,7 @@ class SnmpConnector:
 
         while len(rows) < 10000:
             error_indication, error_status, error_index, var_bind_table = await bulk_cmd(
-                engine, auth, transport, ContextData(), 0, 25,
+                self._engine, self._auth, self._transport, ContextData(), 0, 25,
                 ObjectType(ObjectIdentity(current_oid)),
             )
             if error_indication or error_status:
@@ -350,8 +345,12 @@ class SnmpConnector:
         return rows
 
     async def close(self) -> None:
-        """Clean up resources."""
-        pass
+        """Close SNMP engine and release UDP socket."""
+        if self._engine is not None:
+            self._engine.close_dispatcher()
+            self._engine = None
+        self._transport = None
+        self._auth = None
 ''',
         },
         {
