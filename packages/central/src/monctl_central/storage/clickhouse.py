@@ -536,6 +536,8 @@ CREATE TABLE IF NOT EXISTS alert_log ON CLUSTER '{cluster}'
     entity_labels      String        DEFAULT '{{}}',
     fire_count         UInt32        DEFAULT 0,
     message            String        DEFAULT '',
+    metric_values      String        DEFAULT '{}',
+    threshold_values   String        DEFAULT '{}',
     occurred_at        DateTime64(3, 'UTC'),
     received_at        DateTime64(3, 'UTC') DEFAULT now64(3)
 )
@@ -568,6 +570,8 @@ CREATE TABLE IF NOT EXISTS alert_log
     entity_labels      String        DEFAULT '{}',
     fire_count         UInt32        DEFAULT 0,
     message            String        DEFAULT '',
+    metric_values      String        DEFAULT '{}',
+    threshold_values   String        DEFAULT '{}',
     occurred_at        DateTime64(3, 'UTC'),
     received_at        DateTime64(3, 'UTC') DEFAULT now64(3)
 )
@@ -584,6 +588,7 @@ _ALERT_LOG_INSERT_COLUMNS = [
     "device_id", "device_name",
     "assignment_id", "app_id", "app_name", "tenant_id",
     "entity_labels", "fire_count", "message",
+    "metric_values", "threshold_values",
     "occurred_at",
 ]
 
@@ -1062,6 +1067,9 @@ class ClickHouseClient:
             "ALTER TABLE interface_daily ADD COLUMN IF NOT EXISTS tenant_name String DEFAULT ''",
             # Add metric_types to performance tables
             "ALTER TABLE performance ADD COLUMN IF NOT EXISTS metric_types Array(String) DEFAULT [] AFTER metric_values",
+            # Add metric/threshold values to alert_log
+            "ALTER TABLE alert_log ADD COLUMN IF NOT EXISTS metric_values String DEFAULT '{}' AFTER message",
+            "ALTER TABLE alert_log ADD COLUMN IF NOT EXISTS threshold_values String DEFAULT '{}' AFTER metric_values",
         ]
         for alter_sql in _TENANT_NAME_ALTERS:
             try:

@@ -13,9 +13,11 @@ const stateConfig: Record<string, { variant: BadgeVariant; label: string }> = {
   CRITICAL: { variant: "destructive", label: "CRITICAL" },
   DOWN: { variant: "destructive", label: "DOWN" },
   UNKNOWN: { variant: "default", label: "UNKNOWN" },
-  FIRING: { variant: "destructive", label: "FIRING" },
+  FIRING: { variant: "destructive", label: "ACTIVE" },
   PENDING: { variant: "warning", label: "PENDING" },
-  RESOLVED: { variant: "success", label: "RESOLVED" },
+  RESOLVED: { variant: "success", label: "CLEARED" },
+  ACTIVE: { variant: "destructive", label: "ACTIVE" },
+  CLEARED: { variant: "success", label: "CLEARED" },
 };
 
 export function StatusBadge({ state, className }: StatusBadgeProps) {

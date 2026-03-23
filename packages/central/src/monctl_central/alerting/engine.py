@@ -163,6 +163,8 @@ class AlertEngine:
                 inst.current_value = firing_data.get("value")
                 if firing_data.get("labels"):
                     inst.entity_labels = firing_data["labels"]
+                inst.metric_values = firing_data.get("metric_values", {})
+                inst.threshold_values = firing_data.get("threshold_values", {})
 
                 if inst.state != "firing":
                     inst.state = "firing"
@@ -205,7 +207,7 @@ class AlertEngine:
             "definition_name": defn.name,
             "entity_key": inst.entity_key or "",
             "action": action,
-            "severity": defn.severity,
+            "severity": "",
             "current_value": float(inst.current_value) if inst.current_value is not None else 0.0,
             "threshold_value": 0.0,
             "expression": defn.expression,
@@ -218,6 +220,8 @@ class AlertEngine:
             "entity_labels": json.dumps(labels),
             "fire_count": inst.fire_count,
             "message": self._build_message(defn, inst, action),
+            "metric_values": json.dumps(inst.metric_values or {}),
+            "threshold_values": json.dumps(inst.threshold_values or {}),
             "occurred_at": now,
         }
 
@@ -226,27 +230,62 @@ class AlertEngine:
     ) -> str:
         """Build alert message from template or defaults."""
         labels = inst.entity_labels or {}
-        device = labels.get("device_name", "unknown")
-        entity = labels.get("if_name") or labels.get("component") or inst.entity_key or ""
+        metrics = inst.metric_values or {}
+        thresholds = inst.threshold_values or {}
         value = inst.current_value
+        device = labels.get("device_name", "unknown")
+        entity = (
+            labels.get("if_name")
+            or labels.get("component")
+            or inst.entity_key
+            or ""
+        )
 
         if action == "clear":
+            if defn.message_template:
+                rendered = self._render_template(
+                    defn.message_template, defn, inst, labels, metrics, thresholds
+                )
+                if rendered:
+                    return f"Cleared: {rendered}"
             return f"Cleared: {defn.name} on {device} {entity}".strip()
 
         if defn.message_template:
-            try:
-                return defn.message_template.format(
-                    device_name=device,
-                    value=round(value, 2) if value is not None else "N/A",
-                    threshold="",
-                    fire_count=inst.fire_count,
-                    **{k: v for k, v in labels.items() if k != "device_name"},
-                )
-            except (KeyError, IndexError, TypeError):
-                pass
+            rendered = self._render_template(
+                defn.message_template, defn, inst, labels, metrics, thresholds
+            )
+            if rendered:
+                return rendered
 
         val_str = f" = {round(value, 2)}" if value is not None else ""
         return f"{defn.name}{val_str} on {device} {entity} [{inst.fire_count}x]".strip()
+
+    def _render_template(
+        self,
+        template: str,
+        defn: AlertDefinition,
+        inst: AlertEntity,
+        labels: dict,
+        metrics: dict,
+        thresholds: dict,
+    ) -> str | None:
+        """Render a message template with all available variables."""
+        value = inst.current_value
+        context: dict[str, str] = {}
+        for k, v in labels.items():
+            context[k] = str(v)
+        context["value"] = _fmt_number(value)
+        context["fire_count"] = str(inst.fire_count)
+        context["alert_name"] = defn.name
+        context["entity_key"] = inst.entity_key or ""
+        for k, v in metrics.items():
+            context[k] = _fmt_number(v)
+        for k, v in thresholds.items():
+            context[f"${k}"] = _fmt_number(v)
+        try:
+            return template.format_map(_SafeFormatDict(context))
+        except (ValueError, TypeError):
+            return None
 
     async def _execute_compiled_query(
         self,
@@ -320,17 +359,34 @@ class AlertEngine:
             else:
                 labels = {"device_name": row.get("device_name", "")}
 
-            # Extract numeric value from first aggregation column
-            value = None
-            for k, v in row.items():
-                if k.startswith("_agg_"):
-                    value = float(v) if v is not None else None
-                    break
-                if k == "val":
-                    value = float(v) if v is not None else None
-                    break
+            # Extract ALL metric values using the alias mapping
+            metric_vals: dict[str, float | None] = {}
+            for metric_name, alias in compiled.metric_aliases.items():
+                raw = row.get(alias)
+                metric_vals[metric_name] = round(float(raw), 4) if raw is not None else None
 
-            firing[(aid, entity_key)] = {"value": value, "labels": labels, "assignment_id": aid}
+            # Primary value = first metric (backward compat with current_value)
+            value = next(iter(metric_vals.values()), None) if metric_vals else None
+            if value is None:
+                # Fallback: try any _agg_ or _arith_ column
+                for k, v in row.items():
+                    if k.startswith(("_agg_", "_arith_")):
+                        value = float(v) if v is not None else None
+                        break
+
+            # Resolved threshold values for this entity
+            resolved_thresholds: dict[str, float] = {}
+            if compiled.threshold_params:
+                for tp in compiled.threshold_params:
+                    resolved_thresholds[tp.name] = params.get(tp.param_key, tp.default_value)
+
+            firing[(aid, entity_key)] = {
+                "value": value,
+                "labels": labels,
+                "assignment_id": aid,
+                "metric_values": metric_vals,
+                "threshold_values": resolved_thresholds,
+            }
 
         return firing
 
@@ -393,3 +449,19 @@ class AlertEngine:
                     break
 
         return firing
+
+
+def _fmt_number(v: float | None) -> str:
+    """Format a numeric value for display in messages."""
+    if v is None:
+        return "N/A"
+    if v == int(v):
+        return str(int(v))
+    return f"{v:.2f}"
+
+
+class _SafeFormatDict(dict):
+    """Dict that returns '{key}' for missing keys instead of raising KeyError."""
+
+    def __missing__(self, key: str) -> str:
+        return "{" + key + "}"

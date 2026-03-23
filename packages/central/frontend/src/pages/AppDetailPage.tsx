@@ -1382,17 +1382,15 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
   const formNameField = useField("", validateName);
   const [formExpression, setFormExpression] = useState("");
   const formWindowField = useField("5m", validateAlertWindow);
-  const [formSeverity, setFormSeverity] = useState("warning");
   const [formEnabled, setFormEnabled] = useState(true);
   const [formError, setFormError] = useState<string | null>(null);
 
-  const openCreate = (prefill?: { name?: string; expression?: string; window?: string; severity?: string }) => {
+  const openCreate = (prefill?: { name?: string; expression?: string; window?: string }) => {
     setFormMode("create");
     setEditId(null);
     formNameField.reset(prefill?.name ?? "");
     setFormExpression(prefill?.expression ?? "");
     formWindowField.reset(prefill?.window ?? "5m");
-    setFormSeverity(prefill?.severity ?? "warning");
     setFormEnabled(true);
     setFormError(null);
   };
@@ -1403,7 +1401,6 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
     formNameField.reset(defn.name);
     setFormExpression(defn.expression);
     formWindowField.reset(defn.window);
-    setFormSeverity(defn.severity);
     setFormEnabled(defn.enabled);
     setFormError(null);
   };
@@ -1427,7 +1424,6 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
           name: formNameField.value,
           expression: formExpression,
           window: formWindowField.value,
-          severity: formSeverity,
           enabled: formEnabled,
         });
       } else {
@@ -1436,7 +1432,6 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
           name: formNameField.value,
           expression: formExpression,
           window: formWindowField.value,
-          severity: formSeverity,
           enabled: formEnabled,
         });
       }
@@ -1454,25 +1449,8 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
         name: d.suggested_name,
         expression: d.inverted_expression,
         window: d.window,
-        severity: d.severity,
       });
     } catch { /* noop */ }
-  };
-
-  const severityVariant = (severity: string) => {
-    switch (severity?.toLowerCase()) {
-      case "critical":
-      case "emergency":
-        return "destructive" as const;
-      case "warning":
-        return "warning" as const;
-      case "recovery":
-        return "success" as const;
-      case "info":
-        return "info" as const;
-      default:
-        return "default" as const;
-    }
   };
 
   const isPending = createDef.isPending || updateDef.isPending;
@@ -1508,21 +1486,6 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
                 <Label htmlFor="alert-name">Name</Label>
                 <Input id="alert-name" value={formNameField.value} onChange={formNameField.onChange} onBlur={formNameField.onBlur} required />
                 {formNameField.error && <p className="text-xs text-red-400 mt-0.5">{formNameField.error}</p>}
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="alert-severity">Severity</Label>
-                <select
-                  id="alert-severity"
-                  value={formSeverity}
-                  onChange={(e) => setFormSeverity(e.target.value)}
-                  className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100"
-                >
-                  <option value="info">Info</option>
-                  <option value="recovery">Recovery</option>
-                  <option value="warning">Warning</option>
-                  <option value="critical">Critical</option>
-                  <option value="emergency">Emergency</option>
-                </select>
               </div>
             </div>
             <div className="space-y-1.5">
@@ -1681,7 +1644,6 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
                 <TableHead>Name</TableHead>
                 <TableHead>Expression</TableHead>
                 <TableHead>Window</TableHead>
-                <TableHead>Severity</TableHead>
                 <TableHead>Enabled</TableHead>
                 <TableHead className="w-24"></TableHead>
               </TableRow>
@@ -1696,9 +1658,6 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
                   <TableCell className="font-medium text-zinc-100">{defn.name}</TableCell>
                   <TableCell className="text-zinc-400 font-mono text-xs max-w-xs truncate">{defn.expression}</TableCell>
                   <TableCell className="text-zinc-400">{defn.window}</TableCell>
-                  <TableCell>
-                    <Badge variant={severityVariant(defn.severity)}>{defn.severity}</Badge>
-                  </TableCell>
                   <TableCell>
                     <Badge variant={defn.enabled ? "success" : "default"}>
                       {defn.enabled ? "On" : "Off"}

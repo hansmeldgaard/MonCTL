@@ -136,20 +136,34 @@ class EventEngine:
     def _build_message(
         self, policy: EventPolicy, defn: AlertDefinition, inst: AlertEntity
     ) -> str:
-        template = policy.message_template or defn.message_template
+        """Build event message. Priority: policy template > definition template > default."""
+        from monctl_central.alerting.engine import _fmt_number, _SafeFormatDict
+
         labels = inst.entity_labels or {}
+        metrics = getattr(inst, "metric_values", None) or {}
+        thresholds = getattr(inst, "threshold_values", None) or {}
         value = inst.current_value
 
-        if template:
+        # Try policy template, then definition template
+        for template in [policy.message_template, defn.message_template]:
+            if not template:
+                continue
+            context: dict[str, str] = {}
+            for k, v in labels.items():
+                context[k] = str(v)
+            context["value"] = _fmt_number(value)
+            context["alert_name"] = defn.name
+            context["rule_name"] = defn.name  # backward compat
+            context["fire_count"] = str(inst.fire_count)
+            context["entity_key"] = inst.entity_key or ""
+            for k, v in metrics.items():
+                context[k] = _fmt_number(v)
+            for k, v in thresholds.items():
+                context[f"${k}"] = _fmt_number(v)
             try:
-                return template.format(
-                    value=round(value, 2) if value is not None else "N/A",
-                    rule_name=defn.name,
-                    fire_count=inst.fire_count,
-                    **labels,
-                )
-            except (KeyError, IndexError, TypeError):
-                pass
+                return template.format_map(_SafeFormatDict(context))
+            except (ValueError, TypeError):
+                continue
 
         device = labels.get("device_name", "unknown")
         entity = labels.get("if_name") or labels.get("component") or inst.entity_key or ""

@@ -3691,7 +3691,7 @@ function DeviceActiveAlerts({ deviceId }: { deviceId: string }) {
           <TableBody>
             {instances.map((inst: any) => (
               <TableRow key={inst.id} className={inst.state === "firing" ? "bg-red-500/5" : ""}>
-                <TableCell><Badge variant={inst.state === "firing" ? "destructive" : inst.state === "resolved" ? "warning" : "success"}>{inst.state}</Badge></TableCell>
+                <TableCell><Badge variant={inst.state === "firing" ? "destructive" : inst.state === "resolved" ? "warning" : "success"}>{inst.state === "firing" ? "ACTIVE" : inst.state === "resolved" ? "CLEARED" : inst.state.toUpperCase()}</Badge></TableCell>
                 <TableCell className="font-medium">
                   {inst.definition_name ?? "\u2014"}
                   {inst.entity_labels?.if_name && <span className="ml-1.5 text-xs text-zinc-500">({inst.entity_labels.if_name})</span>}
@@ -3722,7 +3722,6 @@ function DeviceAlertHistory({ deviceId }: { deviceId: string }) {
   const listState = useListState({
     columns: [
       { key: "definition_name", label: "Alert" },
-      { key: "severity", label: "Severity", filterable: false },
       { key: "message", label: "Message" },
       { key: "occurred_at", label: "Time", filterable: false },
     ],
@@ -3769,7 +3768,6 @@ function DeviceAlertHistory({ deviceId }: { deviceId: string }) {
                   <TableHead className="w-16">Action</TableHead>
                   <FilterableSortHead col="definition_name" label="Alert" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.definition_name} onFilterChange={(v) => listState.setFilter("definition_name", v)} />
                   <TableHead>Entity</TableHead>
-                  <FilterableSortHead col="severity" label="Severity" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterable={false} />
                   <TableHead>Value</TableHead>
                   <FilterableSortHead col="message" label="Message" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.message} onFilterChange={(v) => listState.setFilter("message", v)} sortable={false} />
                   <FilterableSortHead col="occurred_at" label="Time" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterable={false} />
@@ -3781,7 +3779,6 @@ function DeviceAlertHistory({ deviceId }: { deviceId: string }) {
                     <TableCell><Badge variant={entry.action === "fire" ? "destructive" : "success"}>{entry.action}</Badge></TableCell>
                     <TableCell className="font-medium">{entry.definition_name}</TableCell>
                     <TableCell className="text-zinc-400 text-xs font-mono">{entry.entity_key || "\u2014"}</TableCell>
-                    <TableCell><SeverityBadge severity={entry.severity} /></TableCell>
                     <TableCell className="font-mono text-xs">{entry.current_value != null ? Number(entry.current_value).toFixed(2) : "\u2014"}</TableCell>
                     <TableCell className="text-xs text-zinc-400 max-w-[200px] truncate" title={entry.message}>{entry.message || "\u2014"}</TableCell>
                     <TableCell className="text-xs text-zinc-400 whitespace-nowrap">{timeAgo(entry.occurred_at)}</TableCell>

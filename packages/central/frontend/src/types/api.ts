@@ -394,7 +394,6 @@ export interface AlertDefinition {
   description: string | null;
   expression: string;
   window: string;
-  severity: "info" | "warning" | "critical" | "emergency" | "recovery";
   enabled: boolean;
   message_template: string | null;
   pack_origin: string | null;
@@ -414,6 +413,7 @@ export interface AlertEntity {
   device_id: string | null;
   enabled: boolean;
   state: "ok" | "firing" | "resolved";
+  display_state: "active" | "cleared" | null;
   current_value: number | null;
   fire_count: number;
   fire_history: boolean[];
@@ -422,9 +422,10 @@ export interface AlertEntity {
   last_cleared_at: string | null;
   entity_key: string;
   entity_labels: Record<string, string>;
+  metric_values: Record<string, number | null>;
+  threshold_values: Record<string, number>;
   created_at: string;
   definition_name?: string;
-  definition_severity?: string;
   definition_expression?: string;
   app_name?: string;
   device_name?: string;
@@ -449,6 +450,8 @@ export interface AlertLogEntry {
   entity_labels: Record<string, string>;
   fire_count: number;
   message: string;
+  metric_values: Record<string, number | null>;
+  threshold_values: Record<string, number>;
   occurred_at: string;
 }
 

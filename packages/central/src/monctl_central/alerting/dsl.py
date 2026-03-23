@@ -549,6 +549,7 @@ class CompiledQuery:
     threshold_params: list[ThresholdParam]
     is_config_changed: bool = False
     config_changed_key: str | None = None
+    metric_aliases: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -838,6 +839,7 @@ class _Compiler:
         self._arith_idx = 0
         self._agg_idx = 0
         # Collected during compilation
+        self._metric_aliases: dict[str, str] = {}
         self._agg_selects: list[str] = []
         self._having_parts: list[str] = []
         self._where_extras: list[str] = []
@@ -894,6 +896,7 @@ class _Compiler:
             sql=sql,
             params=self.params,
             threshold_params=self.threshold_params,
+            metric_aliases=self._metric_aliases,
         )
 
     def _build_query_parts(self, node: ASTNode) -> None:
@@ -965,6 +968,18 @@ class _Compiler:
         # If the expression contains division, add isFinite check
         if isinstance(node, ArithOp) and _has_division(node):
             self._finite_checks.append(f"isFinite({alias})")
+
+        # Track metric aliases for template rendering
+        agg_calls = _collect_agg_calls(node)
+        seen_metrics: dict[str, int] = {}
+        for ac in agg_calls:
+            seen_metrics[ac.metric] = seen_metrics.get(ac.metric, 0) + 1
+        for ac in agg_calls:
+            if seen_metrics[ac.metric] > 1:
+                key = f"{ac.func}_{ac.metric}"
+            else:
+                key = ac.metric
+            self._metric_aliases[key] = alias
 
         return alias
 

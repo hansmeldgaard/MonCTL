@@ -399,7 +399,6 @@ class AlertDefinition(Base):
     description: Mapped[str | None] = mapped_column(Text)
     expression: Mapped[str] = mapped_column(Text, nullable=False)
     window: Mapped[str] = mapped_column(String(20), nullable=False, server_default="5m")
-    severity: Mapped[str] = mapped_column(String(20), nullable=False, server_default="warning")
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     message_template: Mapped[str | None] = mapped_column(Text)
     pack_origin: Mapped[str | None] = mapped_column(String(255))
@@ -446,6 +445,8 @@ class AlertEntity(Base):
     last_cleared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     entity_key: Mapped[str] = mapped_column(String(500), nullable=False, server_default="")
     entity_labels: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    metric_values: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    threshold_values: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )

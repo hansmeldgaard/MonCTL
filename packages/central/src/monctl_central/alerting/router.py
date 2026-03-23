@@ -39,7 +39,6 @@ def _fmt_definition(d: AlertDefinition, instance_counts: dict | None = None) -> 
         "description": d.description,
         "expression": d.expression,
         "window": d.window,
-        "severity": d.severity,
         "enabled": d.enabled,
         "message_template": d.message_template,
         "pack_origin": d.pack_origin,
@@ -52,6 +51,14 @@ def _fmt_definition(d: AlertDefinition, instance_counts: dict | None = None) -> 
     return result
 
 
+def _display_state(internal_state: str) -> str | None:
+    if internal_state == "firing":
+        return "active"
+    if internal_state == "resolved":
+        return "cleared"
+    return None
+
+
 def _fmt_entity(i: AlertEntity) -> dict:
     return {
         "id": str(i.id),
@@ -60,6 +67,7 @@ def _fmt_entity(i: AlertEntity) -> dict:
         "device_id": str(i.device_id) if i.device_id else None,
         "enabled": i.enabled,
         "state": i.state,
+        "display_state": _display_state(i.state),
         "current_value": i.current_value,
         "fire_count": i.fire_count,
         "fire_history": i.fire_history,
@@ -68,6 +76,8 @@ def _fmt_entity(i: AlertEntity) -> dict:
         "last_cleared_at": i.last_cleared_at.isoformat() if i.last_cleared_at else None,
         "entity_key": i.entity_key,
         "entity_labels": i.entity_labels,
+        "metric_values": i.metric_values or {},
+        "threshold_values": i.threshold_values or {},
         "created_at": i.created_at.isoformat() if i.created_at else None,
     }
 
@@ -92,7 +102,6 @@ class CreateAlertDefinitionRequest(BaseModel):
     description: str | None = Field(default=None, max_length=2000)
     expression: str = Field(min_length=1, max_length=2000)
     window: str = Field(default="5m", max_length=10)
-    severity: str = Field(default="warning", max_length=20, description="info, warning, critical, emergency")
     enabled: bool = True
     message_template: str | None = Field(default=None, max_length=2000)
 
@@ -100,13 +109,6 @@ class CreateAlertDefinitionRequest(BaseModel):
     @classmethod
     def check_app_id(cls, v: str) -> str:
         validate_uuid(v, "app_id")
-        return v
-
-    @field_validator("severity")
-    @classmethod
-    def check_severity(cls, v: str) -> str:
-        if v not in {"info", "warning", "critical", "emergency", "recovery"}:
-            raise ValueError("severity must be one of: info, warning, critical, emergency, recovery")
         return v
 
     @field_validator("window")
@@ -120,16 +122,8 @@ class UpdateAlertDefinitionRequest(BaseModel):
     description: str | None = Field(default=None, max_length=2000)
     expression: str | None = Field(default=None, min_length=1, max_length=2000)
     window: str | None = Field(default=None, max_length=10)
-    severity: str | None = Field(default=None, max_length=20)
     enabled: bool | None = None
     message_template: str | None = Field(default=None, max_length=2000)
-
-    @field_validator("severity")
-    @classmethod
-    def check_severity(cls, v: str | None) -> str | None:
-        if v is not None and v not in {"info", "warning", "critical", "emergency", "recovery"}:
-            raise ValueError("severity must be one of: info, warning, critical, emergency, recovery")
-        return v
 
     @field_validator("window")
     @classmethod
@@ -169,14 +163,10 @@ class UpdateThresholdOverrideRequest(BaseModel):
 
 # ── Alert Definitions ────────────────────────────────────
 
-_VALID_SEVERITIES = {"info", "warning", "critical", "emergency", "recovery"}
-
-
 @router.get("/definitions")
 async def list_alert_definitions(
     app_id: str | None = Query(None),
     name: str | None = Query(default=None),
-    severity: str | None = Query(default=None),
     expression: str | None = Query(default=None),
     sort_by: str = Query(default="name"),
     sort_dir: str = Query(default="asc"),
@@ -192,8 +182,6 @@ async def list_alert_definitions(
         filters.append(AlertDefinition.app_id == uuid.UUID(app_id))
     if name:
         filters.append(AlertDefinition.name.ilike(f"%{name}%"))
-    if severity:
-        filters.append(AlertDefinition.severity == severity)
     if expression:
         filters.append(AlertDefinition.expression.ilike(f"%{expression}%"))
 
@@ -210,7 +198,6 @@ async def list_alert_definitions(
 
     SORT_MAP = {
         "name": AlertDefinition.name,
-        "severity": AlertDefinition.severity,
         "enabled": AlertDefinition.enabled,
         "created_at": AlertDefinition.created_at,
     }
@@ -259,19 +246,12 @@ async def create_alert_definition(
             status_code=400, detail=f"Invalid expression: {validation.error}"
         )
 
-    if request.severity not in _VALID_SEVERITIES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Severity must be one of: {', '.join(sorted(_VALID_SEVERITIES))}",
-        )
-
     defn = AlertDefinition(
         app_id=uuid.UUID(request.app_id),
         name=request.name,
         description=request.description,
         expression=request.expression,
         window=request.window,
-        severity=request.severity,
         enabled=request.enabled,
         message_template=request.message_template,
     )
@@ -332,14 +312,6 @@ async def update_alert_definition(
         # Re-sync threshold variables when expression changes
         await sync_threshold_variables(db, defn.app_id, defn, target_table)
 
-    if request.severity is not None:
-        if request.severity not in _VALID_SEVERITIES:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Severity must be one of: {', '.join(sorted(_VALID_SEVERITIES))}",
-            )
-        defn.severity = request.severity
-
     if request.name is not None:
         defn.name = request.name
     if request.description is not None:
@@ -391,7 +363,6 @@ async def invert_alert_definition(
             "inverted_expression": inverted,
             "original_expression": defn.expression,
             "window": defn.window,
-            "severity": "recovery",
             "app_id": str(defn.app_id),
         },
     }
@@ -440,7 +411,6 @@ async def list_alert_instances(
     # Sort
     _SORT_MAP = {
         "state": AlertEntity.state,
-        "severity": AlertDefinition.severity,
         "definition_name": AlertDefinition.name,
         "app_name": App.name,
         "entity_key": AlertEntity.entity_key,
@@ -461,7 +431,6 @@ async def list_alert_instances(
         defn = await db.get(AlertDefinition, inst.definition_id)
         if defn:
             data["definition_name"] = defn.name
-            data["definition_severity"] = defn.severity
             data["definition_expression"] = defn.expression
             app = await db.get(App, defn.app_id)
             data["app_name"] = app.name if app else ""
@@ -494,7 +463,6 @@ async def list_active_instances(
         defn = await db.get(AlertDefinition, inst.definition_id)
         if defn:
             data["definition_name"] = defn.name
-            data["definition_severity"] = defn.severity
             data["definition_expression"] = defn.expression
             app = await db.get(App, defn.app_id)
             data["app_name"] = app.name if app else ""
@@ -511,7 +479,6 @@ async def list_active_instances(
 @router.get("/instances/resolved")
 async def list_resolved_instances(
     limit: int = Query(200, le=500),
-    severity: str | None = Query(None),
     device_id: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
@@ -544,10 +511,7 @@ async def list_resolved_instances(
         defn = await db.get(AlertDefinition, inst.definition_id)
         if defn:
             data["definition_name"] = defn.name
-            data["definition_severity"] = defn.severity
             data["definition_expression"] = defn.expression
-            if severity and defn.severity != severity:
-                continue
             app = await db.get(App, defn.app_id)
             data["app_name"] = app.name if app else ""
         assignment = await db.get(AppAssignment, inst.assignment_id)

@@ -27,21 +27,6 @@ import type { AlertEntity, AlertDefinition, AlertLogEntry } from "@/types/api.ts
 
 type Tab = "active" | "log" | "definitions";
 
-const severityVariant = (severity: string) => {
-  switch (severity?.toLowerCase()) {
-    case "critical":
-    case "emergency":
-      return "destructive" as const;
-    case "warning":
-      return "warning" as const;
-    case "recovery":
-      return "success" as const;
-    case "info":
-      return "info" as const;
-    default:
-      return "default" as const;
-  }
-};
 
 export function AlertsPage() {
   const [tab, setTab] = useState<Tab>("active");
@@ -49,7 +34,6 @@ export function AlertsPage() {
   const defsListState = useListState({
     columns: [
       { key: "name", label: "Name" },
-      { key: "severity", label: "Severity" },
       { key: "expression", label: "Expression", sortable: false },
     ],
   });
@@ -150,7 +134,7 @@ function ActiveAlertsTab({ alerts }: { alerts: AlertEntity[] }) {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Severity</TableHead>
+                <TableHead>State</TableHead>
                 <TableHead>Alert Name</TableHead>
                 <TableHead>App</TableHead>
                 <TableHead>Device</TableHead>
@@ -164,8 +148,8 @@ function ActiveAlertsTab({ alerts }: { alerts: AlertEntity[] }) {
               {alerts.map((alert) => (
                 <TableRow key={alert.id}>
                   <TableCell>
-                    <Badge variant={severityVariant(alert.definition_severity ?? "")}>
-                      {alert.definition_severity ?? "unknown"}
+                    <Badge variant={alert.state === "firing" ? "destructive" : "success"}>
+                      {alert.state === "firing" ? "ACTIVE" : "CLEARED"}
                     </Badge>
                   </TableCell>
                   <TableCell className="font-medium text-zinc-100">
@@ -365,17 +349,16 @@ function DefinitionsTab({
               <FilterableSortHead col="name" label="Name" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.name} onFilterChange={(v) => listState.setFilter("name", v)} />
               <FilterableSortHead col="expression" label="Expression" sortable={false} sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.expression} onFilterChange={(v) => listState.setFilter("expression", v)} />
               <TableHead>Window</TableHead>
-              <FilterableSortHead col="severity" label="Severity" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.severity} onFilterChange={(v) => listState.setFilter("severity", v)} />
               <FilterableSortHead col="enabled" label="Enabled" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterable={false} />
               <TableHead>Instances</TableHead>
-              <TableHead>Firing</TableHead>
+              <TableHead>Active</TableHead>
               <TableHead className="w-12"></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {definitions.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="text-center text-zinc-500 py-8">
+                <TableCell colSpan={7} className="text-center text-zinc-500 py-8">
                   {listState.hasActiveFilters ? "No definitions match your filters" : "No alert definitions configured"}
                 </TableCell>
               </TableRow>
@@ -390,11 +373,6 @@ function DefinitionsTab({
                   </TableCell>
                   <TableCell className="text-zinc-400">
                     {defn.window}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={severityVariant(defn.severity)}>
-                      {defn.severity}
-                    </Badge>
                   </TableCell>
                   <TableCell>
                     <Badge variant={defn.enabled ? "success" : "default"}>
