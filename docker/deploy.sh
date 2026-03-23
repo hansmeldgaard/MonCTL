@@ -188,8 +188,30 @@ EOF
   done
   rm -f /tmp/.env.ha
 
-  # 7c: ClickHouse
-  echo "  7c: Deploying ClickHouse..."
+  # 7c: Redis Sentinel
+  echo "  7c: Deploying Redis Sentinel..."
+  SENTINEL_NODES=("10.145.210.41" "10.145.210.42" "10.145.210.43")
+  for IP in "${SENTINEL_NODES[@]}"; do
+    echo "    [$IP] Deploying sentinel.conf..."
+    scp docker/sentinel.conf ${SSH_USER}@${IP}:/opt/monctl/central-ha/sentinel.conf
+  done
+
+  # Update COMPOSE_PROFILES for Redis HA
+  # central1: redis → redis-primary,redis-sentinel
+  ssh ${SSH_USER}@10.145.210.41 "sed -i 's/COMPOSE_PROFILES=db,redis/COMPOSE_PROFILES=db,redis-primary,redis-sentinel/' /opt/monctl/central-ha/.env"
+  # central2: add redis-replica,redis-sentinel
+  ssh ${SSH_USER}@10.145.210.42 "sed -i 's/COMPOSE_PROFILES=db/COMPOSE_PROFILES=db,redis-replica,redis-sentinel/' /opt/monctl/central-ha/.env"
+  # central3: add redis-sentinel (tiebreaker)
+  ssh ${SSH_USER}@10.145.210.43 "grep -q redis-sentinel /opt/monctl/central-ha/.env || sed -i 's/COMPOSE_PROFILES=\(.*\)/COMPOSE_PROFILES=\1,redis-sentinel/' /opt/monctl/central-ha/.env"
+
+  # Add Sentinel env vars to all central nodes
+  for IP in "${CENTRAL_IPS[@]}"; do
+    ssh ${SSH_USER}@${IP} "grep -q MONCTL_REDIS_SENTINEL_HOSTS /opt/monctl/central-ha/.env || echo 'MONCTL_REDIS_SENTINEL_HOSTS=10.145.210.41:26379,10.145.210.42:26379,10.145.210.43:26379' >> /opt/monctl/central-ha/.env"
+    ssh ${SSH_USER}@${IP} "grep -q MONCTL_REDIS_SENTINEL_MASTER /opt/monctl/central-ha/.env || echo 'MONCTL_REDIS_SENTINEL_MASTER=monctl-redis' >> /opt/monctl/central-ha/.env"
+  done
+
+  # 7d: ClickHouse
+  echo "  7d: Deploying ClickHouse..."
   for entry in "10.145.210.43:ch1:1" "10.145.210.44:ch2:2"; do
     IFS=: read -r IP REPLICA KEEPER_ID <<< "$entry"
     echo "    [$IP] ClickHouse replica ${REPLICA}..."
@@ -200,12 +222,12 @@ EOF
     ssh ${SSH_USER}@${IP} 'cd /opt/monctl/clickhouse && docker compose up -d'
   done
 
-  # 7d: Generate TLS cert
-  echo "  7d: Generating TLS certificate..."
+  # 7e: Generate TLS cert
+  echo "  7e: Generating TLS certificate..."
   bash docker/generate-tls-cert.sh
 
-  # 7e: HAProxy + Keepalived
-  echo "  7e: Deploying HAProxy + Keepalived..."
+  # 7f: HAProxy + Keepalived
+  echo "  7f: Deploying HAProxy + Keepalived..."
   PRIORITIES=("100" "99" "98" "97")
   for idx in 0 1 2 3; do
     IP="${CENTRAL_IPS[$idx]}"

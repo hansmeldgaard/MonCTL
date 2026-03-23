@@ -4,12 +4,16 @@ Caches:
 - API key validation (avoid DB lookup + last_used_at UPDATE per request)
 - Credential lookups (5 min TTL)
 - Assignment enrichment (device_name, app_name, role, tenant_id per assignment_id)
+
+Supports Redis Sentinel for HA (automatic failover). Falls back to direct
+redis_url when Sentinel is not configured (local dev).
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import time as _time
 from typing import Any
 
 import redis.asyncio as aioredis
@@ -19,11 +23,45 @@ logger = logging.getLogger(__name__)
 _redis: aioredis.Redis | None = None
 
 
-async def get_redis(redis_url: str) -> aioredis.Redis:
-    """Get or create the shared Redis connection."""
+async def get_redis(
+    redis_url: str,
+    sentinel_hosts: str = "",
+    sentinel_master: str = "monctl-redis",
+) -> aioredis.Redis:
+    """Get or create the shared Redis connection.
+
+    If sentinel_hosts is provided, uses Sentinel discovery for automatic failover.
+    Otherwise falls back to direct redis_url connection (local dev).
+    """
     global _redis
-    if _redis is None:
+    if _redis is not None:
+        return _redis
+
+    if sentinel_hosts:
+        sentinels = []
+        for entry in sentinel_hosts.split(","):
+            entry = entry.strip()
+            if ":" in entry:
+                host, port = entry.rsplit(":", 1)
+                sentinels.append((host, int(port)))
+            else:
+                sentinels.append((entry, 26379))
+
+        sentinel = aioredis.sentinel.Sentinel(
+            sentinels,
+            socket_timeout=3.0,
+            socket_connect_timeout=3.0,
+            decode_responses=True,
+        )
+        _redis = sentinel.master_for(sentinel_master)
+        logger.info(
+            "redis_sentinel_connected sentinels=%s master=%s",
+            sentinel_hosts, sentinel_master,
+        )
+    else:
         _redis = aioredis.from_url(redis_url, decode_responses=True)
+        logger.info("redis_direct_connected url=%s", redis_url)
+
     return _redis
 
 
@@ -32,6 +70,49 @@ async def close_redis() -> None:
     if _redis is not None:
         await _redis.close()
         _redis = None
+
+
+async def redis_healthy() -> bool:
+    """Quick check if Redis is reachable. Used by health endpoint."""
+    if _redis is None:
+        return False
+    try:
+        import asyncio
+        await asyncio.wait_for(_redis.ping(), timeout=2.0)
+        return True
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# In-process API key cache — survives Redis failover (per-process, not shared)
+# ---------------------------------------------------------------------------
+
+_LOCAL_API_KEY_CACHE: dict[str, tuple[dict, float]] = {}
+_LOCAL_CACHE_MAX = 500
+_LOCAL_CACHE_TTL = 60  # 1 minute — shorter than Redis TTL for safety
+
+
+def _get_local_api_key(key_hash: str) -> dict | None:
+    entry = _LOCAL_API_KEY_CACHE.get(key_hash)
+    if entry is None:
+        return None
+    data, ts = entry
+    if _time.monotonic() - ts > _LOCAL_CACHE_TTL:
+        del _LOCAL_API_KEY_CACHE[key_hash]
+        return None
+    return data
+
+
+def _set_local_api_key(key_hash: str, data: dict) -> None:
+    if len(_LOCAL_API_KEY_CACHE) >= _LOCAL_CACHE_MAX:
+        sorted_keys = sorted(
+            _LOCAL_API_KEY_CACHE.keys(),
+            key=lambda k: _LOCAL_API_KEY_CACHE[k][1],
+        )
+        for k in sorted_keys[: _LOCAL_CACHE_MAX // 10]:
+            del _LOCAL_API_KEY_CACHE[k]
+    _LOCAL_API_KEY_CACHE[key_hash] = (data, _time.monotonic())
 
 
 # ---------------------------------------------------------------------------
@@ -43,18 +124,27 @@ _API_KEY_TTL = 300  # 5 minutes
 
 
 async def get_cached_api_key(key_hash: str) -> dict | None:
-    if _redis is None:
-        return None
-    try:
-        cached = await _redis.get(f"{_API_KEY_PREFIX}{key_hash}")
-        if cached:
-            return json.loads(cached)
-    except Exception:
-        logger.debug("redis_cache_miss", exc_info=True)
+    # Level 1: Redis
+    if _redis is not None:
+        try:
+            cached = await _redis.get(f"{_API_KEY_PREFIX}{key_hash}")
+            if cached:
+                data = json.loads(cached)
+                _set_local_api_key(key_hash, data)
+                return data
+        except Exception:
+            logger.debug("redis_cache_miss", exc_info=True)
+
+    # Level 2: In-process fallback (survives Redis failover)
+    local = _get_local_api_key(key_hash)
+    if local is not None:
+        return local
+
     return None
 
 
 async def set_cached_api_key(key_hash: str, data: dict) -> None:
+    _set_local_api_key(key_hash, data)  # Always populate local cache
     if _redis is None:
         return
     try:
@@ -65,6 +155,7 @@ async def set_cached_api_key(key_hash: str, data: dict) -> None:
 
 async def delete_cached_api_key(key_hash: str) -> None:
     """Remove a cached API key entry (called on revocation)."""
+    _LOCAL_API_KEY_CACHE.pop(key_hash, None)
     if _redis is None:
         return
     try:

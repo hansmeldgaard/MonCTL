@@ -503,8 +503,9 @@ async def _check_ingestion() -> dict:
 
 
 async def _check_redis() -> dict:
-    """Check Redis connectivity, version, memory, clients, and key stats."""
+    """Check Redis connectivity, version, memory, replication, Sentinel, and key stats."""
     from monctl_central.cache import _redis
+    import redis.asyncio as aioredis
 
     if _redis is None:
         return {
@@ -514,7 +515,14 @@ async def _check_redis() -> dict:
         }
 
     t0 = time.monotonic()
-    await _redis.ping()
+    try:
+        await _redis.ping()
+    except Exception as e:
+        return {
+            "status": "critical",
+            "latency_ms": None,
+            "details": {"error": f"Redis ping failed: {e}"},
+        }
     latency_ms = round((time.monotonic() - t0) * 1000, 2)
 
     db_size = await _redis.dbsize()
@@ -533,14 +541,65 @@ async def _check_redis() -> dict:
     try:
         info_mem = await _redis.info("memory")
         memory_stats = {
-            "used_memory": info_mem.get("used_memory"),
             "used_memory_human": info_mem.get("used_memory_human"),
-            "used_memory_peak": info_mem.get("used_memory_peak"),
             "used_memory_peak_human": info_mem.get("used_memory_peak_human"),
             "mem_fragmentation_ratio": info_mem.get("mem_fragmentation_ratio"),
         }
     except Exception:
         pass
+
+    # Replication info
+    replication = None
+    try:
+        info_repl = await _redis.info("replication")
+        replication = {
+            "role": info_repl.get("role"),
+            "connected_slaves": info_repl.get("connected_slaves"),
+        }
+        if int(info_repl.get("connected_slaves", 0)) > 0:
+            replicas = []
+            for i in range(int(info_repl["connected_slaves"])):
+                slave_key = f"slave{i}"
+                if slave_key in info_repl:
+                    replicas.append(info_repl[slave_key])
+            replication["replicas"] = replicas
+    except Exception:
+        pass
+
+    # Sentinel info (only if Sentinel mode is configured)
+    sentinel_info = None
+    if settings.redis_sentinel_hosts:
+        try:
+            for entry in settings.redis_sentinel_hosts.split(","):
+                entry = entry.strip()
+                if ":" in entry:
+                    host, port = entry.rsplit(":", 1)
+                else:
+                    host, port = entry, "26379"
+                try:
+                    s = aioredis.from_url(
+                        f"redis://{host}:{port}", decode_responses=True
+                    )
+                    master_info = await s.execute_command(
+                        "SENTINEL", "master", settings.redis_sentinel_master
+                    )
+                    master_dict = dict(
+                        zip(master_info[::2], master_info[1::2])
+                    )
+                    sentinel_info = {
+                        "master_ip": master_dict.get("ip"),
+                        "master_port": master_dict.get("port"),
+                        "num_slaves": master_dict.get("num-slaves"),
+                        "num_sentinels": int(master_dict.get("num-other-sentinels", 0)) + 1,
+                        "quorum": master_dict.get("quorum"),
+                        "flags": master_dict.get("flags"),
+                    }
+                    await s.close()
+                    break
+                except Exception:
+                    continue
+        except Exception:
+            pass
 
     # Clients
     connected_clients = None
@@ -555,11 +614,11 @@ async def _check_redis() -> dict:
     try:
         prefixes: dict[str, int] = {}
         count = 0
-        async for key in _redis.scan_iter(match="monctl:*", count=500):
+        async for key in _redis.scan_iter(match="*", count=500):
             if isinstance(key, bytes):
                 key = key.decode()
             parts = key.split(":")
-            prefix = ":".join(parts[:2]) if len(parts) >= 2 else key
+            prefix = parts[0] if parts else key
             prefixes[prefix] = prefixes.get(prefix, 0) + 1
             count += 1
             if count >= 2000:
@@ -568,8 +627,17 @@ async def _check_redis() -> dict:
     except Exception:
         pass
 
+    # Determine status
+    status = "healthy"
+    if replication:
+        if replication.get("role") == "master" and replication.get("connected_slaves", 0) == 0:
+            if settings.redis_sentinel_hosts:
+                status = "degraded"  # No replicas connected in HA mode
+    if sentinel_info and sentinel_info.get("flags") and "s_down" in sentinel_info["flags"]:
+        status = "degraded"
+
     return {
-        "status": "healthy",
+        "status": status,
         "latency_ms": latency_ms,
         "details": {
             "version": version,
@@ -577,6 +645,8 @@ async def _check_redis() -> dict:
             "db_size": db_size,
             "connected_clients": connected_clients,
             "memory": memory_stats,
+            "replication": replication,
+            "sentinel": sentinel_info,
             "key_stats": key_stats,
         },
     }

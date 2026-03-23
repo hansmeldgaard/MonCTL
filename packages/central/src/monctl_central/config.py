@@ -21,6 +21,9 @@ class Settings(BaseSettings):
 
     # Redis
     redis_url: str = "redis://localhost:6379/0"
+    # Redis Sentinel (HA mode — takes precedence over redis_url when set)
+    redis_sentinel_hosts: str = ""  # comma-separated: "host1:26379,host2:26379,host3:26379"
+    redis_sentinel_master: str = "monctl-redis"
 
     # ClickHouse (replaces VictoriaMetrics for time-series + text data)
     clickhouse_hosts: str = "localhost"  # comma-separated: "192.168.1.41,192.168.1.42,192.168.1.43"

@@ -69,9 +69,19 @@ class LeaderElection:
 
     async def _try_acquire(self) -> None:
         # Try to acquire or renew
-        acquired = await self._redis.set(
-            _LEADER_KEY, self._instance_id, nx=True, ex=_LEADER_TTL
-        )
+        try:
+            acquired = await self._redis.set(
+                _LEADER_KEY, self._instance_id, nx=True, ex=_LEADER_TTL
+            )
+        except Exception as e:
+            if self._is_leader:
+                logger.warning(
+                    "leader_redis_unreachable_during_leadership instance_id=%s error=%s",
+                    self._instance_id, e,
+                )
+            self._is_leader = False
+            raise  # Let outer loop handle retry
+
         if acquired:
             if not self._is_leader:
                 logger.info("leader_acquired instance_id=%s", self._instance_id)

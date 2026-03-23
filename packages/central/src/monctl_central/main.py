@@ -558,7 +558,11 @@ class SshConnector:
     from monctl_central.cache import get_redis
 
     try:
-        await get_redis(settings.redis_url)
+        await get_redis(
+            settings.redis_url,
+            sentinel_hosts=settings.redis_sentinel_hosts,
+            sentinel_master=settings.redis_sentinel_master,
+        )
         logger.info("redis_connected")
     except Exception:
         logger.warning("redis_connect_failed", exc_info=True)

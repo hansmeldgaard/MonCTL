@@ -49,7 +49,7 @@ services:
     profiles:
       - db
 
-  # ── Redis (central1 only) ──────────────────────────────────────────────────
+  # ── Redis primary (central1 only) ─────────────────────────────────────────
   redis:
     image: redis:7-alpine
     ports:
@@ -64,6 +64,46 @@ services:
     restart: unless-stopped
     profiles:
       - redis
+      - redis-primary
+
+  # ── Redis replica (central2 only) ─────────────────────────────────────────
+  redis-replica:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --replicaof 10.145.210.41 6379
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    profiles:
+      - redis-replica
+
+  # ── Redis Sentinel (central1, central2, central3) ────────────────────────
+  redis-sentinel:
+    image: redis:7-alpine
+    ports:
+      - "26379:26379"
+    entrypoint: []
+    command: >
+      sh -c "
+        cp /etc/redis/sentinel-template.conf /tmp/sentinel.conf &&
+        redis-sentinel /tmp/sentinel.conf
+      "
+    volumes:
+      - ./sentinel.conf:/etc/redis/sentinel-template.conf:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "26379", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    profiles:
+      - redis-sentinel
 
   # ── Central app (all 4 nodes) ──────────────────────────────────────────────
   central:
@@ -83,6 +123,8 @@ services:
       MONCTL_ADMIN_PASSWORD: ${ADMIN_PASSWORD}
       MONCTL_COLLECTOR_API_KEY: ${COLLECTOR_API_KEY}
       MONCTL_CLICKHOUSE_HOSTS: ${CLICKHOUSE_HOSTS:-10.145.210.43,10.145.210.44}
+      MONCTL_REDIS_SENTINEL_HOSTS: ${MONCTL_REDIS_SENTINEL_HOSTS:-}
+      MONCTL_REDIS_SENTINEL_MASTER: ${MONCTL_REDIS_SENTINEL_MASTER:-monctl-redis}
     volumes:
       - upgrades_data:/data/upgrades
     restart: unless-stopped

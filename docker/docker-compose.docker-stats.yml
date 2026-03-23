@@ -14,7 +14,7 @@ services:
       MONCTL_HOST_LABEL: ${MONCTL_HOST_LABEL:-unknown}
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:9100/health"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9100/health"]
       interval: 30s
       timeout: 5s
       retries: 3
