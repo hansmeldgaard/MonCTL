@@ -1,6 +1,5 @@
 import { NavLink } from "react-router-dom";
 import {
-  Activity,
   AppWindow,
   BarChart3,
   Bell,
@@ -56,12 +55,11 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
       )}
     >
       {/* Brand */}
-      <div className="flex h-14 items-center border-b border-zinc-800 px-4">
-        <Activity className="h-6 w-6 shrink-0 text-brand-500" />
-        {!collapsed && (
-          <span className="ml-2.5 text-base font-semibold tracking-tight text-zinc-100">
-            MonCTL
-          </span>
+      <div className="flex h-14 items-center justify-center border-b border-zinc-800 px-4">
+        {collapsed ? (
+          <img src="/logo-icon.svg" alt="MonCTL" className="h-6 w-6" />
+        ) : (
+          <img src="/logo.svg" alt="MonCTL" className="h-6" />
         )}
       </div>
 

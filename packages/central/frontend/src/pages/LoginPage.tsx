@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { Navigate } from "react-router-dom";
-import { Activity, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth.tsx";
 import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
 import { required } from "@/lib/validation.ts";
@@ -60,7 +60,7 @@ export function LoginPage() {
         {/* Brand */}
         <div className="mb-8 flex flex-col items-center text-center">
           <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-brand-600/15">
-            <Activity className="h-7 w-7 text-brand-500" />
+            <img src="/logo-icon.svg" alt="MonCTL" className="h-7 w-7" />
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-zinc-100">
             MonCTL

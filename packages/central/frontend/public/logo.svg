@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="140" height="28" viewBox="0 0 140 28">
+  <path d="M2 21 L6 21 L9 6 L13 18 L16 10 L19 21 L22 21" fill="none" stroke="#5DCAA5" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="28" y="20" font-family="Inter, system-ui, sans-serif" font-weight="500" font-size="15" letter-spacing="-0.3">
+    <tspan fill="#f4f4f5">Mon</tspan><tspan fill="#5DCAA5">CTL</tspan>
+  </text>
+</svg>
