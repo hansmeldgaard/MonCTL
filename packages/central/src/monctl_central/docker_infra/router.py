@@ -73,17 +73,17 @@ async def list_docker_hosts(auth: dict = Depends(require_admin)):
 
     data = []
     for label, url in central.items():
-        data.append({"label": label, "source": "sidecar", "url": url})
+        data.append({"label": label, "tier": "central", "source": "sidecar", "url": url})
     for label, meta in workers.items():
-        if label not in central:  # avoid duplicates
-            data.append({"label": label, "source": "push", "last_push": meta.get("last_push")})
+        if label not in central:
+            data.append({"label": label, "tier": "worker", "source": "push", "last_push": meta.get("last_push")})
 
     return {"status": "success", "data": data}
 
 
 @router.get("/overview")
 async def get_docker_overview(auth: dict = Depends(require_admin)):
-    """Fetch system info from all hosts (sidecar proxy + Redis)."""
+    """Fetch unified host list from both central (sidecar) and worker (Redis) tiers."""
     central = _get_central_hosts()
     workers = await _get_worker_hosts()
 
@@ -92,16 +92,46 @@ async def get_docker_overview(auth: dict = Depends(require_admin)):
 
     results = []
 
-    # Central hosts: proxy HTTP
+    # Central hosts: proxy HTTP — fetch /system + /stats in parallel per host
     async def _fetch_central(client: httpx.AsyncClient, label: str, base_url: str) -> dict:
         try:
-            resp = await client.get(f"{base_url}/system", timeout=5.0)
-            resp.raise_for_status()
-            return {"label": label, "source": "sidecar", "status": "ok", "data": resp.json()}
+            sys_resp, stats_resp = await asyncio.gather(
+                client.get(f"{base_url}/system", timeout=5.0),
+                client.get(f"{base_url}/stats", timeout=5.0),
+            )
+            sys_resp.raise_for_status()
+            sys_data = sys_resp.json()
+
+            containers = []
+            if stats_resp.status_code == 200:
+                containers = stats_resp.json().get("containers", [])
+
+            running = [c for c in containers if c.get("status") == "running"]
+            unhealthy = [c for c in containers if c.get("health") == "unhealthy"]
+
+            return {
+                "label": label,
+                "tier": "central",
+                "source": "sidecar",
+                "status": "ok",
+                "container_count": len(running),
+                "total_containers": len(containers),
+                "unhealthy_count": len(unhealthy),
+                "last_seen": None,
+                "data": {**sys_data, "containers": containers},
+            }
         except Exception as exc:
             return {
-                "label": label, "source": "sidecar",
-                "status": "unreachable", "error": str(exc), "data": None,
+                "label": label,
+                "tier": "central",
+                "source": "sidecar",
+                "status": "unreachable",
+                "container_count": 0,
+                "total_containers": 0,
+                "unhealthy_count": 0,
+                "last_seen": None,
+                "error": str(exc),
+                "data": None,
             }
 
     async with httpx.AsyncClient() as client:
@@ -114,13 +144,37 @@ async def get_docker_overview(auth: dict = Depends(require_admin)):
     for label, meta in workers.items():
         if label in central:
             continue
+        stats = await get_docker_push(label, "stats")
         system = await get_docker_push(label, "system")
-        if system:
-            results.append({"label": label, "source": "push", "status": "ok", "data": system})
+
+        containers = stats.get("containers", []) if stats else []
+        running = [c for c in containers if c.get("status") == "running"]
+        unhealthy = [c for c in containers if c.get("health") == "unhealthy"]
+
+        if stats or system:
+            results.append({
+                "label": label,
+                "tier": "worker",
+                "source": "push",
+                "status": "degraded" if unhealthy else "ok",
+                "container_count": len(running),
+                "total_containers": len(containers),
+                "unhealthy_count": len(unhealthy),
+                "last_seen": meta.get("last_push"),
+                "data": {**(system or {}), "containers": containers},
+            })
         else:
             results.append({
-                "label": label, "source": "push",
-                "status": "stale", "error": "No recent data", "data": None,
+                "label": label,
+                "tier": "worker",
+                "source": "push",
+                "status": "stale",
+                "container_count": 0,
+                "total_containers": 0,
+                "unhealthy_count": 0,
+                "last_seen": meta.get("last_push"),
+                "error": "No recent data",
+                "data": None,
             })
 
     return {

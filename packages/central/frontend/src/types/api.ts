@@ -1178,7 +1178,12 @@ export interface DockerImagesResponse {
 
 export interface DockerOverviewHost {
   label: string;
-  status: "ok" | "unreachable";
+  tier?: "central" | "worker";
+  status: "ok" | "degraded" | "unreachable" | "stale" | "unknown";
+  container_count?: number;
+  total_containers?: number;
+  unhealthy_count?: number;
+  last_seen?: string | null;
   data: DockerSystemInfo | null;
   error?: string;
 }
