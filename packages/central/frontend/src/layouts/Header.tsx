@@ -5,12 +5,21 @@ import { Button } from "@/components/ui/button.tsx";
 
 const pageTitles: Record<string, string> = {
   "/": "Dashboard",
+  "/system-health": "System Health",
+  "/docker-infrastructure": "Docker Infrastructure",
   "/devices": "Devices",
+  "/apps": "Apps",
+  "/connectors": "Connectors",
+  "/python-modules": "Modules",
   "/collectors": "Collectors",
   "/assignments": "Assignments",
+  "/templates": "Templates",
+  "/packs": "Packs",
   "/credentials": "Credentials",
   "/alerts": "Alerts",
   "/events": "Events",
+  "/analytics": "Analytics",
+  "/upgrades": "Upgrades",
   "/settings": "Settings",
 };
 
@@ -22,11 +31,12 @@ export function Header() {
   // Resolve title — check exact match first, then prefix match for detail pages
   let title = pageTitles[location.pathname];
   if (!title) {
-    if (location.pathname.startsWith("/devices/")) {
-      title = "Device Detail";
-    } else {
-      title = "MonCTL";
-    }
+    if (location.pathname.startsWith("/devices/")) title = "Device Detail";
+    else if (location.pathname.startsWith("/apps/")) title = "App Detail";
+    else if (location.pathname.startsWith("/connectors/")) title = "Connector Detail";
+    else if (location.pathname.startsWith("/packs/")) title = "Pack Detail";
+    else if (location.pathname.startsWith("/settings/")) title = "Settings";
+    else title = "MonCTL";
   }
 
   const handleLogout = async () => {
