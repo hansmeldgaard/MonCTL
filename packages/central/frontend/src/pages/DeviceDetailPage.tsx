@@ -1101,7 +1101,7 @@ function PerformanceTab({ deviceId }: { deviceId: string }) {
                           : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
                       }`}
                     >
-                      {ct}
+                      {ct.charAt(0).toUpperCase() + ct.slice(1)}
                     </button>
                   ))}
                 </CardContent>
