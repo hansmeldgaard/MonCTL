@@ -7,25 +7,25 @@ const DASHBOARDS = [
     name: "Device Performance",
     description: "CPU, memory, disk metrics over time",
     icon: Server,
-    path: "/collection/root",
+    path: "/public/dashboard/d8f82baa-fba7-41aa-bca5-81e191405614",
   },
   {
     name: "Interface Traffic",
     description: "Bandwidth, errors, utilization per interface",
     icon: Network,
-    path: "/collection/root",
+    path: "/public/dashboard/aae30f35-7d4f-43c3-aafa-16ed03daed07",
   },
   {
     name: "Availability Overview",
     description: "Uptime, response times, unreachable devices",
     icon: Activity,
-    path: "/collection/root",
+    path: "/public/dashboard/837e66f5-21a3-4498-b709-187abe055547",
   },
   {
     name: "Alert History",
     description: "Alert trends, noisy rules, raw log",
     icon: Bell,
-    path: "/collection/root",
+    path: "/public/dashboard/c95f45f9-a662-4d45-b72e-062bfa77d6ba",
   },
 ];
 
