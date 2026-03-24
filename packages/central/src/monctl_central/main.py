@@ -553,6 +553,16 @@ class SshConnector:
         await session.commit()
         logger.info("central_version_registered", hostname=_hostname)
 
+    # ── ClickHouse write buffer ───────────────────────────────────────────
+    ch_buffer = None
+    if ch is not None:
+        from monctl_central.storage import ch_buffer as _ch_buf_mod
+        from monctl_central.storage.ch_buffer import ClickHouseWriteBuffer
+        ch_buffer = ClickHouseWriteBuffer(ch)
+        await ch_buffer.start()
+        _ch_buf_mod._buffer = ch_buffer
+        logger.info("ch_write_buffer_started")
+
     # ── Redis connection ───────────────────────────────────────────────────
     from monctl_central.cache import get_redis
 
@@ -597,6 +607,9 @@ class SshConnector:
         await scheduler_runner.stop()
     if leader:
         await leader.stop()
+
+    if ch_buffer:
+        await ch_buffer.stop()
 
     from monctl_central.cache import close_redis
     await close_redis()

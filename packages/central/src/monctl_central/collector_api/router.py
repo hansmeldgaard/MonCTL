@@ -1163,52 +1163,77 @@ async def submit_results(
             continue
 
         if target_table == "interface" and r.interface_rows:
-            from monctl_central.cache import get_previous_counters, cache_current_counters
+            from monctl_central.cache import (
+                get_previous_counters_batch,
+                cache_current_counters_batch,
+            )
 
+            # Phase A: Resolve all interface_ids (PG lookups — still sequential)
+            resolved_interfaces: list[dict] = []
             for iface in r.interface_rows:
                 iface_name = iface.get("if_name", "")
                 iface_index = iface.get("if_index", 0)
                 iface_alias = iface.get("if_alias", "")
                 iface_speed = iface.get("if_speed_mbps", 0)
-                in_octets = iface.get("in_octets", 0)
-                out_octets = iface.get("out_octets", 0)
 
-                # Resolve stable interface_id + polling_enabled flag
                 interface_id, polling_enabled = await _resolve_interface_id(
                     db, device_id_resolved, iface_name, iface_index,
                     if_descr="", if_alias=iface_alias, if_speed_mbps=iface_speed,
                 )
-
-                # Skip interfaces where polling has been disabled
                 if not polling_enabled:
                     continue
+                resolved_interfaces.append({
+                    **iface,
+                    "interface_id": interface_id,
+                    "if_speed_mbps": iface_speed,
+                })
 
-                # Central-side rate calculation
+            if not resolved_interfaces:
+                skipped += 1
+                continue
+
+            # Phase B: Batch-fetch all previous counters (1 Redis pipeline)
+            iface_ids = [ri["interface_id"] for ri in resolved_interfaces]
+            prev_map = await get_previous_counters_batch(iface_ids)
+
+            # Phase C: Calculate rates and build CH rows
+            cache_entries: list[dict] = []
+            for ri in resolved_interfaces:
+                iid = ri["interface_id"]
+                in_octets = ri.get("in_octets", 0)
+                out_octets = ri.get("out_octets", 0)
+                if_speed = ri["if_speed_mbps"]
+
                 in_rate = 0.0
                 out_rate = 0.0
                 in_util = 0.0
                 out_util = 0.0
-                prev = await get_previous_counters(interface_id)
+                prev = prev_map.get(iid)
                 if prev:
-                    prev_ts_str = prev["executed_at"]
-                    if isinstance(prev_ts_str, str):
-                        if prev_ts_str.endswith("Z"):
-                            prev_ts_str = prev_ts_str[:-1] + "+00:00"
-                        prev_ts = datetime.fromisoformat(prev_ts_str)
-                        if prev_ts.tzinfo is None:
-                            prev_ts = prev_ts.replace(tzinfo=timezone.utc)
-                    else:
-                        prev_ts = prev_ts_str
-                    dt_sec = (executed_at - prev_ts).total_seconds()
-                    in_rate, _ = _calculate_rate(in_octets, prev["in_octets"], dt_sec, iface_speed)
-                    out_rate, _ = _calculate_rate(out_octets, prev["out_octets"], dt_sec, iface_speed)
-                    in_util = _calculate_utilization(in_rate, iface_speed)
-                    out_util = _calculate_utilization(out_rate, iface_speed)
+                    try:
+                        prev_ts_str = prev["executed_at"]
+                        if isinstance(prev_ts_str, str):
+                            if prev_ts_str.endswith("Z"):
+                                prev_ts_str = prev_ts_str[:-1] + "+00:00"
+                            prev_ts = datetime.fromisoformat(prev_ts_str)
+                            if prev_ts.tzinfo is None:
+                                prev_ts = prev_ts.replace(tzinfo=timezone.utc)
+                        else:
+                            prev_ts = prev_ts_str
+                        dt_sec = (executed_at - prev_ts).total_seconds()
+                        in_rate, _ = _calculate_rate(in_octets, prev["in_octets"], dt_sec, if_speed)
+                        out_rate, _ = _calculate_rate(out_octets, prev["out_octets"], dt_sec, if_speed)
+                        in_util = _calculate_utilization(in_rate, if_speed)
+                        out_util = _calculate_utilization(out_rate, if_speed)
+                    except (ValueError, TypeError):
+                        pass
 
-                # Always cache current counters as new baseline
-                await cache_current_counters(
-                    interface_id, in_octets, out_octets, executed_at.isoformat(),
-                )
+                cache_entries.append({
+                    "interface_id": iid,
+                    "in_octets": in_octets,
+                    "out_octets": out_octets,
+                    "executed_at_iso": executed_at.isoformat(),
+                })
 
                 ch_rows.append({
                     "_target_table": "interface",
@@ -1216,27 +1241,27 @@ async def submit_results(
                     "collector_id": collector_uuid,
                     "app_id": enrichment.get("app_id", str(assignment_id)),
                     "device_id": device_id_resolved,
-                    "interface_id": interface_id,
-                    "if_index": iface_index,
-                    "if_name": iface_name,
-                    "if_alias": iface_alias,
-                    "if_speed_mbps": iface_speed,
-                    "if_admin_status": iface.get("if_admin_status", ""),
-                    "if_oper_status": iface.get("if_oper_status", ""),
+                    "interface_id": iid,
+                    "if_index": ri.get("if_index", 0),
+                    "if_name": ri.get("if_name", ""),
+                    "if_alias": ri.get("if_alias", ""),
+                    "if_speed_mbps": if_speed,
+                    "if_admin_status": ri.get("if_admin_status", ""),
+                    "if_oper_status": ri.get("if_oper_status", ""),
                     "in_octets": in_octets,
                     "out_octets": out_octets,
-                    "in_errors": iface.get("in_errors", 0),
-                    "out_errors": iface.get("out_errors", 0),
-                    "in_discards": iface.get("in_discards", 0),
-                    "out_discards": iface.get("out_discards", 0),
-                    "in_unicast_pkts": iface.get("in_unicast_pkts", 0),
-                    "out_unicast_pkts": iface.get("out_unicast_pkts", 0),
+                    "in_errors": ri.get("in_errors", 0),
+                    "out_errors": ri.get("out_errors", 0),
+                    "in_discards": ri.get("in_discards", 0),
+                    "out_discards": ri.get("out_discards", 0),
+                    "in_unicast_pkts": ri.get("in_unicast_pkts", 0),
+                    "out_unicast_pkts": ri.get("out_unicast_pkts", 0),
                     "in_rate_bps": in_rate,
                     "out_rate_bps": out_rate,
                     "in_utilization_pct": in_util,
                     "out_utilization_pct": out_util,
-                    "poll_interval_sec": iface.get("poll_interval_sec", 0),
-                    "state": iface.get("state", 0),
+                    "poll_interval_sec": ri.get("poll_interval_sec", 0),
+                    "state": ri.get("state", 0),
                     "executed_at": executed_at,
                     "collector_name": request.collector_node,
                     "device_name": enrichment.get("device_name", ""),
@@ -1244,6 +1269,9 @@ async def submit_results(
                     "tenant_id": enrichment.get("tenant_id", "00000000-0000-0000-0000-000000000000"),
                     "tenant_name": enrichment.get("tenant_name", ""),
                 })
+
+            # Phase D: Batch-cache all current counters (1 Redis pipeline)
+            await cache_current_counters_batch(cache_entries)
         elif target_table == "config" and r.config_data:
             # Config-table apps: each key-value pair becomes a separate ClickHouse row
             import hashlib as _hashlib
@@ -1345,19 +1373,23 @@ async def submit_results(
                 row["component_type"] = ""
             ch_rows.append(row)
 
-    # Route results to the correct ClickHouse table based on target_table
+    # Route results to the correct ClickHouse table via write buffer
     if ch_rows:
-        # Group by target_table
         by_table: dict[str, list[dict]] = {}
         for row in ch_rows:
             tt = row.pop("_target_table", "availability_latency")
             by_table.setdefault(tt, []).append(row)
 
+        from monctl_central.storage.ch_buffer import get_ch_buffer
+        buf = get_ch_buffer()
         for table, rows in by_table.items():
-            try:
-                ch.insert_by_table(table, rows)
-            except Exception:
-                logger.exception("clickhouse_insert_error", node=request.collector_node, table=table)
+            if buf is not None:
+                await buf.append(table, rows)
+            else:
+                try:
+                    ch.insert_by_table(table, rows)
+                except Exception:
+                    logger.exception("clickhouse_insert_error", node=request.collector_node, table=table)
 
     return {
         "accepted": len(ch_rows),

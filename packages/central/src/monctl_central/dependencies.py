@@ -29,6 +29,14 @@ def get_engine():
             pool_size=20,
             max_overflow=10,
             pool_pre_ping=True,
+            pool_recycle=1800,
+            pool_timeout=10,
+            connect_args={
+                "server_settings": {
+                    "statement_timeout": "30000",
+                    "idle_in_transaction_session_timeout": "60000",
+                },
+            },
         )
     return _engine
 

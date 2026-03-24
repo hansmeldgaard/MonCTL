@@ -49,9 +49,11 @@ async def get_redis(
 
         sentinel = aioredis.sentinel.Sentinel(
             sentinels,
-            socket_timeout=3.0,
-            socket_connect_timeout=3.0,
+            socket_timeout=5.0,
+            socket_connect_timeout=5.0,
             decode_responses=True,
+            retry_on_timeout=True,
+            health_check_interval=30,
         )
         _redis = sentinel.master_for(sentinel_master)
         logger.info(
@@ -59,7 +61,15 @@ async def get_redis(
             sentinel_hosts, sentinel_master,
         )
     else:
-        _redis = aioredis.from_url(redis_url, decode_responses=True)
+        _redis = aioredis.from_url(
+            redis_url,
+            max_connections=50,
+            decode_responses=True,
+            socket_connect_timeout=5,
+            socket_timeout=5,
+            retry_on_timeout=True,
+            health_check_interval=30,
+        )
         logger.info("redis_direct_connected url=%s", redis_url)
 
     return _redis
@@ -340,6 +350,115 @@ async def cache_current_counters(
         )
     except Exception:
         pass
+
+
+async def get_previous_counters_batch(
+    interface_ids: list[str],
+) -> dict[str, dict | None]:
+    """Fetch previous counters for multiple interfaces in a single Redis pipeline.
+
+    Returns: {interface_id: counter_dict_or_None}
+    """
+    if not interface_ids:
+        return {}
+
+    result: dict[str, dict | None] = {iid: None for iid in interface_ids}
+    cache_misses: list[str] = []
+
+    if _redis is not None:
+        try:
+            pipe = _redis.pipeline(transaction=False)
+            for iid in interface_ids:
+                pipe.get(f"{_IFACE_PREV_PREFIX}{iid}")
+            raw_values = await pipe.execute()
+
+            for iid, raw in zip(interface_ids, raw_values):
+                if raw is not None:
+                    result[iid] = json.loads(raw)
+                else:
+                    cache_misses.append(iid)
+        except Exception:
+            logger.exception("redis_pipeline_get_error")
+            cache_misses = list(interface_ids)
+    else:
+        cache_misses = list(interface_ids)
+
+    # ClickHouse fallback for cache misses
+    if cache_misses:
+        try:
+            import asyncio as _aio
+            from monctl_central.dependencies import get_clickhouse
+            ch = get_clickhouse()
+            if ch:
+                placeholders = ", ".join(f"'{iid}'" for iid in cache_misses)
+                sql = (
+                    "SELECT toString(interface_id) AS interface_id, "
+                    "in_octets, out_octets, executed_at "
+                    "FROM interface_latest FINAL "
+                    f"WHERE interface_id IN ({placeholders})"
+                )
+                rows = await _aio.to_thread(ch._get_client().query, sql)
+                ch_results = {
+                    r["interface_id"]: r for r in rows.named_results()
+                }
+
+                backfill_pipe = (
+                    _redis.pipeline(transaction=False) if _redis else None
+                )
+                for iid in cache_misses:
+                    row = ch_results.get(iid)
+                    if row:
+                        ea = row["executed_at"]
+                        prev = {
+                            "in_octets": row["in_octets"],
+                            "out_octets": row["out_octets"],
+                            "executed_at": (
+                                ea.isoformat()
+                                if hasattr(ea, "isoformat")
+                                else str(ea)
+                            ),
+                        }
+                        result[iid] = prev
+                        if backfill_pipe:
+                            backfill_pipe.setex(
+                                f"{_IFACE_PREV_PREFIX}{iid}",
+                                _IFACE_PREV_TTL,
+                                json.dumps(prev),
+                            )
+                if backfill_pipe:
+                    try:
+                        await backfill_pipe.execute()
+                    except Exception:
+                        pass
+        except Exception:
+            logger.exception("ch_fallback_batch_error")
+
+    return result
+
+
+async def cache_current_counters_batch(entries: list[dict]) -> None:
+    """Cache current counters for multiple interfaces in a single Redis pipeline.
+
+    Each entry: {"interface_id": str, "in_octets": int, "out_octets": int, "executed_at_iso": str}
+    """
+    if _redis is None or not entries:
+        return
+    try:
+        pipe = _redis.pipeline(transaction=False)
+        for e in entries:
+            data = json.dumps({
+                "in_octets": e["in_octets"],
+                "out_octets": e["out_octets"],
+                "executed_at": e["executed_at_iso"],
+            })
+            pipe.setex(
+                f"{_IFACE_PREV_PREFIX}{e['interface_id']}",
+                _IFACE_PREV_TTL,
+                data,
+            )
+        await pipe.execute()
+    except Exception:
+        logger.exception("redis_pipeline_set_error")
 
 
 async def get_or_load_enrichment(
