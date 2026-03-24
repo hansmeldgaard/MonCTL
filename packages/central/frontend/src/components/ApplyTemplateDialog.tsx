@@ -26,6 +26,11 @@ export function ApplyTemplateDialog({ open, onClose, deviceIds, deviceName }: Pr
 
   const selectedTemplate = templates?.find((t: Template) => t.id === selectedTemplateId);
   const apps = selectedTemplate?.config?.apps ?? [];
+  const monitoring = selectedTemplate?.config?.monitoring;
+  const monitoringChecks = monitoring
+    ? Object.entries(monitoring).filter(([, v]) => v != null) as [string, { app_name: string; interval_seconds: number }][]
+    : [];
+  const hasContent = apps.length > 0 || monitoringChecks.length > 0;
 
   function handleClose() {
     setSelectedTemplateId("");
@@ -79,10 +84,19 @@ export function ApplyTemplateDialog({ open, onClose, deviceIds, deviceName }: Pr
           </Select>
         </div>
 
-        {selectedTemplate && apps.length > 0 && (
+        {selectedTemplate && hasContent && (
           <div className="space-y-1.5">
             <Label className="text-xs text-zinc-500">Apps to be assigned</Label>
             <div className="rounded-md border border-zinc-700 bg-zinc-800/50 p-3 space-y-1.5">
+              {monitoringChecks.map(([role, check]) => (
+                <div key={role} className="flex items-center justify-between text-sm">
+                  <span className="font-mono text-zinc-200">{check.app_name}</span>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="info" className="text-[10px]">{role}</Badge>
+                    <span className="text-xs text-zinc-500">{check.interval_seconds}s</span>
+                  </div>
+                </div>
+              ))}
               {apps.map((app: { app_id?: string; app_name?: string; role?: string; schedule_value?: string }, idx: number) => (
                 <div key={idx} className="flex items-center justify-between text-sm">
                   <span className="font-mono text-zinc-200">{app.app_name ?? app.app_id ?? "unknown"}</span>
@@ -98,7 +112,7 @@ export function ApplyTemplateDialog({ open, onClose, deviceIds, deviceName }: Pr
           </div>
         )}
 
-        {selectedTemplate && apps.length === 0 && (
+        {selectedTemplate && !hasContent && (
           <p className="text-sm text-zinc-500 italic">This template has no apps configured.</p>
         )}
 
@@ -110,7 +124,7 @@ export function ApplyTemplateDialog({ open, onClose, deviceIds, deviceName }: Pr
         <Button variant="secondary" onClick={handleClose}>Cancel</Button>
         <Button
           onClick={handleApply}
-          disabled={!selectedTemplateId || apps.length === 0 || applyTemplate.isPending}
+          disabled={!selectedTemplateId || !hasContent || applyTemplate.isPending}
         >
           {applyTemplate.isPending ? (
             <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
