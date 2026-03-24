@@ -536,8 +536,8 @@ CREATE TABLE IF NOT EXISTS alert_log ON CLUSTER '{cluster}'
     entity_labels      String        DEFAULT '{{}}',
     fire_count         UInt32        DEFAULT 0,
     message            String        DEFAULT '',
-    metric_values      String        DEFAULT '{}',
-    threshold_values   String        DEFAULT '{}',
+    metric_values      String        DEFAULT '{{}}',
+    threshold_values   String        DEFAULT '{{}}',
     occurred_at        DateTime64(3, 'UTC'),
     received_at        DateTime64(3, 'UTC') DEFAULT now64(3)
 )

@@ -1,15 +1,15 @@
 """Remove severity from alert_definitions, add metric/threshold values to entities.
 
-Revision ID: a1b2c3d4e5f6
-Revises: z7a8b9c0d1e2
+Revision ID: ab1cd2ef3gh4
+Revises: p4q5r6s7t8u9
 """
 
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB
 
-revision = "a1b2c3d4e5f6"
-down_revision = "z7a8b9c0d1e2"
+revision = "ab1cd2ef3gh4"
+down_revision = "p4q5r6s7t8u9"
 branch_labels = None
 depends_on = None
 
