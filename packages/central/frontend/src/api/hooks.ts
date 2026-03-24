@@ -85,6 +85,7 @@ import type {
   OsCachedPkg,
   OsInstallResult,
   UpgradeBadge,
+  DashboardSummary,
 } from "@/types/api.ts";
 
 function buildListQs(params: ListParams): string {
@@ -2875,5 +2876,16 @@ export function useUpgradeBadge() {
     queryFn: () => apiGet<UpgradeBadge>("/upgrades/badge"),
     select: (r) => r.data,
     refetchInterval: 60_000,
+  });
+}
+
+// ── Dashboard ────────────────────────────────────────────────────────────────
+
+export function useDashboardSummary() {
+  return useQuery({
+    queryKey: ["dashboard-summary"],
+    queryFn: () => apiGet<DashboardSummary>("/dashboard/summary"),
+    select: (res) => res.data,
+    refetchInterval: 15_000,
   });
 }

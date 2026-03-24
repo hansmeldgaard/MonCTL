@@ -1,0 +1,101 @@
+{
+  "uid": "alert-history",
+  "title": "Alert History",
+  "description": "Alert trends, noisiest rules, duration analysis",
+  "tags": ["monctl"],
+  "timezone": "browser",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "templating": {
+    "list": [
+      {
+        "name": "severity",
+        "type": "query",
+        "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+        "query": "SELECT DISTINCT severity FROM events WHERE severity != '' ORDER BY severity",
+        "multi": true,
+        "includeAll": true,
+        "current": { "text": "All", "value": "$__all" },
+        "refresh": 2
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Alert Volume Over Time",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [
+        {
+          "rawSql": "SELECT $__timeInterval(fired_at) AS time, action, count() AS cnt FROM alert_log WHERE $__timeFilter(fired_at) GROUP BY time, action ORDER BY time",
+          "format": 1,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "options": {
+        "stacking": "normal"
+      }
+    },
+    {
+      "id": 2,
+      "title": "Top 10 Noisiest Alert Rules",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [
+        {
+          "rawSql": "SELECT definition_name, count() AS fire_count FROM alert_log WHERE action = 'fire' AND $__timeFilter(fired_at) GROUP BY definition_name ORDER BY fire_count DESC LIMIT 10",
+          "format": 2,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "options": {
+        "orientation": "horizontal"
+      }
+    },
+    {
+      "id": 3,
+      "title": "Event State Distribution",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [
+        {
+          "rawSql": "SELECT state, count() AS cnt FROM events WHERE $__timeFilter(created_at) GROUP BY state",
+          "format": 2,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Alert Log — Raw",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 8 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [
+        {
+          "rawSql": "SELECT fired_at, action, definition_name, device_name, entity_key, current_value, threshold_value FROM alert_log WHERE $__timeFilter(fired_at) ORDER BY fired_at DESC LIMIT 100",
+          "format": 2,
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "time": { "from": "now-7d", "to": "now" }
+}

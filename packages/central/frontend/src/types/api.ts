@@ -1367,3 +1367,78 @@ export interface OsInstallResult {
 export interface UpgradeBadge {
   os_update_count: number;
 }
+
+// ── Dashboard Summary ───────────────────────────────────────────────────────
+
+export interface DashboardAlertSummary {
+  total_firing: number;
+  recent: DashboardRecentAlert[];
+}
+
+export interface DashboardRecentAlert {
+  id: string;
+  definition_name: string;
+  device_name: string;
+  device_id: string | null;
+  entity_key: string;
+  current_value: number | null;
+  fire_count: number;
+  started_at: string | null;
+}
+
+export interface DashboardDeviceHealth {
+  total: number;
+  up: number;
+  down: number;
+  degraded: number;
+  worst: DashboardWorstDevice[];
+}
+
+export interface DashboardWorstDevice {
+  device_id: string;
+  device_name: string;
+  device_address: string;
+  reason: "down" | "degraded";
+  firing_alerts: number;
+}
+
+export interface DashboardCollectorStatus {
+  total: number;
+  online: number;
+  offline: number;
+  pending: number;
+  stale: DashboardStaleCollector[];
+}
+
+export interface DashboardStaleCollector {
+  collector_id: string;
+  name: string;
+  last_seen: string | null;
+  stale_seconds: number | null;
+}
+
+export interface DashboardTopNEntry {
+  device_id: string;
+  device_name: string;
+  component?: string;
+  interface?: string;
+  value: number;
+  unit: string;
+  in_rate_bps?: number;
+  out_rate_bps?: number;
+  speed_mbps?: number;
+  executed_at: string | null;
+}
+
+export interface DashboardPerformanceTopN {
+  cpu: DashboardTopNEntry[];
+  memory: DashboardTopNEntry[];
+  bandwidth: DashboardTopNEntry[];
+}
+
+export interface DashboardSummary {
+  alert_summary: DashboardAlertSummary;
+  device_health: DashboardDeviceHealth;
+  collector_status: DashboardCollectorStatus;
+  performance_top_n: DashboardPerformanceTopN;
+}

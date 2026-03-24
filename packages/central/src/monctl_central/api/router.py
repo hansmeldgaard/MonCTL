@@ -35,6 +35,7 @@ from monctl_central.config_history.router import router as config_history_router
 from monctl_central.docker_infra.router import router as docker_infra_router
 from monctl_central.retention.router import router as retention_router
 from monctl_central.upgrades.router import router as upgrades_router
+from monctl_central.dashboard.router import router as dashboard_router
 
 api_router = APIRouter()
 
@@ -69,3 +70,4 @@ api_router.include_router(config_history_router, tags=["config-history"])
 api_router.include_router(docker_infra_router, prefix="/docker-infra", tags=["docker-infra"])
 api_router.include_router(retention_router, tags=["retention"])
 api_router.include_router(upgrades_router, prefix="/upgrades", tags=["upgrades"])
+api_router.include_router(dashboard_router, tags=["dashboard"])

@@ -1,7 +1,6 @@
 import type { ComponentType } from "react";
 import { Link } from "react-router-dom";
 import {
-  Activity,
   AlertTriangle,
   Bell,
   CheckCircle2,
@@ -11,7 +10,6 @@ import {
   XCircle,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
-import { Badge } from "@/components/ui/badge.tsx";
 import {
   Table,
   TableBody,
@@ -20,14 +18,16 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table.tsx";
-import { StatusBadge } from "@/components/StatusBadge.tsx";
-import {
-  useDevices,
-  useCollectors,
-  useActiveAlerts,
-  useLatestResults,
-} from "@/api/hooks.ts";
+import { useDashboardSummary } from "@/api/hooks.ts";
 import { timeAgo } from "@/lib/utils.ts";
+import type {
+  DashboardTopNEntry,
+  DashboardWorstDevice,
+  DashboardRecentAlert,
+  DashboardStaleCollector,
+} from "@/types/api.ts";
+
+// ── Stat Card ────────────────────────────────────────────────────────────────
 
 function StatCard({
   title,
@@ -35,15 +35,17 @@ function StatCard({
   subtitle,
   icon: Icon,
   iconColor,
+  to,
 }: {
   title: string;
   value: string | number;
   subtitle?: string;
   icon: ComponentType<{ className?: string }>;
   iconColor: string;
+  to?: string;
 }) {
-  return (
-    <Card>
+  const card = (
+    <Card className={to ? "hover:border-brand-500/50 transition-colors cursor-pointer" : ""}>
       <CardHeader className="flex flex-row items-center justify-between pb-2">
         <CardTitle>{title}</CardTitle>
         <Icon className={`h-4.5 w-4.5 ${iconColor}`} />
@@ -56,18 +58,42 @@ function StatCard({
       </CardContent>
     </Card>
   );
+
+  if (to) {
+    return <Link to={to}>{card}</Link>;
+  }
+  return card;
 }
 
+// ── Progress bar with color ramp ─────────────────────────────────────────────
+
+function PercentBar({ value }: { value: number }) {
+  const color =
+    value > 80
+      ? "bg-red-500"
+      : value > 60
+        ? "bg-amber-500"
+        : "bg-emerald-500";
+
+  return (
+    <div className="flex items-center gap-2">
+      <div className="h-2 flex-1 rounded-full bg-zinc-800">
+        <div
+          className={`h-2 rounded-full ${color}`}
+          style={{ width: `${Math.min(value, 100)}%` }}
+        />
+      </div>
+      <span className="w-12 text-right text-xs text-zinc-400">{value}%</span>
+    </div>
+  );
+}
+
+// ── Dashboard Page ───────────────────────────────────────────────────────────
+
 export function DashboardPage() {
-  const { data: devicesResponse, isLoading: devicesLoading } = useDevices();
-  const devices = devicesResponse?.data ?? [];
-  const { data: collectors, isLoading: collectorsLoading } = useCollectors();
-  const { data: alerts, isLoading: alertsLoading } = useActiveAlerts();
-  const { data: latestResults } = useLatestResults();
+  const { data, isLoading } = useDashboardSummary();
 
-  const isLoading = devicesLoading || collectorsLoading || alertsLoading;
-
-  if (isLoading) {
+  if (isLoading || !data) {
     return (
       <div className="flex h-64 items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
@@ -75,55 +101,57 @@ export function DashboardPage() {
     );
   }
 
-  const deviceCount = devices?.length ?? 0;
-  const collectorCount = collectors?.length ?? 0;
-  const alertCount = alerts?.length ?? 0;
-  const onlineCollectors =
-    collectors?.filter((c) => c.status === "ACTIVE").length ?? 0;
-
-  // Determine up/down device counts from latest results
-  const unreachableResults = latestResults?.filter((r) => !r.reachable) ?? [];
-
-  // Unique devices that have at least one unreachable check
-  const devicesWithIssues = new Set(unreachableResults.map((r) => r.device_id));
-  const devicesUp = deviceCount - devicesWithIssues.size;
-  const devicesDown = devicesWithIssues.size;
+  const { alert_summary, device_health, collector_status, performance_top_n } = data;
 
   return (
     <div className="space-y-6">
-      {/* Summary Cards */}
+      {/* ── Row 1: Stat Cards ─────────────────────────────────────────── */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
-          title="Total Devices"
-          value={deviceCount}
-          subtitle={`${devicesUp} up / ${devicesDown} down`}
-          icon={Monitor}
-          iconColor="text-brand-400"
+          title="Active Alerts"
+          value={alert_summary.total_firing}
+          subtitle={
+            alert_summary.total_firing > 0
+              ? "Action required"
+              : "No active alerts"
+          }
+          icon={alert_summary.total_firing > 0 ? Bell : CheckCircle2}
+          iconColor={alert_summary.total_firing > 0 ? "text-amber-400" : "text-zinc-500"}
+          to="/alerts"
         />
         <StatCard
           title="Devices Up"
-          value={devicesUp}
-          subtitle="Responding to checks"
+          value={device_health.up}
+          subtitle={`of ${device_health.total}`}
           icon={CheckCircle2}
           iconColor="text-emerald-400"
+          to="/devices"
         />
         <StatCard
           title="Devices Down"
-          value={devicesDown}
-          subtitle={devicesDown > 0 ? "Requires attention" : "All systems healthy"}
-          icon={devicesDown > 0 ? XCircle : CheckCircle2}
-          iconColor={devicesDown > 0 ? "text-red-400" : "text-emerald-400"}
+          value={device_health.down}
+          subtitle={
+            device_health.degraded > 0
+              ? `+ ${device_health.degraded} degraded`
+              : device_health.down > 0
+                ? "Requires attention"
+                : "All healthy"
+          }
+          icon={device_health.down > 0 ? XCircle : CheckCircle2}
+          iconColor={device_health.down > 0 ? "text-red-400" : "text-emerald-400"}
+          to="/devices"
         />
         <StatCard
-          title="Active Alerts"
-          value={alertCount}
-          subtitle={alertCount > 0 ? "Action required" : "No active alerts"}
-          icon={alertCount > 0 ? AlertTriangle : Bell}
-          iconColor={alertCount > 0 ? "text-amber-400" : "text-zinc-500"}
+          title="Collectors Online"
+          value={collector_status.online}
+          subtitle={`${collector_status.offline} offline, ${collector_status.pending} pending`}
+          icon={Cpu}
+          iconColor="text-brand-400"
+          to="/settings/collectors"
         />
       </div>
 
-      {/* Two column layout for below */}
+      {/* ── Row 2: Active Alerts + Device Health ──────────────────────── */}
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Active Alerts */}
         <Card>
@@ -134,7 +162,7 @@ export function DashboardPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {!alerts || alerts.length === 0 ? (
+            {alert_summary.recent.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-8 text-zinc-500">
                 <CheckCircle2 className="mb-2 h-8 w-8 text-emerald-500/50" />
                 <p className="text-sm">No active alerts</p>
@@ -143,173 +171,268 @@ export function DashboardPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>State</TableHead>
-                    <TableHead>Rule</TableHead>
-                    <TableHead>Started</TableHead>
+                    <TableHead>Alert</TableHead>
+                    <TableHead>Device</TableHead>
+                    <TableHead>Entity</TableHead>
+                    <TableHead>Value</TableHead>
+                    <TableHead>Since</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {alerts.slice(0, 5).map((alert) => (
-                    <TableRow key={alert.id}>
-                      <TableCell>
-                        <StatusBadge state={alert.state} />
-                      </TableCell>
+                  {alert_summary.recent.map((a: DashboardRecentAlert) => (
+                    <TableRow key={a.id}>
                       <TableCell className="font-medium text-zinc-200">
-                        {alert.definition_name ?? alert.definition_id}
+                        {a.definition_name}
+                      </TableCell>
+                      <TableCell>
+                        {a.device_id ? (
+                          <Link
+                            to={`/devices/${a.device_id}?tab=alerts`}
+                            className="text-zinc-300 hover:text-brand-400"
+                          >
+                            {a.device_name}
+                          </Link>
+                        ) : (
+                          <span className="text-zinc-500">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="max-w-[120px] truncate text-zinc-500" title={a.entity_key}>
+                        {a.entity_key || "—"}
+                      </TableCell>
+                      <TableCell className="text-zinc-400">
+                        {a.current_value != null ? a.current_value : "—"}
                       </TableCell>
                       <TableCell className="text-zinc-500">
-                        {timeAgo(alert.started_firing_at)}
+                        {timeAgo(a.started_at)}
                       </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
             )}
-            {alerts && alerts.length > 5 && (
+            {alert_summary.total_firing > 10 && (
               <div className="mt-3 text-center">
                 <Link
                   to="/alerts"
                   className="text-sm text-brand-400 hover:text-brand-300"
                 >
-                  View all {alerts.length} alerts
+                  View all {alert_summary.total_firing} alerts
                 </Link>
               </div>
             )}
           </CardContent>
         </Card>
 
-        {/* Collectors Overview */}
+        {/* Device Health — Worst Devices */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Cpu className="h-4 w-4" />
-              Collectors
+              <Monitor className="h-4 w-4" />
+              Device Health
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {!collectors || collectors.length === 0 ? (
+            {device_health.worst.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-8 text-zinc-500">
-                <Cpu className="mb-2 h-8 w-8 text-zinc-600" />
-                <p className="text-sm">No collectors registered</p>
+                <CheckCircle2 className="mb-2 h-8 w-8 text-emerald-500/50" />
+                <p className="text-sm">All devices healthy</p>
               </div>
             ) : (
-              <div className="space-y-3">
-                <div className="flex items-center gap-2 text-sm text-zinc-400">
-                  <Activity className="h-4 w-4" />
-                  <span>
-                    {onlineCollectors} of {collectorCount} online
-                  </span>
-                </div>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Last Seen</TableHead>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Device</TableHead>
+                    <TableHead>Address</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Alerts</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {device_health.worst.map((d: DashboardWorstDevice) => (
+                    <TableRow key={d.device_id}>
+                      <TableCell>
+                        <Link
+                          to={`/devices/${d.device_id}`}
+                          className="font-medium text-zinc-200 hover:text-brand-400"
+                        >
+                          {d.device_name}
+                        </Link>
+                      </TableCell>
+                      <TableCell className="text-zinc-500">{d.device_address}</TableCell>
+                      <TableCell>
+                        <span
+                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                            d.reason === "down"
+                              ? "bg-red-500/15 text-red-400"
+                              : "bg-amber-500/15 text-amber-400"
+                          }`}
+                        >
+                          {d.reason}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-zinc-400">
+                        {d.firing_alerts > 0 ? (
+                          <span className="text-red-400">{d.firing_alerts}</span>
+                        ) : (
+                          "0"
+                        )}
+                      </TableCell>
                     </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {collectors.slice(0, 5).map((c) => (
-                      <TableRow key={c.id}>
-                        <TableCell className="font-medium text-zinc-200">
-                          {c.name}
-                        </TableCell>
-                        <TableCell>
-                          <Badge
-                            variant={
-                              c.status === "ACTIVE" ? "success" : "destructive"
-                            }
-                          >
-                            {c.status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-zinc-500">
-                          {timeAgo(c.last_seen_at)}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                  ))}
+                </TableBody>
+              </Table>
             )}
-            {collectors && collectors.length > 5 && (
-              <div className="mt-3 text-center">
-                <Link
-                  to="/collectors"
-                  className="text-sm text-brand-400 hover:text-brand-300"
-                >
-                  View all {collectors.length} collectors
-                </Link>
-              </div>
-            )}
+            <div className="mt-3 text-center">
+              <Link
+                to="/devices"
+                className="text-sm text-brand-400 hover:text-brand-300"
+              >
+                View all devices
+              </Link>
+            </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Recent Check Results */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Activity className="h-4 w-4" />
-            Recent Check Results
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {!latestResults || latestResults.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 text-zinc-500">
-              <Activity className="mb-2 h-8 w-8 text-zinc-600" />
-              <p className="text-sm">No check results yet</p>
-            </div>
-          ) : (
+      {/* ── Row 3: Performance Top-N ──────────────────────────────────── */}
+      {(performance_top_n.cpu.length > 0 ||
+        performance_top_n.memory.length > 0 ||
+        performance_top_n.bandwidth.length > 0) && (
+        <div className="grid gap-6 lg:grid-cols-3">
+          {/* Top CPU */}
+          <TopNCard
+            title="Top CPU"
+            entries={performance_top_n.cpu}
+            linkTab="performance"
+          />
+
+          {/* Top Memory */}
+          <TopNCard
+            title="Top Memory"
+            entries={performance_top_n.memory}
+            linkTab="performance"
+          />
+
+          {/* Top Bandwidth */}
+          <TopNCard
+            title="Top Bandwidth"
+            entries={performance_top_n.bandwidth}
+            linkTab="interfaces"
+            showInterface
+          />
+        </div>
+      )}
+
+      {/* ── Row 4: Collector Fleet Status (only when issues) ──────────── */}
+      {(collector_status.offline > 0 || collector_status.stale.length > 0) && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-amber-400" />
+              Collector Issues
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>State</TableHead>
-                  <TableHead>Device</TableHead>
-                  <TableHead>Check</TableHead>
-                  <TableHead>Output</TableHead>
-                  <TableHead>Response Time</TableHead>
-                  <TableHead>Executed</TableHead>
+                  <TableHead>Collector</TableHead>
+                  <TableHead>Last Seen</TableHead>
+                  <TableHead>Stale Duration</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {latestResults.slice(0, 10).map((r, idx) => (
-                  <TableRow key={`${r.assignment_id}-${idx}`}>
-                    <TableCell>
-                      <StatusBadge state={r.state_name} />
-                    </TableCell>
-                    <TableCell>
-                      <Link
-                        to={`/devices/${r.device_id}`}
-                        className="font-medium text-zinc-200 hover:text-brand-400"
-                      >
-                        {r.device_name ?? r.device_id}
-                      </Link>
-                    </TableCell>
-                    <TableCell className="text-zinc-300">
-                      {r.app_name ?? "—"}
-                    </TableCell>
-                    <TableCell
-                      className="max-w-[200px] truncate text-zinc-500"
-                      title={r.output}
-                    >
-                      {r.output || "—"}
-                    </TableCell>
-                    <TableCell className="text-zinc-400">
-                      {r.response_time_ms != null
-                        ? `${r.response_time_ms}ms`
-                        : "—"}
+                {collector_status.stale.map((c: DashboardStaleCollector) => (
+                  <TableRow key={c.collector_id}>
+                    <TableCell className="font-medium text-zinc-200">
+                      {c.name}
                     </TableCell>
                     <TableCell className="text-zinc-500">
-                      {timeAgo(r.executed_at)}
+                      {timeAgo(c.last_seen)}
+                    </TableCell>
+                    <TableCell className="text-amber-400">
+                      {c.stale_seconds != null
+                        ? formatDuration(c.stale_seconds)
+                        : "—"}
                     </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
-          )}
-        </CardContent>
-      </Card>
+            <div className="mt-3 text-center">
+              <Link
+                to="/settings/collectors"
+                className="text-sm text-brand-400 hover:text-brand-300"
+              >
+                Manage collectors
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
+}
+
+// ── Top-N Card Component ─────────────────────────────────────────────────────
+
+function TopNCard({
+  title,
+  entries,
+  linkTab,
+  showInterface,
+}: {
+  title: string;
+  entries: DashboardTopNEntry[];
+  linkTab: string;
+  showInterface?: boolean;
+}) {
+  if (entries.length === 0) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm">{title}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="py-4 text-center text-sm text-zinc-500">No data</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm">{title}</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {entries.map((e, idx) => (
+          <div key={`${e.device_id}-${idx}`}>
+            <div className="mb-1 flex items-center justify-between text-xs">
+              <Link
+                to={`/devices/${e.device_id}?tab=${linkTab}`}
+                className="truncate text-zinc-300 hover:text-brand-400"
+                title={e.device_name}
+              >
+                {e.device_name}
+                {showInterface && e.interface ? (
+                  <span className="ml-1 text-zinc-500">({e.interface})</span>
+                ) : null}
+              </Link>
+            </div>
+            <PercentBar value={e.value} />
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+  return `${Math.floor(seconds / 86400)}d ${Math.floor((seconds % 86400) / 3600)}h`;
 }

@@ -2,6 +2,7 @@ import { NavLink } from "react-router-dom";
 import {
   Activity,
   AppWindow,
+  BarChart3,
   Bell,
   Boxes,
   ChevronLeft,
@@ -38,6 +39,7 @@ const navItems = [
   { to: "/packs", icon: Boxes, label: "Packs", end: false },
   { to: "/alerts", icon: Bell, label: "Alerts", end: false },
   { to: "/events", icon: Zap, label: "Events", end: false },
+  { to: "/analytics", icon: BarChart3, label: "Analytics", end: true },
   { to: "/upgrades", icon: ArrowUpCircle, label: "Upgrades", end: false },
   { to: "/settings", icon: Settings, label: "Settings", end: false },
 ];

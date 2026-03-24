@@ -1,0 +1,131 @@
+{
+  "uid": "device-performance",
+  "title": "Device Performance",
+  "description": "CPU, memory, disk metrics per device over time",
+  "tags": ["monctl"],
+  "timezone": "browser",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "templating": {
+    "list": [
+      {
+        "name": "device",
+        "type": "query",
+        "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+        "query": "SELECT DISTINCT device_name FROM performance_latest FINAL WHERE device_name != '' ORDER BY device_name",
+        "multi": true,
+        "includeAll": true,
+        "current": { "text": "All", "value": "$__all" },
+        "refresh": 2
+      },
+      {
+        "name": "component_type",
+        "type": "query",
+        "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+        "query": "SELECT DISTINCT component_type FROM performance WHERE device_name IN ($device) AND component_type != '' ORDER BY component_type",
+        "multi": false,
+        "includeAll": false,
+        "current": { "text": "cpu", "value": "cpu" },
+        "refresh": 2
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "CPU Utilization",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [
+        {
+          "rawSql": "SELECT $__timeInterval(executed_at) AS time, device_name, component, avg(metric_values[indexOf(metric_names, 'utilization_pct')]) AS utilization FROM performance WHERE device_name IN ($device) AND component_type = 'cpu' AND $__timeFilter(executed_at) GROUP BY time, device_name, component ORDER BY time",
+          "format": 1,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "table", "placement": "bottom" }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Memory Utilization",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [
+        {
+          "rawSql": "SELECT $__timeInterval(executed_at) AS time, device_name, avg(metric_values[indexOf(metric_names, 'utilization_pct')]) AS utilization FROM performance WHERE device_name IN ($device) AND component_type = 'memory' AND $__timeFilter(executed_at) GROUP BY time, device_name ORDER BY time",
+          "format": 1,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "table", "placement": "bottom" }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Disk Utilization",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [
+        {
+          "rawSql": "SELECT $__timeInterval(executed_at) AS time, device_name, component, avg(metric_values[indexOf(metric_names, 'utilization_pct')]) AS utilization FROM performance WHERE device_name IN ($device) AND component_type = 'disk' AND $__timeFilter(executed_at) GROUP BY time, device_name, component ORDER BY time",
+          "format": 1,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "table", "placement": "bottom" }
+      }
+    },
+    {
+      "id": 4,
+      "title": "All Metrics — Latest Values",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [
+        {
+          "rawSql": "SELECT device_name, component_type, component, metric_names, metric_values, executed_at FROM performance_latest FINAL WHERE device_name IN ($device) AND device_id != toUUID('00000000-0000-0000-0000-000000000000') ORDER BY device_name, component_type, component",
+          "format": 2,
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "time": { "from": "now-6h", "to": "now" }
+}
