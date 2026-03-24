@@ -206,20 +206,20 @@ async def list_devices(
     if collector_id:
         stmt = stmt.where(Device.collector_id == uuid.UUID(collector_id))
     if device_type:
-        stmt = stmt.where(Device.device_type == device_type)
+        stmt = stmt.where(Device.device_type.ilike(f"%{device_type}%"))
     if name:
         stmt = stmt.where(Device.name.ilike(f"%{name}%"))
     if address:
         stmt = stmt.where(Device.address.ilike(f"%{address}%"))
     if tenant_name:
         stmt = stmt.outerjoin(Tenant, Device.tenant_id == Tenant.id)
-        stmt = stmt.where(Tenant.name == tenant_name)
+        stmt = stmt.where(Tenant.name.ilike(f"%{tenant_name}%"))
     if collector_group_name:
         if not tenant_name:  # avoid double outerjoin issues
             stmt = stmt.outerjoin(CollectorGroup, Device.collector_group_id == CollectorGroup.id)
         else:
             stmt = stmt.outerjoin(CollectorGroup, Device.collector_group_id == CollectorGroup.id)
-        stmt = stmt.where(CollectorGroup.name == collector_group_name)
+        stmt = stmt.where(CollectorGroup.name.ilike(f"%{collector_group_name}%"))
     if label_key:
         stmt = stmt.where(Device.labels.has_key(label_key))
         if label_value:
