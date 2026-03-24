@@ -1137,8 +1137,14 @@ class ClickHouseClient:
         """Batch insert performance results."""
         if not results:
             return
+        # Ensure Array columns are never None (ClickHouse rejects NULL for Array)
+        _PERF_ARRAY_DEFAULTS = {"metric_names": [], "metric_values": [], "metric_types": []}
         client = self._get_client()
-        data = [[r.get(col) for col in _PERF_INSERT_COLUMNS] for r in results]
+        data = [
+            [r.get(col) if r.get(col) is not None else _PERF_ARRAY_DEFAULTS.get(col)
+             for col in _PERF_INSERT_COLUMNS]
+            for r in results
+        ]
         client.insert("performance", data, column_names=_PERF_INSERT_COLUMNS)
 
     # Columns that must never be None (ClickHouse UInt/Float, no Nullable)
