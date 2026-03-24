@@ -45,7 +45,7 @@ Collectors (worker1-4) → poll jobs fra central → eksekver checks → forward
 
 SSH bruger: `monctl` på alle servere. Compose files: `/opt/monctl/{central,collector}/docker-compose.yml`.
 
-**Central1-3**: Bruger `central-ha` compose projekt i `/opt/monctl/central-ha/` (inkl. Patroni + Redis). **Central4**: Bruger `/opt/monctl/central/` (app + Grafana). Grafana tilgængelig via HAProxy `/grafana` sub-path.
+**Central1-3**: Bruger `central-ha` compose projekt i `/opt/monctl/central-ha/` (inkl. Patroni + Redis). Central1 kører også Metabase (port 3000, tilgængelig via HAProxy `/metabase`). **Central4**: Bruger `/opt/monctl/central/` (app + Grafana). Grafana tilgængelig via HAProxy `/grafana` sub-path.
 
 ---
 
@@ -304,13 +304,15 @@ Hver tabel har en `_latest` materialized view (ReplacingMergeTree) der holder se
 
 **Engine**: 30s cycle, leader-elected. Resolves thresholds per-entity, batches ClickHouse queries by effective threshold combination.
 
-### Dashboard & Grafana
+### Dashboard & Analytics
 
 **Operational Dashboard** (`dashboard/router.py`): `GET /v1/dashboard/summary` aggregerer alert_summary, device_health, collector_status, performance_top_n i ét kald. Frontend bruger `useDashboardSummary()` med 15s auto-refresh. Stat cards, worst devices tabel, performance top-N med progress bars.
 
-**Grafana**: Grafana OSS 11.4 kører på central4 som Docker Compose service. ClickHouse datasource auto-provisioned. 4 dashboards i MonCTL-folder: Device Performance, Interface Traffic, Availability Overview, Alert History. Tilgængelig via HAProxy på `https://VIP/grafana` (sub-path). Anonymous viewer — ingen separat login nødvendig.
+**Metabase** (`docker/metabase/`): Metabase v0.54 kører på central1 som Docker Compose service. Native ClickHouse driver. Bruger eksisterende PostgreSQL (`metabase` database). Tilgængelig via HAProxy på `https://VIP/metabase` (path-strip rewrite). Setup: `docker/metabase/setup.py`. 4 pre-built dashboards: Device Performance, Interface Traffic, Availability Overview, Alert History. Admin: `admin@monctl.local`.
 
-**Analytics Page** (`pages/AnalyticsPage.tsx`): Links til Grafana dashboards. Læser `grafana_url` fra system settings. Sidebar: "Analytics" mellem Events og Upgrades.
+**Grafana**: Grafana OSS 11.4 kører på central4. Tilgængelig via HAProxy på `https://VIP/grafana`.
+
+**Analytics Page** (`pages/AnalyticsPage.tsx`): Links til Metabase dashboards + SQL query builder. Læser `metabase_url` fra system settings. Sidebar: "Analytics" mellem Events og Upgrades.
 
 ### Packs System
 

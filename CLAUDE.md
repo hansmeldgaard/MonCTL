@@ -165,15 +165,15 @@ Each table has a `*_latest` materialized view (ReplacingMergeTree) for instant l
 
 **History query default**: `GET /v1/results` queries `availability_latency`, `performance`, `config` by default (NOT `interface` — interface data has its own dedicated endpoints to avoid flooding the History tab with one row per interface per poll).
 
-### Dashboard & Grafana
+### Dashboard & Analytics
 
 **Operational Dashboard** (`dashboard/router.py`): Single `GET /v1/dashboard/summary` endpoint aggregating alert_summary (total firing + top 10 recent), device_health (up/down/degraded counts + worst 10), collector_status (online/offline/pending + stale list), performance_top_n (CPU/memory/bandwidth from ClickHouse). Frontend uses `useDashboardSummary()` hook with 15s auto-refresh.
 
-**Grafana** (`docker/grafana/`): Grafana OSS 11.4 runs on central4 as Docker Compose service. ClickHouse datasource auto-provisioned. 4 pre-built dashboards in MonCTL folder: Device Performance, Interface Traffic, Availability Overview, Alert History. Accessible via HAProxy at `/grafana` sub-path (`GF_SERVER_SERVE_FROM_SUB_PATH=true`). Anonymous viewer access enabled (no separate login required).
+**Metabase** (`docker/metabase/`): Metabase v0.54 runs on central1 as Docker Compose service. Native ClickHouse driver (core-level, no plugin). Uses existing PostgreSQL for its application database (`metabase` database). Accessible via HAProxy at `/metabase` sub-path (path-strip rewrite in HAProxy). Setup via `docker/metabase/setup.py` (creates admin user, adds ClickHouse datasource, seeds dashboards). 4 pre-built dashboards in "MonCTL" collection: Device Performance, Interface Traffic, Availability Overview, Alert History. Admin credentials: `admin@monctl.local`.
 
-**Analytics Page** (`pages/AnalyticsPage.tsx`): Links to Grafana dashboards. Reads `grafana_url` from system settings. Shows "Grafana not configured" empty state when URL not set.
+**Grafana** (`docker/grafana/`): Grafana OSS 11.4 runs on central4 as Docker Compose service. Accessible via HAProxy at `/grafana` sub-path. Anonymous viewer access enabled.
 
-**Pack Integration**: `grafana_dashboards` section in pack JSON. Export fetches dashboards tagged `pack:{uid}` from Grafana API. Import pushes to Grafana API. Schema validation in `packs/schema.py`.
+**Analytics Page** (`pages/AnalyticsPage.tsx`): Links to Metabase dashboards + SQL query builder. Reads `metabase_url` from system settings. Shows "Metabase not configured" empty state when URL not set.
 
 ### Config Data Optimization
 
@@ -231,7 +231,7 @@ Each table has a `*_latest` materialized view (ReplacingMergeTree) for instant l
 
 ### System Settings
 
-Key-value pairs in `SystemSetting` table. Managed via `GET/PUT /v1/settings`. Notable settings: retention days (config, interface, performance, availability), `grafana_url`, `pypi_network_mode`, `session_idle_timeout_minutes`, `collector_central_url`.
+Key-value pairs in `SystemSetting` table. Managed via `GET/PUT /v1/settings`. Notable settings: retention days (config, interface, performance, availability), `metabase_url`, `grafana_url`, `pypi_network_mode`, `session_idle_timeout_minutes`, `collector_central_url`.
 
 ---
 
@@ -354,7 +354,7 @@ SSH user: `monctl` for all servers.
 
 | Project | Path | Central1 | Central2 | Central3 | Central4 |
 |---------|------|----------|----------|----------|----------|
-| central-ha | `/opt/monctl/central-ha/` | app + Patroni + Redis primary + sentinel | app + Patroni + Redis replica + sentinel | app + Redis sentinel | — |
+| central-ha | `/opt/monctl/central-ha/` | app + Patroni + Redis primary + sentinel + Metabase | app + Patroni + Redis replica + sentinel | app + Redis sentinel | — |
 | central | `/opt/monctl/central/` | — | — | — | app + Grafana |
 | clickhouse | `/opt/monctl/clickhouse/` | — | — | ClickHouse node | ClickHouse node |
 | haproxy | `/opt/monctl/haproxy/` | HAProxy + keepalived | HAProxy + keepalived | HAProxy + keepalived | HAProxy + keepalived (+ `/grafana` → central4:3000) |
