@@ -26,6 +26,7 @@ Collectors (worker1-4) → poll jobs from central → execute checks → forward
 | Collector | Python 3.12, gRPC (peer communication), SQLite (local buffer) |
 | Icons | Lucide React |
 | Charts | Recharts |
+| Analytics | Grafana OSS 11.4 (ClickHouse datasource) |
 | Code editor | CodeMirror 6 (Python syntax) |
 
 ## Package Structure
@@ -38,6 +39,7 @@ packages/
   sdk/              SDK package (base classes, testing utilities)
 apps/               Built-in monitoring apps (ping, port, HTTP, SNMP)
 docker/             Dockerfiles and deployment configs
+docker/grafana/     Grafana provisioning (datasources, dashboards)
 ```
 
 ## Central Server
@@ -57,11 +59,13 @@ The central server provides:
 - **Monitoring packs** for import/export of apps, connectors, and alert definitions
 - **Python module registry** with PyPI import and wheel distribution
 - **Docker infrastructure monitoring** (containers, logs, events, images)
+- **Operational dashboard** with aggregated health summary, device status, and performance top-N
+- **Grafana integration** with ClickHouse datasource, pre-built dashboards, and analytics page
 - **REST API** with JWT cookie auth (web UI) and bearer token auth (collectors/management)
 
 ### API
 
-- Web API: `/v1/` — 29 routers (devices, collectors, apps, credentials, alerts, config history, etc.)
+- Web API: `/v1/` — 30 routers (devices, collectors, apps, credentials, alerts, dashboard, config history, etc.)
 - Collector API: `/api/v1/` (job pull, result submission, app/connector code, credentials)
 
 ### ClickHouse Tables

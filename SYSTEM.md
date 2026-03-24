@@ -45,7 +45,7 @@ Collectors (worker1-4) → poll jobs fra central → eksekver checks → forward
 
 SSH bruger: `monctl` på alle servere. Compose files: `/opt/monctl/{central,collector}/docker-compose.yml`.
 
-**Central1 special case**: Bruger `central-ha` compose projekt i `/opt/monctl/central-ha/` (inkl. Patroni + Redis på hosten). Deploy: `cd /opt/monctl/central-ha && docker compose down && docker compose up -d`. Central2-4 bruger standard `/opt/monctl/central/`.
+**Central1-3**: Bruger `central-ha` compose projekt i `/opt/monctl/central-ha/` (inkl. Patroni + Redis). **Central4**: Bruger `/opt/monctl/central/` (app + Grafana). Grafana tilgængelig via HAProxy `/grafana` sub-path.
 
 ---
 
@@ -71,7 +71,7 @@ packages/
 │   │   ├── storage/
 │   │   │   ├── models.py           # 41 SQLAlchemy models (alle PostgreSQL-tabeller)
 │   │   │   └── clickhouse.py       # ClickHouseClient wrapper, 5 domænetabeller + MV'er + rollup + config history
-│   │   ├── api/router.py           # Hovedrouter — monterer 29 sub-routers på /v1/
+│   │   ├── api/router.py           # Hovedrouter — monterer 30 sub-routers på /v1/
 │   │   ├── auth/                   # JWT cookie auth (login, refresh, me)
 │   │   ├── devices/router.py       # Device CRUD, bulk-patch, monitoring config, interface metadata, credentials
 │   │   ├── collectors/router.py    # Collector register, approve, reject, heartbeat, config
@@ -89,7 +89,8 @@ packages/
 │   │   │   ├── router.py          # Definitions, entities, overrides, validation, alert log
 │   │   │   └── threshold_sync.py  # Auto-sync threshold variables from expressions
 │   │   ├── events/                 # Event policies + engine + acknowledge/clear
-│   │   ├── packs/                  # Monitoring pack import/export
+│   │   ├── dashboard/              # Aggregated dashboard summary endpoint (GET /dashboard/summary)
+│   │   ├── packs/                  # Monitoring pack import/export (+ grafana_dashboards sektion)
 │   │   ├── python_modules/         # Package registry + PyPI import + wheel distribution
 │   │   ├── docker_infra/           # Docker host monitoring (stats, logs, events, images)
 │   │   ├── roles/                  # Custom RBAC roles + permissions
@@ -111,10 +112,10 @@ packages/
 │   │       ├── hooks/
 │   │       │   ├── useAuth.tsx     # Auth context (user, login, logout, refresh)
 │   │       │   └── useTimezone.ts  # Returnerer user.timezone, default "UTC"
-│   │       ├── pages/              # 26 page components
+│   │       ├── pages/              # 28 page components
 │   │       ├── components/         # 23 feature-komponenter + 10 UI-primitiver
 │   │       │   └── ui/             # badge, button, card, clearable-input, dialog, input, label, select, table, tabs
-│   │       └── layouts/            # AppLayout, Sidebar (13 nav items), Header
+│   │       └── layouts/            # AppLayout, Sidebar (15 nav items), Header (pageTitles map)
 │   └── alembic/                    # 39 migrationer, kører auto ved container startup
 ├── collector/                      # Collector node
 │   └── src/monctl_collector/
@@ -303,15 +304,23 @@ Hver tabel har en `_latest` materialized view (ReplacingMergeTree) der holder se
 
 **Engine**: 30s cycle, leader-elected. Resolves thresholds per-entity, batches ClickHouse queries by effective threshold combination.
 
+### Dashboard & Grafana
+
+**Operational Dashboard** (`dashboard/router.py`): `GET /v1/dashboard/summary` aggregerer alert_summary, device_health, collector_status, performance_top_n i ét kald. Frontend bruger `useDashboardSummary()` med 15s auto-refresh. Stat cards, worst devices tabel, performance top-N med progress bars.
+
+**Grafana**: Grafana OSS 11.4 kører på central4 som Docker Compose service. ClickHouse datasource auto-provisioned. 4 dashboards i MonCTL-folder: Device Performance, Interface Traffic, Availability Overview, Alert History. Tilgængelig via HAProxy på `https://VIP/grafana` (sub-path). Anonymous viewer — ingen separat login nødvendig.
+
+**Analytics Page** (`pages/AnalyticsPage.tsx`): Links til Grafana dashboards. Læser `grafana_url` fra system settings. Sidebar: "Analytics" mellem Events og Upgrades.
+
 ### Packs System
 
-Import/export af monitoring packs (apps + connectors + alert definitions + credential templates). Preview + conflict detection. Version tracking.
+Import/export af monitoring packs (apps + connectors + alert definitions + credential templates + grafana dashboards). Preview + conflict detection. Version tracking. `grafana_dashboards` sektion eksporterer/importerer dashboards via Grafana API (tagging konvention: `pack:{uid}`).
 
 ---
 
 ## API-endpoints
 
-### Web API (`/v1/`) — 28 routers
+### Web API (`/v1/`) — 30 routers
 
 | Router | Prefix | Endpoints | Auth |
 |--------|--------|-----------|------|
@@ -343,6 +352,7 @@ Import/export af monitoring packs (apps + connectors + alert definitions + crede
 | tls | /v1/settings/tls | GET, POST generate/upload/deploy | require_admin |
 | system | /v1/system | GET /health (concurrent subsystem checks) | require_admin |
 | docker_infra | /v1/docker-infra | GET overview, stats, containers, logs, events, images | require_auth |
+| dashboard | /v1/dashboard | GET /summary (aggregated dashboard data) | require_auth |
 | ingestion | /v1 | POST /ingest (legacy) | require_collector_auth |
 
 ### Collector API (`/api/v1/`)
@@ -381,12 +391,12 @@ stmt = apply_tenant_filter(stmt, auth, Device.tenant_id)
 
 ## Frontend — sider og komponenter
 
-### Sider (26)
+### Sider (28)
 
 | Side | Route | Formål |
 |------|-------|--------|
 | LoginPage | /login | Username/password login |
-| DashboardPage | / | Stat-kort + tabeller (alerts, collectors, recent results) |
+| DashboardPage | / | 4 stat cards (alerts/up/down/collectors) + active alerts tabel + worst devices + performance top-N (CPU/memory/bandwidth) + collector issues |
 | SystemHealthPage | /system-health | Subsystem-kort (PG, CH, Redis, Collectors, Scheduler) + collector-tabel med filter |
 | DockerInfraPage | /docker-infrastructure | Docker host overview, containers, logs, events, images |
 | DevicesPage | /devices | Server-side pagination/sort/filter, bulk actions (enable/disable/move/delete/template), status dots |
@@ -402,6 +412,8 @@ stmt = apply_tenant_filter(stmt, auth, Device.tenant_id)
 | PackDetailPage | /packs/:id | Pack versions, entities, export |
 | AlertsPage | /alerts | Tabs: Active Alerts, Alert Log (ClickHouse), Alert Definitions |
 | EventsPage | /events | Active/cleared events med acknowledge/clear |
+| AnalyticsPage | /analytics | Grafana dashboard links, reads grafana_url fra system settings |
+| UpgradesPage | /upgrades | OS upgrades, package management, rolling upgrade orchestration |
 | SettingsPage | /settings/:tab | Tabs: Profile, System, Device Types, Collectors, Credentials, SNMP OIDs, Labels, Roles, Users, Tenants |
 | CollectorsPage | (settings tab) | Pending/Active collectors, Groups, Registration Tokens |
 | CredentialsPage | (settings tab) | Credential Keys + Templates + Types + Credentials CRUD |
@@ -442,9 +454,9 @@ stmt = apply_tenant_filter(stmt, auth, Device.tenant_id)
 
 badge, button, card, clearable-input, dialog, input, label, select, table, tabs
 
-### Sidebar navigation (13 items)
+### Sidebar navigation (15 items)
 
-Dashboard → System Health → Docker Infra → Devices → Apps → Connectors → Modules → Assignments → Templates → Packs → Alerts → Events → Settings
+Dashboard → System Health → Docker Infra → Devices → Apps → Connectors → Modules → Assignments → Templates → Packs → Alerts → Events → Analytics → Upgrades → Settings
 
 ### Polling
 
@@ -515,11 +527,11 @@ for ip in 41 42 43 44; do
   docker save monctl-central:latest | ssh monctl@10.145.210.$ip 'docker load'
 done
 
-# Restart central (central1 bruger central-ha, central2-4 bruger central/)
-ssh monctl@10.145.210.41 'cd /opt/monctl/central-ha && docker compose down && docker compose up -d'
-for ip in 42 43 44; do
-  ssh monctl@10.145.210.$ip 'cd /opt/monctl/central && docker compose down && docker compose up -d'
+# Restart central (central1-3 bruger central-ha, central4 bruger central/)
+for ip in 41 42 43; do
+  ssh monctl@10.145.210.$ip 'cd /opt/monctl/central-ha && docker compose down && docker compose up -d'
 done
+ssh monctl@10.145.210.44 'cd /opt/monctl/central && docker compose down && docker compose up -d'
 ```
 
 ### Collector deploy

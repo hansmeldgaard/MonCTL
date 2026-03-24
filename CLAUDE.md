@@ -47,7 +47,7 @@ packages/
 │   │   ├── storage/
 │   │   │   ├── models.py       # SQLAlchemy models (41 models, all PostgreSQL tables)
 │   │   │   └── clickhouse.py   # ClickHouse client, DDL, insert/query methods
-│   │   ├── api/router.py       # Main router (mounts 29 sub-routers at /v1/)
+│   │   ├── api/router.py       # Main router (mounts 30 sub-routers at /v1/)
 │   │   ├── auth/               # JWT cookie auth (login, refresh, me)
 │   │   ├── devices/router.py   # Device CRUD, bulk-patch, monitoring config, interface metadata, credentials
 │   │   ├── collectors/router.py # Collector registration, approval, heartbeat
@@ -69,6 +69,7 @@ packages/
 │   │   ├── events/             # Event policies, engine, active/cleared events
 │   │   │   ├── engine.py       # Event promotion engine (runs after alert engine)
 │   │   │   └── router.py       # Events CRUD, policies, acknowledge/clear
+│   │   ├── dashboard/           # Aggregated dashboard summary endpoint
 │   │   ├── packs/              # Monitoring pack import/export
 │   │   ├── python_modules/     # Package registry + PyPI import + wheel distribution
 │   │   ├── docker_infra/       # Docker host monitoring (stats, logs, events, images)
@@ -84,10 +85,10 @@ packages/
 │   │       │   ├── client.ts   # fetch() wrapper (apiGet, apiPost, apiPut, apiPatch, apiDelete)
 │   │       │   └── hooks.ts    # 185 React Query hooks for ALL API endpoints
 │   │       ├── types/api.ts    # 100 TypeScript interfaces for API responses
-│   │       ├── pages/          # 26 page components
+│   │       ├── pages/          # 28 page components
 │   │       ├── components/     # 33 reusable UI components (incl. ClearableInput, FilterableSortHead, PaginationBar)
 │   │       ├── hooks/          # useAuth, useTimezone
-│   │       └── layouts/        # Sidebar + Header + AppLayout
+│   │       └── layouts/        # Sidebar + Header (pageTitles map) + AppLayout
 │   └── alembic/                # 39 database migrations
 ├── collector/                  # Collector node
 │   └── src/monctl_collector/
@@ -164,6 +165,16 @@ Each table has a `*_latest` materialized view (ReplacingMergeTree) for instant l
 
 **History query default**: `GET /v1/results` queries `availability_latency`, `performance`, `config` by default (NOT `interface` — interface data has its own dedicated endpoints to avoid flooding the History tab with one row per interface per poll).
 
+### Dashboard & Grafana
+
+**Operational Dashboard** (`dashboard/router.py`): Single `GET /v1/dashboard/summary` endpoint aggregating alert_summary (total firing + top 10 recent), device_health (up/down/degraded counts + worst 10), collector_status (online/offline/pending + stale list), performance_top_n (CPU/memory/bandwidth from ClickHouse). Frontend uses `useDashboardSummary()` hook with 15s auto-refresh.
+
+**Grafana** (`docker/grafana/`): Grafana OSS 11.4 runs on central4 as Docker Compose service. ClickHouse datasource auto-provisioned. 4 pre-built dashboards in MonCTL folder: Device Performance, Interface Traffic, Availability Overview, Alert History. Accessible via HAProxy at `/grafana` sub-path (`GF_SERVER_SERVE_FROM_SUB_PATH=true`). Anonymous viewer access enabled (no separate login required).
+
+**Analytics Page** (`pages/AnalyticsPage.tsx`): Links to Grafana dashboards. Reads `grafana_url` from system settings. Shows "Grafana not configured" empty state when URL not set.
+
+**Pack Integration**: `grafana_dashboards` section in pack JSON. Export fetches dashboards tagged `pack:{uid}` from Grafana API. Import pushes to Grafana API. Schema validation in `packs/schema.py`.
+
 ### Config Data Optimization
 
 **Write suppression**: `collector_api/router.py` compares each config key's MD5 hash against `config_latest FINAL` before writing. Only changed keys and volatile keys are written to ClickHouse. In-memory LRU cache (60s TTL) avoids repeated ClickHouse lookups.
@@ -217,6 +228,10 @@ Each table has a `*_latest` materialized view (ReplacingMergeTree) for instant l
 **Engine**: Runs every 30s via scheduler. Writes fire/clear records to `alert_log`. Resolves thresholds per-entity from 4-level hierarchy. Groups entities by effective threshold for batched ClickHouse queries.
 
 **Validation**: `POST /v1/alerts/validate-expression` returns `errors[]`, `warnings[]`, `referenced_metrics[]`, `threshold_params[]`, `has_arithmetic`, `has_division`.
+
+### System Settings
+
+Key-value pairs in `SystemSetting` table. Managed via `GET/PUT /v1/settings`. Notable settings: retention days (config, interface, performance, availability), `grafana_url`, `pypi_network_mode`, `session_idle_timeout_minutes`, `collector_central_url`.
 
 ---
 
@@ -340,9 +355,9 @@ SSH user: `monctl` for all servers.
 | Project | Path | Central1 | Central2 | Central3 | Central4 |
 |---------|------|----------|----------|----------|----------|
 | central-ha | `/opt/monctl/central-ha/` | app + Patroni + Redis primary + sentinel | app + Patroni + Redis replica + sentinel | app + Redis sentinel | — |
-| central | `/opt/monctl/central/` | — | — | — | app only |
+| central | `/opt/monctl/central/` | — | — | — | app + Grafana |
 | clickhouse | `/opt/monctl/clickhouse/` | — | — | ClickHouse node | ClickHouse node |
-| haproxy | `/opt/monctl/haproxy/` | HAProxy + keepalived | HAProxy + keepalived | HAProxy + keepalived | HAProxy + keepalived |
+| haproxy | `/opt/monctl/haproxy/` | HAProxy + keepalived | HAProxy + keepalived | HAProxy + keepalived | HAProxy + keepalived (+ `/grafana` → central4:3000) |
 | etcd | `/opt/monctl/etcd/` | etcd | etcd | etcd | — |
 | docker-stats | `/opt/monctl/docker-stats/` | stats agent | stats agent | stats agent | stats agent |
 
