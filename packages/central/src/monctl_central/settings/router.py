@@ -33,6 +33,7 @@ _DEFAULTS = {
     "session_idle_timeout_minutes": "60",
     "collector_central_url": "",
     "grafana_url": "",
+    "metabase_url": "",
 }
 
 
