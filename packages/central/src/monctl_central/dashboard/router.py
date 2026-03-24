@@ -28,17 +28,12 @@ async def dashboard_summary(
     """Aggregated dashboard data — one call powers all widgets."""
     tenant_ids = auth.get("tenant_ids")
 
-    (
-        alert_summary,
-        device_health,
-        collector_status,
-        perf_top_n,
-    ) = await asyncio.gather(
-        _alert_summary(db, tenant_ids),
-        _device_health(db, tenant_ids),
-        _collector_status(db),
-        _performance_top_n(tenant_ids),
-    )
+    # Run DB queries sequentially (async sessions can't be shared across gather),
+    # but ClickHouse-only queries can run via asyncio.to_thread in parallel within each step.
+    alert_summary = await _alert_summary(db, tenant_ids)
+    device_health = await _device_health(db, tenant_ids)
+    collector_status = await _collector_status(db)
+    perf_top_n = await _performance_top_n(tenant_ids)
 
     return {
         "status": "success",
