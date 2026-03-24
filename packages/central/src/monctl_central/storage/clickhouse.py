@@ -910,8 +910,6 @@ class ClickHouseClient:
                 password=self._password,
                 database=self._database,
                 settings=settings,
-                pool_connections=10,
-                pool_maxsize=10,
                 connect_timeout=10,
                 send_receive_timeout=60,
             )
