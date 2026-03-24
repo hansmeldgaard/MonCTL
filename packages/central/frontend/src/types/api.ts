@@ -841,15 +841,39 @@ export interface TlsCertificateInfo {
 
 // ── Templates ────────────────────────────────────────────
 
+export interface TemplateMonitoringCheck {
+  app_name: string;
+  config: Record<string, unknown>;
+  interval_seconds: number;
+}
+
+export interface TemplateMonitoringConfig {
+  availability?: TemplateMonitoringCheck | null;
+  latency?: TemplateMonitoringCheck | null;
+  interface?: TemplateMonitoringCheck | null;
+}
+
+export interface TemplateAppEntry {
+  app_name: string;
+  schedule_type: string;
+  schedule_value: string;
+  config: Record<string, unknown>;
+  role?: string;
+}
+
+export interface TemplateConfig {
+  monitoring?: TemplateMonitoringConfig;
+  apps?: TemplateAppEntry[];
+  default_credential_id?: string;
+  default_collector_group_id?: string;
+  labels?: Record<string, string>;
+}
+
 export interface Template {
   id: string;
   name: string;
   description: string | null;
-  config: {
-    apps?: { app_id: string; schedule_type: string; schedule_value: string; config: Record<string, unknown>; role?: string }[];
-    default_credential_id?: string;
-    labels?: Record<string, string>;
-  };
+  config: TemplateConfig;
   created_at: string;
   updated_at: string;
 }

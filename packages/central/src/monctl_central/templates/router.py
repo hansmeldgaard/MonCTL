@@ -213,8 +213,76 @@ async def apply_template(
         if cred_id:
             device.default_credential_id = uuid.UUID(cred_id)
 
-        # Apply app assignments
+        # Apply collector group
+        cg_id = config.get("default_collector_group_id")
+        if cg_id:
+            device.collector_group_id = uuid.UUID(cg_id)
+
+        # Apply monitoring configuration (availability / latency / interface)
+        monitoring_config = config.get("monitoring", {})
+        if monitoring_config:
+            from sqlalchemy import delete as sa_delete
+
+            _ROLE_TARGET_TABLE = {
+                "availability": "availability_latency",
+                "latency": "availability_latency",
+                "interface": "interface",
+            }
+
+            roles_to_apply = [
+                r for r in ["availability", "latency", "interface"]
+                if monitoring_config.get(r)
+            ]
+            if roles_to_apply:
+                await db.execute(
+                    sa_delete(AppAssignment).where(
+                        AppAssignment.device_id == device_id,
+                        AppAssignment.role.in_(roles_to_apply),
+                    )
+                )
+
+            for role_name in ["availability", "latency", "interface"]:
+                check_config = monitoring_config.get(role_name)
+                if not check_config or not check_config.get("app_name"):
+                    continue
+
+                app = (await db.execute(
+                    select(App).where(App.name == check_config["app_name"])
+                )).scalar_one_or_none()
+                if app is None:
+                    continue
+
+                expected_table = _ROLE_TARGET_TABLE.get(role_name)
+                if app.target_table != expected_table:
+                    continue
+
+                app_version = (await db.execute(
+                    select(AppVersion)
+                    .where(AppVersion.app_id == app.id)
+                    .order_by(desc(AppVersion.published_at))
+                    .limit(1)
+                )).scalar_one_or_none()
+                if app_version is None:
+                    continue
+
+                interval = check_config.get("interval_seconds", 60)
+                assignment = AppAssignment(
+                    app_id=app.id,
+                    app_version_id=app_version.id,
+                    device_id=device_id,
+                    config=check_config.get("config", {}),
+                    schedule_type="interval",
+                    schedule_value=str(interval),
+                    role=role_name,
+                    enabled=True,
+                )
+                db.add(assignment)
+
+        # Apply app assignments (generic — non-monitoring)
+        _MONITORING_ROLES = {"availability", "latency", "interface"}
         for app_config in config.get("apps", []):
+            if app_config.get("role") in _MONITORING_ROLES:
+                continue
             app_name = app_config.get("app_name") or app_config.get("app_id")
             if not app_name:
                 continue

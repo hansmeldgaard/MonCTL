@@ -17,12 +17,13 @@ import {
   useUpdateTemplate,
   useDeleteTemplate,
 } from "@/api/hooks.ts";
-import type { Template } from "@/types/api.ts";
+import type { Template, TemplateConfig } from "@/types/api.ts";
 import { formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 import { useListState } from "@/hooks/useListState.ts";
 import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
+import { TemplateConfigEditor } from "@/components/TemplateConfigEditor.tsx";
 
 export function TemplatesPage() {
   const tz = useTimezone();
@@ -42,13 +43,13 @@ export function TemplatesPage() {
   const [addOpen, setAddOpen] = useState(false);
   const addNameField = useField("", validateName);
   const [addDesc, setAddDesc] = useState("");
-  const [addConfig, setAddConfig] = useState("{}");
+  const [addConfigObj, setAddConfigObj] = useState<TemplateConfig>({});
   const [addError, setAddError] = useState<string | null>(null);
 
   const [editTarget, setEditTarget] = useState<Template | null>(null);
   const editNameField = useField("", validateName);
   const [editDesc, setEditDesc] = useState("");
-  const [editConfig, setEditConfig] = useState("");
+  const [editConfigObj, setEditConfigObj] = useState<TemplateConfig>({});
   const [editError, setEditError] = useState<string | null>(null);
 
   const [deleteTarget, setDeleteTarget] = useState<Template | null>(null);
@@ -57,11 +58,13 @@ export function TemplatesPage() {
     e.preventDefault();
     setAddError(null);
     if (!validateAll(addNameField)) return;
-    let config: Record<string, unknown>;
-    try { config = JSON.parse(addConfig); } catch { setAddError("Invalid JSON config."); return; }
     try {
-      await createTemplate.mutateAsync({ name: addNameField.value.trim(), description: addDesc.trim() || undefined, config });
-      addNameField.reset(); setAddDesc(""); setAddConfig("{}"); setAddOpen(false);
+      await createTemplate.mutateAsync({
+        name: addNameField.value.trim(),
+        description: addDesc.trim() || undefined,
+        config: addConfigObj as Record<string, unknown>,
+      });
+      addNameField.reset(); setAddDesc(""); setAddConfigObj({}); setAddOpen(false);
     } catch (err) {
       setAddError(err instanceof Error ? err.message : "Failed to create template");
     }
@@ -71,7 +74,7 @@ export function TemplatesPage() {
     setEditTarget(t);
     editNameField.reset(t.name);
     setEditDesc(t.description ?? "");
-    setEditConfig(JSON.stringify(t.config, null, 2));
+    setEditConfigObj(t.config || {});
     setEditError(null);
   }
 
@@ -80,12 +83,10 @@ export function TemplatesPage() {
     if (!editTarget) return;
     setEditError(null);
     if (!validateAll(editNameField)) return;
-    let config: Record<string, unknown>;
-    try { config = JSON.parse(editConfig); } catch { setEditError("Invalid JSON config."); return; }
     try {
       await updateTemplate.mutateAsync({
         id: editTarget.id,
-        data: { name: editNameField.value.trim(), description: editDesc.trim(), config },
+        data: { name: editNameField.value.trim(), description: editDesc.trim(), config: editConfigObj as Record<string, unknown> },
       });
       setEditTarget(null);
     } catch (err) {
@@ -96,6 +97,17 @@ export function TemplatesPage() {
   async function handleDelete() {
     if (!deleteTarget) return;
     try { await deleteTemplate.mutateAsync(deleteTarget.id); setDeleteTarget(null); } catch { /* silent */ }
+  }
+
+  function countItems(config: TemplateConfig): number {
+    let count = 0;
+    if (config.monitoring) {
+      if (config.monitoring.availability) count++;
+      if (config.monitoring.latency) count++;
+      if (config.monitoring.interface) count++;
+    }
+    count += config.apps?.length ?? 0;
+    return count;
   }
 
   if (isLoading) {
@@ -109,7 +121,7 @@ export function TemplatesPage() {
           <h1 className="text-lg font-semibold text-zinc-100">Templates</h1>
           <p className="text-sm text-zinc-500">Reusable monitoring configurations for bulk device setup.</p>
         </div>
-        <Button size="sm" onClick={() => { addNameField.reset(); setAddDesc(""); setAddConfig("{}"); setAddError(null); setAddOpen(true); }} className="gap-1.5">
+        <Button size="sm" onClick={() => { addNameField.reset(); setAddDesc(""); setAddConfigObj({}); setAddError(null); setAddOpen(true); }} className="gap-1.5">
           <Plus className="h-4 w-4" /> New Template
         </Button>
       </div>
@@ -127,7 +139,7 @@ export function TemplatesPage() {
                 <TableRow>
                   <FilterableSortHead col="name" label="Name" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.name} onFilterChange={(v) => listState.setFilter("name", v)} />
                   <FilterableSortHead col="description" label="Description" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} sortable={false} filterValue={listState.filters.description} onFilterChange={(v) => listState.setFilter("description", v)} />
-                  <TableHead>Apps</TableHead>
+                  <TableHead>Items</TableHead>
                   <FilterableSortHead col="created_at" label="Created" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterable={false} />
                   <TableHead className="w-20"></TableHead>
                 </TableRow>
@@ -142,9 +154,9 @@ export function TemplatesPage() {
                 ) : templates.map((t) => (
                   <TableRow key={t.id}>
                     <TableCell className="font-medium text-zinc-100">{t.name}</TableCell>
-                    <TableCell className="text-zinc-400 max-w-[300px] truncate">{t.description ?? "—"}</TableCell>
+                    <TableCell className="text-zinc-400 max-w-[300px] truncate">{t.description ?? "\u2014"}</TableCell>
                     <TableCell>
-                      <Badge variant="default">{t.config?.apps?.length ?? 0} apps</Badge>
+                      <Badge variant="default">{countItems(t.config || {})} items</Badge>
                     </TableCell>
                     <TableCell className="text-zinc-500">{formatDate(t.created_at, tz)}</TableCell>
                     <TableCell>
@@ -173,7 +185,7 @@ export function TemplatesPage() {
       </Card>
 
       {/* Add Dialog */}
-      <Dialog open={addOpen} onClose={() => setAddOpen(false)} title="New Template">
+      <Dialog open={addOpen} onClose={() => setAddOpen(false)} title="New Template" size="lg">
         <form onSubmit={handleCreate} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="tpl-name">Name</Label>
@@ -184,11 +196,7 @@ export function TemplatesPage() {
             <Label htmlFor="tpl-desc">Description <span className="font-normal text-zinc-500">(optional)</span></Label>
             <Input id="tpl-desc" value={addDesc} onChange={e => setAddDesc(e.target.value)} />
           </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="tpl-config">Config (JSON)</Label>
-            <textarea id="tpl-config" value={addConfig} onChange={e => setAddConfig(e.target.value)}
-              className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 font-mono h-32 focus:outline-none focus:ring-1 focus:ring-brand-500" />
-          </div>
+          <TemplateConfigEditor value={addConfigObj} onChange={setAddConfigObj} />
           {addError && <p className="text-sm text-red-400">{addError}</p>}
           <DialogFooter>
             <Button type="button" variant="secondary" onClick={() => setAddOpen(false)}>Cancel</Button>
@@ -200,7 +208,7 @@ export function TemplatesPage() {
       </Dialog>
 
       {/* Edit Dialog */}
-      <Dialog open={!!editTarget} onClose={() => setEditTarget(null)} title={`Edit: ${editTarget?.name ?? ""}`}>
+      <Dialog open={!!editTarget} onClose={() => setEditTarget(null)} title={`Edit: ${editTarget?.name ?? ""}`} size="lg">
         <form onSubmit={handleEdit} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="tpl-edit-name">Name</Label>
@@ -211,11 +219,7 @@ export function TemplatesPage() {
             <Label htmlFor="tpl-edit-desc">Description</Label>
             <Input id="tpl-edit-desc" value={editDesc} onChange={e => setEditDesc(e.target.value)} />
           </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="tpl-edit-config">Config (JSON)</Label>
-            <textarea id="tpl-edit-config" value={editConfig} onChange={e => setEditConfig(e.target.value)}
-              className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 font-mono h-32 focus:outline-none focus:ring-1 focus:ring-brand-500" />
-          </div>
+          <TemplateConfigEditor value={editConfigObj} onChange={setEditConfigObj} />
           {editError && <p className="text-sm text-red-400">{editError}</p>}
           <DialogFooter>
             <Button type="button" variant="secondary" onClick={() => setEditTarget(null)}>Cancel</Button>

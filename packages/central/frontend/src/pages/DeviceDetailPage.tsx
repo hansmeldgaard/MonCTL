@@ -83,7 +83,6 @@ import {
   useBulkUpdateInterfaceSettings,
   useAppDetail,
   useApps,
-  useSnmpOids,
   useSystemSettings,
   useTenants,
   useUpdateDevice,
@@ -112,6 +111,7 @@ import type { Device as DeviceType, DeviceAssignment, DeviceThresholdRow, Config
 import { useListState } from "@/hooks/useListState.ts";
 import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
+import { SchemaConfigFields } from "@/components/SchemaConfigFields.tsx";
 import { ConfigDataRenderer } from "@/components/ConfigDataRenderer.tsx";
 import { ApplyTemplateDialog } from "@/components/ApplyTemplateDialog.tsx";
 import { PerformanceChart } from "@/components/PerformanceChart.tsx";
@@ -2456,118 +2456,7 @@ const INTERVAL_OPTIONS = [
   { value: "300", label: "5 minutes" },
 ];
 
-// Renders config fields dynamically from an app's config_schema
-function SchemaConfigFields({
-  schema,
-  config,
-  onChange,
-  prefix,
-  disabled,
-}: {
-  schema: Record<string, unknown> | null | undefined;
-  config: Record<string, unknown>;
-  onChange: (config: Record<string, unknown>) => void;
-  prefix: string;
-  disabled?: boolean;
-}) {
-  const { data: snmpOids } = useSnmpOids();
-  const { data: credentials } = useCredentials();
-
-  if (!schema || typeof schema !== "object") return null;
-  const properties = (schema as { properties?: Record<string, Record<string, unknown>> }).properties;
-  if (!properties) return null;
-
-  const setField = (key: string, value: unknown) => {
-    onChange({ ...config, [key]: value });
-  };
-
-  return (
-    <>
-      {Object.entries(properties).map(([key, prop]) => {
-        const widget = prop["x-widget"] as string | undefined;
-        const title = (prop.title as string) ?? key;
-        const defaultVal = prop.default;
-        const currentVal = config[key] ?? defaultVal ?? "";
-
-        // SNMP OID selector
-        if (widget === "snmp-oid") {
-          return (
-            <div key={key} className="space-y-1">
-              <span className="text-xs text-zinc-400">{title}</span>
-              <Select
-                id={`${prefix}-${key}`}
-                value={String(currentVal)}
-                onChange={(e) => setField(key, e.target.value)}
-                disabled={disabled}
-              >
-                <option value="">-- {title} --</option>
-                {(snmpOids ?? []).map((o) => (
-                  <option key={o.id} value={o.oid}>{o.name} ({o.oid})</option>
-                ))}
-              </Select>
-            </div>
-          );
-        }
-
-        // Credential selector
-        if (widget === "credential") {
-          // Strip "$credential:" prefix for display — stored as "$credential:name"
-          const credName = typeof currentVal === "string" && currentVal.startsWith("$credential:")
-            ? currentVal.slice("$credential:".length)
-            : String(currentVal);
-          return (
-            <div key={key} className="space-y-1">
-              <span className="text-xs text-zinc-400">{title}</span>
-              <Select
-                id={`${prefix}-${key}`}
-                value={credName}
-                onChange={(e) => setField(key, e.target.value ? `$credential:${e.target.value}` : "")}
-                disabled={disabled}
-              >
-                <option value="">-- {title} --</option>
-                {(credentials ?? []).map((c) => (
-                  <option key={c.id} value={c.name}>{c.name}</option>
-                ))}
-              </Select>
-            </div>
-          );
-        }
-
-        // Number input
-        if (prop.type === "integer" || prop.type === "number") {
-          return (
-            <div key={key} className="space-y-1">
-              <span className="text-xs text-zinc-400">{title}</span>
-              <Input
-                id={`${prefix}-${key}`}
-                type="number"
-                min={prop.minimum as number | undefined}
-                max={prop.maximum as number | undefined}
-                value={currentVal !== "" ? String(currentVal) : String(defaultVal ?? "")}
-                onChange={(e) => setField(key, e.target.value ? parseInt(e.target.value, 10) : undefined)}
-                className="w-28"
-                disabled={disabled}
-              />
-            </div>
-          );
-        }
-
-        // Default: text input
-        return (
-          <div key={key} className="space-y-1">
-            <span className="text-xs text-zinc-400">{title}</span>
-            <Input
-              id={`${prefix}-${key}`}
-              value={String(currentVal)}
-              onChange={(e) => setField(key, e.target.value)}
-              disabled={disabled}
-            />
-          </div>
-        );
-      })}
-    </>
-  );
-}
+// SchemaConfigFields extracted to @/components/SchemaConfigFields.tsx
 
 function MonitoringCard({ deviceId, device }: { deviceId: string; device: DeviceType | undefined }) {
   const { data: monitoring, isLoading: monLoading } = useDeviceMonitoring(deviceId);
