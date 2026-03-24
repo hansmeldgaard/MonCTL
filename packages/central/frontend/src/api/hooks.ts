@@ -1156,6 +1156,18 @@ export function useBulkUpdateAssignments() {
   });
 }
 
+export function useBulkDeleteAssignments() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (assignmentIds: string[]) =>
+      apiPost<{ deleted: number }>("/apps/assignments/bulk-delete", { assignment_ids: assignmentIds }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["assignments"] });
+      qc.invalidateQueries({ queryKey: ["device-assignments"] });
+    },
+  });
+}
+
 // ── Apps list + app detail (for AddAssignmentDialog) ─────
 
 export function useApps(params: ListParams = {}) {

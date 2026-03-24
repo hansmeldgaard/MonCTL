@@ -21,6 +21,7 @@ import {
 import { timeAgo, formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 import { useListState } from "@/hooks/useListState.ts";
+import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
 import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
 import type { AlertEntity, AlertDefinition, AlertLogEntry } from "@/types/api.ts";
@@ -30,14 +31,17 @@ type Tab = "active" | "log" | "definitions";
 
 export function AlertsPage() {
   const [tab, setTab] = useState<Tab>("active");
+  const { pageSize, scrollMode } = useTablePreferences();
   const { data: alerts, isLoading: alertsLoading } = useActiveAlerts();
   const defsListState = useListState({
     columns: [
       { key: "name", label: "Name" },
       { key: "expression", label: "Expression", sortable: false },
     ],
+    defaultPageSize: pageSize,
+    scrollMode,
   });
-  const { data: defsResponse, isLoading: defsLoading } = useAlertRules(defsListState.params);
+  const { data: defsResponse, isLoading: defsLoading, isFetching: defsFetching } = useAlertRules(defsListState.params);
   const definitions = defsResponse?.data ?? [];
   const defsMeta = (defsResponse as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
 
@@ -109,7 +113,7 @@ export function AlertsPage() {
           onActionChange={(v) => { setLogAction(v); setLogPage(0); }}
         />
       ) : (
-        <DefinitionsTab definitions={definitions} listState={defsListState} meta={defsMeta} />
+        <DefinitionsTab definitions={definitions} listState={defsListState} meta={defsMeta} isFetching={defsFetching} />
       )}
     </div>
   );
@@ -303,10 +307,12 @@ function DefinitionsTab({
   definitions,
   listState,
   meta,
+  isFetching,
 }: {
   definitions: AlertDefinition[];
   listState: ReturnType<typeof useListState>;
   meta: { limit: number; offset: number; count: number; total: number };
+  isFetching: boolean;
 }) {
   const invertDef = useInvertAlertDefinition();
   const createDef = useCreateAlertDefinition();
@@ -418,6 +424,10 @@ function DefinitionsTab({
           total={meta.total}
           count={meta.count}
           onPageChange={listState.setPage}
+          scrollMode={listState.scrollMode}
+          sentinelRef={listState.sentinelRef}
+          isFetching={isFetching}
+          onLoadMore={listState.loadMore}
         />
       </CardContent>
     </Card>

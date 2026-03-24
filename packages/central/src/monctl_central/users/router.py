@@ -114,7 +114,7 @@ VALID_SCROLL_MODES = {"paginated", "infinite"}
 
 
 class UpdateTablePreferencesRequest(BaseModel):
-    table_page_size: int | None = Field(default=None, ge=10, le=200)
+    table_page_size: int | None = Field(default=None, ge=10, le=500)
     table_scroll_mode: str | None = Field(default=None, max_length=20)
 
 

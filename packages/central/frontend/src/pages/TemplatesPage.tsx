@@ -21,19 +21,23 @@ import type { Template, TemplateConfig } from "@/types/api.ts";
 import { formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 import { useListState } from "@/hooks/useListState.ts";
+import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
 import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
 import { TemplateConfigEditor } from "@/components/TemplateConfigEditor.tsx";
 
 export function TemplatesPage() {
   const tz = useTimezone();
+  const { pageSize, scrollMode } = useTablePreferences();
   const listState = useListState({
     columns: [
       { key: "name", label: "Name" },
       { key: "description", label: "Description", sortable: false },
     ],
+    defaultPageSize: pageSize,
+    scrollMode,
   });
-  const { data: response, isLoading } = useTemplates(listState.params);
+  const { data: response, isLoading, isFetching } = useTemplates(listState.params);
   const templates = response?.data ?? [];
   const meta = (response as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
   const createTemplate = useCreateTemplate();
@@ -180,6 +184,10 @@ export function TemplatesPage() {
             total={meta.total}
             count={meta.count}
             onPageChange={listState.setPage}
+            scrollMode={listState.scrollMode}
+            sentinelRef={listState.sentinelRef}
+            isFetching={isFetching}
+            onLoadMore={listState.loadMore}
           />
         </CardContent>
       </Card>

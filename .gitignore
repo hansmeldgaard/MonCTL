@@ -43,3 +43,9 @@ docker/redis-data/
 # Collector local data
 *.db
 *.key
+
+# Playwright browser state (contains session cookies)
+.playwright/auth-state.json
+
+# Playwright screenshots
+.playwright/screenshots/

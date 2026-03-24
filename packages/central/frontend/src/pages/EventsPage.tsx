@@ -37,6 +37,7 @@ import {
 import { timeAgo, formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 import { useListState } from "@/hooks/useListState.ts";
+import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
 import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
 import type { MonitoringEvent, EventPolicy } from "@/types/api.ts";
@@ -59,6 +60,7 @@ const severityVariant = (severity: string) => {
 
 export function EventsPage() {
   const [tab, setTab] = useState<Tab>("active");
+  const { pageSize, scrollMode } = useTablePreferences();
   const activeListState = useListState({
     columns: [
       { key: "source", label: "Source" },
@@ -66,6 +68,8 @@ export function EventsPage() {
     ],
     defaultSortBy: "occurred_at",
     defaultSortDir: "desc",
+    defaultPageSize: pageSize,
+    scrollMode,
   });
   const clearedListState = useListState({
     columns: [
@@ -74,11 +78,13 @@ export function EventsPage() {
     ],
     defaultSortBy: "occurred_at",
     defaultSortDir: "desc",
+    defaultPageSize: pageSize,
+    scrollMode,
   });
-  const { data: activeResponse, isLoading: activeLoading } = useActiveEvents(activeListState.params);
+  const { data: activeResponse, isLoading: activeLoading, isFetching: activeFetching } = useActiveEvents(activeListState.params);
   const activeEvents = activeResponse?.data ?? [];
   const activeMeta = (activeResponse as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
-  const { data: clearedResponse, isLoading: clearedLoading } = useClearedEvents(clearedListState.params);
+  const { data: clearedResponse, isLoading: clearedLoading, isFetching: clearedFetching } = useClearedEvents(clearedListState.params);
   const clearedEvents = clearedResponse?.data ?? [];
   const clearedMeta = (clearedResponse as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
   const { data: policies, isLoading: policiesLoading } = useEventPolicies();
@@ -127,9 +133,9 @@ export function EventsPage() {
           <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
         </div>
       ) : tab === "active" ? (
-        <ActiveEventsTab events={activeEvents} listState={activeListState} meta={activeMeta} />
+        <ActiveEventsTab events={activeEvents} listState={activeListState} meta={activeMeta} isFetching={activeFetching} />
       ) : tab === "cleared" ? (
-        <ClearedEventsTab events={clearedEvents} listState={clearedListState} meta={clearedMeta} />
+        <ClearedEventsTab events={clearedEvents} listState={clearedListState} meta={clearedMeta} isFetching={clearedFetching} />
       ) : (
         <PoliciesTab policies={policies ?? []} />
       )}
@@ -141,10 +147,12 @@ function ActiveEventsTab({
   events,
   listState,
   meta,
+  isFetching,
 }: {
   events: MonitoringEvent[];
   listState: ReturnType<typeof useListState>;
   meta: { limit: number; offset: number; count: number; total: number };
+  isFetching: boolean;
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const ackMut = useAcknowledgeEvents();
@@ -278,6 +286,10 @@ function ActiveEventsTab({
           total={meta.total}
           count={meta.count}
           onPageChange={listState.setPage}
+          scrollMode={listState.scrollMode}
+          sentinelRef={listState.sentinelRef}
+          isFetching={isFetching}
+          onLoadMore={listState.loadMore}
         />
       </CardContent>
     </Card>
@@ -288,10 +300,12 @@ function ClearedEventsTab({
   events,
   listState,
   meta,
+  isFetching,
 }: {
   events: MonitoringEvent[];
   listState: ReturnType<typeof useListState>;
   meta: { limit: number; offset: number; count: number; total: number };
+  isFetching: boolean;
 }) {
   const tz = useTimezone();
 
@@ -360,6 +374,10 @@ function ClearedEventsTab({
           total={meta.total}
           count={meta.count}
           onPageChange={listState.setPage}
+          scrollMode={listState.scrollMode}
+          sentinelRef={listState.sentinelRef}
+          isFetching={isFetching}
+          onLoadMore={listState.loadMore}
         />
       </CardContent>
     </Card>

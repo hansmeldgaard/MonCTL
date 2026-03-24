@@ -109,6 +109,7 @@ import {
 import { useAuth } from "@/hooks/useAuth.tsx";
 import type { Device as DeviceType, DeviceAssignment, DeviceThresholdRow, ConfigDiffEntry, AlertLogEntry, MonitoringEvent } from "@/types/api.ts";
 import { useListState } from "@/hooks/useListState.ts";
+import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
 import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
 import { SchemaConfigFields } from "@/components/SchemaConfigFields.tsx";
@@ -3515,6 +3516,7 @@ function AlertsTab({ deviceId }: { deviceId: string }) {
 }
 
 function DeviceActiveAlerts({ deviceId }: { deviceId: string }) {
+  const { pageSize, scrollMode } = useTablePreferences();
   const listState = useListState({
     columns: [
       { key: "state", label: "State", filterable: false },
@@ -3527,8 +3529,10 @@ function DeviceActiveAlerts({ deviceId }: { deviceId: string }) {
     ],
     defaultSortBy: "state",
     defaultSortDir: "desc",
+    defaultPageSize: pageSize,
+    scrollMode,
   });
-  const { data: response, isLoading } = useAlertInstances({
+  const { data: response, isLoading, isFetching } = useAlertInstances({
     device_id: deviceId,
     ...listState.params,
   });
@@ -3600,7 +3604,7 @@ function DeviceActiveAlerts({ deviceId }: { deviceId: string }) {
             ))}
           </TableBody>
         </Table>
-        <PaginationBar page={listState.page} pageSize={listState.pageSize} total={meta.total} count={meta.count} onPageChange={listState.setPage} />
+        <PaginationBar page={listState.page} pageSize={listState.pageSize} total={meta.total} count={meta.count} onPageChange={listState.setPage} scrollMode={listState.scrollMode} sentinelRef={listState.sentinelRef} isFetching={isFetching} onLoadMore={listState.loadMore} />
       </CardContent>
     </Card>
   );
@@ -3608,6 +3612,7 @@ function DeviceActiveAlerts({ deviceId }: { deviceId: string }) {
 
 function DeviceAlertHistory({ deviceId }: { deviceId: string }) {
   const [actionFilter, setActionFilter] = useState<string | undefined>(undefined);
+  const { pageSize, scrollMode } = useTablePreferences();
   const listState = useListState({
     columns: [
       { key: "definition_name", label: "Alert" },
@@ -3616,9 +3621,11 @@ function DeviceAlertHistory({ deviceId }: { deviceId: string }) {
     ],
     defaultSortBy: "occurred_at",
     defaultSortDir: "desc",
+    defaultPageSize: pageSize,
+    scrollMode,
   });
 
-  const { data: response, isLoading } = useDeviceAlertLog(deviceId, listState.params, { action: actionFilter });
+  const { data: response, isLoading, isFetching } = useDeviceAlertLog(deviceId, listState.params, { action: actionFilter });
   const logEntries = (response as any)?.data ?? [];
   const meta = (response as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
 
@@ -3675,7 +3682,7 @@ function DeviceAlertHistory({ deviceId }: { deviceId: string }) {
                 ))}
               </TableBody>
             </Table>
-            <PaginationBar page={listState.page} pageSize={listState.pageSize} total={meta.total} count={meta.count} onPageChange={listState.setPage} />
+            <PaginationBar page={listState.page} pageSize={listState.pageSize} total={meta.total} count={meta.count} onPageChange={listState.setPage} scrollMode={listState.scrollMode} sentinelRef={listState.sentinelRef} isFetching={isFetching} onLoadMore={listState.loadMore} />
           </>
         )}
       </CardContent>
@@ -3700,6 +3707,7 @@ function EventsTab({ deviceId }: { deviceId: string }) {
 }
 
 function DeviceActiveEvents({ deviceId }: { deviceId: string }) {
+  const { pageSize, scrollMode } = useTablePreferences();
   const listState = useListState({
     columns: [
       { key: "severity", label: "Severity", filterable: false },
@@ -3710,8 +3718,10 @@ function DeviceActiveEvents({ deviceId }: { deviceId: string }) {
     ],
     defaultSortBy: "occurred_at",
     defaultSortDir: "desc",
+    defaultPageSize: pageSize,
+    scrollMode,
   });
-  const { data: response, isLoading } = useDeviceActiveEvents(deviceId, listState.params);
+  const { data: response, isLoading, isFetching } = useDeviceActiveEvents(deviceId, listState.params);
   const events = (response as any)?.data ?? [];
   const meta = (response as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -3768,13 +3778,14 @@ function DeviceActiveEvents({ deviceId }: { deviceId: string }) {
             ))}
           </TableBody>
         </Table>
-        <PaginationBar page={listState.page} pageSize={listState.pageSize} total={meta.total} count={meta.count} onPageChange={listState.setPage} />
+        <PaginationBar page={listState.page} pageSize={listState.pageSize} total={meta.total} count={meta.count} onPageChange={listState.setPage} scrollMode={listState.scrollMode} sentinelRef={listState.sentinelRef} isFetching={isFetching} onLoadMore={listState.loadMore} />
       </CardContent>
     </Card>
   );
 }
 
 function DeviceClearedEvents({ deviceId }: { deviceId: string }) {
+  const { pageSize, scrollMode } = useTablePreferences();
   const listState = useListState({
     columns: [
       { key: "severity", label: "Severity", filterable: false },
@@ -3784,8 +3795,10 @@ function DeviceClearedEvents({ deviceId }: { deviceId: string }) {
     ],
     defaultSortBy: "occurred_at",
     defaultSortDir: "desc",
+    defaultPageSize: pageSize,
+    scrollMode,
   });
-  const { data: response, isLoading } = useDeviceClearedEvents(deviceId, listState.params);
+  const { data: response, isLoading, isFetching } = useDeviceClearedEvents(deviceId, listState.params);
   const events = (response as any)?.data ?? [];
   const meta = (response as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
 
@@ -3822,7 +3835,7 @@ function DeviceClearedEvents({ deviceId }: { deviceId: string }) {
             ))}
           </TableBody>
         </Table>
-        <PaginationBar page={listState.page} pageSize={listState.pageSize} total={meta.total} count={meta.count} onPageChange={listState.setPage} />
+        <PaginationBar page={listState.page} pageSize={listState.pageSize} total={meta.total} count={meta.count} onPageChange={listState.setPage} scrollMode={listState.scrollMode} sentinelRef={listState.sentinelRef} isFetching={isFetching} onLoadMore={listState.loadMore} />
       </CardContent>
     </Card>
   );

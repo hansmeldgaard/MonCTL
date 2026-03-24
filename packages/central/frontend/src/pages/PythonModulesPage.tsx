@@ -40,6 +40,7 @@ import {
 } from "@/api/hooks.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 import { useListState } from "@/hooks/useListState.ts";
+import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
 import { formatDate } from "@/lib/utils.ts";
 import { WheelUploadDialog } from "@/components/WheelUploadDialog.tsx";
 import { PyPIImportDialog } from "@/components/PyPIImportDialog.tsx";
@@ -240,13 +241,16 @@ function ModuleVersionsRow({ moduleId }: { moduleId: string }) {
 
 export function PythonModulesPage() {
   const tz = useTimezone();
+  const { pageSize, scrollMode } = useTablePreferences();
   const listState = useListState({
     columns: [
       { key: "name", label: "Name" },
       { key: "description", label: "Description", sortable: false },
     ],
+    defaultPageSize: pageSize,
+    scrollMode,
   });
-  const { data: response, isLoading } = usePythonModules(listState.params);
+  const { data: response, isLoading, isFetching } = usePythonModules(listState.params);
   const modules = response?.data ?? [];
   const meta = (response as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
   const { data: network } = useNetworkStatus();
@@ -545,6 +549,10 @@ export function PythonModulesPage() {
             total={meta.total}
             count={meta.count}
             onPageChange={listState.setPage}
+            scrollMode={listState.scrollMode}
+            sentinelRef={listState.sentinelRef}
+            isFetching={isFetching}
+            onLoadMore={listState.loadMore}
           />
         </CardContent>
       </Card>

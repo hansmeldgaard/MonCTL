@@ -437,6 +437,7 @@ async def list_assignments(
     app_name: str | None = Query(default=None),
     device_name: str | None = Query(default=None),
     device_address: str | None = Query(default=None),
+    device_type: str | None = Query(default=None),
     sort_by: str = Query(default="app_name"),
     sort_dir: str = Query(default="asc"),
     limit: int = Query(default=50, le=500),
@@ -470,11 +471,14 @@ async def list_assignments(
         stmt = stmt.where(DeviceModel.name.ilike(f"%{device_name}%"))
     if device_address:
         stmt = stmt.where(DeviceModel.address.ilike(f"%{device_address}%"))
+    if device_type:
+        stmt = stmt.where(DeviceModel.device_type.ilike(f"%{device_type}%"))
 
     ASSIGNMENTS_SORT_MAP = {
         "app_name": App.name,
         "device_name": DeviceModel.name,
         "device_address": DeviceModel.address,
+        "device_type": DeviceModel.device_type,
         "schedule": AppAssignment.schedule_value,
         "enabled": AppAssignment.enabled,
         "created_at": AppAssignment.created_at,
@@ -720,6 +724,63 @@ async def bulk_update_assignments(
         )
 
     return {"status": "success", "data": {"updated": len(assignments)}}
+
+
+class BulkDeleteAssignmentsRequest(BaseModel):
+    assignment_ids: list[str]
+
+
+@router.post("/assignments/bulk-delete")
+async def bulk_delete_assignments(
+    request: BulkDeleteAssignmentsRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Bulk delete multiple assignments. Bumps collector config_version."""
+    from monctl_central.storage.models import Collector, Device
+    from sqlalchemy import update as sa_update
+    from monctl_common.utils import utc_now
+
+    if not request.assignment_ids:
+        raise HTTPException(status_code=400, detail="No assignment IDs provided")
+    if len(request.assignment_ids) > 200:
+        raise HTTPException(status_code=400, detail="Max 200 assignments per bulk delete")
+
+    uuids = [uuid.UUID(aid) for aid in request.assignment_ids]
+    stmt = select(AppAssignment).where(AppAssignment.id.in_(uuids))
+    assignments = (await db.execute(stmt)).scalars().all()
+
+    if not assignments:
+        raise HTTPException(status_code=404, detail="No assignments found")
+
+    collector_ids_to_bump: set[uuid.UUID] = set()
+    group_ids_to_bump: set[uuid.UUID] = set()
+
+    for a in assignments:
+        if a.collector_id:
+            collector_ids_to_bump.add(a.collector_id)
+        elif a.device_id:
+            device = await db.get(Device, a.device_id)
+            if device and device.collector_group_id:
+                group_ids_to_bump.add(device.collector_group_id)
+        await db.delete(a)
+
+    await db.flush()
+
+    if collector_ids_to_bump:
+        await db.execute(
+            sa_update(Collector)
+            .where(Collector.id.in_(collector_ids_to_bump))
+            .values(config_version=Collector.config_version + 1, updated_at=utc_now())
+        )
+    if group_ids_to_bump:
+        await db.execute(
+            sa_update(Collector)
+            .where(Collector.group_id.in_(group_ids_to_bump))
+            .values(config_version=Collector.config_version + 1, updated_at=utc_now())
+        )
+
+    return {"status": "success", "data": {"deleted": len(assignments)}}
 
 
 @router.get("/{app_id}")

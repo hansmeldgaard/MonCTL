@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { Link } from "react-router-dom";
-import { ChevronDown, ListChecks, Loader2 } from "lucide-react";
+import { ChevronDown, ListChecks, Loader2, Trash2 } from "lucide-react";
 import { CredentialCell } from "@/components/CredentialCell.tsx";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
@@ -15,7 +15,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table.tsx";
-import { useAssignments, useAppDetail, useBulkUpdateAssignments, useCredentials } from "@/api/hooks.ts";
+import { useAssignments, useAppDetail, useBulkUpdateAssignments, useBulkDeleteAssignments, useCredentials } from "@/api/hooks.ts";
 import { formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 import { useListState } from "@/hooks/useListState.ts";
@@ -26,17 +26,19 @@ import type { BulkUpdateAssignmentsRequest } from "@/types/api.ts";
 
 export function AssignmentsPage() {
   const tz = useTimezone();
-  const { pageSize } = useTablePreferences();
+  const { pageSize, scrollMode } = useTablePreferences();
   const listState = useListState({
     columns: [
       { key: "app_name", label: "App" },
       { key: "device_name", label: "Device" },
+      { key: "device_type", label: "Type" },
       { key: "device_address", label: "Device Address", sortable: false },
     ],
     defaultSortBy: "app_name",
     defaultPageSize: pageSize,
+    scrollMode,
   });
-  const { data: response, isLoading } = useAssignments(listState.params);
+  const { data: response, isLoading, isFetching } = useAssignments(listState.params);
   const assignments = response?.data ?? [];
   const meta = (response as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
 
@@ -51,6 +53,8 @@ export function AssignmentsPage() {
   const [bulkEnabled, setBulkEnabled] = useState("");
   const [bulkVersionMode, setBulkVersionMode] = useState("");
   const bulkUpdate = useBulkUpdateAssignments();
+  const bulkDelete = useBulkDeleteAssignments();
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const { data: credentials } = useCredentials();
   const bulkRef = useRef<HTMLDivElement>(null);
 
@@ -86,6 +90,7 @@ export function AssignmentsPage() {
   const someSelected = selected.size > 0;
 
   function toggleSelectAll() {
+    setConfirmDelete(false);
     if (allVisibleSelected) {
       setSelected(new Set());
     } else {
@@ -153,15 +158,43 @@ export function AssignmentsPage() {
               {selected.size} selected
             </span>
             <div className="relative" ref={bulkRef}>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setBulkOpen(!bulkOpen)}
-                className="gap-1.5"
-              >
-                Bulk actions
-                <ChevronDown className="h-3 w-3" />
-              </Button>
+              <div className="flex gap-1.5">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setBulkOpen(!bulkOpen)}
+                  className="gap-1.5"
+                >
+                  Bulk actions
+                  <ChevronDown className="h-3 w-3" />
+                </Button>
+                {!confirmDelete ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setConfirmDelete(true)}
+                    className="gap-1.5 text-red-400 border-red-400/30 hover:bg-red-400/10"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Delete
+                  </Button>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={bulkDelete.isPending}
+                    onClick={async () => {
+                      await bulkDelete.mutateAsync([...selected]);
+                      setSelected(new Set());
+                      setConfirmDelete(false);
+                    }}
+                    className="gap-1.5 text-red-400 border-red-500 hover:bg-red-500/20"
+                  >
+                    {bulkDelete.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                    Confirm delete {selected.size}?
+                  </Button>
+                )}
+              </div>
 
               {bulkOpen && (
                 <div className="absolute top-9 right-0 z-20 w-64 rounded-md border border-zinc-700 bg-zinc-900 p-3 space-y-3 shadow-lg">
@@ -291,6 +324,12 @@ export function AssignmentsPage() {
                   onFilterChange={(v) => listState.setFilter("device_name", v)}
                 />
                 <FilterableSortHead
+                  col="device_type" label="Type"
+                  sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
+                  filterValue={listState.filters.device_type}
+                  onFilterChange={(v) => listState.setFilter("device_type", v)}
+                />
+                <FilterableSortHead
                   col="device_address" label="Device Address"
                   sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
                   sortable={false}
@@ -318,7 +357,7 @@ export function AssignmentsPage() {
             <TableBody>
               {assignments.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center py-8 text-zinc-500 text-sm">
+                  <TableCell colSpan={9} className="text-center py-8 text-zinc-500 text-sm">
                     {listState.hasActiveFilters ? "No assignments match your filters" : "No assignments configured"}
                   </TableCell>
                 </TableRow>
@@ -362,6 +401,9 @@ export function AssignmentsPage() {
                       <span className="italic text-zinc-500">inline</span>
                     )}
                   </TableCell>
+                  <TableCell className="text-zinc-400 text-xs">
+                    {assignment.device?.device_type ?? "—"}
+                  </TableCell>
                   <TableCell className="font-mono text-xs text-zinc-400">
                     {assignment.device
                       ? assignment.device.address
@@ -397,6 +439,10 @@ export function AssignmentsPage() {
             total={meta.total}
             count={meta.count}
             onPageChange={listState.setPage}
+            scrollMode={listState.scrollMode}
+            sentinelRef={listState.sentinelRef}
+            isFetching={isFetching}
+            onLoadMore={listState.loadMore}
           />
         </CardContent>
       </Card>

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Link } from "react-router-dom";
 import {
   ArrowDown,
@@ -98,10 +98,21 @@ export function DevicesPage() {
   // ── Add dialog ──────────────────────────────────────────
   const [addOpen, setAddOpen] = useState(false);
 
+  // ── Infinite scroll state ───────────────────────────────
+  const [infinitePages, setInfinitePages] = useState(1);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  // Reset infinite pages when filters/sort/scrollMode change
+  useEffect(() => {
+    setInfinitePages(1);
+  }, [debouncedFilters, sortBy, sortDir, scrollMode]);
+
   // ── Fetch devices ───────────────────────────────────────
-  const { data: response, isLoading } = useDevices({
-    limit: pageSize,
-    offset: page * pageSize,
+  const fetchLimit = scrollMode === "infinite" ? pageSize * infinitePages : pageSize;
+  const fetchOffset = scrollMode === "infinite" ? 0 : page * pageSize;
+  const { data: response, isLoading, isFetching } = useDevices({
+    limit: fetchLimit,
+    offset: fetchOffset,
     sort_by: sortBy,
     sort_dir: sortDir,
     ...Object.fromEntries(
@@ -117,6 +128,24 @@ export function DevicesPage() {
     offset: 0,
   };
   const total: number = meta.total ?? devices.length;
+
+  // ── Infinite scroll observer ───────────────────────────
+  const hasMoreInfinite = scrollMode === "infinite" && devices.length < total;
+  const loadMore = useCallback(() => {
+    if (hasMoreInfinite && !isFetching) {
+      setInfinitePages((p) => p + 1);
+    }
+  }, [hasMoreInfinite, isFetching]);
+
+  useEffect(() => {
+    if (scrollMode !== "infinite" || !sentinelRef.current) return;
+    const observer = new IntersectionObserver(
+      (entries) => { if (entries[0].isIntersecting) loadMore(); },
+      { root: document.querySelector("main"), threshold: 0.1 },
+    );
+    observer.observe(sentinelRef.current);
+    return () => observer.disconnect();
+  }, [scrollMode, loadMore]);
 
   // ── Latest results for status dots ──────────────────────
   const { data: latestResults } = useLatestResults();
@@ -642,6 +671,21 @@ export function DevicesPage() {
                 </Table>
               </div>
 
+              {/* Infinite scroll sentinel */}
+              {scrollMode === "infinite" && (
+                <div ref={sentinelRef} className="flex justify-center py-4">
+                  {isFetching && <Loader2 className="h-5 w-5 animate-spin text-brand-500" />}
+                  {!isFetching && hasMoreInfinite && (
+                    <span className="text-xs text-zinc-600">Scroll for more...</span>
+                  )}
+                  {!hasMoreInfinite && devices.length > 0 && (
+                    <span className="text-xs text-zinc-600">
+                      Showing all {total} devices
+                    </span>
+                  )}
+                </div>
+              )}
+
               {/* Pagination */}
               <div className="flex items-center justify-between border-t border-zinc-800 pt-3 mt-3">
                 <div className="flex items-center gap-2">
@@ -662,12 +706,16 @@ export function DevicesPage() {
                       <option key={s} value={String(s)}>{s}</option>
                     ))}
                   </Select>
-                  <span className="text-xs text-zinc-600">rows</span>
+                  <span className="text-xs text-zinc-600">
+                    {scrollMode === "infinite" ? "per batch" : "rows"}
+                  </span>
                 </div>
                 <span className="text-sm text-zinc-500">
-                  Showing {startItem}&ndash;{endItem} of {total}
+                  {scrollMode === "infinite"
+                    ? `Showing ${devices.length} of ${total}`
+                    : <>Showing {startItem}&ndash;{endItem} of {total}</>}
                 </span>
-                <div className="flex items-center gap-2">
+                {scrollMode === "paginated" ? <div className="flex items-center gap-2">
                   <Button
                     size="sm"
                     variant="secondary"
@@ -684,7 +732,7 @@ export function DevicesPage() {
                   >
                     Next <ChevronRight className="h-4 w-4" />
                   </Button>
-                </div>
+                </div> : <div />}
               </div>
             </>
           )}

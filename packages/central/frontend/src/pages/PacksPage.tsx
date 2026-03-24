@@ -20,6 +20,7 @@ import { CreatePackDialog } from "@/components/CreatePackDialog.tsx";
 import { formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 import { useListState } from "@/hooks/useListState.ts";
+import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
 import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
 
@@ -37,14 +38,17 @@ const SECTION_LABELS: Record<string, string> = {
 export function PacksPage() {
   const tz = useTimezone();
   const navigate = useNavigate();
+  const { pageSize, scrollMode } = useTablePreferences();
   const listState = useListState({
     columns: [
       { key: "name", label: "Name" },
       { key: "pack_uid", label: "Pack UID" },
       { key: "description", label: "Description", sortable: false },
     ],
+    defaultPageSize: pageSize,
+    scrollMode,
   });
-  const { data: response, isLoading } = usePacks(listState.params);
+  const { data: response, isLoading, isFetching } = usePacks(listState.params);
   const packs = response?.data ?? [];
   const meta = (response as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
   const exportPack = useExportPack();
@@ -234,6 +238,10 @@ export function PacksPage() {
             total={meta.total}
             count={meta.count}
             onPageChange={listState.setPage}
+            scrollMode={listState.scrollMode}
+            sentinelRef={listState.sentinelRef}
+            isFetching={isFetching}
+            onLoadMore={listState.loadMore}
           />
         </CardContent>
       </Card>

@@ -18,11 +18,13 @@ import {
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import { useApps, useCreateApp, useDeleteApp } from "@/api/hooks.ts";
 import { useListState } from "@/hooks/useListState.ts";
+import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
 import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
 import type { AppSummary } from "@/types/api.ts";
 
 export function AppsPage() {
+  const { pageSize, scrollMode } = useTablePreferences();
   const listState = useListState({
     columns: [
       { key: "name", label: "Name" },
@@ -30,8 +32,10 @@ export function AppsPage() {
       { key: "target_table", label: "Target Table" },
       { key: "description", label: "Description", sortable: false },
     ],
+    defaultPageSize: pageSize,
+    scrollMode,
   });
-  const { data: response, isLoading } = useApps(listState.params);
+  const { data: response, isLoading, isFetching } = useApps(listState.params);
   const apps = response?.data ?? [];
   const meta = (response as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
   const createApp = useCreateApp();
@@ -196,7 +200,7 @@ export function AppsPage() {
                   )}
                 </TableBody>
               </Table>
-              <PaginationBar page={listState.page} pageSize={listState.pageSize} total={meta.total} count={meta.count} onPageChange={listState.setPage} />
+              <PaginationBar page={listState.page} pageSize={listState.pageSize} total={meta.total} count={meta.count} onPageChange={listState.setPage} scrollMode={listState.scrollMode} sentinelRef={listState.sentinelRef} isFetching={isFetching} onLoadMore={listState.loadMore} />
             </>
           )}
         </CardContent>

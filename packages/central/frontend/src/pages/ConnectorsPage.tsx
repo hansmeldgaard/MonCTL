@@ -17,19 +17,23 @@ import {
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import { useConnectors, useCreateConnector, useDeleteConnector } from "@/api/hooks.ts";
 import { useListState } from "@/hooks/useListState.ts";
+import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
 import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
 import type { ConnectorSummary } from "@/types/api.ts";
 
 export function ConnectorsPage() {
+  const { pageSize, scrollMode } = useTablePreferences();
   const listState = useListState({
     columns: [
       { key: "name", label: "Name" },
       { key: "connector_type", label: "Type" },
       { key: "description", label: "Description", sortable: false },
     ],
+    defaultPageSize: pageSize,
+    scrollMode,
   });
-  const { data: response, isLoading } = useConnectors(listState.params);
+  const { data: response, isLoading, isFetching } = useConnectors(listState.params);
   const connectors = response?.data ?? [];
   const meta = (response as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
   const createConnector = useCreateConnector();
@@ -180,7 +184,7 @@ export function ConnectorsPage() {
                   )}
                 </TableBody>
               </Table>
-              <PaginationBar page={listState.page} pageSize={listState.pageSize} total={meta.total} count={meta.count} onPageChange={listState.setPage} />
+              <PaginationBar page={listState.page} pageSize={listState.pageSize} total={meta.total} count={meta.count} onPageChange={listState.setPage} scrollMode={listState.scrollMode} sentinelRef={listState.sentinelRef} isFetching={isFetching} onLoadMore={listState.loadMore} />
             </>
           )}
         </CardContent>

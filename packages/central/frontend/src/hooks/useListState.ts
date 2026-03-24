@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import type { ListParams } from "@/types/api.ts";
 
 export interface ColumnDef {
@@ -14,6 +14,7 @@ interface UseListStateOptions {
   defaultSortDir?: "asc" | "desc";
   defaultPageSize?: number;
   debounceMs?: number;
+  scrollMode?: "paginated" | "infinite";
 }
 
 export function useListState(options: UseListStateOptions) {
@@ -23,12 +24,17 @@ export function useListState(options: UseListStateOptions) {
     defaultSortDir = "asc",
     defaultPageSize = 50,
     debounceMs = 300,
+    scrollMode = "paginated",
   } = options;
 
   const [sortBy, setSortBy] = useState(defaultSortBy);
   const [sortDir, setSortDir] = useState<"asc" | "desc">(defaultSortDir);
   const [page, setPage] = useState(0);
   const [pageSize] = useState(defaultPageSize);
+
+  // Infinite scroll: how many batches loaded
+  const [infinitePages, setInfinitePages] = useState(1);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
   // Per-column filter values (immediate — drives Input value)
   const filterableKeys = columns.filter((c) => c.filterable !== false).map((c) => c.key);
@@ -45,9 +51,15 @@ export function useListState(options: UseListStateOptions) {
     const timer = setTimeout(() => {
       setDebouncedFilters(filters);
       setPage(0);
+      setInfinitePages(1);
     }, debounceMs);
     return () => clearTimeout(timer);
   }, [filters, debounceMs]);
+
+  // Reset infinite pages on sort change
+  useEffect(() => {
+    setInfinitePages(1);
+  }, [sortBy, sortDir]);
 
   const setFilter = useCallback((key: string, value: string) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -72,18 +84,24 @@ export function useListState(options: UseListStateOptions) {
     setPage(0);
   }, []);
 
+  const isInfinite = scrollMode === "infinite";
+
   const params: ListParams = useMemo(() => {
     const p: ListParams = {
       sort_by: sortBy,
       sort_dir: sortDir,
-      limit: pageSize,
-      offset: page * pageSize,
+      limit: isInfinite ? pageSize * infinitePages : pageSize,
+      offset: isInfinite ? 0 : page * pageSize,
     };
     for (const [key, val] of Object.entries(debouncedFilters)) {
       if (val) p[key] = val;
     }
     return p;
-  }, [sortBy, sortDir, page, pageSize, debouncedFilters]);
+  }, [sortBy, sortDir, page, pageSize, debouncedFilters, isInfinite, infinitePages]);
+
+  const loadMore = useCallback(() => {
+    setInfinitePages((p) => p + 1);
+  }, []);
 
   return {
     columns,
@@ -98,5 +116,9 @@ export function useListState(options: UseListStateOptions) {
     setPage,
     pageSize,
     params,
+    // Infinite scroll support
+    scrollMode,
+    sentinelRef,
+    loadMore,
   };
 }

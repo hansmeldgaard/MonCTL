@@ -333,9 +333,22 @@ ssh monctl@10.145.210.31 'cd /opt/monctl/collector && docker compose down && doc
 | Workers  | worker1-4      | 10.145.210.31 - .34    |
 | VIP      | (keepalived)   | 10.145.210.40          |
 
-SSH user: `monctl` for all servers. Compose files at `/opt/monctl/{central,collector}/docker-compose.yml`.
+SSH user: `monctl` for all servers.
 
-**Central1 special case**: Uses `central-ha` compose project at `/opt/monctl/central-ha/docker-compose.yml` (includes Patroni + Redis on host). Deploy with: `cd /opt/monctl/central-ha && docker compose down && docker compose up -d`. Central2-4 use the standard `/opt/monctl/central/` path.
+**Central compose projects** (multiple per server — restart order matters):
+
+| Project | Path | Central1 | Central2 | Central3 | Central4 |
+|---------|------|----------|----------|----------|----------|
+| central-ha | `/opt/monctl/central-ha/` | app + Patroni + Redis primary + sentinel | app + Patroni + Redis replica + sentinel | app + Redis sentinel | — |
+| central | `/opt/monctl/central/` | — | — | — | app only |
+| clickhouse | `/opt/monctl/clickhouse/` | — | — | ClickHouse node | ClickHouse node |
+| haproxy | `/opt/monctl/haproxy/` | HAProxy + keepalived | HAProxy + keepalived | HAProxy + keepalived | HAProxy + keepalived |
+| etcd | `/opt/monctl/etcd/` | etcd | etcd | etcd | — |
+| docker-stats | `/opt/monctl/docker-stats/` | stats agent | stats agent | stats agent | stats agent |
+
+**Important**: Central1-3 use `central-ha` for the main app (binds :8443). Central4 uses `central` (also binds :8443). Do NOT start both `central-ha` and `central` on the same node — they conflict on port 8443.
+
+**Workers**: All use single compose project at `/opt/monctl/collector/` (poll-worker, forwarder, cache-node, docker-stats).
 
 ### Code Style
 
@@ -362,3 +375,30 @@ SSH user: `monctl` for all servers. Compose files at `/opt/monctl/{central,colle
 **Threshold value formatting**: `formatThresholdValue(value, unit)` handles all unit types with auto-scaling: `bps` → kbps/Mbps/Gbps, `bytes` → KB/MB/GB. Null values render as em-dash. Custom units render as `{value} {unit}`. Used in both AppDetailPage and DeviceDetailPage threshold tabs.
 
 **UnitSelector** (`AppDetailPage.tsx`): Combined dropdown + free-text component for threshold variable units. Built-in options (9 units) + "Custom..." option that reveals a text input. Used in New Variable form and inline editing.
+
+### Playwright MCP (Browser Automation)
+ 
+**When to use**: After implementing UI changes, to verify they render correctly against the running MonCTL instance. Also for reading live system state (device lists, alert status, performance charts) and running E2E verification flows.
+ 
+**Target URL**: `https://10.145.210.40` (HAProxy VIP — routes to central1-4)
+ 
+**Authentication flow**:
+1. First, try navigating with `--storage-state .playwright/auth-state.json`
+2. If redirected to `/login`, perform login:
+   - Username: (read from `.env.local-dev` → `MONCTL_TEST_USER`)
+   - Password: (read from `.env.local-dev` → `MONCTL_TEST_PASSWORD`)
+3. After login, save state: store cookies to `.playwright/auth-state.json`
+4. Subsequent navigations reuse the saved state
+ 
+**Environment file** (`.env.local-dev`, gitignored):
+```
+MONCTL_TEST_USER=admin
+MONCTL_TEST_PASSWORD=<password>
+MONCTL_BASE_URL=https://10.145.210.40
+```
+ 
+**TLS**: The lab HAProxy uses a self-signed certificate. Playwright's Chromium ignores certificate errors by default in MCP mode, so no special config is needed.
+ 
+**Headless mode**: The lab server has no display. Playwright always runs headless. Do NOT pass `--headed` or attempt to use headed mode.
+ 
+**Screenshots**: When verifying UI changes, always take a screenshot as evidence. Store in `.playwright/screenshots/` (gitignored). Describe what the screenshot shows in your response.
