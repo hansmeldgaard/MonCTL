@@ -20,9 +20,19 @@ import time
 import traceback
 from dataclasses import dataclass, field
 
+import ctypes
+import gc
+
 import structlog
 
 from monctl_collector.apps.manager import AppManager
+
+# glibc malloc_trim — returns freed memory to OS
+try:
+    _libc = ctypes.CDLL("libc.so.6")
+    _malloc_trim = _libc.malloc_trim
+except Exception:
+    _malloc_trim = None
 from monctl_collector.central.credentials import CredentialManager
 from monctl_collector.config import SchedulingConfig
 from monctl_collector.jobs.models import (
@@ -339,6 +349,21 @@ class PollEngine:
                         await conn.close()
                     except Exception:
                         pass
+                # Release memory back to OS
+                gc.collect()
+                if _malloc_trim is not None:
+                    _malloc_trim(0)
+
+                # Log RSS for memory leak tracking
+                try:
+                    with open("/proc/self/status") as _f:
+                        for _line in _f:
+                            if _line.startswith("VmRSS"):
+                                logger.debug("job_memory", job_id=job.job_id,
+                                             app=job.app_id, rss_kb=int(_line.split()[1]))
+                                break
+                except Exception:
+                    pass
 
         execution_time = time.time() - start
         self._running.discard(job.job_id)

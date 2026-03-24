@@ -264,6 +264,13 @@ class SnmpConnector:
 
     async def connect(self, host: str) -> None:
         """Create SNMP engine + transport — reused for all operations until close()."""
+        # Idempotent: if already connected to same host, reuse. If different host
+        # or called again (e.g. by apps that predate engine-managed lifecycle),
+        # close the previous engine first to prevent memory leaks.
+        if self._engine is not None:
+            if self._host == host:
+                return  # Already connected to this host
+            await self.close()
         from pysnmp.hlapi.v3arch.asyncio import SnmpEngine, UdpTransportTarget
         self._host = host
         self._engine = SnmpEngine()
@@ -345,9 +352,18 @@ class SnmpConnector:
         return rows
 
     async def close(self) -> None:
-        """Close SNMP engine and release UDP socket."""
+        """Close SNMP engine and release all internal pysnmp state."""
         if self._engine is not None:
-            self._engine.close_dispatcher()
+            try:
+                self._engine.close_dispatcher()
+            except Exception:
+                pass
+            # Clear internal MIB/security registrations that accumulate
+            try:
+                mib = self._engine.get_mib_builder()
+                mib.clean()
+            except Exception:
+                pass
             self._engine = None
         self._transport = None
         self._auth = None
