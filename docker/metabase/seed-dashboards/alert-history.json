@@ -9,10 +9,17 @@
         "native": {
           "query": "SELECT\n  toStartOfHour(occurred_at) AS time,\n  action,\n  count() AS alert_count\nFROM alert_log\nWHERE occurred_at >= now() - INTERVAL {{time_range}}\nGROUP BY time, action\nORDER BY time",
           "template-tags": {
-            "time_range": {"type": "text", "name": "time_range", "display-name": "Time Range", "default": "7 DAY"}
+            "time_range": {
+              "type": "text",
+              "name": "time_range",
+              "display-name": "Time Range",
+              "default": "7 DAY"
+            }
           }
-        }
-      }
+        },
+        "database": 1
+      },
+      "visualization_settings": {}
     },
     {
       "_ref": "noisiest_rules",
@@ -23,10 +30,17 @@
         "native": {
           "query": "SELECT\n  definition_name,\n  count() AS fire_count\nFROM alert_log\nWHERE occurred_at >= now() - INTERVAL {{time_range}}\n  AND action = 'fire'\nGROUP BY definition_name\nORDER BY fire_count DESC\nLIMIT 10",
           "template-tags": {
-            "time_range": {"type": "text", "name": "time_range", "display-name": "Time Range", "default": "7 DAY"}
+            "time_range": {
+              "type": "text",
+              "name": "time_range",
+              "display-name": "Time Range",
+              "default": "7 DAY"
+            }
           }
-        }
-      }
+        },
+        "database": 1
+      },
+      "visualization_settings": {}
     },
     {
       "_ref": "alert_log_table",
@@ -37,19 +51,44 @@
         "native": {
           "query": "SELECT\n  occurred_at,\n  action,\n  definition_name,\n  device_name,\n  entity_key,\n  current_value,\n  message\nFROM alert_log\nWHERE occurred_at >= now() - INTERVAL {{time_range}}\nORDER BY occurred_at DESC\nLIMIT 500",
           "template-tags": {
-            "time_range": {"type": "text", "name": "time_range", "display-name": "Time Range", "default": "7 DAY"}
+            "time_range": {
+              "type": "text",
+              "name": "time_range",
+              "display-name": "Time Range",
+              "default": "7 DAY"
+            }
           }
-        }
-      }
+        },
+        "database": 1
+      },
+      "visualization_settings": {}
     }
   ],
   "dashboard": {
     "name": "Alert History",
     "description": "Alert trends, noisy rules, and raw alert log from ClickHouse",
     "cards": [
-      {"_ref": "alert_volume", "size_x": 16, "size_y": 6, "row": 0, "col": 0},
-      {"_ref": "noisiest_rules", "size_x": 8, "size_y": 6, "row": 0, "col": 16},
-      {"_ref": "alert_log_table", "size_x": 24, "size_y": 10, "row": 6, "col": 0}
+      {
+        "_ref": "alert_volume",
+        "size_x": 16,
+        "size_y": 6,
+        "row": 0,
+        "col": 0
+      },
+      {
+        "_ref": "noisiest_rules",
+        "size_x": 8,
+        "size_y": 6,
+        "row": 0,
+        "col": 16
+      },
+      {
+        "_ref": "alert_log_table",
+        "size_x": 24,
+        "size_y": 10,
+        "row": 6,
+        "col": 0
+      }
     ]
   }
 }

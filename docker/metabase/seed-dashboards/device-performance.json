@@ -13,10 +13,21 @@
         "native": {
           "query": "SELECT\n  toStartOfInterval(executed_at, INTERVAL 5 minute) AS time,\n  device_name,\n  component,\n  avg(metric_values[indexOf(metric_names, 'utilization_pct')]) AS cpu_pct\nFROM performance\nWHERE component_type = 'cpu'\n  AND has(metric_names, 'utilization_pct')\n  AND executed_at >= now() - INTERVAL {{time_range}}\n  AND device_name = {{device_name}}\nGROUP BY time, device_name, component\nORDER BY time",
           "template-tags": {
-            "time_range": {"type": "text", "name": "time_range", "display-name": "Time Range", "default": "24 HOUR"},
-            "device_name": {"type": "text", "name": "device_name", "display-name": "Device Name", "default": ""}
+            "time_range": {
+              "type": "text",
+              "name": "time_range",
+              "display-name": "Time Range",
+              "default": "24 HOUR"
+            },
+            "device_name": {
+              "type": "text",
+              "name": "device_name",
+              "display-name": "Device Name",
+              "default": ""
+            }
           }
-        }
+        },
+        "database": 1
       }
     },
     {
@@ -31,10 +42,21 @@
         "native": {
           "query": "SELECT\n  toStartOfInterval(executed_at, INTERVAL 5 minute) AS time,\n  device_name,\n  avg(metric_values[indexOf(metric_names, 'utilization_pct')]) AS mem_pct\nFROM performance\nWHERE component_type = 'memory'\n  AND has(metric_names, 'utilization_pct')\n  AND executed_at >= now() - INTERVAL {{time_range}}\n  AND device_name = {{device_name}}\nGROUP BY time, device_name\nORDER BY time",
           "template-tags": {
-            "time_range": {"type": "text", "name": "time_range", "display-name": "Time Range", "default": "24 HOUR"},
-            "device_name": {"type": "text", "name": "device_name", "display-name": "Device Name", "default": ""}
+            "time_range": {
+              "type": "text",
+              "name": "time_range",
+              "display-name": "Time Range",
+              "default": "24 HOUR"
+            },
+            "device_name": {
+              "type": "text",
+              "name": "device_name",
+              "display-name": "Device Name",
+              "default": ""
+            }
           }
-        }
+        },
+        "database": 1
       }
     },
     {
@@ -45,8 +67,10 @@
         "type": "native",
         "native": {
           "query": "SELECT\n  device_name,\n  component,\n  metric_values[indexOf(metric_names, 'utilization_pct')] AS disk_pct\nFROM performance_latest FINAL\nWHERE component_type = 'disk'\n  AND has(metric_names, 'utilization_pct')\nORDER BY disk_pct DESC\nLIMIT 50"
-        }
-      }
+        },
+        "database": 1
+      },
+      "visualization_settings": {}
     },
     {
       "_ref": "all_metrics_table",
@@ -57,20 +81,51 @@
         "native": {
           "query": "SELECT\n  device_name,\n  component_type,\n  component,\n  metric_names,\n  metric_values,\n  executed_at\nFROM performance_latest FINAL\nWHERE device_name = {{device_name}}\nORDER BY component_type, component",
           "template-tags": {
-            "device_name": {"type": "text", "name": "device_name", "display-name": "Device Name", "default": ""}
+            "device_name": {
+              "type": "text",
+              "name": "device_name",
+              "display-name": "Device Name",
+              "default": ""
+            }
           }
-        }
-      }
+        },
+        "database": 1
+      },
+      "visualization_settings": {}
     }
   ],
   "dashboard": {
     "name": "Device Performance",
     "description": "CPU, memory, disk metrics over time. Use the device filter to focus on a specific device.",
     "cards": [
-      {"_ref": "cpu_over_time", "size_x": 12, "size_y": 6, "row": 0, "col": 0},
-      {"_ref": "memory_over_time", "size_x": 12, "size_y": 6, "row": 0, "col": 12},
-      {"_ref": "disk_usage", "size_x": 12, "size_y": 6, "row": 6, "col": 0},
-      {"_ref": "all_metrics_table", "size_x": 12, "size_y": 8, "row": 6, "col": 12}
+      {
+        "_ref": "cpu_over_time",
+        "size_x": 12,
+        "size_y": 6,
+        "row": 0,
+        "col": 0
+      },
+      {
+        "_ref": "memory_over_time",
+        "size_x": 12,
+        "size_y": 6,
+        "row": 0,
+        "col": 12
+      },
+      {
+        "_ref": "disk_usage",
+        "size_x": 12,
+        "size_y": 6,
+        "row": 6,
+        "col": 0
+      },
+      {
+        "_ref": "all_metrics_table",
+        "size_x": 12,
+        "size_y": 8,
+        "row": 6,
+        "col": 12
+      }
     ]
   }
 }

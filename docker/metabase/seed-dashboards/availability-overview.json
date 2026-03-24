@@ -9,10 +9,17 @@
         "native": {
           "query": "SELECT\n  round(countIf(reachable = 1) * 100.0 / count(), 2) AS availability_pct\nFROM availability_latency\nWHERE executed_at >= now() - INTERVAL {{time_range}}",
           "template-tags": {
-            "time_range": {"type": "text", "name": "time_range", "display-name": "Time Range", "default": "24 HOUR"}
+            "time_range": {
+              "type": "text",
+              "name": "time_range",
+              "display-name": "Time Range",
+              "default": "24 HOUR"
+            }
           }
-        }
-      }
+        },
+        "database": 1
+      },
+      "visualization_settings": {}
     },
     {
       "_ref": "availability_by_device",
@@ -23,10 +30,17 @@
         "native": {
           "query": "SELECT\n  device_name,\n  count() AS total_checks,\n  countIf(reachable = 1) AS ok_checks,\n  round(countIf(reachable = 1) * 100.0 / count(), 2) AS availability_pct,\n  round(avg(rtt_ms), 1) AS avg_rtt_ms,\n  round(quantile(0.95)(rtt_ms), 1) AS p95_rtt_ms\nFROM availability_latency\nWHERE executed_at >= now() - INTERVAL {{time_range}}\nGROUP BY device_name\nORDER BY availability_pct ASC",
           "template-tags": {
-            "time_range": {"type": "text", "name": "time_range", "display-name": "Time Range", "default": "24 HOUR"}
+            "time_range": {
+              "type": "text",
+              "name": "time_range",
+              "display-name": "Time Range",
+              "default": "24 HOUR"
+            }
           }
-        }
-      }
+        },
+        "database": 1
+      },
+      "visualization_settings": {}
     },
     {
       "_ref": "response_time_trend",
@@ -37,11 +51,23 @@
         "native": {
           "query": "SELECT\n  toStartOfInterval(executed_at, INTERVAL 5 minute) AS time,\n  device_name,\n  avg(rtt_ms) AS avg_rtt\nFROM availability_latency\nWHERE executed_at >= now() - INTERVAL {{time_range}}\n  AND device_name = {{device_name}}\nGROUP BY time, device_name\nORDER BY time",
           "template-tags": {
-            "time_range": {"type": "text", "name": "time_range", "display-name": "Time Range", "default": "24 HOUR"},
-            "device_name": {"type": "text", "name": "device_name", "display-name": "Device", "default": ""}
+            "time_range": {
+              "type": "text",
+              "name": "time_range",
+              "display-name": "Time Range",
+              "default": "24 HOUR"
+            },
+            "device_name": {
+              "type": "text",
+              "name": "device_name",
+              "display-name": "Device",
+              "default": ""
+            }
           }
-        }
-      }
+        },
+        "database": 1
+      },
+      "visualization_settings": {}
     },
     {
       "_ref": "unreachable_now",
@@ -51,18 +77,44 @@
         "type": "native",
         "native": {
           "query": "SELECT\n  device_name,\n  app_name,\n  rtt_ms,\n  error_message,\n  executed_at\nFROM availability_latency_latest FINAL\nWHERE reachable = 0\nORDER BY device_name"
-        }
-      }
+        },
+        "database": 1
+      },
+      "visualization_settings": {}
     }
   ],
   "dashboard": {
     "name": "Availability Overview",
     "description": "Uptime, response times, and currently unreachable devices",
     "cards": [
-      {"_ref": "overall_availability", "size_x": 6, "size_y": 4, "row": 0, "col": 0},
-      {"_ref": "unreachable_now", "size_x": 18, "size_y": 4, "row": 0, "col": 6},
-      {"_ref": "response_time_trend", "size_x": 12, "size_y": 6, "row": 4, "col": 0},
-      {"_ref": "availability_by_device", "size_x": 12, "size_y": 8, "row": 4, "col": 12}
+      {
+        "_ref": "overall_availability",
+        "size_x": 6,
+        "size_y": 4,
+        "row": 0,
+        "col": 0
+      },
+      {
+        "_ref": "unreachable_now",
+        "size_x": 18,
+        "size_y": 4,
+        "row": 0,
+        "col": 6
+      },
+      {
+        "_ref": "response_time_trend",
+        "size_x": 12,
+        "size_y": 6,
+        "row": 4,
+        "col": 0
+      },
+      {
+        "_ref": "availability_by_device",
+        "size_x": 12,
+        "size_y": 8,
+        "row": 4,
+        "col": 12
+      }
     ]
   }
 }

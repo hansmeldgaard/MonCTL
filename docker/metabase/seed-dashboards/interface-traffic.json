@@ -9,11 +9,23 @@
         "native": {
           "query": "SELECT\n  toStartOfInterval(executed_at, INTERVAL 5 minute) AS time,\n  if_name,\n  avg(in_rate_bps) AS in_bps,\n  avg(out_rate_bps) AS out_bps\nFROM interface\nWHERE device_name = {{device_name}}\n  AND executed_at >= now() - INTERVAL {{time_range}}\nGROUP BY time, if_name\nORDER BY time",
           "template-tags": {
-            "device_name": {"type": "text", "name": "device_name", "display-name": "Device", "default": ""},
-            "time_range": {"type": "text", "name": "time_range", "display-name": "Time Range", "default": "24 HOUR"}
+            "device_name": {
+              "type": "text",
+              "name": "device_name",
+              "display-name": "Device",
+              "default": ""
+            },
+            "time_range": {
+              "type": "text",
+              "name": "time_range",
+              "display-name": "Time Range",
+              "default": "24 HOUR"
+            }
           }
-        }
-      }
+        },
+        "database": 1
+      },
+      "visualization_settings": {}
     },
     {
       "_ref": "utilization_pct",
@@ -24,11 +36,23 @@
         "native": {
           "query": "SELECT\n  toStartOfInterval(executed_at, INTERVAL 5 minute) AS time,\n  if_name,\n  avg(in_utilization_pct) AS in_util,\n  avg(out_utilization_pct) AS out_util\nFROM interface\nWHERE device_name = {{device_name}}\n  AND executed_at >= now() - INTERVAL {{time_range}}\nGROUP BY time, if_name\nORDER BY time",
           "template-tags": {
-            "device_name": {"type": "text", "name": "device_name", "display-name": "Device", "default": ""},
-            "time_range": {"type": "text", "name": "time_range", "display-name": "Time Range", "default": "24 HOUR"}
+            "device_name": {
+              "type": "text",
+              "name": "device_name",
+              "display-name": "Device",
+              "default": ""
+            },
+            "time_range": {
+              "type": "text",
+              "name": "time_range",
+              "display-name": "Time Range",
+              "default": "24 HOUR"
+            }
           }
-        }
-      }
+        },
+        "database": 1
+      },
+      "visualization_settings": {}
     },
     {
       "_ref": "errors_discards",
@@ -39,11 +63,23 @@
         "native": {
           "query": "SELECT\n  toStartOfInterval(executed_at, INTERVAL 1 hour) AS time,\n  if_name,\n  sum(in_errors) AS in_err,\n  sum(out_errors) AS out_err,\n  sum(in_discards) AS in_disc,\n  sum(out_discards) AS out_disc\nFROM interface\nWHERE device_name = {{device_name}}\n  AND executed_at >= now() - INTERVAL {{time_range}}\nGROUP BY time, if_name\nORDER BY time",
           "template-tags": {
-            "device_name": {"type": "text", "name": "device_name", "display-name": "Device", "default": ""},
-            "time_range": {"type": "text", "name": "time_range", "display-name": "Time Range", "default": "24 HOUR"}
+            "device_name": {
+              "type": "text",
+              "name": "device_name",
+              "display-name": "Device",
+              "default": ""
+            },
+            "time_range": {
+              "type": "text",
+              "name": "time_range",
+              "display-name": "Time Range",
+              "default": "24 HOUR"
+            }
           }
-        }
-      }
+        },
+        "database": 1
+      },
+      "visualization_settings": {}
     },
     {
       "_ref": "interface_status_table",
@@ -54,20 +90,51 @@
         "native": {
           "query": "SELECT\n  device_name,\n  if_name,\n  if_alias,\n  if_oper_status,\n  if_speed_mbps,\n  in_rate_bps,\n  out_rate_bps,\n  in_utilization_pct,\n  out_utilization_pct,\n  executed_at\nFROM interface_latest FINAL\nWHERE device_name = {{device_name}}\nORDER BY if_name",
           "template-tags": {
-            "device_name": {"type": "text", "name": "device_name", "display-name": "Device", "default": ""}
+            "device_name": {
+              "type": "text",
+              "name": "device_name",
+              "display-name": "Device",
+              "default": ""
+            }
           }
-        }
-      }
+        },
+        "database": 1
+      },
+      "visualization_settings": {}
     }
   ],
   "dashboard": {
     "name": "Interface Traffic",
     "description": "Bandwidth, errors, utilization per network interface",
     "cards": [
-      {"_ref": "traffic_rate", "size_x": 12, "size_y": 6, "row": 0, "col": 0},
-      {"_ref": "utilization_pct", "size_x": 12, "size_y": 6, "row": 0, "col": 12},
-      {"_ref": "errors_discards", "size_x": 12, "size_y": 6, "row": 6, "col": 0},
-      {"_ref": "interface_status_table", "size_x": 12, "size_y": 8, "row": 6, "col": 12}
+      {
+        "_ref": "traffic_rate",
+        "size_x": 12,
+        "size_y": 6,
+        "row": 0,
+        "col": 0
+      },
+      {
+        "_ref": "utilization_pct",
+        "size_x": 12,
+        "size_y": 6,
+        "row": 0,
+        "col": 12
+      },
+      {
+        "_ref": "errors_discards",
+        "size_x": 12,
+        "size_y": 6,
+        "row": 6,
+        "col": 0
+      },
+      {
+        "_ref": "interface_status_table",
+        "size_x": 12,
+        "size_y": 8,
+        "row": 6,
+        "col": 12
+      }
     ]
   }
 }
