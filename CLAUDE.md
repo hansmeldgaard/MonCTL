@@ -339,7 +339,7 @@ ssh monctl@10.145.210.31 'cd /opt/monctl/collector && docker compose down && doc
 - Always use `--no-cache` when rebuilding after source changes
 - Use `docker compose up -d` (not `restart`) to pick up new images
 - Deploy to ALL 4 central nodes and ALL 4 worker nodes
-- **Healthchecks in Alpine containers**: Use `wget -qO-` instead of `curl -sf` — Alpine images (TimescaleDB/Patroni, Redis) do not include curl. Redis uses `redis-cli ping`.
+- **Healthchecks in Alpine containers**: Alpine images (TimescaleDB/Patroni, Redis) do not include curl. Use `pg_isready -h 127.0.0.1 -p 5433` for Patroni (not wget — it causes `ConnectionResetError` spam in Patroni logs). Use `redis-cli ping` for Redis.
 
 ### Server Inventory
 
