@@ -4,6 +4,7 @@ import {
   Pencil,
   Plus,
   Search,
+  Server,
   Trash2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
@@ -32,9 +33,49 @@ import {
 } from "@/api/hooks.ts";
 import { useListState } from "@/hooks/useListState.ts";
 import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
+import { DeviceCategoriesPage } from "@/pages/DeviceTypesPage.tsx";
+import { cn } from "@/lib/utils.ts";
 import type { DeviceType } from "@/types/api.ts";
 
+const TABS = [
+  { key: "types", label: "Device Types", icon: Search },
+  { key: "categories", label: "Categories", icon: Server },
+] as const;
+
+type TabKey = (typeof TABS)[number]["key"];
+
 export function DeviceTypesPage() {
+  const [activeTab, setActiveTab] = useState<TabKey>("types");
+
+  return (
+    <div className="space-y-4">
+      {/* Tab bar */}
+      <div className="flex items-center gap-1 border-b border-zinc-800">
+        {TABS.map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => setActiveTab(tab.key)}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px cursor-pointer",
+              activeTab === tab.key
+                ? "border-brand-500 text-brand-400"
+                : "border-transparent text-zinc-500 hover:text-zinc-300",
+            )}
+          >
+            <tab.icon className="h-4 w-4" />
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "types" && <DeviceTypesTab />}
+      {activeTab === "categories" && <DeviceCategoriesPage />}
+    </div>
+  );
+}
+
+function DeviceTypesTab() {
   const { pageSize, scrollMode } = useTablePreferences();
   const listState = useListState({
     columns: [

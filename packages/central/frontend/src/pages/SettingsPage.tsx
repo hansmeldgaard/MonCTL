@@ -50,7 +50,6 @@ import { cn, formatDate, timeAgo } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 
 // Lazy-import existing page components to render inside tabs
-import { DeviceCategoriesPage } from "@/pages/DeviceTypesPage.tsx";
 import { CollectorsPage } from "@/pages/CollectorsPage.tsx";
 import { CredentialsPage } from "@/pages/CredentialsPage.tsx";
 import { SnmpOidsPage } from "@/pages/SnmpOidsPage.tsx";
@@ -63,7 +62,6 @@ const TABS = [
   { key: "profile", label: "Profile", icon: User },
   { key: "api-keys", label: "API Keys", icon: KeyRound },
   { key: "system", label: "System", icon: Settings },
-  { key: "device-categories", label: "Device Categories", icon: Server },
   { key: "labels", label: "Labels", icon: Tag },
   { key: "collectors", label: "Collectors", icon: Cpu },
   { key: "credentials", label: "Credentials", icon: KeyRound },
@@ -1113,7 +1111,6 @@ export function SettingsPage() {
       case "profile": return <ProfileTab />;
       case "api-keys": return <ApiKeysTab />;
       case "system": return <SystemTab />;
-      case "device-categories": return <DeviceCategoriesPage />;
       case "labels": return <LabelKeysPage />;
       case "collectors": return <CollectorsPage />;
       case "credentials": return <CredentialsPage />;

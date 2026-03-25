@@ -20,21 +20,22 @@ interface Props {
   title?: string;
 }
 
+function formatTimeLabel(ts: number, timezone: string): string {
+  return new Date(ts).toLocaleTimeString("en-US", {
+    hour: "2-digit", minute: "2-digit", hour12: false, timeZone: timezone,
+  });
+}
+
 export function PerformanceChart({ data, selectedComponents, metricName, timezone = "UTC", unit = "", title }: Props) {
-  const chartData = useMemo(() => {
+  const { chartData, domain } = useMemo(() => {
     const filtered = data.filter((r) => selectedComponents.includes(r.component));
 
-    const byTime = new Map<string, Record<string, number | string>>();
+    const byTime = new Map<number, Record<string, number | string>>();
 
     for (const r of filtered) {
-      const ts = r.executed_at;
+      const ts = new Date(r.executed_at).getTime();
       if (!byTime.has(ts)) {
-        byTime.set(ts, {
-          time: new Date(ts).toLocaleTimeString("en-US", {
-            hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: timezone,
-          }),
-          _ts: ts,
-        } as Record<string, number | string>);
+        byTime.set(ts, { ts } as Record<string, number | string>);
       }
       const entry = byTime.get(ts)!;
       const val = r.metrics[metricName];
@@ -43,10 +44,15 @@ export function PerformanceChart({ data, selectedComponents, metricName, timezon
       }
     }
 
-    return [...byTime.values()].sort((a, b) =>
-      String(a._ts).localeCompare(String(b._ts))
-    );
-  }, [data, selectedComponents, metricName, timezone]);
+    const sorted = [...byTime.values()].sort((a, b) => (a.ts as number) - (b.ts as number));
+    const timestamps = sorted.map((d) => d.ts as number);
+    const pad = timestamps.length > 1 ? (timestamps[timestamps.length - 1] - timestamps[0]) * 0.02 : 60_000;
+    const domain: [number, number] = timestamps.length > 0
+      ? [timestamps[0] - pad, timestamps[timestamps.length - 1] + pad]
+      : [Date.now() - 3600_000, Date.now()];
+
+    return { chartData: sorted, domain };
+  }, [data, selectedComponents, metricName]);
 
   if (chartData.length === 0) {
     return (
@@ -66,12 +72,15 @@ export function PerformanceChart({ data, selectedComponents, metricName, timezon
           <LineChart data={chartData} margin={{ top: 4, right: 16, bottom: 0, left: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
             <XAxis
-              dataKey="time"
+              dataKey="ts"
+              type="number"
+              scale="time"
+              domain={domain}
               stroke="#52525b"
               fontSize={10}
               tickLine={false}
               axisLine={false}
-              interval="preserveStartEnd"
+              tickFormatter={(ts: number) => formatTimeLabel(ts, timezone)}
             />
             <YAxis
               stroke="#52525b"
@@ -88,6 +97,7 @@ export function PerformanceChart({ data, selectedComponents, metricName, timezon
                 borderRadius: "0.5rem",
                 fontSize: "0.75rem",
               }}
+              labelFormatter={(ts) => formatTimeLabel(Number(ts), timezone)}
               formatter={(value: unknown, name: unknown) => [
                 unit ? `${Number(value).toFixed(1)}${unit}` : Number(value).toFixed(2),
                 String(name),
@@ -104,7 +114,7 @@ export function PerformanceChart({ data, selectedComponents, metricName, timezon
                 strokeWidth={1.5}
                 dot={false}
                 activeDot={{ r: 3 }}
-                connectNulls
+                connectNulls={false}
                 isAnimationActive={false}
               />
             ))}
