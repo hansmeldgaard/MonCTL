@@ -176,9 +176,9 @@ def _parse_sys_descr(sys_descr: str) -> dict[str, str]:
         m = re.search(r"Cisco IOS.*?,\s*(\S+)\s+Software", sys_descr)
         if m:
             result["model"] = m.group(1)
-        if "IOS XE" in sys_descr:
+        if "IOS XE" in sys_descr or "IOSXE" in sys_descr:
             result["os_family"] = "IOS-XE"
-        elif "IOS XR" in sys_descr:
+        elif "IOS XR" in sys_descr or "IOSXR" in sys_descr:
             result["os_family"] = "IOS-XR"
         elif "NX-OS" in sys_descr:
             result["os_family"] = "NX-OS"
