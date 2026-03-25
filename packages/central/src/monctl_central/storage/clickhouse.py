@@ -905,7 +905,7 @@ ENGINE = ReplicatedMergeTree(
 )
 PARTITION BY toYYYYMMDD(timestamp)
 ORDER BY (collector_name, container_name, timestamp)
-TTL timestamp + INTERVAL 7 DAY
+TTL toDateTime(timestamp) + INTERVAL 7 DAY
 SETTINGS index_granularity = 8192
 """
 
@@ -933,7 +933,7 @@ CREATE TABLE IF NOT EXISTS logs
 ENGINE = MergeTree()
 PARTITION BY toYYYYMMDD(timestamp)
 ORDER BY (collector_name, container_name, timestamp)
-TTL timestamp + INTERVAL 7 DAY
+TTL toDateTime(timestamp) + INTERVAL 7 DAY
 SETTINGS index_granularity = 8192
 """
 
