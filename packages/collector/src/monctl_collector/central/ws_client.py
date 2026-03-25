@@ -30,9 +30,12 @@ class WebSocketClient:
         api_key: str,
         node_id: str,
         verify_ssl: bool = True,
+        collector_id: str = "",
     ):
         ws_url = central_url.replace("https://", "wss://").replace("http://", "ws://")
         self._ws_url = f"{ws_url.rstrip('/')}/ws/collector?token={api_key}"
+        if collector_id:
+            self._ws_url += f"&collector_id={collector_id}"
         self._node_id = node_id
         self._verify_ssl = verify_ssl
         self._handlers: dict[str, Callable[..., Awaitable]] = {}

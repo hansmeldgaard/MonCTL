@@ -24,9 +24,11 @@ manager = ConnectionManager()
 async def collector_ws(
     websocket: WebSocket,
     token: str = Query(...),
+    collector_id: str | None = Query(None),
 ):
     """Persistent WebSocket for collector command channel."""
-    collector_id, collector_name = await authenticate_ws(websocket, token)
+    cid, collector_name = await authenticate_ws(websocket, token, collector_id)
+    collector_id = cid
     if collector_id is None:
         return
 

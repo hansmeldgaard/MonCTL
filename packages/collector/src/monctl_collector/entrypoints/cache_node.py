@@ -144,6 +144,7 @@ async def run(cfg: CollectorConfig) -> None:
         api_key=cfg.central.api_key,
         node_id=node_id,
         verify_ssl=cfg.central.verify_ssl,
+        collector_id=cfg.collector_id or "",
     )
 
     init_handlers(

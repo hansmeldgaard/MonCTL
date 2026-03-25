@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import uuid
 
 import structlog
@@ -18,15 +19,31 @@ logger = structlog.get_logger()
 async def authenticate_ws(
     websocket: WebSocket,
     token: str,
+    collector_id_hint: str | None = None,
 ) -> tuple[uuid.UUID | None, str | None]:
-    """Authenticate a WebSocket connection using a collector API key.
+    """Authenticate a WebSocket connection.
+
+    Supports two auth modes:
+    1. Individual collector API key (looked up in api_keys table)
+    2. Shared secret (MONCTL_COLLECTOR_API_KEY env var) + collector_id query param
 
     Returns (collector_id, collector_name) on success, (None, None) on failure.
-    On failure, the WebSocket is accepted and then closed with a 4001 code.
     """
     try:
         factory = get_session_factory()
         async with factory() as db:
+            # Mode 1: Try shared secret first
+            shared_secret = os.environ.get("MONCTL_COLLECTOR_API_KEY", "")
+            if shared_secret and token == shared_secret and collector_id_hint:
+                try:
+                    cid = uuid.UUID(collector_id_hint)
+                    collector = await db.get(Collector, cid)
+                    if collector and collector.status == "ACTIVE":
+                        return collector.id, collector.name
+                except (ValueError, AttributeError):
+                    pass
+
+            # Mode 2: Individual collector API key
             token_hash = hash_api_key(token)
             stmt = select(ApiKey).where(ApiKey.key_hash == token_hash)
             result = await db.execute(stmt)
