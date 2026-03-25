@@ -11,7 +11,7 @@ logger = structlog.get_logger()
 
 _job_scheduler = None
 _central_client = None
-_sidecar_url = "http://localhost:9100"
+_sidecar_url = "http://monctl-docker-stats:9100"
 
 
 def init_handlers(scheduler, central_client, sidecar_url: str = "http://localhost:9100"):

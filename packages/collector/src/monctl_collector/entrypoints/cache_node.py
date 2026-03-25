@@ -138,7 +138,7 @@ async def run(cfg: CollectorConfig) -> None:
     await upgrade_agent.start()
 
     # ── WebSocket command channel ─────────────────────────────────────────────
-    sidecar_url = os.environ.get("MONCTL_DOCKER_STATS_URL", "http://localhost:9100")
+    sidecar_url = os.environ.get("MONCTL_DOCKER_STATS_URL", "http://monctl-docker-stats:9100")
     ws_client = WebSocketClient(
         central_url=cfg.central.url,
         api_key=cfg.central.api_key,
