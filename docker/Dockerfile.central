@@ -47,6 +47,9 @@ COPY --from=frontend-builder /frontend/dist /app/static
 # Copy alembic migration files (for auto-migration on startup)
 COPY packages/central/alembic/ /app/alembic/
 
+# Copy built-in app source files (for seeding snmp_discovery etc.)
+COPY apps/ /app/apps/
+
 # Copy entrypoint
 COPY docker/central-entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh

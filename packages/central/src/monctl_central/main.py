@@ -102,6 +102,7 @@ async def lifespan(app: FastAPI):
         # Seed built-in snmp_discovery app (required for device auto-discovery)
         from monctl_central.storage.models import App, AppVersion
         from pathlib import Path
+        import hashlib
 
         try:
             existing_discovery = (await session.execute(
@@ -117,15 +118,23 @@ async def lifespan(app: FastAPI):
                 session.add(discovery_app)
                 await session.flush()
 
-                source_path = Path(__file__).resolve().parents[4] / "apps" / "snmp_discovery.py"
                 source_code = ""
-                if source_path.exists():
-                    source_code = source_path.read_text()
+                # Try multiple paths: dev layout and Docker container
+                for candidate in [
+                    Path(__file__).resolve().parents[4] / "apps" / "snmp_discovery.py",
+                    Path("/app/apps/snmp_discovery.py"),
+                ]:
+                    if candidate.exists():
+                        source_code = candidate.read_text()
+                        break
+
+                checksum = hashlib.sha256(source_code.encode()).hexdigest()
 
                 version = AppVersion(
                     app_id=discovery_app.id,
                     version="1.0.0",
                     source_code=source_code,
+                    checksum_sha256=checksum,
                     entry_class="Poller",
                     requirements=[],
                     is_latest=True,
@@ -135,9 +144,9 @@ async def lifespan(app: FastAPI):
                 session.add(version)
                 await session.commit()
                 logger.info("snmp_discovery_app_seeded")
-        except Exception:
+        except Exception as exc:
             await session.rollback()
-            logger.debug("snmp_discovery_app_already_exists")
+            logger.error("snmp_discovery_seed_failed", error=str(exc))
 
     # ── Seed default RBAC roles ────────────────────────────────────────────
     from monctl_central.storage.models import Role, RolePermission
