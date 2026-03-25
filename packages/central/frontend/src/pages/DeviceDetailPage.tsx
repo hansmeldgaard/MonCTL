@@ -134,6 +134,7 @@ interface AddAssignmentDialogProps {
   deviceId: string;
   deviceCollectorGroupId: string | null;
   deviceCollectorGroupName: string | null;
+  deviceCredentials?: Record<string, { id: string; name: string; credential_type: string }>;
   open: boolean;
   onClose: () => void;
 }
@@ -142,6 +143,7 @@ function AddAssignmentDialog({
   deviceId,
   deviceCollectorGroupId,
   deviceCollectorGroupName,
+  deviceCredentials,
   open,
   onClose,
 }: AddAssignmentDialogProps) {
@@ -451,6 +453,7 @@ function AddAssignmentDialog({
                 }}
                 prefix="add-assign"
                 disabled={false}
+                deviceCredentials={deviceCredentials}
               />
               <details className="text-xs">
                 <summary className="cursor-pointer text-zinc-600 hover:text-zinc-400">
@@ -500,11 +503,12 @@ function AddAssignmentDialog({
 interface EditAssignmentDialogProps {
   assignment: DeviceAssignment | null;
   deviceCollectorGroupId: string | null;
+  deviceCredentials?: Record<string, { id: string; name: string; credential_type: string }>;
   open: boolean;
   onClose: () => void;
 }
 
-function EditAssignmentDialog({ assignment, deviceCollectorGroupId, open, onClose }: EditAssignmentDialogProps) {
+function EditAssignmentDialog({ assignment, deviceCollectorGroupId, deviceCredentials, open, onClose }: EditAssignmentDialogProps) {
   const updateAssignment = useUpdateAssignment();
   const { data: appDetail } = useAppDetail(assignment?.app.id);
   const { data: credentials } = useCredentials();
@@ -763,6 +767,7 @@ function EditAssignmentDialog({ assignment, deviceCollectorGroupId, open, onClos
                 }}
                 prefix="edit-assign"
                 disabled={false}
+                deviceCredentials={deviceCredentials}
               />
               <details className="text-xs">
                 <summary className="cursor-pointer text-zinc-600 hover:text-zinc-400">
@@ -2619,6 +2624,7 @@ function MonitoringCard({ deviceId, device }: { deviceId: string; device: Device
                     onChange={setAvailConfig}
                     prefix="av"
                     disabled={!hasGroup}
+                    deviceCredentials={device?.credentials}
                   />
                 )}
               </div>
@@ -2647,6 +2653,7 @@ function MonitoringCard({ deviceId, device }: { deviceId: string; device: Device
                     onChange={setLatencyConfig}
                     prefix="la"
                     disabled={!hasGroup}
+                    deviceCredentials={device?.credentials}
                   />
                 )}
               </div>
@@ -2705,6 +2712,7 @@ function MonitoringCard({ deviceId, device }: { deviceId: string; device: Device
                       onChange={setInterfaceConfig}
                       prefix="iface"
                       disabled={!hasGroup}
+                      deviceCredentials={device?.credentials}
                     />
                   </>
                 )}
@@ -2772,6 +2780,7 @@ function AssignmentsTab({ deviceId }: { deviceId: string }) {
           deviceId={deviceId}
           deviceCollectorGroupId={device?.collector_group_id ?? null}
           deviceCollectorGroupName={device?.collector_group_name ?? null}
+          deviceCredentials={device?.credentials}
           open={addOpen}
           onClose={() => setAddOpen(false)}
         />
@@ -2913,6 +2922,7 @@ function AssignmentsTab({ deviceId }: { deviceId: string }) {
       <EditAssignmentDialog
         assignment={editing ?? null}
         deviceCollectorGroupId={device?.collector_group_id ?? null}
+        deviceCredentials={device?.credentials}
         open={!!editingId}
         onClose={() => setEditingId(null)}
       />
