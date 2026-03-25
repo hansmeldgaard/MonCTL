@@ -1135,6 +1135,29 @@ async def submit_results(
     ch_rows = []
     skipped = 0
     for r in request.results:
+        # Handle discovery jobs (job_id = "discovery-{device_id}", not a UUID)
+        is_discovery = r.job_id.startswith("discovery-")
+        if is_discovery:
+            device_id_str = r.job_id.removeprefix("discovery-")
+            try:
+                device_id_resolved = str(uuid.UUID(device_id_str))
+            except ValueError:
+                skipped += 1
+                continue
+            if r.config_data:
+                try:
+                    from monctl_central.discovery.service import process_discovery_result
+                    await process_discovery_result(
+                        device_id=device_id_resolved,
+                        config_data=r.config_data,
+                        db=db,
+                    )
+                    logger.info("discovery_result_processed", device_id=device_id_resolved)
+                except Exception as _disc_exc:
+                    logger.warning("discovery_processing_failed",
+                                   device_id=device_id_resolved, error=str(_disc_exc))
+            continue
+
         try:
             assignment_id = uuid.UUID(r.job_id)
         except ValueError:
