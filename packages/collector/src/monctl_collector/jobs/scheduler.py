@@ -93,6 +93,16 @@ class JobScheduler:
                 pass
         logger.info("job_scheduler_stopped")
 
+    async def force_sync(self) -> None:
+        """Force an immediate full sync (called via WS config_reload handler).
+
+        Resets _last_sync so the next sync is a full fetch (no delta),
+        ensuring one-shot jobs like discovery are picked up.
+        """
+        self._last_sync = None
+        logger.info("force_sync_triggered")
+        await self._sync_jobs()
+
     # ── Background sync loop ─────────────────────────────────────────────────
 
     async def _initial_load_from_db(self) -> None:

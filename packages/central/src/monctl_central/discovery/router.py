@@ -6,11 +6,13 @@ import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from monctl_central.dependencies import get_db, require_auth
-from monctl_central.storage.models import Credential, Device
+from monctl_central.storage.models import Collector, Credential, Device
 from monctl_central.cache import set_discovery_flag
+from monctl_central.ws.router import manager as ws_manager
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +31,10 @@ async def trigger_discovery(
     snmp_discovery job on the next job fetch. The collector runs the SNMP
     queries and returns results via the normal ingest pipeline. Central
     then matches the results against discovery rules and updates the device.
+
+    After setting the flag, sends a config_reload command via WebSocket to
+    collectors in the device's group so they sync jobs immediately instead
+    of waiting up to 60s for the next poll cycle.
 
     The response is immediate (202 Accepted) — discovery results will appear
     in device metadata once the collector completes the job.
@@ -61,10 +67,32 @@ async def trigger_discovery(
 
     await set_discovery_flag(device_id)
 
+    # Notify collectors in this group via WebSocket to sync jobs immediately
+    ws_notified = 0
+    try:
+        result = await db.execute(
+            select(Collector.id).where(
+                Collector.group_id == device.collector_group_id,
+                Collector.status == "APPROVED",
+            )
+        )
+        collector_ids = result.scalars().all()
+
+        for cid in collector_ids:
+            if ws_manager.is_connected(cid):
+                try:
+                    await ws_manager.send_command(cid, "config_reload", {}, timeout=5)
+                    ws_notified += 1
+                except Exception as exc:
+                    logger.debug("ws_config_reload_failed", collector_id=str(cid), error=str(exc))
+    except Exception as exc:
+        logger.warning("ws_notify_collectors_failed", error=str(exc))
+
     return {
         "status": "success",
         "data": {
             "message": "Discovery queued. The collector will run SNMP discovery on the next poll cycle.",
             "device_id": device_id,
+            "ws_notified": ws_notified,
         },
     }
