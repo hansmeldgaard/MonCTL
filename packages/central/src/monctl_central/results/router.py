@@ -498,7 +498,7 @@ async def device_status(
             "device_id": device_id,
             "device_name": device.name,
             "device_address": device.address,
-            "device_type": device.device_type,
+            "device_category": device.device_category,
             "tenant_id": str(device.tenant_id) if device.tenant_id else None,
             "up": all_reachable,
             "checks": checks,

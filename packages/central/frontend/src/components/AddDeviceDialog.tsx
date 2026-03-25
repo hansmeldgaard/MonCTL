@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { Select } from "@/components/ui/select.tsx";
-import { useCreateDevice, useCollectorGroups, useCredentials, useDeviceTypes, useTenants } from "@/api/hooks.ts";
+import { useCreateDevice, useCollectorGroups, useCredentials, useDeviceCategories, useTenants } from "@/api/hooks.ts";
 import { LabelEditor } from "@/components/LabelEditor.tsx";
 
 function formatCredentialType(type: string): string {
@@ -24,7 +24,7 @@ interface AddDeviceDialogProps {
 }
 
 export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
-  const { data: deviceTypes } = useDeviceTypes();
+  const { data: deviceCategories } = useDeviceCategories();
   const { data: tenants } = useTenants();
   const { data: collectorGroups } = useCollectorGroups();
   const { data: credentials } = useCredentials();
@@ -32,7 +32,7 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
 
   const nameField = useField("", validateName);
   const addressField = useField("", validateAddress);
-  const [deviceType, setDeviceType] = useState("host");
+  const [deviceCategory, setDeviceCategory] = useState("host");
   const [tenantId, setTenantId] = useState("");
   const [collectorGroupId, setCollectorGroupId] = useState("");
   const [deviceCreds, setDeviceCreds] = useState<Record<string, string>>({});
@@ -54,7 +54,7 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
   function reset() {
     nameField.reset();
     addressField.reset();
-    setDeviceType("host");
+    setDeviceCategory("host");
     setTenantId("");
     setCollectorGroupId("");
     setDeviceCreds({});
@@ -91,7 +91,7 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
       await createDevice.mutateAsync({
         name: nameField.value.trim(),
         address: addressField.value.trim(),
-        device_type: deviceType,
+        device_category: deviceCategory,
         tenant_id: tenantId || undefined,
         collector_group_id: collectorGroupId || undefined,
         default_credential_id: defaultCredId,
@@ -135,19 +135,19 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
           {addressField.error && <p className="text-xs text-red-400 mt-0.5">{addressField.error}</p>}
         </div>
 
-        {/* Device Type */}
+        {/* Device Category */}
         <div className="space-y-1.5">
-          <Label htmlFor="device-type">Device Type</Label>
+          <Label htmlFor="device-category">Device Category</Label>
           <Select
-            id="device-type"
-            value={deviceType}
-            onChange={(e) => setDeviceType(e.target.value)}
+            id="device-category"
+            value={deviceCategory}
+            onChange={(e) => setDeviceCategory(e.target.value)}
           >
-            {deviceTypes && deviceTypes.length > 0
-              ? deviceTypes.map((dt) => (
-                  <option key={dt.id} value={dt.name}>
-                    {dt.name}
-                    {dt.description ? ` — ${dt.description}` : ""}
+            {deviceCategories && deviceCategories.length > 0
+              ? deviceCategories.map((dc) => (
+                  <option key={dc.id} value={dc.name}>
+                    {dc.name}
+                    {dc.description ? ` — ${dc.description}` : ""}
                   </option>
                 ))
               : (

@@ -60,7 +60,7 @@ export function DevicesPage() {
   const [debouncedFilters, setDebouncedFilters] = useState({
     name: "",
     address: "",
-    device_type: "",
+    device_category: "",
     tenant_name: "",
     collector_group_name: "",
   });
@@ -70,7 +70,7 @@ export function DevicesPage() {
       setDebouncedFilters({
         name: filterName,
         address: filterAddress,
-        device_type: filterType,
+        device_category: filterType,
         tenant_name: filterTenant,
         collector_group_name: filterGroup,
       });
@@ -452,13 +452,13 @@ export function DevicesPage() {
                         />
                       </TableHead>
 
-                      {/* Type */}
+                      {/* Category */}
                       <TableHead>
                         <div
                           className="flex items-center gap-1 cursor-pointer select-none"
-                          onClick={() => handleSort("device_type")}
+                          onClick={() => handleSort("device_category")}
                         >
-                          Type <SortIcon col="device_type" />
+                          Category <SortIcon col="device_category" />
                         </div>
                         <ClearableInput
                           placeholder="Filter..."
@@ -607,9 +607,9 @@ export function DevicesPage() {
                             {device.address}
                           </TableCell>
 
-                          {/* Type */}
+                          {/* Category */}
                           <TableCell>
-                            <Badge variant="info">{device.device_type}</Badge>
+                            <Badge variant="info">{device.device_category}</Badge>
                           </TableCell>
 
                           {/* Tenant */}

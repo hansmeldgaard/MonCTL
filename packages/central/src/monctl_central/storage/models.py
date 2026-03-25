@@ -78,6 +78,9 @@ class Collector(Base):
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     approved_by: Mapped[str | None] = mapped_column(String(255))
     rejected_reason: Mapped[str | None] = mapped_column(Text)
+    log_level_filter: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="INFO", default="INFO"
+    )
 
     cluster: Mapped[CollectorCluster | None] = relationship(back_populates="collectors")
     group: Mapped["CollectorGroup | None"] = relationship(back_populates="collectors", foreign_keys=[group_id])
@@ -153,20 +156,55 @@ class AppVersion(Base):
     app: Mapped[App] = relationship(back_populates="versions")
 
 
-class DeviceType(Base):
-    """User-defined device type catalogue (host, network, api, database, …)."""
-    __tablename__ = "device_types"
+class DeviceCategory(Base):
+    """Device category catalogue (cisco-router, juniper-switch, host, network, …)."""
+    __tablename__ = "device_categories"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     category: Mapped[str] = mapped_column(String(32), nullable=False, default="other")
+    icon: Mapped[str | None] = mapped_column(
+        String(64), nullable=True,
+        comment="Icon identifier, e.g. 'router', 'switch', 'server', 'firewall', 'printer', 'cloud'"
+    )
     pack_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("packs.id", ondelete="SET NULL"), nullable=True, index=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default="now()"
     )
+
+
+class DeviceType(Base):
+    """Specific device model/type with SNMP sysObjectID pattern for auto-discovery."""
+    __tablename__ = "device_types"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    sys_object_id_pattern: Mapped[str] = mapped_column(
+        String(256), nullable=False, unique=True,
+        comment="sysObjectID prefix to match, e.g. '1.3.6.1.4.1.2636.1.1.1.2.143' for Juniper MX204"
+    )
+    device_category_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("device_categories.id", ondelete="CASCADE"), nullable=False
+    )
+    vendor: Mapped[str | None] = mapped_column(String(128))
+    model: Mapped[str | None] = mapped_column(String(255))
+    os_family: Mapped[str | None] = mapped_column(String(128))
+    description: Mapped[str | None] = mapped_column(Text)
+    priority: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0",
+        comment="Higher = preferred when multiple rules match. Longest prefix wins first, then priority."
+    )
+    pack_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("packs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+    device_category: Mapped["DeviceCategory"] = relationship(foreign_keys=[device_category_id])
 
 
 class Device(Base):
@@ -176,7 +214,7 @@ class Device(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     address: Mapped[str] = mapped_column(String(512), nullable=False)
-    device_type: Mapped[str] = mapped_column(String(64), nullable=False, default="host")
+    device_category: Mapped[str] = mapped_column(String(64), nullable=False, default="host")
     collector_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("collectors.id"), nullable=True
     )

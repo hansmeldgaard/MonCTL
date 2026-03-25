@@ -50,7 +50,7 @@ import { cn, formatDate, timeAgo } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 
 // Lazy-import existing page components to render inside tabs
-import { DeviceTypesPage } from "@/pages/DeviceTypesPage.tsx";
+import { DeviceCategoriesPage } from "@/pages/DeviceTypesPage.tsx";
 import { CollectorsPage } from "@/pages/CollectorsPage.tsx";
 import { CredentialsPage } from "@/pages/CredentialsPage.tsx";
 import { SnmpOidsPage } from "@/pages/SnmpOidsPage.tsx";
@@ -63,7 +63,7 @@ const TABS = [
   { key: "profile", label: "Profile", icon: User },
   { key: "api-keys", label: "API Keys", icon: KeyRound },
   { key: "system", label: "System", icon: Settings },
-  { key: "device-types", label: "Device Types", icon: Server },
+  { key: "device-categories", label: "Device Categories", icon: Server },
   { key: "labels", label: "Labels", icon: Tag },
   { key: "collectors", label: "Collectors", icon: Cpu },
   { key: "credentials", label: "Credentials", icon: KeyRound },
@@ -697,6 +697,7 @@ function DataRetentionTab() {
   const [availHourlyRetention, setAvailHourlyRetention] = useState("365");
   const [availDailyRetention, setAvailDailyRetention] = useState("1825");
   const [idleTimeoutDefault, setIdleTimeoutDefault] = useState("60");
+  const [logRetention, setLogRetention] = useState("7");
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
@@ -715,6 +716,7 @@ function DataRetentionTab() {
       setAvailHourlyRetention(settings.avail_hourly_retention_days ?? "365");
       setAvailDailyRetention(settings.avail_daily_retention_days ?? "1825");
       setIdleTimeoutDefault(settings.session_idle_timeout_minutes ?? "60");
+      setLogRetention(settings.log_retention_days ?? "7");
     }
   }, [settings]);
 
@@ -732,7 +734,8 @@ function DataRetentionTab() {
     availRawRetention !== (settings.avail_raw_retention_days ?? "30") ||
     availHourlyRetention !== (settings.avail_hourly_retention_days ?? "365") ||
     availDailyRetention !== (settings.avail_daily_retention_days ?? "1825") ||
-    idleTimeoutDefault !== (settings.session_idle_timeout_minutes ?? "60")
+    idleTimeoutDefault !== (settings.session_idle_timeout_minutes ?? "60") ||
+    logRetention !== (settings.log_retention_days ?? "7")
   );
 
   async function handleSave() {
@@ -752,6 +755,7 @@ function DataRetentionTab() {
         avail_hourly_retention_days: availHourlyRetention,
         avail_daily_retention_days: availDailyRetention,
         session_idle_timeout_minutes: idleTimeoutDefault,
+        log_retention_days: logRetention,
       },
     });
     setSaved(true);
@@ -877,6 +881,19 @@ function DataRetentionTab() {
               <label className="text-sm text-zinc-400">Job Status</label>
               <Input type="number" value={jobRetention} onChange={e => setJobRetention(e.target.value)} className="max-w-32" />
               <p className="text-xs text-zinc-600">Job execution status records.</p>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm text-zinc-400">Log Data</label>
+              <Select value={logRetention} onChange={(e) => setLogRetention(e.target.value)}>
+                <option value="1">1 day</option>
+                <option value="3">3 days</option>
+                <option value="7">7 days (default)</option>
+                <option value="14">14 days</option>
+                <option value="30">30 days</option>
+                <option value="60">60 days</option>
+                <option value="90">90 days</option>
+              </Select>
+              <p className="text-xs text-zinc-600">Docker container and application logs in ClickHouse.</p>
             </div>
           </div>
         </CardContent>
@@ -1096,7 +1113,7 @@ export function SettingsPage() {
       case "profile": return <ProfileTab />;
       case "api-keys": return <ApiKeysTab />;
       case "system": return <SystemTab />;
-      case "device-types": return <DeviceTypesPage />;
+      case "device-categories": return <DeviceCategoriesPage />;
       case "labels": return <LabelKeysPage />;
       case "collectors": return <CollectorsPage />;
       case "credentials": return <CredentialsPage />;

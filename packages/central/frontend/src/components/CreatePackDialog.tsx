@@ -3,7 +3,7 @@ import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
 import { validateSlug, validateName, validateSemver } from "@/lib/validation.ts";
 import {
   AppWindow, Binary, ChevronDown, ChevronRight, KeyRound, LayoutTemplate,
-  Loader2, Lock, Monitor, Plug, Tag, Unlock,
+  Loader2, Lock, Monitor, Plug, Search, Tag, Unlock,
 } from "lucide-react";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import { Button } from "@/components/ui/button.tsx";
@@ -22,9 +22,10 @@ const SECTION_CONFIG: { key: string; label: string; icon: React.ReactNode }[] = 
   { key: "credential_templates", label: "Credential Templates", icon: <KeyRound className="h-4 w-4" /> },
   { key: "snmp_oids", label: "SNMP OIDs", icon: <Binary className="h-4 w-4" /> },
   { key: "device_templates", label: "Device Templates", icon: <LayoutTemplate className="h-4 w-4" /> },
-  { key: "device_types", label: "Device Types", icon: <Monitor className="h-4 w-4" /> },
+  { key: "device_categories", label: "Device Categories", icon: <Monitor className="h-4 w-4" /> },
   { key: "label_keys", label: "Label Keys", icon: <Tag className="h-4 w-4" /> },
   { key: "connectors", label: "Connectors", icon: <Plug className="h-4 w-4" /> },
+  { key: "device_types", label: "Device Types", icon: <Search className="h-4 w-4" /> },
 ];
 
 const EMPTY_SELECTED: Record<string, Set<string>> = {
@@ -32,9 +33,10 @@ const EMPTY_SELECTED: Record<string, Set<string>> = {
   credential_templates: new Set(),
   snmp_oids: new Set(),
   device_templates: new Set(),
-  device_types: new Set(),
+  device_categories: new Set(),
   label_keys: new Set(),
   connectors: new Set(),
+  device_types: new Set(),
 };
 
 function toSlug(name: string): string {

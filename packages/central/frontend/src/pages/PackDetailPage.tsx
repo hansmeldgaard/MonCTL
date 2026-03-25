@@ -18,13 +18,14 @@ const SECTION_LABELS: Record<string, string> = {
   credential_templates: "Credential Templates",
   snmp_oids: "SNMP OIDs",
   device_templates: "Device Templates",
-  device_types: "Device Types",
+  device_categories: "Device Categories",
   label_keys: "Label Keys",
   connectors: "Connectors",
+  device_types: "Device Types",
   grafana_dashboards: "Grafana Dashboards",
 };
 
-const SECTIONS = ["apps", "alert_definitions", "credential_templates", "snmp_oids", "device_templates", "device_types", "label_keys", "connectors", "grafana_dashboards"];
+const SECTIONS = ["apps", "alert_definitions", "credential_templates", "snmp_oids", "device_templates", "device_categories", "label_keys", "connectors", "device_types", "grafana_dashboards"];
 
 export function PackDetailPage() {
   const { id } = useParams<{ id: string }>();

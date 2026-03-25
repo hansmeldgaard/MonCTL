@@ -472,13 +472,13 @@ async def list_assignments(
     if device_address:
         stmt = stmt.where(DeviceModel.address.ilike(f"%{device_address}%"))
     if device_type:
-        stmt = stmt.where(DeviceModel.device_type.ilike(f"%{device_type}%"))
+        stmt = stmt.where(DeviceModel.device_category.ilike(f"%{device_type}%"))
 
     ASSIGNMENTS_SORT_MAP = {
         "app_name": App.name,
         "device_name": DeviceModel.name,
         "device_address": DeviceModel.address,
-        "device_type": DeviceModel.device_type,
+        "device_category": DeviceModel.device_category,
         "schedule": AppAssignment.schedule_value,
         "enabled": AppAssignment.enabled,
         "created_at": AppAssignment.created_at,
@@ -575,7 +575,7 @@ async def list_assignments(
                         "id": str(devices[row.AppAssignment.device_id].id),
                         "name": devices[row.AppAssignment.device_id].name,
                         "address": devices[row.AppAssignment.device_id].address,
-                        "device_type": devices[row.AppAssignment.device_id].device_type,
+                        "device_category": devices[row.AppAssignment.device_id].device_category,
                     }
                     if row.AppAssignment.device_id and row.AppAssignment.device_id in devices
                     else None

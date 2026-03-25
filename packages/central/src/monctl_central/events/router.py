@@ -6,6 +6,7 @@ import asyncio
 import json
 import uuid
 
+import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator
 from monctl_common.validators import validate_uuid
@@ -272,17 +273,63 @@ class UpdateEventPolicyRequest(BaseModel):
 
 @router.get("/policies")
 async def list_event_policies(
+    name: str | None = Query(default=None, description="Filter by name (ilike)"),
+    definition_name: str | None = Query(default=None, description="Filter by alert definition name (ilike)"),
+    event_severity: str | None = Query(default=None, description="Filter by severity"),
+    enabled: str | None = Query(default=None, description="Filter by enabled (true/false)"),
+    search: str | None = Query(default=None, description="Search name or definition name"),
+    sort_by: str = Query(default="name", description="Sort field"),
+    sort_dir: str = Query(default="asc", description="Sort direction"),
+    limit: int = Query(default=50, le=500),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
-    rows = (
-        await db.execute(
-            select(EventPolicy)
-            .options(selectinload(EventPolicy.definition))
-            .order_by(EventPolicy.name)
+    stmt = select(EventPolicy).options(selectinload(EventPolicy.definition))
+
+    if name:
+        stmt = stmt.where(EventPolicy.name.ilike(f"%{name}%"))
+    if definition_name:
+        stmt = stmt.join(AlertDefinition, EventPolicy.definition_id == AlertDefinition.id)
+        stmt = stmt.where(AlertDefinition.name.ilike(f"%{definition_name}%"))
+    if event_severity:
+        stmt = stmt.where(EventPolicy.event_severity == event_severity)
+    if enabled is not None and enabled != "":
+        stmt = stmt.where(EventPolicy.enabled == (enabled.lower() == "true"))
+    if search:
+        stmt = stmt.outerjoin(AlertDefinition, EventPolicy.definition_id == AlertDefinition.id)
+        stmt = stmt.where(
+            sa.or_(
+                EventPolicy.name.ilike(f"%{search}%"),
+                AlertDefinition.name.ilike(f"%{search}%"),
+            )
         )
-    ).scalars().all()
-    return {"status": "success", "data": [_fmt_policy(p) for p in rows]}
+
+    # Count
+    count_stmt = select(sa.func.count()).select_from(stmt.subquery())
+    total = (await db.execute(count_stmt)).scalar() or 0
+
+    # Sorting
+    sort_column = {
+        "name": EventPolicy.name,
+        "event_severity": EventPolicy.event_severity,
+        "mode": EventPolicy.mode,
+        "enabled": EventPolicy.enabled,
+        "created_at": EventPolicy.created_at,
+    }.get(sort_by, EventPolicy.name)
+
+    if sort_dir == "desc":
+        stmt = stmt.order_by(sa.desc(sort_column))
+    else:
+        stmt = stmt.order_by(sa.asc(sort_column))
+
+    stmt = stmt.offset(offset).limit(limit)
+    rows = (await db.execute(stmt)).scalars().unique().all()
+    return {
+        "status": "success",
+        "data": [_fmt_policy(p) for p in rows],
+        "meta": {"limit": limit, "offset": offset, "count": len(rows), "total": total},
+    }
 
 
 @router.post("/policies", status_code=status.HTTP_201_CREATED)

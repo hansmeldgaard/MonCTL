@@ -23,6 +23,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  Search,
   Settings2,
   Tag,
   Pencil,
@@ -74,7 +75,7 @@ import {
   useDeviceHistory,
   useDeviceMonitoring,
   useDeviceResults,
-  useDeviceTypes,
+  useDeviceCategories,
   useInterfaceLatest,
   useMultiInterfaceHistory,
   useRefreshInterfaceMetadata,
@@ -105,9 +106,10 @@ import {
   useDeviceClearedEvents,
   useAcknowledgeEvents,
   useClearEvents,
+  useDiscoverDevice,
 } from "@/api/hooks.ts";
 import { useAuth } from "@/hooks/useAuth.tsx";
-import type { Device as DeviceType, DeviceAssignment, DeviceThresholdRow, ConfigDiffEntry, AlertLogEntry, MonitoringEvent } from "@/types/api.ts";
+import type { Device as DeviceModel, DeviceAssignment, DeviceThresholdRow, ConfigDiffEntry, AlertLogEntry, MonitoringEvent } from "@/types/api.ts";
 import { useListState } from "@/hooks/useListState.ts";
 import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
 import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
@@ -2459,7 +2461,7 @@ const INTERVAL_OPTIONS = [
 
 // SchemaConfigFields extracted to @/components/SchemaConfigFields.tsx
 
-function MonitoringCard({ deviceId, device }: { deviceId: string; device: DeviceType | undefined }) {
+function MonitoringCard({ deviceId, device }: { deviceId: string; device: DeviceModel | undefined }) {
   const { data: monitoring, isLoading: monLoading } = useDeviceMonitoring(deviceId);
   const { data: allAppsResp } = useApps();
   const allApps = allAppsResp?.data ?? [];
@@ -2944,7 +2946,7 @@ function formatCredentialType(type: string): string {
 
 function SettingsTab({ deviceId }: { deviceId: string }) {
   const { data: device, isLoading: deviceLoading } = useDevice(deviceId);
-  const { data: deviceTypes } = useDeviceTypes();
+  const { data: deviceCategories } = useDeviceCategories();
   const { data: tenants } = useTenants();
   const { data: collectorGroups } = useCollectorGroups();
   const { data: allCredentials } = useCredentials();
@@ -2954,7 +2956,7 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
   // Device fields
   const settingsNameField = useField("", validateName);
   const settingsAddressField = useField("", validateAddress);
-  const [deviceType, setDeviceType] = useState("");
+  const [deviceCategory, setDeviceCategory] = useState("");
   const [tenantId, setTenantId] = useState("");
   const [collectorGroupId, setCollectorGroupId] = useState("");
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -2980,7 +2982,7 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
     if (device) {
       settingsNameField.reset(device.name);
       settingsAddressField.reset(device.address);
-      setDeviceType(device.device_type);
+      setDeviceCategory(device.device_category);
       setTenantId(device.tenant_id ?? "");
       setCollectorGroupId(device.collector_group_id ?? "");
       setLabels(device.labels ?? {});
@@ -3005,7 +3007,7 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
         data: {
           name: settingsNameField.value.trim(),
           address: settingsAddressField.value.trim(),
-          device_type: deviceType,
+          device_category: deviceCategory,
           tenant_id: tenantId || null,
           collector_group_id: collectorGroupId || null,
           labels,
@@ -3028,7 +3030,7 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
         data: {
           name: settingsNameField.value.trim(),
           address: settingsAddressField.value.trim(),
-          device_type: deviceType,
+          device_category: deviceCategory,
           tenant_id: tenantId || null,
           collector_group_id: collectorGroupId || null,
           labels,
@@ -3112,10 +3114,10 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
                 </div>
               </div>
               <div className="grid grid-cols-[110px_1fr] items-center gap-2">
-                <Label htmlFor="s-dtype" className="text-right">Device Type</Label>
-                <Select id="s-dtype" value={deviceType} onChange={(e) => setDeviceType(e.target.value)}>
-                  {(deviceTypes ?? []).map((dt) => (
-                    <option key={dt.id} value={dt.name}>{dt.name}</option>
+                <Label htmlFor="s-dtype" className="text-right">Category</Label>
+                <Select id="s-dtype" value={deviceCategory} onChange={(e) => setDeviceCategory(e.target.value)}>
+                  {(deviceCategories ?? []).map((dc) => (
+                    <option key={dc.id} value={dc.name}>{dc.name}</option>
                   ))}
                 </Select>
               </div>
@@ -3288,12 +3290,95 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
         </CardContent>
       </Card>
 
+      {/* SNMP Discovery */}
+      <DiscoveryCard deviceId={deviceId} device={device} />
+
       {/* Monitoring Configuration */}
       <MonitoringCard deviceId={deviceId} device={device} />
     </div>
   );
 }
 
+function DiscoveryCard({ deviceId, device }: { deviceId: string; device: DeviceModel | undefined }) {
+  const discoverMut = useDiscoverDevice();
+  const tz = useTimezone();
+  const meta = device?.metadata as Record<string, string> | undefined;
+  const discovered = meta?.discovered_at;
+
+  const fields = [
+    { label: "sysObjectID", key: "sys_object_id" },
+    { label: "Vendor", key: "vendor" },
+    { label: "Model", key: "model" },
+    { label: "OS Family", key: "os_family" },
+    { label: "sysDescr", key: "sys_descr" },
+    { label: "sysName", key: "sys_name" },
+  ];
+
+  const handleDiscover = () => {
+    discoverMut.mutate(deviceId);
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle className="flex items-center gap-2">
+            <Search className="h-4 w-4" />
+            SNMP Discovery
+          </CardTitle>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleDiscover}
+            disabled={discoverMut.isPending}
+          >
+            {discoverMut.isPending
+              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              : <Search className="h-3.5 w-3.5" />}
+            {discovered ? "Re-discover" : "Discover"}
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {discoverMut.isSuccess && (
+          <p className="text-xs text-amber-400 mb-3">
+            Discovery queued — waiting for collector to complete SNMP query...
+          </p>
+        )}
+        {discoverMut.isError && (
+          <p className="text-xs text-red-400 mb-3">
+            {discoverMut.error instanceof Error ? discoverMut.error.message : "Discovery failed"}
+          </p>
+        )}
+        {!discovered && !discoverMut.isSuccess ? (
+          <p className="text-sm text-zinc-500">
+            This device has not been discovered yet. Assign an SNMP credential and click Discover.
+          </p>
+        ) : (
+          <div className="grid grid-cols-[120px_1fr] gap-x-4 gap-y-1.5 text-sm">
+            {fields.map(({ label, key }) => {
+              const val = meta?.[key];
+              return val ? (
+                <div key={key} className="contents">
+                  <span className="text-zinc-500">{label}</span>
+                  <span className={key === "sys_object_id" ? "font-mono text-xs text-zinc-300" : "text-zinc-300"}>
+                    {key === "sys_descr" && val.length > 100 ? val.slice(0, 100) + "..." : val}
+                  </span>
+                </div>
+              ) : null;
+            })}
+            {discovered && (
+              <div className="contents">
+                <span className="text-zinc-500">Discovered</span>
+                <span className="text-zinc-400 text-xs">{formatDate(discovered, tz)}</span>
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 
 
@@ -4082,7 +4167,7 @@ export function DeviceDetailPage() {
   // Use device data as primary source, deviceResults as supplement
   const deviceName = device?.name ?? deviceResults?.device_name ?? "Unknown";
   const deviceAddress = device?.address ?? deviceResults?.device_address ?? "";
-  const deviceType = device?.device_type ?? deviceResults?.device_type ?? "";
+  const deviceCategory = device?.device_category ?? deviceResults?.device_category ?? "";
   const deviceId = id!;
   const upStatus = deviceResults?.up;
 
@@ -4114,7 +4199,7 @@ export function DeviceDetailPage() {
         </div>
         <div className="flex items-center gap-3 text-sm text-zinc-500">
           <span className="font-mono">{deviceAddress}</span>
-          {deviceType && <Badge variant="info">{deviceType}</Badge>}
+          {deviceCategory && <Badge variant="info">{deviceCategory}</Badge>}
           {device?.tenant_name && (
             <span className="text-xs text-zinc-500">
               tenant: <span className="text-zinc-300">{device.tenant_name}</span>

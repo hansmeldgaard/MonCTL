@@ -31,7 +31,7 @@ export function AssignmentsPage() {
     columns: [
       { key: "app_name", label: "App" },
       { key: "device_name", label: "Device" },
-      { key: "device_type", label: "Type" },
+      { key: "device_category", label: "Category" },
       { key: "device_address", label: "Device Address", sortable: false },
     ],
     defaultSortBy: "app_name",
@@ -324,10 +324,10 @@ export function AssignmentsPage() {
                   onFilterChange={(v) => listState.setFilter("device_name", v)}
                 />
                 <FilterableSortHead
-                  col="device_type" label="Type"
+                  col="device_category" label="Category"
                   sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
-                  filterValue={listState.filters.device_type}
-                  onFilterChange={(v) => listState.setFilter("device_type", v)}
+                  filterValue={listState.filters.device_category}
+                  onFilterChange={(v) => listState.setFilter("device_category", v)}
                 />
                 <FilterableSortHead
                   col="device_address" label="Device Address"
@@ -402,7 +402,7 @@ export function AssignmentsPage() {
                     )}
                   </TableCell>
                   <TableCell className="text-zinc-400 text-xs">
-                    {assignment.device?.device_type ?? "—"}
+                    {assignment.device?.device_category ?? "—"}
                   </TableCell>
                   <TableCell className="font-mono text-xs text-zinc-400">
                     {assignment.device

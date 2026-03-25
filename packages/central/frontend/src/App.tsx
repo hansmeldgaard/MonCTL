@@ -20,6 +20,7 @@ import { SystemHealthPage } from "@/pages/SystemHealthPage.tsx";
 import { DockerInfraPage } from "@/pages/DockerInfraPage.tsx";
 import { UpgradesPage } from "@/pages/UpgradesPage.tsx";
 import { AnalyticsPage } from "@/pages/AnalyticsPage.tsx";
+import { DeviceTypesPage } from "@/pages/DiscoveryRulesPage.tsx";
 
 export function App() {
   return (
@@ -44,6 +45,7 @@ export function App() {
         <Route path="events" element={<EventsPage />} />
         <Route path="analytics" element={<AnalyticsPage />} />
         <Route path="upgrades" element={<UpgradesPage />} />
+        <Route path="device-types" element={<DeviceTypesPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="settings/:tab" element={<SettingsPage />} />
       </Route>

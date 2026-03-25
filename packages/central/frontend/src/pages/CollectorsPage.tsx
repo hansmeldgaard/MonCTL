@@ -646,6 +646,7 @@ function CollectorsCard() {
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-8">Status</TableHead>
+                  <TableHead className="w-8">WS</TableHead>
                   <TableHead>Name</TableHead>
                   <TableHead>Hostname</TableHead>
                   <TableHead>IP Address</TableHead>
@@ -660,6 +661,16 @@ function CollectorsCard() {
                   <TableRow key={c.id}>
                     <TableCell>
                       <StatusDot status={c.status} />
+                    </TableCell>
+                    <TableCell>
+                      <span
+                        className={`inline-block h-2 w-2 rounded-full ${
+                          c.ws_connected ? "bg-emerald-400" : "bg-zinc-600"
+                        }`}
+                        title={c.ws_connected
+                          ? `WS connected since ${c.ws_connection?.connected_at ?? "—"}`
+                          : "WS not connected"}
+                      />
                     </TableCell>
                     <TableCell className="font-medium text-zinc-100">{c.name}</TableCell>
                     <TableCell className="font-mono text-xs text-zinc-400">

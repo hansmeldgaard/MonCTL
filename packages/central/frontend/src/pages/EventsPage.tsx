@@ -87,12 +87,10 @@ export function EventsPage() {
   const { data: clearedResponse, isLoading: clearedLoading, isFetching: clearedFetching } = useClearedEvents(clearedListState.params);
   const clearedEvents = clearedResponse?.data ?? [];
   const clearedMeta = (clearedResponse as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
-  const { data: policies, isLoading: policiesLoading } = useEventPolicies();
-
   const isLoading =
     tab === "active" ? activeLoading :
     tab === "cleared" ? clearedLoading :
-    policiesLoading;
+    false;
 
   return (
     <div className="space-y-4">
@@ -137,7 +135,7 @@ export function EventsPage() {
       ) : tab === "cleared" ? (
         <ClearedEventsTab events={clearedEvents} listState={clearedListState} meta={clearedMeta} isFetching={clearedFetching} />
       ) : (
-        <PoliciesTab policies={policies ?? []} />
+        <PoliciesTab />
       )}
     </div>
   );
@@ -384,9 +382,41 @@ function ClearedEventsTab({
   );
 }
 
-function PoliciesTab({ policies }: { policies: EventPolicy[] }) {
+function PoliciesTab() {
   const [showCreate, setShowCreate] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<EventPolicy | null>(null);
   const deleteMut = useDeleteEventPolicy();
+  const { pageSize, scrollMode } = useTablePreferences();
+
+  const listState = useListState({
+    columns: [
+      { key: "name", label: "Name" },
+      { key: "definition_name", label: "Alert Definition" },
+      { key: "event_severity", label: "Severity" },
+    ],
+    defaultSortBy: "name",
+    defaultSortDir: "asc",
+    defaultPageSize: pageSize,
+    scrollMode,
+  });
+
+  const { data: response, isLoading, isFetching } = useEventPolicies(listState.params);
+  const policies = response?.data ?? [];
+  const meta = response?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    await deleteMut.mutateAsync(deleteTarget.id);
+    setDeleteTarget(null);
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
+      </div>
+    );
+  }
 
   return (
     <>
@@ -395,7 +425,7 @@ function PoliciesTab({ policies }: { policies: EventPolicy[] }) {
           <div className="flex items-center justify-between">
             <CardTitle className="flex items-center gap-2">
               <Settings2 className="h-4 w-4" />
-              Event Policies ({policies.length})
+              Event Policies ({meta.total})
             </CardTitle>
             <Button size="sm" onClick={() => setShowCreate(true)}>
               <Plus className="h-3.5 w-3.5" />
@@ -404,30 +434,30 @@ function PoliciesTab({ policies }: { policies: EventPolicy[] }) {
           </div>
         </CardHeader>
         <CardContent>
-          {policies.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
-              <Settings2 className="mb-2 h-8 w-8 text-zinc-600" />
-              <p className="text-sm">No event policies configured</p>
-              <p className="text-xs text-zinc-600 mt-1">
-                Create a policy to promote alerts to events
-              </p>
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <FilterableSortHead col="name" label="Name" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.name} onFilterChange={(v) => listState.setFilter("name", v)} />
+                <FilterableSortHead col="definition_name" label="Alert Definition" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.definition_name} onFilterChange={(v) => listState.setFilter("definition_name", v)} />
+                <FilterableSortHead col="mode" label="Mode" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterable={false} />
+                <TableHead>Threshold</TableHead>
+                <FilterableSortHead col="event_severity" label="Severity" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.event_severity} onFilterChange={(v) => listState.setFilter("event_severity", v)} />
+                <TableHead>Auto-clear</TableHead>
+                <FilterableSortHead col="enabled" label="Enabled" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterable={false} />
+                <TableHead className="w-12"></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {policies.length === 0 ? (
                 <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Alert Definition</TableHead>
-                  <TableHead>Mode</TableHead>
-                  <TableHead>Threshold</TableHead>
-                  <TableHead>Severity</TableHead>
-                  <TableHead>Auto-clear</TableHead>
-                  <TableHead>Enabled</TableHead>
-                  <TableHead className="w-12"></TableHead>
+                  <TableCell colSpan={8} className="text-center text-zinc-500 py-8">
+                    {listState.hasActiveFilters
+                      ? "No policies match your filters"
+                      : "No event policies configured — create a policy to promote alerts to events"}
+                  </TableCell>
                 </TableRow>
-              </TableHeader>
-              <TableBody>
-                {policies.map((p) => (
+              ) : (
+                policies.map((p) => (
                   <TableRow key={p.id}>
                     <TableCell className="font-medium text-zinc-100">
                       {p.name}
@@ -461,27 +491,62 @@ function PoliciesTab({ policies }: { policies: EventPolicy[] }) {
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-zinc-500 hover:text-red-400"
-                        onClick={() => deleteMut.mutate(p.id)}
-                        disabled={deleteMut.isPending}
+                      <button
+                        className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                        onClick={() => setDeleteTarget(p)}
+                        title="Delete"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
+                      </button>
                     </TableCell>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+                ))
+              )}
+            </TableBody>
+          </Table>
+          <PaginationBar
+            page={listState.page}
+            pageSize={listState.pageSize}
+            total={meta.total}
+            count={meta.count}
+            onPageChange={listState.setPage}
+            scrollMode={listState.scrollMode}
+            sentinelRef={listState.sentinelRef}
+            isFetching={isFetching}
+            onLoadMore={listState.loadMore}
+          />
         </CardContent>
       </Card>
 
       {showCreate && (
         <CreatePolicyDialog onClose={() => setShowCreate(false)} />
       )}
+
+      {/* Delete Confirmation */}
+      <Dialog
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete Event Policy"
+      >
+        <p className="text-sm text-zinc-400">
+          Are you sure you want to delete the policy{" "}
+          <span className="font-medium text-zinc-200">{deleteTarget?.name}</span>?
+          Active events created by this policy will remain but no new events will be promoted.
+        </p>
+        <DialogFooter>
+          <Button variant="secondary" onClick={() => setDeleteTarget(null)}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={() => void handleDelete()}
+            disabled={deleteMut.isPending}
+          >
+            {deleteMut.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            Delete
+          </Button>
+        </DialogFooter>
+      </Dialog>
     </>
   );
 }

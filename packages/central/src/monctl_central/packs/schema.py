@@ -35,8 +35,8 @@ def _validate_threshold_defaults(alert_def: dict) -> None:
 
 VALID_SECTIONS = {
     "apps", "credential_templates", "snmp_oids",
-    "device_templates", "device_types", "label_keys", "connectors",
-    "grafana_dashboards",
+    "device_templates", "device_categories", "label_keys", "connectors",
+    "device_types", "grafana_dashboards",
 }
 
 
@@ -163,6 +163,13 @@ def validate_pack_schema(data: dict) -> None:
     for oid in contents.get("snmp_oids", []):
         if not oid.get("name") or not oid.get("oid"):
             raise HTTPException(status_code=400, detail="SNMP OIDs require name and oid")
+
+    for dr in contents.get("device_types", []):
+        if not dr.get("name") or not dr.get("sys_object_id_pattern") or not dr.get("device_category_name"):
+            raise HTTPException(
+                status_code=400,
+                detail="Device types require name, sys_object_id_pattern, and device_category_name",
+            )
 
     for lk in contents.get("label_keys", []):
         if not lk.get("key"):

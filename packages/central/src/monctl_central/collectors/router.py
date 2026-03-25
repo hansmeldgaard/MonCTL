@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from monctl_central.dependencies import get_db, require_collector_key, require_auth, require_admin
 from monctl_central.storage.models import ApiKey, Collector, CollectorGroup, RegistrationToken
+from monctl_central.ws.router import manager as ws_manager
 from monctl_common.utils import generate_api_key, hash_api_key, key_prefix_display, utc_now
 from monctl_common.constants import COLLECTOR_KEY_PREFIX
 from monctl_common.validators import validate_labels, validate_uuid
@@ -73,6 +74,9 @@ class HeartbeatResponse(BaseModel):
 class UpdateCollectorRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     group_id: str | None = None  # empty string = unassign, UUID string = assign
+    log_level_filter: str | None = Field(
+        default=None, pattern="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$"
+    )
 
     @field_validator("group_id")
     @classmethod
@@ -496,7 +500,7 @@ async def get_collector_config(
             if device:
                 resolved["host"] = device.address
                 resolved["device_name"] = device.name
-                resolved["device_type"] = device.device_type
+                resolved["device_category"] = device.device_category
 
         # Assignment config can override / extend device defaults
         resolved.update(assignment.config or {})
@@ -613,6 +617,9 @@ async def list_collectors(
                 "approved_by": c.approved_by,
                 "rejected_reason": c.rejected_reason,
                 "registered_at": c.registered_at.isoformat() if c.registered_at else None,
+                "log_level_filter": c.log_level_filter,
+                "ws_connected": ws_manager.is_connected(c.id),
+                "ws_connection": ws_manager.get_connection_info(c.id),
             }
             for c in collectors
         ],
@@ -645,6 +652,9 @@ async def update_collector(
     if request.name is not None:
         c.name = request.name
 
+    if request.log_level_filter is not None:
+        c.log_level_filter = request.log_level_filter
+
     if request.group_id is not None:
         if request.group_id == "":
             c.group_id = None
@@ -672,6 +682,9 @@ async def update_collector(
             "last_seen_at": c.last_seen_at.isoformat() if c.last_seen_at else None,
             "group_id": str(c.group_id) if c.group_id else None,
             "group_name": c.group.name if c.group else None,
+            "log_level_filter": c.log_level_filter,
+            "ws_connected": ws_manager.is_connected(c.id),
+            "ws_connection": ws_manager.get_connection_info(c.id),
         },
     }
 

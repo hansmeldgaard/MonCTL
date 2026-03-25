@@ -11,7 +11,7 @@ from monctl_central.apps.router import router as apps_router
 from monctl_central.alerting.router import router as alerting_router
 from monctl_central.results.router import router as results_router
 from monctl_central.devices.router import router as devices_router
-from monctl_central.device_types.router import router as device_types_router
+from monctl_central.device_types.router import router as device_categories_router
 from monctl_central.credentials.router import router as credentials_router
 from monctl_central.tenants.router import router as tenants_router
 from monctl_central.users.router import router as users_router
@@ -36,6 +36,10 @@ from monctl_central.docker_infra.router import router as docker_infra_router
 from monctl_central.retention.router import router as retention_router
 from monctl_central.upgrades.router import router as upgrades_router
 from monctl_central.dashboard.router import router as dashboard_router
+from monctl_central.discovery.router import router as discovery_router
+from monctl_central.discovery.rules_router import router as device_types_router
+from monctl_central.ws.command_router import router as ws_command_router
+from monctl_central.logs.router import router as logs_router
 
 api_router = APIRouter()
 
@@ -47,7 +51,7 @@ api_router.include_router(apps_router, prefix="/apps", tags=["apps"])
 api_router.include_router(alerting_router, prefix="/alerts", tags=["alerting"])
 api_router.include_router(results_router, prefix="/results", tags=["results"])
 api_router.include_router(devices_router, prefix="/devices", tags=["devices"])
-api_router.include_router(device_types_router, prefix="/device-types", tags=["device-types"])
+api_router.include_router(device_categories_router, prefix="/device-categories", tags=["device-categories"])
 api_router.include_router(credentials_router, prefix="/credentials", tags=["credentials"])
 api_router.include_router(tenants_router, prefix="/tenants", tags=["tenants"])
 api_router.include_router(users_router, prefix="/users", tags=["users"])
@@ -71,3 +75,7 @@ api_router.include_router(docker_infra_router, prefix="/docker-infra", tags=["do
 api_router.include_router(retention_router, tags=["retention"])
 api_router.include_router(upgrades_router, prefix="/upgrades", tags=["upgrades"])
 api_router.include_router(dashboard_router, tags=["dashboard"])
+api_router.include_router(discovery_router, prefix="/devices", tags=["discovery"])
+api_router.include_router(device_types_router, prefix="/device-types", tags=["device-types"])
+api_router.include_router(ws_command_router, tags=["collectors"])
+api_router.include_router(logs_router, tags=["logs"])

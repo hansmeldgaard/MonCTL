@@ -14,6 +14,7 @@ import {
   Package,
   Plug,
   ArrowUpCircle,
+  Search,
   Settings,
   Zap,
 } from "lucide-react";
@@ -38,6 +39,7 @@ const navItems = [
   { to: "/packs", icon: Boxes, label: "Packs", end: false },
   { to: "/alerts", icon: Bell, label: "Alerts", end: false },
   { to: "/events", icon: Zap, label: "Events", end: false },
+  { to: "/device-types", icon: Search, label: "Device Types", end: false },
   { to: "/analytics", icon: BarChart3, label: "Analytics", end: true },
   { to: "/upgrades", icon: ArrowUpCircle, label: "Upgrades", end: false },
   { to: "/settings", icon: Settings, label: "Settings", end: false },
@@ -57,9 +59,9 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
       {/* Brand */}
       <div className="flex h-14 items-center justify-center border-b border-zinc-800 px-4">
         {collapsed ? (
-          <img src="/logo-icon.svg" alt="MonCTL" className="h-6 w-6" />
+          <img src="/logo-icon.svg" alt="MonCTL" className="h-8 w-8" />
         ) : (
-          <img src="/logo.svg" alt="MonCTL" className="h-6" />
+          <img src="/logo.svg" alt="MonCTL" className="h-8" />
         )}
       </div>
 

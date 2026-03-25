@@ -30,9 +30,10 @@ const SECTION_LABELS: Record<string, string> = {
   credential_templates: "Credential Templates",
   snmp_oids: "SNMP OIDs",
   device_templates: "Device Templates",
-  device_types: "Device Types",
+  device_categories: "Device Categories",
   label_keys: "Label Keys",
   connectors: "Connectors",
+  device_types: "Device Types",
 };
 
 export function PacksPage() {

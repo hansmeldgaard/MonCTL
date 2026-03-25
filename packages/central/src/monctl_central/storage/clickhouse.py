@@ -875,6 +875,69 @@ SETTINGS index_granularity = 8192
 """
 
 
+# ---------------------------------------------------------------------------
+# Logs table (centralized log collection)
+# ---------------------------------------------------------------------------
+
+_LOGS_DDL = """
+CREATE TABLE IF NOT EXISTS logs ON CLUSTER '{cluster}'
+(
+    timestamp          DateTime64(3, 'UTC'),
+    received_at        DateTime64(3, 'UTC') DEFAULT now64(3),
+
+    collector_id       UUID,
+    collector_name     String        DEFAULT '',
+    host_label         String        DEFAULT '',
+
+    source_type        String        DEFAULT '',
+    container_name     String        DEFAULT '',
+    image_name         String        DEFAULT '',
+
+    level              String        DEFAULT 'INFO',
+    stream             String        DEFAULT 'stdout',
+
+    message            String,
+
+    tenant_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000')
+)
+ENGINE = ReplicatedMergeTree(
+    '/clickhouse/tables/{{shard}}/logs', '{{replica}}'
+)
+PARTITION BY toYYYYMMDD(timestamp)
+ORDER BY (collector_name, container_name, timestamp)
+TTL timestamp + INTERVAL 7 DAY
+SETTINGS index_granularity = 8192
+"""
+
+_LOGS_DDL_LOCAL = """
+CREATE TABLE IF NOT EXISTS logs
+(
+    timestamp          DateTime64(3, 'UTC'),
+    received_at        DateTime64(3, 'UTC') DEFAULT now64(3),
+
+    collector_id       UUID,
+    collector_name     String        DEFAULT '',
+    host_label         String        DEFAULT '',
+
+    source_type        String        DEFAULT '',
+    container_name     String        DEFAULT '',
+    image_name         String        DEFAULT '',
+
+    level              String        DEFAULT 'INFO',
+    stream             String        DEFAULT 'stdout',
+
+    message            String,
+
+    tenant_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000')
+)
+ENGINE = MergeTree()
+PARTITION BY toYYYYMMDD(timestamp)
+ORDER BY (collector_name, container_name, timestamp)
+TTL timestamp + INTERVAL 7 DAY
+SETTINGS index_granularity = 8192
+"""
+
+
 class ClickHouseClient:
     """Thin wrapper around clickhouse-connect for MonCTL operations."""
 
@@ -1025,6 +1088,7 @@ class ClickHouseClient:
                 _PERFORMANCE_DAILY_DDL,
                 _AVAIL_HOURLY_DDL,
                 _AVAIL_DAILY_DDL,
+                _LOGS_DDL,
             ]:
                 client.command(ddl.format(cluster=self._cluster_name))
             for mv_ddl in [
@@ -1049,6 +1113,7 @@ class ClickHouseClient:
                 _PERFORMANCE_DAILY_DDL_LOCAL,
                 _AVAIL_HOURLY_DDL_LOCAL,
                 _AVAIL_DAILY_DDL_LOCAL,
+                _LOGS_DDL_LOCAL,
             ]:
                 client.command(ddl)
             for mv_ddl in [
@@ -1204,6 +1269,19 @@ class ClickHouseClient:
             if self._is_table_missing_error(exc) or self._is_connection_error(exc):
                 return {}
             raise
+
+    def insert(self, table: str, rows: list[dict], column_names: list[str]) -> None:
+        """Generic insert: accepts a list of dicts + column order."""
+        if not rows:
+            return
+        client = self._get_client()
+        data = [[r.get(col) for col in column_names] for r in rows]
+        client.insert(table, data, column_names=column_names)
+
+    def query(self, sql: str, parameters: dict | None = None):
+        """Execute a raw query and return the clickhouse_connect QueryResult."""
+        client = self._get_client()
+        return client.query(sql, parameters=parameters or {})
 
     def insert_by_table(self, table: str, results: list[dict]) -> None:
         """Route inserts to the correct table by name."""

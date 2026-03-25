@@ -372,17 +372,20 @@ class PollEngine:
         if result and result.started_at is None:
             result.started_at = start
 
-        # Reschedule
-        next_deadline = start + job.interval
-        heapq.heappush(
-            self._heap,
-            ScheduledJob(
-                next_deadline=next_deadline,
-                job_id=job.job_id,
-                job=job,
-                profile=sj.profile,
-            ),
-        )
+        # Reschedule (skip for one-shot jobs like discovery)
+        if job.interval > 0:
+            next_deadline = start + job.interval
+            heapq.heappush(
+                self._heap,
+                ScheduledJob(
+                    next_deadline=next_deadline,
+                    job_id=job.job_id,
+                    job=job,
+                    profile=sj.profile,
+                ),
+            )
+        else:
+            logger.info("one_shot_job_complete", job_id=job.job_id)
 
         if result:
             await self._submit_result(result)

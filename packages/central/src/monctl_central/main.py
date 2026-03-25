@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI):
     )
 
     from sqlalchemy import select
-    from monctl_central.storage.models import DeviceType, LabelKey, User
+    from monctl_central.storage.models import DeviceCategory, LabelKey, User
 
     factory = get_session_factory()
 
@@ -59,8 +59,8 @@ async def lifespan(app: FastAPI):
                     await session.commit()
                     logger.info("admin_user_created", username=settings.admin_username)
 
-        # Seed device types (name, description, category)
-        _DEFAULT_DEVICE_TYPES = [
+        # Seed device categories (name, description, category)
+        _DEFAULT_DEVICE_CATEGORIES = [
             ("host", "Generic server, VM, or physical machine", "server"),
             ("network", "Network device — router, switch, firewall, access point", "network"),
             ("api", "HTTP API endpoint or web service", "service"),
@@ -73,12 +73,12 @@ async def lifespan(app: FastAPI):
             ("iot", "IoT or embedded device", "iot"),
         ]
         async with factory() as session:
-            count = (await session.execute(select(DeviceType).limit(1))).scalar_one_or_none()
+            count = (await session.execute(select(DeviceCategory).limit(1))).scalar_one_or_none()
             if count is None:
-                for name, description, category in _DEFAULT_DEVICE_TYPES:
-                    session.add(DeviceType(name=name, description=description, category=category))
+                for name, description, category in _DEFAULT_DEVICE_CATEGORIES:
+                    session.add(DeviceCategory(name=name, description=description, category=category))
                 await session.commit()
-                logger.info("device_types_seeded", count=len(_DEFAULT_DEVICE_TYPES))
+                logger.info("device_categories_seeded", count=len(_DEFAULT_DEVICE_CATEGORIES))
 
         # Seed default label keys
         async with factory() as session:
@@ -99,7 +99,45 @@ async def lifespan(app: FastAPI):
                 await session.commit()
                 logger.info("label_keys_seeded", count=len(default_label_keys))
 
-        # Apps are managed entirely via the web UI — no seed apps on startup.
+        # Seed built-in snmp_discovery app (required for device auto-discovery)
+        from monctl_central.storage.models import App, AppVersion
+        from pathlib import Path
+
+        try:
+            existing_discovery = (await session.execute(
+                select(App).where(App.name == "snmp_discovery")
+            )).scalar_one_or_none()
+            if existing_discovery is None:
+                discovery_app = App(
+                    name="snmp_discovery",
+                    description="SNMP device discovery — collects system identity OIDs for auto-classification",
+                    app_type="script",
+                    target_table="config",
+                )
+                session.add(discovery_app)
+                await session.flush()
+
+                source_path = Path(__file__).resolve().parents[4] / "apps" / "snmp_discovery.py"
+                source_code = ""
+                if source_path.exists():
+                    source_code = source_path.read_text()
+
+                version = AppVersion(
+                    app_id=discovery_app.id,
+                    version="1.0.0",
+                    source_code=source_code,
+                    entry_class="Poller",
+                    requirements=[],
+                    is_latest=True,
+                    metadata_={"built_in": True},
+                    volatile_keys=[],
+                )
+                session.add(version)
+                await session.commit()
+                logger.info("snmp_discovery_app_seeded")
+        except Exception:
+            await session.rollback()
+            logger.debug("snmp_discovery_app_already_exists")
 
     # ── Seed default RBAC roles ────────────────────────────────────────────
     from monctl_central.storage.models import Role, RolePermission
@@ -499,6 +537,7 @@ class SshConnector:
     _APP_CONNECTOR_REQUIREMENTS: dict[str, list[dict[str, str]]] = {
         "snmp_check": [{"alias": "snmp", "connector_name": "snmp"}],
         "snmp_interface_poller": [{"alias": "snmp", "connector_name": "snmp"}],
+        "snmp_discovery": [{"alias": "snmp", "connector_name": "snmp"}],
     }
 
     async with factory() as session:
@@ -725,6 +764,10 @@ async def system_status():
 # Import and mount API routers
 from monctl_central.api.router import api_router  # noqa: E402
 app.include_router(api_router, prefix="/v1")
+
+# WebSocket router — mounted at app root (not under /v1/)
+from monctl_central.ws.router import router as ws_router  # noqa: E402
+app.include_router(ws_router)
 
 # Collector API — job-pull model (new distributed collector system)
 from monctl_central.collector_api.router import router as collector_api_router  # noqa: E402

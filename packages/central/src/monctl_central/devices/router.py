@@ -43,7 +43,7 @@ class CreateDeviceRequest(BaseModel):
                     "value": {
                         "name": "prod-web-01",
                         "address": "10.0.1.10",
-                        "device_type": "host",
+                        "device_category": "host",
                         "labels": {"env": "production", "role": "web"},
                     },
                 },
@@ -53,7 +53,7 @@ class CreateDeviceRequest(BaseModel):
 
     name: str = Field(min_length=1, max_length=255, description="Human-readable device name, e.g. 'prod-db-01'")
     address: str = Field(min_length=1, max_length=500, description="IP address, hostname, or URL")
-    device_type: str = Field(default="host", min_length=1, max_length=64, description="'host', 'network', 'api', 'database', etc.")
+    device_category: str = Field(default="host", min_length=1, max_length=64, description="'host', 'network', 'api', 'database', etc.")
     collector_id: str | None = Field(default=None, description="UUID of the owning collector")
     tenant_id: str | None = Field(default=None, description="UUID of the owning tenant")
     collector_group_id: str | None = Field(default=None, description="UUID of the collector group")
@@ -88,7 +88,7 @@ class CreateDeviceRequest(BaseModel):
 class UpdateDeviceRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     address: str | None = Field(default=None, min_length=1, max_length=500)
-    device_type: str | None = Field(default=None, min_length=1, max_length=64)
+    device_category: str | None = Field(default=None, min_length=1, max_length=64)
     collector_id: str | None = None
     tenant_id: str | None = None
     collector_group_id: str | None = None
@@ -132,7 +132,7 @@ def _format_device(d: Device, resolved_credentials: dict | None = None) -> dict:
         "id": str(d.id),
         "name": d.name,
         "address": d.address,
-        "device_type": d.device_type,
+        "device_category": d.device_category,
         "collector_id": str(d.collector_id) if d.collector_id else None,
         "tenant_id": str(d.tenant_id) if d.tenant_id else None,
         "tenant_name": d.tenant.name if d.tenant else None,
@@ -180,7 +180,7 @@ async def _resolve_device_credentials(device: Device, db) -> dict:
 @router.get("")
 async def list_devices(
     collector_id: Optional[str] = Query(default=None, description="Filter by collector UUID"),
-    device_type: Optional[str] = Query(default=None, description="Filter by device type"),
+    device_category: Optional[str] = Query(default=None, description="Filter by device category"),
     name: Optional[str] = Query(default=None, description="Filter by name (ilike)"),
     address: Optional[str] = Query(default=None, description="Filter by address (ilike)"),
     tenant_name: Optional[str] = Query(default=None, description="Filter by tenant name"),
@@ -205,8 +205,8 @@ async def list_devices(
     # Apply filters
     if collector_id:
         stmt = stmt.where(Device.collector_id == uuid.UUID(collector_id))
-    if device_type:
-        stmt = stmt.where(Device.device_type.ilike(f"%{device_type}%"))
+    if device_category:
+        stmt = stmt.where(Device.device_category.ilike(f"%{device_category}%"))
     if name:
         stmt = stmt.where(Device.name.ilike(f"%{name}%"))
     if address:
@@ -235,7 +235,7 @@ async def list_devices(
     sort_column = {
         "name": Device.name,
         "address": Device.address,
-        "device_type": Device.device_type,
+        "device_category": Device.device_category,
         "created_at": Device.created_at,
     }.get(sort_by)
 
@@ -277,7 +277,7 @@ async def create_device(
     device = Device(
         name=request.name,
         address=request.address,
-        device_type=request.device_type,
+        device_category=request.device_category,
         collector_id=uuid.UUID(request.collector_id) if request.collector_id else None,
         tenant_id=uuid.UUID(request.tenant_id) if request.tenant_id else None,
         collector_group_id=uuid.UUID(request.collector_group_id) if request.collector_group_id else None,
@@ -290,10 +290,31 @@ async def create_device(
     await _auto_register_label_keys(request.labels, db)
     await db.flush()
     await db.refresh(device, ["tenant", "collector_group", "default_credential"])
+
+    # Auto-discover if device has an SNMP credential and a collector group
+    discovery_queued = False
+    has_snmp = False
+    if device.credentials:
+        has_snmp = any("snmp" in k.lower() for k in device.credentials)
+    if not has_snmp and device.default_credential_id:
+        cred = await db.get(Credential, device.default_credential_id)
+        if cred and "snmp" in (cred.credential_type or "").lower():
+            has_snmp = True
+    if has_snmp and device.collector_group_id:
+        try:
+            from monctl_central.cache import set_discovery_flag
+            await set_discovery_flag(str(device.id))
+            discovery_queued = True
+        except Exception:
+            pass
+
     resolved_creds = await _resolve_device_credentials(device, db)
+    data = _format_device(device, resolved_creds)
+    if discovery_queued:
+        data["discovery_queued"] = True
     return {
         "status": "success",
-        "data": _format_device(device, resolved_creds),
+        "data": data,
     }
 
 
@@ -417,8 +438,8 @@ async def update_device(
         device.name = request.name
     if request.address is not None:
         device.address = request.address
-    if request.device_type is not None:
-        device.device_type = request.device_type
+    if request.device_category is not None:
+        device.device_category = request.device_category
     if request.collector_id is not None:
         device.collector_id = uuid.UUID(request.collector_id) if request.collector_id else None
     if request.tenant_id is not None:

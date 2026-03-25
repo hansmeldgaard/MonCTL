@@ -190,7 +190,7 @@ async def apply_template(
         device_ids.add(uuid.UUID(did))
 
     if request.device_type_names:
-        stmt = select(Device).where(Device.device_type.in_(request.device_type_names))
+        stmt = select(Device).where(Device.device_category.in_(request.device_type_names))
         result = await db.execute(stmt)
         for d in result.scalars().all():
             device_ids.add(d.id)

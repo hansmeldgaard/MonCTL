@@ -25,6 +25,7 @@ import type {
   ThresholdVariable,
   DisplayTemplate,
   DeviceResults,
+  DeviceCategory,
   DeviceType,
   ExpressionValidation,
   HealthStatus,
@@ -86,6 +87,12 @@ import type {
   OsInstallResult,
   UpgradeBadge,
   DashboardSummary,
+  DeviceCategoryListMeta,
+  DeviceCategoryCounts,
+  LogQueryResponse,
+  LogFiltersResponse,
+  CollectorWsStatus,
+  CollectorWsConnection,
 } from "@/types/api.ts";
 
 function buildListQs(params: ListParams): string {
@@ -112,7 +119,7 @@ export function useDevices(params: DeviceListParams = {}) {
   if (params.sort_dir) queryString.set("sort_dir", params.sort_dir);
   if (params.name) queryString.set("name", params.name);
   if (params.address) queryString.set("address", params.address);
-  if (params.device_type) queryString.set("device_type", params.device_type);
+  if (params.device_category) queryString.set("device_category", params.device_category);
   if (params.tenant_name) queryString.set("tenant_name", params.tenant_name);
   if (params.collector_group_name) queryString.set("collector_group_name", params.collector_group_name);
   if (params.label_key) queryString.set("label_key", params.label_key);
@@ -665,46 +672,66 @@ export function useHealth() {
   });
 }
 
-// ── Device Types ─────────────────────────────────────────
+// ── Device Categories (groupings) ────────────────────────
 
-export function useDeviceTypes() {
+export function useDeviceCategories() {
   return useQuery({
-    queryKey: ["device-types"],
-    queryFn: () => apiGet<DeviceType[]>("/device-types"),
+    queryKey: ["device-categories"],
+    queryFn: () => apiGet<DeviceCategory[]>("/device-categories"),
     select: (res) => res.data,
     refetchInterval: POLL_LIST,
   });
 }
 
-export function useCreateDeviceType() {
+export function useCreateDeviceCategory() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { name: string; description?: string; category?: string }) =>
-      apiPost<DeviceType>("/device-types", data),
+    mutationFn: (data: { name: string; description?: string; category?: string; icon?: string }) =>
+      apiPost<DeviceCategory>("/device-categories", data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["device-types"] });
+      qc.invalidateQueries({ queryKey: ["device-categories"] });
     },
   });
 }
 
-export function useUpdateDeviceType() {
+export function useUpdateDeviceCategory() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: { name?: string; description?: string; category?: string } }) =>
-      apiPut<DeviceType>(`/device-types/${id}`, data),
+    mutationFn: ({ id, data }: { id: string; data: { name?: string; description?: string; category?: string; icon?: string } }) =>
+      apiPut<DeviceCategory>(`/device-categories/${id}`, data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["device-types"] });
+      qc.invalidateQueries({ queryKey: ["device-categories"] });
     },
   });
 }
 
-export function useDeleteDeviceType() {
+export function useDeleteDeviceCategory() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => apiDelete(`/device-types/${id}`),
+    mutationFn: (id: string) => apiDelete(`/device-categories/${id}`),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["device-types"] });
+      qc.invalidateQueries({ queryKey: ["device-categories"] });
     },
+  });
+}
+
+export function useDeviceCategoryList(params: ListParams) {
+  const qs = buildListQs(params);
+  return useQuery<{ status: string; data: DeviceCategory[]; meta: DeviceCategoryListMeta }>({
+    queryKey: ["device-categories", "list", params],
+    queryFn: () => apiGetRaw(`/device-categories${qs}`),
+    placeholderData: keepPreviousData,
+    refetchInterval: POLL_LIST,
+  });
+}
+
+export function useDeviceCategoryCounts(search?: string) {
+  const qs = search ? `?search=${encodeURIComponent(search)}` : "";
+  return useQuery({
+    queryKey: ["device-categories", "categories", search ?? ""],
+    queryFn: () => apiGet<DeviceCategoryCounts>(`/device-categories/categories${qs}`),
+    select: (res) => res.data,
+    refetchInterval: POLL_LIST,
   });
 }
 
@@ -850,7 +877,7 @@ export function useCreateDevice() {
     mutationFn: (data: {
       name: string;
       address: string;
-      device_type: string;
+      device_category: string;
       tenant_id?: string;
       collector_group_id?: string;
       default_credential_id?: string;
@@ -906,7 +933,7 @@ export function useUpdateDevice() {
       data: Partial<{
         name: string;
         address: string;
-        device_type: string;
+        device_category: string;
         tenant_id: string | null;
         collector_group_id: string | null;
         credentials: Record<string, string>;
@@ -2365,11 +2392,12 @@ export function useClearEvents() {
 
 // ── Event Policies ───────────────────────────────────────
 
-export function useEventPolicies() {
+export function useEventPolicies(params: ListParams = {}) {
+  const qs = buildListQs(params);
   return useQuery({
-    queryKey: ["event-policies"],
-    queryFn: () => apiGet<EventPolicy[]>("/events/policies"),
-    select: (res) => res.data,
+    queryKey: ["event-policies", params],
+    queryFn: () => apiGetRaw<{ status: string; data: EventPolicy[]; meta: { limit: number; offset: number; count: number; total: number } }>(`/events/policies${qs}`),
+    placeholderData: keepPreviousData,
     refetchInterval: POLL_LIST,
   });
 }
@@ -2488,7 +2516,7 @@ export function useImportPack() {
       qc.invalidateQueries({ queryKey: ["connectors"] });
       qc.invalidateQueries({ queryKey: ["snmp-oids"] });
       qc.invalidateQueries({ queryKey: ["templates"] });
-      qc.invalidateQueries({ queryKey: ["device-types"] });
+      qc.invalidateQueries({ queryKey: ["device-categories"] });
       qc.invalidateQueries({ queryKey: ["label-keys"] });
       qc.invalidateQueries({ queryKey: ["credential-templates"] });
     },
@@ -2886,6 +2914,151 @@ export function useDashboardSummary() {
     queryKey: ["dashboard-summary"],
     queryFn: () => apiGet<DashboardSummary>("/dashboard/summary"),
     select: (res) => res.data,
+    refetchInterval: 15_000,
+  });
+}
+
+// ── Device Types (specific hardware models with OID) ────
+
+export function useDeviceTypes(params: ListParams = {}) {
+  const qs = buildListQs(params);
+  return useQuery({
+    queryKey: ["device-types", params],
+    queryFn: () => apiGetRaw<{ status: string; data: DeviceType[]; meta: { limit: number; offset: number; count: number; total: number } }>(`/device-types${qs}`),
+    placeholderData: keepPreviousData,
+    refetchInterval: POLL_LIST,
+  });
+}
+
+export function useCreateDeviceType() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: {
+      name: string;
+      sys_object_id_pattern: string;
+      device_category_id: string;
+      vendor?: string;
+      model?: string;
+      os_family?: string;
+      description?: string;
+      priority?: number;
+    }) => apiPost<DeviceType>("/device-types", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["device-types"] });
+    },
+  });
+}
+
+export function useUpdateDeviceType() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: Record<string, unknown> }) =>
+      apiPut<DeviceType>(`/device-types/${id}`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["device-types"] });
+    },
+  });
+}
+
+export function useDeleteDeviceType() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/device-types/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["device-types"] });
+    },
+  });
+}
+
+export function useDiscoverDevice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (deviceId: string) =>
+      apiPost(`/devices/${deviceId}/discover`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["devices"] });
+      qc.invalidateQueries({ queryKey: ["device"] });
+    },
+  });
+}
+
+// ── Logs (ClickHouse) ───────────────────────────────────────────────────────
+
+export interface LogQueryParams {
+  collector_name?: string;
+  container_name?: string;
+  host_label?: string;
+  level?: string;
+  source_type?: string;
+  search?: string;
+  from_ts?: string;
+  to_ts?: string;
+  page?: number;
+  page_size?: number;
+  sort_field?: string;
+  sort_dir?: string;
+}
+
+export function useLogs(params: LogQueryParams, enabled = true) {
+  const searchParams = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") {
+      searchParams.set(k, String(v));
+    }
+  });
+
+  return useQuery({
+    queryKey: ["logs", params],
+    queryFn: () => apiGet<LogQueryResponse>(`/logs?${searchParams.toString()}`),
+    enabled,
+    refetchInterval: false,
+  });
+}
+
+export function useLogFilters() {
+  return useQuery({
+    queryKey: ["log-filters"],
+    queryFn: () => apiGet<LogFiltersResponse>("/logs/filters"),
+    staleTime: 60_000,
+  });
+}
+
+export function useLogsTail(params: LogQueryParams, enabled = false) {
+  const searchParams = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") {
+      searchParams.set(k, String(v));
+    }
+  });
+  searchParams.set("sort_field", "timestamp");
+  searchParams.set("sort_dir", "desc");
+  searchParams.set("page", "1");
+  searchParams.set("page_size", "200");
+
+  return useQuery({
+    queryKey: ["logs-tail", params],
+    queryFn: () => apiGet<LogQueryResponse>(`/logs?${searchParams.toString()}`),
+    enabled,
+    refetchInterval: 2_000,
+  });
+}
+
+// ── WebSocket status ────────────────────────────────────────────────────────
+
+export function useCollectorWsStatus(collectorId: string) {
+  return useQuery({
+    queryKey: ["collector-ws-status", collectorId],
+    queryFn: () => apiGet<CollectorWsStatus>(`/collectors/${collectorId}/ws-status`),
+    refetchInterval: 15_000,
+    enabled: !!collectorId,
+  });
+}
+
+export function useWsConnections() {
+  return useQuery({
+    queryKey: ["ws-connections"],
+    queryFn: () =>
+      apiGet<{ connections: CollectorWsConnection[] }>("/collectors/ws-connections"),
     refetchInterval: 15_000,
   });
 }

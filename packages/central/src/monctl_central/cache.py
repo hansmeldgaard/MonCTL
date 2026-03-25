@@ -501,6 +501,36 @@ async def get_and_clear_interface_refresh_flag(device_id: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# SNMP discovery flag
+# ---------------------------------------------------------------------------
+
+_DISCOVERY_PREFIX = "discovery:pending:"
+
+
+async def set_discovery_flag(device_id: str, ttl: int = 600) -> None:
+    """Set a flag requesting SNMP discovery for a device.
+
+    The flag is consumed by the collector API's job-fetch endpoint,
+    which injects a one-shot snmp_discovery job for this device.
+    TTL ensures stale flags expire if never consumed (10 min default).
+    """
+    if _redis:
+        await _redis.set(f"{_DISCOVERY_PREFIX}{device_id}", "1", ex=ttl)
+
+
+async def get_and_clear_discovery_flag(device_id: str) -> bool:
+    """Check and atomically clear the discovery flag.
+
+    Returns True if the flag was set (discovery should be triggered).
+    Uses GETDEL for atomic check-and-clear — only one collector picks it up.
+    """
+    if _redis:
+        result = await _redis.getdel(f"{_DISCOVERY_PREFIX}{device_id}")
+        return result is not None
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Docker push cache (worker docker-stats → central via push)
 # ---------------------------------------------------------------------------
 

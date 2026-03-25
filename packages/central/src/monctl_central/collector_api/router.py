@@ -495,6 +495,111 @@ async def get_jobs(
             "connector_bindings": bindings,
         })
 
+    # ── Inject one-shot SNMP discovery jobs for flagged devices ───────────
+    from monctl_central.cache import get_and_clear_discovery_flag
+
+    # Collect device IDs in scope (from jobs + all group devices for new devices)
+    discovery_device_ids: set[str] = set()
+    for job in jobs:
+        if job.get("device_id"):
+            discovery_device_ids.add(job["device_id"])
+
+    # Also check devices in collector's group that may not have assignments yet
+    if group_id:
+        pending_devs = (await db.execute(
+            select(Device.id).where(
+                Device.collector_group_id == group_id,
+                Device.is_enabled == True,  # noqa: E712
+            )
+        )).scalars().all()
+        for dev_id in pending_devs:
+            discovery_device_ids.add(str(dev_id))
+
+    # Find snmp_discovery app + latest version
+    discovery_app = (await db.execute(
+        select(App).where(App.name == "snmp_discovery")
+    )).scalar_one_or_none()
+
+    if discovery_app and discovery_device_ids:
+        discovery_version = (await db.execute(
+            select(AppVersion).where(
+                AppVersion.app_id == discovery_app.id,
+                AppVersion.is_latest == True,  # noqa: E712
+            )
+        )).scalar_one_or_none()
+
+        if discovery_version:
+            # Get app-level connector bindings for the discovery app
+            disc_app_cbs = app_bindings_map.get(discovery_app.id) or []
+            if not disc_app_cbs:
+                disc_acb_stmt = select(AppConnectorBinding).where(
+                    AppConnectorBinding.app_id == discovery_app.id
+                )
+                disc_app_cbs = list((await db.execute(disc_acb_stmt)).scalars().all())
+
+            for dev_id_str in discovery_device_ids:
+                if not await get_and_clear_discovery_flag(dev_id_str):
+                    continue
+
+                device = await db.get(Device, uuid.UUID(dev_id_str))
+                if not device:
+                    continue
+
+                # Resolve SNMP credential for discovery
+                disc_cred_id: uuid.UUID | None = None
+                if device.credentials:
+                    for ctype, cid in device.credentials.items():
+                        if "snmp" in ctype.lower():
+                            try:
+                                disc_cred_id = uuid.UUID(str(cid))
+                            except ValueError:
+                                pass
+                            break
+                if not disc_cred_id and device.default_credential_id:
+                    disc_cred_id = device.default_credential_id
+
+                disc_cred_name = cred_name_map.get(disc_cred_id) if disc_cred_id else None
+                # If credential not in our pre-loaded map, look it up
+                if disc_cred_id and not disc_cred_name:
+                    cred_row = (await db.execute(
+                        select(Credential.name).where(Credential.id == disc_cred_id)
+                    )).scalar_one_or_none()
+                    disc_cred_name = cred_row
+
+                # Build connector bindings for discovery job
+                disc_bindings = []
+                for acb in disc_app_cbs:
+                    version_id = acb.connector_version_id
+                    if acb.use_latest:
+                        version_id = latest_connector_versions.get(acb.connector_id, version_id)
+                    disc_bindings.append({
+                        "alias": acb.alias,
+                        "connector_id": str(acb.connector_id),
+                        "connector_version_id": str(version_id) if version_id else None,
+                        "credential_name": disc_cred_name,
+                        "use_latest": acb.use_latest,
+                        "settings": acb.settings or {},
+                        "connector_checksum": cv_checksum_map.get(version_id, "") if version_id else "",
+                    })
+
+                jobs.append({
+                    "job_id": f"discovery-{dev_id_str}",
+                    "device_id": dev_id_str,
+                    "device_host": device.address,
+                    "app_id": discovery_app.name,
+                    "app_version": discovery_version.version,
+                    "app_checksum": discovery_version.checksum_sha256 or "",
+                    "credential_names": [disc_cred_name] if disc_cred_name else [],
+                    "interval": 0,  # One-shot: interval=0 signals no reschedule
+                    "parameters": {"_one_shot": True},
+                    "role": "discovery",
+                    "max_execution_time": 30,
+                    "enabled": True,
+                    "updated_at": None,
+                    "connector_bindings": disc_bindings,
+                })
+                logger.info("discovery_job_injected", device_id=dev_id_str)
+
     return {
         "jobs": jobs,
         "deleted_ids": [],  # soft-delete support: future work
@@ -1315,6 +1420,20 @@ async def submit_results(
                     device_id_resolved,
                     enrichment.get("app_id", str(assignment_id)),
                 )
+
+            # Process discovery results if this is the snmp_discovery app
+            if enrichment.get("app_name") == "snmp_discovery" and r.config_data and device_id_resolved:
+                try:
+                    from monctl_central.discovery.service import process_discovery_result
+                    await process_discovery_result(
+                        device_id=device_id_resolved,
+                        config_data=r.config_data,
+                        db=db,
+                    )
+                except Exception as _disc_exc:
+                    logger.warning("discovery_processing_failed",
+                                   device_id=device_id_resolved, error=str(_disc_exc))
+
             # Also insert an availability_latency row for status tracking
             ch_rows.append({
                 "_target_table": "availability_latency",
@@ -1951,3 +2070,6 @@ router.include_router(upgrade_collector_router, prefix="/upgrade", tags=["upgrad
 
 from monctl_central.upgrades.os_collector_api import router as os_packages_router
 router.include_router(os_packages_router, prefix="/os-packages", tags=["os-packages"])
+
+from monctl_central.logs.router import router as logs_collector_router
+router.include_router(logs_collector_router, tags=["logs"])

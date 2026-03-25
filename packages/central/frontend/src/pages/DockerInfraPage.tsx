@@ -33,6 +33,9 @@ import {
   useDockerContainerLogs,
   useDockerEvents,
   useDockerImages,
+  useLogs,
+  useLogFilters,
+  useLogsTail,
 } from "@/api/hooks.ts";
 import { formatBytes, formatUptime, timeAgo } from "@/lib/utils.ts";
 import type {
@@ -40,6 +43,7 @@ import type {
   DockerEvent,
   DockerImageInfo,
   DockerVolumeInfo,
+  LogEntry,
 } from "@/types/api.ts";
 
 // ── Types for stats data ────────────────────────────────────────────────────
@@ -250,7 +254,7 @@ export function DockerInfraPage() {
         {selectedHost && currentHost?.status === "ok" && (
           <>
             {activeTab === "containers" && <ContainersTab hostLabel={selectedHost} />}
-            {activeTab === "logs" && <LogsTab hostLabel={selectedHost} initialContainer={initialContainer} />}
+            {activeTab === "logs" && <LogsTab hostLabel={selectedHost} />}
             {activeTab === "events" && <EventsTab hostLabel={selectedHost} />}
             {activeTab === "images" && <ImagesTab hostLabel={selectedHost} />}
             {activeTab === "system" && <SystemTab hostLabel={selectedHost} />}
@@ -456,60 +460,183 @@ function InlineLogViewer({ hostLabel, container }: { hostLabel: string; containe
 
 // ── Logs tab ────────────────────────────────────────────────────────────────
 
-function LogsTab({ hostLabel, initialContainer }: { hostLabel: string; initialContainer: string }) {
-  const stats = useDockerHostStats(hostLabel);
-  const containers: string[] = useMemo(() => {
-    const raw = (stats.data?.data as Record<string, unknown>)?.containers as ContainerStats[] | undefined;
-    return raw?.filter((c) => c.status === "running").map((c) => c.name).sort() ?? [];
-  }, [stats.data]);
+function LogsTab({ hostLabel }: { hostLabel: string }) {
+  const filters = useLogFilters();
 
-  const [container, setContainer] = useState(initialContainer || "");
-  const [tail, setTail] = useState(100);
-  const logs = useDockerContainerLogs(hostLabel, container, tail);
-  const scrollRef = useRef<HTMLDivElement>(null);
-
-  // Auto-select first container
-  useEffect(() => {
-    if (!container && containers.length > 0) setContainer(containers[0]);
-  }, [containers]);
+  const [collector, setCollector] = useState("");
+  const [container, setContainer] = useState("");
+  const [level, setLevel] = useState("");
+  const [search, setSearch] = useState("");
+  const [searchDebounced, setSearchDebounced] = useState("");
+  const [page, setPage] = useState(1);
+  const [sortField, setSortField] = useState("timestamp");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [tailMode, setTailMode] = useState(false);
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    const timer = setTimeout(() => setSearchDebounced(search), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  useEffect(() => { setPage(1); }, [collector, container, level, searchDebounced]);
+
+  const queryParams: import("@/api/hooks.ts").LogQueryParams = {
+    host_label: hostLabel || undefined,
+    collector_name: collector || undefined,
+    container_name: container || undefined,
+    level: level || undefined,
+    search: searchDebounced || undefined,
+    page,
+    page_size: 100,
+    sort_field: sortField,
+    sort_dir: sortDir,
+  };
+
+  const logs = useLogs(queryParams, !tailMode);
+  const tail = useLogsTail({ ...queryParams }, tailMode);
+  const activeData = tailMode ? tail : logs;
+
+  const entries = activeData.data?.data?.data ?? [];
+  const total = activeData.data?.data?.total ?? 0;
+  const totalPages = activeData.data?.data?.total_pages ?? 0;
+
+  const levelColors: Record<string, string> = {
+    DEBUG: "text-zinc-500",
+    INFO: "text-blue-400",
+    WARNING: "text-amber-400",
+    ERROR: "text-red-400",
+    CRITICAL: "text-red-500 font-bold",
+  };
+
+  function handleSort(field: string) {
+    if (sortField === field) {
+      setSortDir(sortDir === "asc" ? "desc" : "asc");
+    } else {
+      setSortField(field);
+      setSortDir("desc");
     }
-  }, [logs.data]);
-
-  function copyLogs() {
-    const text = logs.data?.data?.lines?.join("\n") ?? "";
-    navigator.clipboard.writeText(text);
   }
+
+  const SortIcon = ({ field }: { field: string }) => {
+    if (sortField !== field) return <ArrowUpDown className="h-3 w-3 text-zinc-600" />;
+    return sortDir === "asc"
+      ? <ArrowUp className="h-3 w-3 text-blue-400" />
+      : <ArrowDown className="h-3 w-3 text-blue-400" />;
+  };
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-3">
-        <Select value={container} onChange={(e) => setContainer(e.target.value)} className="w-64">
-          <option value="">Select container...</option>
-          {containers.map((c) => <option key={c} value={c}>{c}</option>)}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative">
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-500" />
+          <input
+            type="text"
+            placeholder="Search logs..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-8 pr-3 py-1.5 text-sm bg-zinc-900 border border-zinc-700 rounded text-zinc-200 w-64"
+          />
+        </div>
+
+        <Select value={container} onChange={(e) => setContainer(e.target.value)} className="w-44">
+          <option value="">All containers</option>
+          {(filters.data?.data?.containers ?? []).map((c) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
         </Select>
-        <Select value={String(tail)} onChange={(e) => setTail(Number(e.target.value))} className="w-24">
-          {[50, 100, 200, 500].map((n) => <option key={n} value={n}>{n} lines</option>)}
+
+        <Select value={level} onChange={(e) => setLevel(e.target.value)} className="w-32">
+          <option value="">All levels</option>
+          <option value="DEBUG">Debug+</option>
+          <option value="INFO">Info+</option>
+          <option value="WARNING">Warning+</option>
+          <option value="ERROR">Error+</option>
+          <option value="CRITICAL">Critical</option>
         </Select>
-        <Button variant="default" size="sm" onClick={copyLogs}>
-          <ClipboardCopy className="h-3.5 w-3.5 mr-1" />
-          Copy
-        </Button>
-        {logs.isFetching && <Loader2 className="h-4 w-4 animate-spin text-zinc-500" />}
+
+        <Select value={collector} onChange={(e) => setCollector(e.target.value)} className="w-40">
+          <option value="">All collectors</option>
+          {(filters.data?.data?.collectors ?? []).map((c) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
+        </Select>
+
+        <div className="ml-auto flex items-center gap-2">
+          <Button
+            size="sm"
+            variant={tailMode ? "default" : "outline"}
+            onClick={() => setTailMode(!tailMode)}
+          >
+            {tailMode ? "Stop tail" : "Live tail"}
+          </Button>
+          {activeData.isFetching && <Loader2 className="h-4 w-4 animate-spin text-zinc-500" />}
+          <span className="text-xs text-zinc-500">{total} entries</span>
+        </div>
       </div>
 
-      <div ref={scrollRef} className="bg-zinc-950 rounded p-3 font-mono text-xs text-zinc-300 max-h-[600px] overflow-auto whitespace-pre-wrap">
-        {logs.data?.data?.lines?.length ? (
-          logs.data.data.lines.map((line, i) => <div key={i}>{line}</div>)
-        ) : container ? (
-          <span className="text-zinc-600">No log lines available</span>
-        ) : (
-          <span className="text-zinc-600">Select a container to view logs</span>
-        )}
+      <div className="border border-zinc-800 rounded overflow-hidden">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-44 cursor-pointer" onClick={() => handleSort("timestamp")}>
+                <span className="flex items-center gap-1">Timestamp <SortIcon field="timestamp" /></span>
+              </TableHead>
+              <TableHead className="w-20 cursor-pointer" onClick={() => handleSort("level")}>
+                <span className="flex items-center gap-1">Level <SortIcon field="level" /></span>
+              </TableHead>
+              <TableHead className="w-32 cursor-pointer" onClick={() => handleSort("collector_name")}>
+                <span className="flex items-center gap-1">Collector <SortIcon field="collector_name" /></span>
+              </TableHead>
+              <TableHead className="w-40 cursor-pointer" onClick={() => handleSort("container_name")}>
+                <span className="flex items-center gap-1">Container <SortIcon field="container_name" /></span>
+              </TableHead>
+              <TableHead>Message</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {entries.map((entry, i) => (
+              <TableRow key={`${entry.timestamp}-${i}`} className="hover:bg-zinc-800/50">
+                <TableCell className="font-mono text-xs text-zinc-500 whitespace-nowrap">
+                  {new Date(entry.timestamp).toLocaleString()}
+                </TableCell>
+                <TableCell>
+                  <span className={`text-xs font-medium ${levelColors[entry.level] ?? "text-zinc-400"}`}>
+                    {entry.level}
+                  </span>
+                </TableCell>
+                <TableCell className="text-xs text-zinc-400">{entry.collector_name}</TableCell>
+                <TableCell className="text-xs text-zinc-400">{entry.container_name}</TableCell>
+                <TableCell className="font-mono text-xs text-zinc-300 whitespace-pre-wrap break-all max-w-xl truncate">
+                  {entry.message}
+                </TableCell>
+              </TableRow>
+            ))}
+            {entries.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={5} className="text-center text-zinc-500 py-8">
+                  No log entries found
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
       </div>
+
+      {!tailMode && totalPages > 1 && (
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-zinc-500">
+            Page {page} of {totalPages} ({total} total)
+          </span>
+          <div className="flex gap-1">
+            <Button size="sm" variant="outline" disabled={page <= 1} onClick={() => setPage(page - 1)}>
+              Previous
+            </Button>
+            <Button size="sm" variant="outline" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>
+              Next
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

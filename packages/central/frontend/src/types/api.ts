@@ -31,14 +31,46 @@ export interface LoginPayload {
   password: string;
 }
 
-// ── Device Types ──────────────────────────────────────────
+// ── Device Categories (groupings like cisco-router, host) ─
 
-export interface DeviceType {
+export interface DeviceCategory {
   id: string;
   name: string;
   description: string | null;
   category: string;
+  icon: string | null;
+  pack_id: string | null;
   created_at: string;
+}
+
+// ── Device Types (specific hardware models with OID) ─────
+
+export interface DeviceType {
+  id: string;
+  name: string;
+  sys_object_id_pattern: string;
+  device_category_id: string;
+  device_category_name: string | null;
+  vendor: string | null;
+  model: string | null;
+  os_family: string | null;
+  description: string | null;
+  priority: number;
+  pack_id: string | null;
+  created_at: string;
+}
+
+export interface DeviceCategoryListMeta {
+  limit: number;
+  offset: number;
+  count: number;
+  total: number;
+  category_counts: Record<string, number>;
+}
+
+export interface DeviceCategoryCounts {
+  categories: Record<string, number>;
+  total: number;
 }
 
 // ── Tenants ───────────────────────────────────────────────
@@ -105,7 +137,7 @@ export interface Device {
   id: string;
   name: string;
   address: string;
-  device_type: string;
+  device_category: string;
   tenant_id: string | null;
   tenant_name: string | null;
   collector_group_id: string | null;
@@ -115,6 +147,7 @@ export interface Device {
   default_credential_name: string | null;
   is_enabled: boolean;
   credentials: Record<string, { id: string; name: string; credential_type: string }>;
+  metadata: Record<string, unknown> | null;
   retention_overrides: Record<string, string>;
   created_at?: string;
   updated_at?: string;
@@ -157,7 +190,7 @@ export interface DeviceListParams {
   sort_dir?: "asc" | "desc";
   name?: string;
   address?: string;
-  device_type?: string;
+  device_category?: string;
   tenant_name?: string;
   collector_group_name?: string;
   label_key?: string;
@@ -200,7 +233,7 @@ export interface DeviceResults {
   device_id: string;
   device_name: string;
   device_address: string;
-  device_type: string;
+  device_category: string;
   tenant_id: string | null;
   up: boolean;
   checks: CheckResult[];
@@ -245,6 +278,9 @@ export interface Collector {
   approved_by: string | null;
   rejected_reason: string | null;
   registered_at: string | null;
+  log_level_filter?: string;
+  ws_connected?: boolean;
+  ws_connection?: CollectorWsConnection | null;
 }
 
 // ── Assignments ───────────────────────────────────────────
@@ -259,7 +295,7 @@ export interface DeviceInfo {
   id: string;
   name: string;
   address: string;
-  device_type: string;
+  device_category: string;
 }
 
 export interface Assignment {
@@ -1441,4 +1477,49 @@ export interface DashboardSummary {
   device_health: DashboardDeviceHealth;
   collector_status: DashboardCollectorStatus;
   performance_top_n: DashboardPerformanceTopN;
+}
+
+// ── Logs (ClickHouse) ─────────────────────────────────────
+
+export interface LogEntry {
+  timestamp: string;
+  collector_id: string;
+  collector_name: string;
+  host_label: string;
+  source_type: string;
+  container_name: string;
+  image_name: string;
+  level: string;
+  stream: string;
+  message: string;
+}
+
+export interface LogQueryResponse {
+  data: LogEntry[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface LogFiltersResponse {
+  collectors: string[];
+  containers: string[];
+  hosts: string[];
+  levels: string[];
+  source_types: string[];
+}
+
+// ── WebSocket Status ──────────────────────────────────────
+
+export interface CollectorWsConnection {
+  collector_id: string;
+  name: string;
+  connected_at: string;
+  last_seen_at: string;
+}
+
+export interface CollectorWsStatus {
+  connected: boolean;
+  connection: CollectorWsConnection | null;
 }

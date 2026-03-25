@@ -16,7 +16,7 @@ from sqlalchemy.orm import selectinload
 from monctl_central.dependencies import get_db, require_auth
 from monctl_central.storage.models import (
     Pack, PackVersion, App, CredentialTemplate,
-    SnmpOid, Template, DeviceType, LabelKey, Connector,
+    SnmpOid, Template, DeviceCategory, DeviceType, LabelKey, Connector,
 )
 from monctl_central.packs.schema import validate_pack_schema
 from monctl_central.packs.service import (
@@ -73,9 +73,10 @@ async def list_available_entities(
         ("credential_templates", CredentialTemplate, "name"),
         ("snmp_oids", SnmpOid, "name"),
         ("device_templates", Template, "name"),
-        ("device_types", DeviceType, "name"),
+        ("device_categories", DeviceCategory, "name"),
         ("label_keys", LabelKey, "key"),
         ("connectors", Connector, "name"),
+        ("device_types", DeviceType, "name"),
     ]
 
     for section, model, name_field in _SECTIONS:

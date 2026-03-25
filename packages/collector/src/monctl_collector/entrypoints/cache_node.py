@@ -38,6 +38,17 @@ from monctl_collector.jobs.scheduler import JobScheduler
 from monctl_collector.cache.app_cache_sync import AppCacheSyncLoop
 from monctl_collector.peer.server import CollectorPeerServicer, start_server
 from monctl_collector.upgrade_agent import UpgradeAgent
+from monctl_collector.central.ws_client import WebSocketClient
+from monctl_collector.central.ws_handlers import (
+    init_handlers,
+    handle_poll_device,
+    handle_config_reload,
+    handle_health_check,
+    handle_module_update,
+    handle_docker_health,
+    handle_docker_logs,
+)
+from monctl_collector.central.log_shipper import LogShipper
 
 logger = structlog.get_logger()
 
@@ -126,6 +137,43 @@ async def run(cfg: CollectorConfig) -> None:
     )
     await upgrade_agent.start()
 
+    # ── WebSocket command channel ─────────────────────────────────────────────
+    sidecar_url = os.environ.get("MONCTL_DOCKER_STATS_URL", "http://localhost:9100")
+    ws_client = WebSocketClient(
+        central_url=cfg.central.url,
+        api_key=cfg.central.api_key,
+        node_id=node_id,
+        verify_ssl=cfg.central.verify_ssl,
+    )
+
+    init_handlers(
+        scheduler=scheduler,
+        central_client=central_client,
+        sidecar_url=sidecar_url,
+    )
+
+    ws_client.register_handler("poll_device", handle_poll_device)
+    ws_client.register_handler("config_reload", handle_config_reload)
+    ws_client.register_handler("health_check", handle_health_check)
+    ws_client.register_handler("module_update", handle_module_update)
+    ws_client.register_handler("docker_health", handle_docker_health)
+    ws_client.register_handler("docker_logs", handle_docker_logs)
+
+    ws_task = asyncio.create_task(ws_client.run())
+
+    # ── Log shipper ───────────────────────────────────────────────────────────
+    host_label = os.environ.get("MONCTL_HOST_LABEL", node_id)
+    log_level_filter = os.environ.get("MONCTL_LOG_LEVEL_FILTER", "INFO")
+    log_shipper = LogShipper(
+        central_client=central_client,
+        collector_id=cfg.collector_id or "",
+        collector_name=node_id,
+        host_label=host_label,
+        sidecar_url=sidecar_url,
+        log_level_filter=log_level_filter,
+    )
+    log_shipper_task = asyncio.create_task(log_shipper.run())
+
     logger.info("cache_node_ready", node_id=node_id)
 
     # ── Shutdown handler ──────────────────────────────────────────────────────
@@ -143,6 +191,8 @@ async def run(cfg: CollectorConfig) -> None:
 
     # Graceful shutdown
     logger.info("cache_node_shutting_down")
+    await log_shipper.stop()
+    await ws_client.stop()
     await upgrade_agent.stop()
     await app_cache_sync.stop()
     await scheduler.stop()

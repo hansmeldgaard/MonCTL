@@ -58,6 +58,15 @@ class CentralAPIClient:
     def _url(self, path: str) -> str:
         return f"{self._base_url}/api/v1{path}"
 
+    async def post_json(self, path: str, payload: dict) -> dict | None:
+        """Generic POST helper for JSON payloads."""
+        url = self._url(path)
+        async with self._session.post(url, json=payload) as resp:
+            if resp.status in (200, 201, 202):
+                return await resp.json()
+            body = await resp.text()
+            raise RuntimeError(f"POST {path} failed: {resp.status} {body[:200]}")
+
     # ── Jobs ─────────────────────────────────────────────────────────────────
 
     async def get_jobs(

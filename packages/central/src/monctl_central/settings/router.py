@@ -34,6 +34,7 @@ _DEFAULTS = {
     "collector_central_url": "",
     "grafana_url": "",
     "metabase_url": "",
+    "log_retention_days": "7",
 }
 
 
@@ -70,6 +71,19 @@ async def update_settings(
         else:
             db.add(SystemSetting(key=key, value=value))
     await db.flush()
+
+    # Update ClickHouse logs TTL when retention changes
+    if "log_retention_days" in request.settings:
+        try:
+            from monctl_central.dependencies import get_clickhouse
+            days = int(request.settings["log_retention_days"])
+            if 1 <= days <= 365:
+                ch = get_clickhouse()
+                ch._get_client().command(
+                    f"ALTER TABLE logs MODIFY TTL timestamp + INTERVAL {days} DAY"
+                )
+        except Exception:
+            pass  # Non-critical — TTL update is best-effort
     # Return updated settings
     result = await db.execute(select(SystemSetting))
     rows = result.scalars().all()
