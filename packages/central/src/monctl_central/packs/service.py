@@ -18,6 +18,7 @@ from monctl_central.storage.models import (
     Connector,
     ConnectorVersion,
     CredentialTemplate,
+    DeviceCategory,
     DeviceType,
     LabelKey,
     Pack,
@@ -37,9 +38,10 @@ ENTITY_MAP: list[tuple[str, type, str]] = [
     ("credential_templates", CredentialTemplate, "name"),
     ("snmp_oids", SnmpOid, "name"),
     ("device_templates", Template, "name"),
-    ("device_types", DeviceType, "name"),
+    ("device_categories", DeviceCategory, "name"),
     ("label_keys", LabelKey, "key"),
     ("connectors", Connector, "name"),
+    ("device_types", DeviceType, "name"),
 ]
 
 
@@ -123,9 +125,19 @@ async def export_pack(pack_id: uuid.UUID, db: AsyncSession) -> dict:
     if templates:
         result["contents"]["device_templates"] = [_export_template(t) for t in templates]
 
+    # Device categories
+    device_categories = (await db.execute(
+        select(DeviceCategory).where(DeviceCategory.pack_id == pack.id)
+    )).scalars().all()
+    if device_categories:
+        result["contents"]["device_categories"] = [_export_device_category(dc) for dc in device_categories]
+
     # Device types
+    from sqlalchemy.orm import selectinload as _sinload
     device_types = (await db.execute(
-        select(DeviceType).where(DeviceType.pack_id == pack.id)
+        select(DeviceType)
+        .options(_sinload(DeviceType.device_category))
+        .where(DeviceType.pack_id == pack.id)
     )).scalars().all()
     if device_types:
         result["contents"]["device_types"] = [_export_device_type(dt) for dt in device_types]
@@ -202,7 +214,6 @@ def _export_app(
                 "name": ad.name,
                 "expression": ad.expression,
                 "window": ad.window,
-                "severity": ad.severity,
                 "enabled": ad.enabled,
                 "description": ad.description,
                 "message_template": ad.message_template,
@@ -252,11 +263,27 @@ def _export_template(t: Template) -> dict:
     }
 
 
+def _export_device_category(dc: DeviceCategory) -> dict:
+    d: dict = {
+        "name": dc.name,
+        "description": dc.description,
+        "category": dc.category,
+    }
+    if dc.icon:
+        d["icon"] = dc.icon
+    return d
+
+
 def _export_device_type(dt: DeviceType) -> dict:
     return {
         "name": dt.name,
+        "sys_object_id_pattern": dt.sys_object_id_pattern,
+        "device_category_name": dt.device_category.name if dt.device_category else "",
+        "vendor": dt.vendor,
+        "model": dt.model,
+        "os_family": dt.os_family,
         "description": dt.description,
-        "category": dt.category,
+        "priority": dt.priority,
     }
 
 
@@ -395,6 +422,14 @@ async def preview_import(data: dict, db: AsyncSession) -> dict:
                 select(model).where(getattr(model, name_field) == item_name)
             )).scalar_one_or_none()
 
+            # Device types: also match on sys_object_id_pattern (unique constraint)
+            if section == "device_types" and not existing:
+                pattern = item.get("sys_object_id_pattern", "")
+                if pattern:
+                    existing = (await db.execute(
+                        select(DeviceType).where(DeviceType.sys_object_id_pattern == pattern)
+                    )).scalar_one_or_none()
+
             entry: dict = {
                 "section": section,
                 "name": item_name,
@@ -502,9 +537,33 @@ async def import_pack(
             resolution_key = f"{section}:{item_name}"
             resolution = resolutions.get(resolution_key, "skip")
 
+            # Device types: resolve device_category_name → device_category_id before any create/update
+            if section == "device_types" and "device_category_name" in item:
+                dc = (await db.execute(
+                    select(DeviceCategory).where(DeviceCategory.name == item["device_category_name"])
+                )).scalar_one_or_none()
+                if dc:
+                    item["_resolved_device_category_id"] = str(dc.id)
+                else:
+                    logger.warning("device_type_skip_no_device_category",
+                                   rule=item_name, device_category_name=item["device_category_name"])
+                    stats["skipped"] += 1
+                    continue
+
             existing = (await db.execute(
                 select(model).where(getattr(model, name_field) == item_name)
             )).scalar_one_or_none()
+
+            # Device types: also check for existing pattern match (unique constraint)
+            if section == "device_types" and not existing:
+                pattern = item.get("sys_object_id_pattern", "")
+                if pattern:
+                    existing = (await db.execute(
+                        select(DeviceType).where(DeviceType.sys_object_id_pattern == pattern)
+                    )).scalar_one_or_none()
+                    if existing:
+                        # Update resolution to overwrite by default for pattern match
+                        resolution = resolutions.get(resolution_key, "overwrite")
 
             if existing and resolution == "skip":
                 stats["skipped"] += 1
@@ -584,7 +643,8 @@ def _build_manifest(data: dict) -> dict:
     manifest: dict = {}
     contents = data.get("contents", {})
     for section in ["apps", "credential_templates", "snmp_oids",
-                     "device_templates", "device_types", "label_keys", "connectors"]:
+                     "device_templates", "device_categories", "label_keys", "connectors",
+                     "device_types"]:
         items = contents.get(section, [])
         if items:
             if section == "apps":
@@ -633,11 +693,25 @@ def _create_entity(item: dict, section: str, pack_id: uuid.UUID):
             config=item.get("config", {}),
             pack_id=pack_id,
         )
-    elif section == "device_types":
-        return DeviceType(
+    elif section == "device_categories":
+        return DeviceCategory(
             name=item["name"],
             description=item.get("description"),
             category=item.get("category", "other"),
+            icon=item.get("icon"),
+            pack_id=pack_id,
+        )
+    elif section == "device_types":
+        # device_category_id is resolved before calling this
+        return DeviceType(
+            name=item["name"],
+            sys_object_id_pattern=item["sys_object_id_pattern"],
+            device_category_id=uuid.UUID(item["_resolved_device_category_id"]),
+            vendor=item.get("vendor"),
+            model=item.get("model"),
+            os_family=item.get("os_family"),
+            description=item.get("description"),
+            priority=item.get("priority", 0),
             pack_id=pack_id,
         )
     elif section == "label_keys":
@@ -675,9 +749,20 @@ def _update_entity(existing, item: dict, section: str, pack_id: uuid.UUID) -> No
     elif section == "device_templates":
         existing.description = item.get("description")
         existing.config = item.get("config", existing.config)
-    elif section == "device_types":
+    elif section == "device_categories":
         existing.description = item.get("description")
         existing.category = item.get("category", existing.category)
+        if "icon" in item:
+            existing.icon = item["icon"]
+    elif section == "device_types":
+        existing.sys_object_id_pattern = item.get("sys_object_id_pattern", existing.sys_object_id_pattern)
+        if "_resolved_device_category_id" in item:
+            existing.device_category_id = uuid.UUID(item["_resolved_device_category_id"])
+        existing.vendor = item.get("vendor")
+        existing.model = item.get("model")
+        existing.os_family = item.get("os_family")
+        existing.description = item.get("description")
+        existing.priority = item.get("priority", existing.priority)
     elif section == "label_keys":
         existing.description = item.get("description")
         existing.color = item.get("color", existing.color)
@@ -847,7 +932,6 @@ async def _sync_app_alert_definitions(
             if existing_def.expression != ad_data["expression"]:
                 existing_def.expression = ad_data["expression"]
                 existing_def.window = ad_data.get("window", "5m")
-                existing_def.severity = ad_data.get("severity", "warning")
                 existing_def.enabled = ad_data.get("enabled", True)
                 existing_def.description = ad_data.get("description")
                 existing_def.message_template = ad_data.get("message_template")
@@ -859,7 +943,6 @@ async def _sync_app_alert_definitions(
                 name=name,
                 expression=ad_data["expression"],
                 window=ad_data.get("window", "5m"),
-                severity=ad_data.get("severity", "warning"),
                 enabled=ad_data.get("enabled", True),
                 description=ad_data.get("description"),
                 message_template=ad_data.get("message_template"),

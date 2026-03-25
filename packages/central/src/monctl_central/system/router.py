@@ -810,23 +810,16 @@ async def _check_alerts(db: AsyncSession) -> dict:
         )
     ).scalar() or 0
 
-    # Firing instances grouped by severity
-    firing_rows = (
+    # Count total firing entities
+    total_firing = (
         await db.execute(
-            select(AlertDefinition.severity, func.count(AlertEntity.id))
-            .join(AlertEntity, AlertEntity.definition_id == AlertDefinition.id)
+            select(func.count(AlertEntity.id))
             .where(AlertEntity.state == "firing")
-            .group_by(AlertDefinition.severity)
         )
-    ).all()
-    firing_by_severity = {row[0]: row[1] for row in firing_rows}
-    total_firing = sum(firing_by_severity.values())
+    ).scalar() or 0
 
     if total_firing > 0:
-        if firing_by_severity.get("critical", 0) > 0:
-            status = "critical"
-        else:
-            status = "degraded"
+        status = "degraded"
     else:
         status = "healthy"
 
@@ -837,7 +830,6 @@ async def _check_alerts(db: AsyncSession) -> dict:
             "total_rules": total_rules,
             "enabled_rules": enabled_rules,
             "total_firing": total_firing,
-            "firing_by_severity": firing_by_severity,
         },
     }
 
