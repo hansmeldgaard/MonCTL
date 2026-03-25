@@ -525,9 +525,11 @@ class SshConnector:
                     latest_ver.checksum = src_checksum
                     latest_ver.requirements = spec.get("requirements")
                     latest_ver.entry_class = spec["entry_class"]
-                    latest_ver.version = spec["version"]
+                    # Only update version string if it won't violate unique constraint
+                    if latest_ver.version == spec["version"] or latest_ver.version is None:
+                        latest_ver.version = spec["version"]
                     logger.info("connector_updated", name=spec["name"],
-                                version=spec["version"])
+                                version=latest_ver.version)
 
         await session.commit()
 
