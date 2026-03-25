@@ -53,6 +53,7 @@ export function DevicesPage() {
   const [filterName, setFilterName] = useState("");
   const [filterAddress, setFilterAddress] = useState("");
   const [filterType, setFilterType] = useState("");
+  const [filterDeviceType, setFilterDeviceType] = useState("");
   const [filterTenant, setFilterTenant] = useState("");
   const [filterGroup, setFilterGroup] = useState("");
 
@@ -61,6 +62,7 @@ export function DevicesPage() {
     name: "",
     address: "",
     device_category: "",
+    device_type_name: "",
     tenant_name: "",
     collector_group_name: "",
   });
@@ -71,13 +73,14 @@ export function DevicesPage() {
         name: filterName,
         address: filterAddress,
         device_category: filterType,
+        device_type_name: filterDeviceType,
         tenant_name: filterTenant,
         collector_group_name: filterGroup,
       });
       setPage(0);
     }, 300);
     return () => clearTimeout(timer);
-  }, [filterName, filterAddress, filterType, filterTenant, filterGroup]);
+  }, [filterName, filterAddress, filterType, filterDeviceType, filterTenant, filterGroup]);
 
   // ── Compact mode ────────────────────────────────────────
   const [compact, setCompact] = useState(false);
@@ -469,6 +472,23 @@ export function DevicesPage() {
                         />
                       </TableHead>
 
+                      {/* Device Type */}
+                      <TableHead>
+                        <div
+                          className="flex items-center gap-1 cursor-pointer select-none"
+                          onClick={() => handleSort("device_type_name")}
+                        >
+                          Type <SortIcon col="device_type_name" />
+                        </div>
+                        <ClearableInput
+                          placeholder="Filter..."
+                          value={filterDeviceType}
+                          onChange={(e) => setFilterDeviceType(e.target.value)}
+                          onClear={() => setFilterDeviceType("")}
+                          className="mt-1 h-6 text-xs"
+                        />
+                      </TableHead>
+
                       {/* Tenant */}
                       <TableHead>
                         <div
@@ -610,6 +630,11 @@ export function DevicesPage() {
                           {/* Category */}
                           <TableCell>
                             <Badge variant="info">{device.device_category}</Badge>
+                          </TableCell>
+
+                          {/* Device Type */}
+                          <TableCell className="text-zinc-400 text-sm">
+                            {device.device_type_name || <span className="text-zinc-600">&mdash;</span>}
                           </TableCell>
 
                           {/* Tenant */}

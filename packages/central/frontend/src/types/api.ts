@@ -138,6 +138,11 @@ export interface Device {
   name: string;
   address: string;
   device_category: string;
+  device_type_id: string | null;
+  device_type_name: string | null;
+  device_type_vendor: string | null;
+  device_type_model: string | null;
+  device_type_os_family: string | null;
   tenant_id: string | null;
   tenant_name: string | null;
   collector_group_id: string | null;
@@ -191,6 +196,7 @@ export interface DeviceListParams {
   name?: string;
   address?: string;
   device_category?: string;
+  device_type_name?: string;
   tenant_name?: string;
   collector_group_name?: string;
   label_key?: string;

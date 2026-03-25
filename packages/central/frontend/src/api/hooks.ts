@@ -120,6 +120,7 @@ export function useDevices(params: DeviceListParams = {}) {
   if (params.name) queryString.set("name", params.name);
   if (params.address) queryString.set("address", params.address);
   if (params.device_category) queryString.set("device_category", params.device_category);
+  if (params.device_type_name) queryString.set("device_type_name", params.device_type_name);
   if (params.tenant_name) queryString.set("tenant_name", params.tenant_name);
   if (params.collector_group_name) queryString.set("collector_group_name", params.collector_group_name);
   if (params.label_key) queryString.set("label_key", params.label_key);

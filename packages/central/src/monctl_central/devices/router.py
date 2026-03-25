@@ -13,7 +13,7 @@ from typing import Optional
 import sqlalchemy as sa
 from monctl_central.dependencies import apply_tenant_filter, check_tenant_access, get_db, require_auth
 from sqlalchemy.orm import selectinload
-from monctl_central.storage.models import Credential, CollectorGroup, Device, InterfaceMetadata, LabelKey, Tenant, Collector
+from monctl_central.storage.models import Credential, CollectorGroup, Device, DeviceType, InterfaceMetadata, LabelKey, Tenant, Collector
 from monctl_common.utils import utc_now
 from monctl_common.validators import validate_address, validate_labels, validate_metadata, validate_uuid
 
@@ -128,11 +128,17 @@ class UpdateDeviceRequest(BaseModel):
 
 
 def _format_device(d: Device, resolved_credentials: dict | None = None) -> dict:
+    dt = d.device_type if hasattr(d, "device_type") else None
     return {
         "id": str(d.id),
         "name": d.name,
         "address": d.address,
         "device_category": d.device_category,
+        "device_type_id": str(d.device_type_id) if d.device_type_id else None,
+        "device_type_name": dt.name if dt else None,
+        "device_type_vendor": dt.vendor if dt else None,
+        "device_type_model": dt.model if dt else None,
+        "device_type_os_family": dt.os_family if dt else None,
         "collector_id": str(d.collector_id) if d.collector_id else None,
         "tenant_id": str(d.tenant_id) if d.tenant_id else None,
         "tenant_name": d.tenant.name if d.tenant else None,
@@ -181,6 +187,7 @@ async def _resolve_device_credentials(device: Device, db) -> dict:
 async def list_devices(
     collector_id: Optional[str] = Query(default=None, description="Filter by collector UUID"),
     device_category: Optional[str] = Query(default=None, description="Filter by device category"),
+    device_type_name: Optional[str] = Query(default=None, description="Filter by device type name"),
     name: Optional[str] = Query(default=None, description="Filter by name (ilike)"),
     address: Optional[str] = Query(default=None, description="Filter by address (ilike)"),
     tenant_name: Optional[str] = Query(default=None, description="Filter by tenant name"),
@@ -200,6 +207,7 @@ async def list_devices(
         selectinload(Device.tenant),
         selectinload(Device.collector_group),
         selectinload(Device.default_credential),
+        selectinload(Device.device_type),
     )
 
     # Apply filters
@@ -207,6 +215,9 @@ async def list_devices(
         stmt = stmt.where(Device.collector_id == uuid.UUID(collector_id))
     if device_category:
         stmt = stmt.where(Device.device_category.ilike(f"%{device_category}%"))
+    if device_type_name:
+        stmt = stmt.outerjoin(DeviceType, Device.device_type_id == DeviceType.id)
+        stmt = stmt.where(DeviceType.name.ilike(f"%{device_type_name}%"))
     if name:
         stmt = stmt.where(Device.name.ilike(f"%{name}%"))
     if address:
@@ -249,6 +260,11 @@ async def list_devices(
         sort_column = CollectorGroup.name
     elif sort_by == "collector_group_name":
         sort_column = CollectorGroup.name
+    elif sort_by == "device_type_name" and not device_type_name:
+        stmt = stmt.outerjoin(DeviceType, Device.device_type_id == DeviceType.id)
+        sort_column = DeviceType.name
+    elif sort_by == "device_type_name":
+        sort_column = DeviceType.name
 
     if sort_column is not None:
         if sort_dir == "desc":
@@ -289,7 +305,7 @@ async def create_device(
     db.add(device)
     await _auto_register_label_keys(request.labels, db)
     await db.flush()
-    await db.refresh(device, ["tenant", "collector_group", "default_credential"])
+    await db.refresh(device, ["tenant", "collector_group", "default_credential", "device_type"])
 
     # Auto-discover if device has an SNMP credential and a collector group
     discovery_queued = False
@@ -403,7 +419,7 @@ async def get_device(
     """Get a device by ID."""
     stmt = (
         select(Device)
-        .options(selectinload(Device.tenant), selectinload(Device.collector_group), selectinload(Device.default_credential))
+        .options(selectinload(Device.tenant), selectinload(Device.collector_group), selectinload(Device.default_credential), selectinload(Device.device_type))
         .where(Device.id == uuid.UUID(device_id))
     )
     device = (await db.execute(stmt)).scalar_one_or_none()
@@ -425,7 +441,7 @@ async def update_device(
     """Update a device."""
     stmt = (
         select(Device)
-        .options(selectinload(Device.tenant), selectinload(Device.collector_group), selectinload(Device.default_credential))
+        .options(selectinload(Device.tenant), selectinload(Device.collector_group), selectinload(Device.default_credential), selectinload(Device.device_type))
         .where(Device.id == uuid.UUID(device_id))
     )
     device = (await db.execute(stmt)).scalar_one_or_none()
@@ -508,7 +524,7 @@ async def update_device(
             .values(config_version=Collector.config_version + 1, updated_at=_utc_now())
         )
 
-    await db.refresh(device, ["tenant", "collector_group", "default_credential"])
+    await db.refresh(device, ["tenant", "collector_group", "default_credential", "device_type"])
     resolved_creds = await _resolve_device_credentials(device, db)
     return {"status": "success", "data": _format_device(device, resolved_creds)}
 

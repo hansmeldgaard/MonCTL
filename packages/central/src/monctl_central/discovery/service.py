@@ -100,6 +100,13 @@ async def process_discovery_result(
         if old_category != device.device_category:
             changes["device_category"] = f"{old_category} → {device.device_category}"
 
+    # 5. Persist matched device type
+    if match_result and match_result.device_type:
+        device.device_type_id = match_result.device_type.id
+        changes["device_type"] = match_result.device_type.name
+    else:
+        device.device_type_id = None
+
     await db.flush()
 
     logger.info("discovery_applied",

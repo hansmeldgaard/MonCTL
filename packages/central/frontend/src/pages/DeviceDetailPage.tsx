@@ -3316,6 +3316,7 @@ function DiscoveryCard({ deviceId, device }: { deviceId: string; device: DeviceM
   const discovered = meta?.discovered_at;
 
   const fields = [
+    { label: "Matched Type", value: device?.device_type_name || undefined },
     { label: "sysObjectID", key: "sys_object_id" },
     { label: "Vendor", key: "vendor" },
     { label: "Model", key: "model" },
@@ -3366,11 +3367,12 @@ function DiscoveryCard({ deviceId, device }: { deviceId: string; device: DeviceM
           </p>
         ) : (
           <div className="grid grid-cols-[120px_1fr] gap-x-4 gap-y-1.5 text-sm">
-            {fields.map(({ label, key }) => {
-              const val = meta?.[key];
+            {fields.map((f) => {
+              const val = "value" in f ? f.value : meta?.[(f as { key: string }).key];
+              const key = "key" in f ? (f as { key: string }).key : f.label;
               return val ? (
                 <div key={key} className="contents">
-                  <span className="text-zinc-500">{label}</span>
+                  <span className="text-zinc-500">{f.label}</span>
                   <span className={key === "sys_object_id" ? "font-mono text-xs text-zinc-300" : "text-zinc-300"}>
                     {key === "sys_descr" && val.length > 100 ? val.slice(0, 100) + "..." : val}
                   </span>
@@ -4210,6 +4212,12 @@ export function DeviceDetailPage() {
         <div className="flex items-center gap-3 text-sm text-zinc-500">
           <span className="font-mono">{deviceAddress}</span>
           {deviceCategory && <Badge variant="info">{deviceCategory}</Badge>}
+          {device?.device_type_name && (
+            <span className="text-xs text-zinc-500">
+              type: <span className="text-zinc-300">{device.device_type_name}</span>
+              {device.device_type_vendor && <span className="text-zinc-500 ml-1">({device.device_type_vendor})</span>}
+            </span>
+          )}
           {device?.tenant_name && (
             <span className="text-xs text-zinc-500">
               tenant: <span className="text-zinc-300">{device.tenant_name}</span>
