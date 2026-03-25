@@ -3,11 +3,13 @@
 Workers push consolidated docker-stats payloads to central because central
 cannot reach workers (network is one-way: workers → central VIP only).
 Data is stored in Redis with a short TTL and served via the docker_infra router.
+Logs are also written to ClickHouse for centralized log collection.
 """
 
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 
 import structlog
 from fastapi import APIRouter, Depends
@@ -18,10 +20,25 @@ from monctl_central.cache import (
     append_docker_push_logs,
     store_docker_push,
 )
-from monctl_central.dependencies import require_collector_auth as require_auth
+from monctl_central.dependencies import get_clickhouse, require_collector_auth as require_auth
 
 router = APIRouter()
 logger = structlog.get_logger()
+
+_LEVEL_KEYWORDS = {
+    "CRITICAL": ("CRITICAL", "FATAL"),
+    "ERROR": ("ERROR", "ERR "),
+    "WARNING": ("WARNING", "WARN "),
+    "DEBUG": ("DEBUG",),
+}
+
+
+def _detect_level(message: str) -> str:
+    upper = message.upper()[:100]
+    for level, keywords in _LEVEL_KEYWORDS.items():
+        if any(kw in upper for kw in keywords):
+            return level
+    return "INFO"
 
 
 class DockerStatsPush(BaseModel):
@@ -57,6 +74,33 @@ async def push_docker_stats(
 
     if payload.logs:
         await append_docker_push_logs(label, payload.logs)
+        # Also write to ClickHouse for centralized log collection
+        try:
+            ch = get_clickhouse()
+            now = datetime.now(timezone.utc).isoformat()
+            rows = []
+            for container_name, lines in payload.logs.items():
+                for line in lines:
+                    rows.append({
+                        "timestamp": now,
+                        "collector_id": "00000000-0000-0000-0000-000000000000",
+                        "collector_name": label,
+                        "host_label": label,
+                        "source_type": "docker",
+                        "container_name": container_name,
+                        "image_name": "",
+                        "level": _detect_level(line),
+                        "stream": "stdout",
+                        "message": line,
+                    })
+            if rows:
+                ch.insert("logs", rows, column_names=[
+                    "timestamp", "collector_id", "collector_name", "host_label",
+                    "source_type", "container_name", "image_name",
+                    "level", "stream", "message",
+                ])
+        except Exception:
+            logger.debug("docker_push_logs_ch_failed", label=label)
 
     if payload.events:
         await append_docker_push_events(label, payload.events)
