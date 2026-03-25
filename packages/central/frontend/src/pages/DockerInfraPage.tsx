@@ -5,7 +5,6 @@ import {
   ArrowUp,
   ArrowUpDown,
   Box,
-  ClipboardCopy,
   HardDrive,
   Loader2,
   RefreshCw,
@@ -43,7 +42,6 @@ import type {
   DockerEvent,
   DockerImageInfo,
   DockerVolumeInfo,
-  LogEntry,
 } from "@/types/api.ts";
 
 // ── Types for stats data ────────────────────────────────────────────────────
@@ -85,7 +83,6 @@ export function DockerInfraPage() {
 
   const selectedHost = searchParams.get("host") || hosts[0]?.label || "";
   const activeTab = (searchParams.get("tab") as Tab) || "containers";
-  const initialContainer = searchParams.get("container") || "";
 
   // Sidebar state
   const [hostSearch, setHostSearch] = useState("");
