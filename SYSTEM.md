@@ -15,9 +15,11 @@ Distribueret monitoring-platform med central management server og distribuerede 
 Browser → HAProxy (VIP 10.145.210.40:443) → central1-4 (:8443)
                                               ├── PostgreSQL (Patroni HA)
                                               ├── ClickHouse (replicated cluster)
-                                              └── Redis (single, central1)
+                                              └── Redis (Sentinel HA: primary central1, replica central2, 3 sentinels)
 
 Collectors (worker1-4) → poll jobs fra central → eksekver checks → forward resultater
+                       → WebSocket command channel (wss://central/ws/collector)
+                       → Log shipper (batch POST /api/v1/logs/ingest every 10s)
 ```
 
 ## Tech Stack
@@ -74,9 +76,16 @@ packages/
 │   │   ├── api/router.py           # Hovedrouter — monterer 30 sub-routers på /v1/
 │   │   ├── auth/                   # JWT cookie auth (login, refresh, me)
 │   │   ├── devices/router.py       # Device CRUD, bulk-patch, monitoring config, interface metadata, credentials
-│   │   ├── collectors/router.py    # Collector register, approve, reject, heartbeat, config
-│   │   ├── collector_api/router.py # /api/v1/ endpoints collectors kalder (jobs, apps, credentials, results)
+│   │   ├── collectors/router.py    # Collector register, approve, reject, heartbeat, config, WS status
+│   │   ├── collector_api/router.py # /api/v1/ endpoints collectors kalder (jobs, apps, credentials, results, logs)
 │   │   ├── collector_groups/router.py
+│   │   ├── ws/                     # WebSocket command channel (collector ↔ central)
+│   │   │   ├── router.py          # /ws/collector endpoint
+│   │   │   ├── auth.py            # WS auth (shared secret + collector_id, or individual key)
+│   │   │   ├── connection_manager.py # Connection tracking, keepalive, request-response
+│   │   │   └── command_router.py  # REST API for sending commands via WS
+│   │   ├── logs/                   # Centralized log collection (ClickHouse)
+│   │   │   └── router.py         # POST /logs/ingest, GET /logs, GET /logs/filters
 │   │   ├── apps/router.py          # App CRUD + AppVersion CRUD + Assignment CRUD
 │   │   ├── results/router.py       # ClickHouse query API (history, latest, interfaces)
 │   │   ├── config_history/         # Config change history (changelog, snapshot, diff, timestamps)
@@ -122,7 +131,10 @@ packages/
 │       ├── config.py               # YAML + env config
 │       ├── central/
 │       │   ├── api_client.py       # HTTP client for /api/v1/
-│       │   └── credentials.py      # Credential fetch + local encrypted cache
+│       │   ├── credentials.py      # Credential fetch + local encrypted cache
+│       │   ├── ws_client.py        # WebSocket client (persistent, auto-reconnect)
+│       │   ├── ws_handlers.py      # Command handlers (poll_device, config_reload, etc.)
+│       │   └── log_shipper.py      # Background log collection → POST to central
 │       ├── polling/
 │       │   ├── engine.py           # Min-heap deadline scheduler + connector instantiation
 │       │   └── base.py             # BasePoller ABC: setup(), poll(context), teardown()
@@ -210,6 +222,7 @@ packages/
 | config | Config/discovery data (change-only writes) | (device_id, component_type, component, config_key, executed_at) | config_key, config_value, config_hash |
 | alert_log | Alert fire/clear history | (tenant_id, definition_id, entity_key, occurred_at) | action, current_value, threshold_value, fire_count |
 | events | Event lifecycle (active/ack/cleared) | (tenant_id, severity, occurred_at, id) | event_type, definition_id, policy_id, state |
+| logs | Centralized Docker/app logs | (collector_name, container_name, timestamp) | level, stream, message, host_label, image_name |
 
 Alle tabeller har: assignment_id, collector_id, app_id, device_id, executed_at, received_at + denormaliserede felter: collector_name, device_name, app_name, tenant_id.
 
@@ -308,6 +321,24 @@ Hver tabel har en `_latest` materialized view (ReplacingMergeTree) der holder se
 
 **Engine**: 30s cycle, leader-elected. Resolves thresholds per-entity, batches ClickHouse queries by effective threshold combination.
 
+### WebSocket Command Channel
+
+Persistent bidirectional WebSocket (`/ws/collector`) for ad-hoc commands. Collector initiates outward (NAT/firewall compatible). Message envelope: `{message_id, type, in_reply_to, payload, timestamp}`. Types: ping/pong, poll_device, config_reload, health_check, module_update, docker_health, docker_logs. 60s timeout, 30s keepalive. Auto-reconnect: 1s/2s/3s/5s backoff.
+
+Auth: shared secret (`MONCTL_COLLECTOR_API_KEY`) + `collector_id` query param (production mode), or individual collector API key.
+
+### Centralized Log Collection
+
+Docker-stats sidecars push logs to central via `/api/v1/docker-stats/push`. Push handler writes to Redis (ring-buffer) + ClickHouse (`logs` table). Collectors also run a backup log shipper that POSTs to `/api/v1/logs/ingest` every 10s. Sidecar URL for collectors: `http://monctl-docker-stats:9100` (Docker container DNS).
+
+ClickHouse `logs` table: TTL `toDateTime(timestamp) + INTERVAL 7 DAY` (ClickHouse 24.3 requires `toDateTime()` wrapper for DateTime64 TTL). Configurable via `log_retention_days` system setting.
+
+Query: `GET /v1/logs` (filter, paginate, sort), `GET /v1/logs/filters` (distinct values for dropdowns). Frontend: Logs tab on Docker Infrastructure page with live tail (2s poll).
+
+### Redis Sentinel HA
+
+3 sentinels (central1-3), primary (central1), replica (central2). **Critical**: `sentinel announce-ip <host-ip>` in sentinel.conf and `--replica-announce-ip <host-ip>` in Redis command — required for Docker bridge networking. Without this, sentinels advertise container-internal IPs (172.x.x.x) and cross-host communication breaks. Coordinated restart needed to reset corrupt sentinel state (stop all 3 simultaneously, then start all).
+
 ### Dashboard & Analytics
 
 **Operational Dashboard** (`dashboard/router.py`): `GET /v1/dashboard/summary` aggregerer alert_summary, device_health, collector_status, performance_top_n i ét kald. Frontend bruger `useDashboardSummary()` med 15s auto-refresh. Stat cards, worst devices tabel, performance top-N med progress bars.
@@ -359,6 +390,9 @@ Import/export af monitoring packs (apps + connectors + alert definitions + crede
 | system | /v1/system | GET /health (concurrent subsystem checks) | require_admin |
 | docker_infra | /v1/docker-infra | GET overview, stats, containers, logs, events, images | require_auth |
 | dashboard | /v1/dashboard | GET /summary (aggregated dashboard data) | require_auth |
+| logs | /v1/logs | GET (query+filter+paginate), GET /filters, POST /ingest | require_auth |
+| ws_command | /v1/collectors | GET /{id}/ws-status, GET /ws-connections, POST /{id}/command/{type} | require_auth |
+| ws | /ws/collector | WebSocket endpoint (persistent bidirectional) | token query param |
 | ingestion | /v1 | POST /ingest (legacy) | require_collector_auth |
 
 ### Collector API (`/api/v1/`)
@@ -371,6 +405,7 @@ Import/export af monitoring packs (apps + connectors + alert definitions + crede
 | /api/v1/connectors/:id/code | GET | Connector source code + requirements |
 | /api/v1/credentials/:name | GET | Dekrypteret credential |
 | /api/v1/results | POST | Push check resultater |
+| /api/v1/logs/ingest | POST | Batch log ingestion (collector → ClickHouse) |
 | /api/v1/app-cache | GET/PUT | App-level persistent cache |
 
 ### API Response-format

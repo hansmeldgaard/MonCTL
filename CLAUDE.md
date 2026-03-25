@@ -43,15 +43,22 @@ packages/
 │   │   ├── main.py             # FastAPI app, lifespan, seed logic
 │   │   ├── config.py           # Settings via env vars (MONCTL_ prefix)
 │   │   ├── dependencies.py     # DI: get_db, get_clickhouse, require_auth, require_admin
-│   │   ├── cache.py            # Redis client + caching (enrichment, interface ID, refresh flags)
+│   │   ├── cache.py            # Redis client + caching (enrichment, interface ID, refresh flags, docker push)
 │   │   ├── storage/
 │   │   │   ├── models.py       # SQLAlchemy models (41 models, all PostgreSQL tables)
 │   │   │   └── clickhouse.py   # ClickHouse client, DDL, insert/query methods
 │   │   ├── api/router.py       # Main router (mounts 30 sub-routers at /v1/)
 │   │   ├── auth/               # JWT cookie auth (login, refresh, me)
 │   │   ├── devices/router.py   # Device CRUD, bulk-patch, monitoring config, interface metadata, credentials
-│   │   ├── collectors/router.py # Collector registration, approval, heartbeat
-│   │   ├── collector_api/router.py # /api/v1/ endpoints collectors call (jobs, results, credentials)
+│   │   ├── collectors/router.py # Collector registration, approval, heartbeat, WS status
+│   │   ├── collector_api/router.py # /api/v1/ endpoints collectors call (jobs, results, credentials, logs/ingest)
+│   │   ├── ws/                 # WebSocket command channel (collector ↔ central)
+│   │   │   ├── router.py      # /ws/collector endpoint (persistent bidirectional)
+│   │   │   ├── auth.py        # WS auth (shared secret + collector_id, or individual key)
+│   │   │   ├── connection_manager.py # Connection tracking, keepalive, request-response
+│   │   │   └── command_router.py # REST API to send commands via WS
+│   │   ├── logs/               # Centralized log collection (ClickHouse)
+│   │   │   └── router.py      # POST /logs/ingest, GET /logs (query), GET /logs/filters
 │   │   ├── apps/router.py      # App CRUD + assignment CRUD + version management
 │   │   ├── results/router.py   # ClickHouse query API (history, latest, interfaces)
 │   │   ├── config_history/     # Config change history (changelog, snapshot, diff)
@@ -95,7 +102,10 @@ packages/
 │       ├── config.py           # YAML + env config
 │       ├── central/
 │       │   ├── api_client.py   # HTTP client for /api/v1/
-│       │   └── credentials.py  # Credential fetch + local encrypted cache
+│       │   ├── credentials.py  # Credential fetch + local encrypted cache
+│       │   ├── ws_client.py    # WebSocket client (persistent, auto-reconnect with backoff)
+│       │   ├── ws_handlers.py  # Command handlers (poll_device, config_reload, health_check, docker_*)
+│       │   └── log_shipper.py  # Background log collection from sidecar → POST to central
 │       ├── polling/
 │       │   ├── engine.py       # Min-heap deadline scheduler + connector instantiation
 │       │   └── base.py         # BasePoller abstract class
@@ -164,6 +174,7 @@ packages/
 | `config` | Configuration tracking (change-only writes) | config_key, config_value, config_hash |
 | `alert_log` | Alert fire/clear history | definition_id, entity_key, action, current_value, threshold_value |
 | `events` | Event lifecycle (active/ack/cleared) | definition_id, policy_id, severity, state |
+| `logs` | Centralized Docker/app logs | collector_name, container_name, level, message |
 
 Each table has a `*_latest` materialized view (ReplacingMergeTree) for instant latest-per-key lookups. Interface also has `interface_hourly` and `interface_daily` rollup tables.
 
@@ -233,9 +244,49 @@ Each table has a `*_latest` materialized view (ReplacingMergeTree) for instant l
 
 **Validation**: `POST /v1/alerts/validate-expression` returns `errors[]`, `warnings[]`, `referenced_metrics[]`, `threshold_params[]`, `has_arithmetic`, `has_division`.
 
+### WebSocket Command Channel
+
+**Architecture**: Collectors maintain a persistent bidirectional WebSocket to central (`/ws/collector`). Central can push ad-hoc commands; collectors respond with results. Separate from HTTP polling (jobs, heartbeat) — used for real-time commands.
+
+**Auth**: Two modes: (1) individual collector API key (from `api_keys` table), (2) shared secret (`MONCTL_COLLECTOR_API_KEY` env var) + `collector_id` query parameter. Mode 2 is used in production since collectors use the shared secret.
+
+**Connection manager** (`ws/connection_manager.py`): Tracks active connections, sends keepalive pings every 30s, supports request-response with 60s timeout and `message_id`/`in_reply_to` correlation.
+
+**Message types**: `ping/pong`, `poll_device`, `config_reload`, `health_check`, `module_update`, `docker_health`, `docker_logs`. Each command type has a `_result` or `_ack` response type.
+
+**Reconnect**: Collector uses soft backoff: 1s, 2s, 3s, 5s (cap). Resets on successful connect.
+
+**REST API**: `GET /v1/collectors/{id}/ws-status`, `GET /v1/collectors/ws-connections`, `POST /v1/collectors/{id}/command/{type}`.
+
+**Frontend**: Green/grey WS connection dot on Collectors page.
+
+### Centralized Log Collection
+
+**Flow**: Docker-stats sidecars on all hosts (central + workers) push logs to central via `/api/v1/docker-stats/push`. The push handler writes logs to both Redis (ring-buffer for UI) and ClickHouse (`logs` table) for persistent storage.
+
+**Collector log shipper** (`central/log_shipper.py`): Also runs on collector cache-nodes as a backup path. Fetches Docker container logs from local sidecar (`http://monctl-docker-stats:9100`) every 10s and POSTs batches to `/api/v1/logs/ingest`. Level detection heuristic. Max 5000 lines per batch.
+
+**ClickHouse `logs` table**: Partitioned by day, ORDER BY (collector_name, container_name, timestamp), TTL 7 days (configurable via `log_retention_days` setting). Uses `toDateTime(timestamp)` wrapper in TTL expression (required for ClickHouse 24.3 with DateTime64 columns).
+
+**Query API**: `GET /v1/logs` with filters (collector, container, host, level, source_type, search), pagination, sorting. `GET /v1/logs/filters` returns distinct values for dropdowns.
+
+**Frontend**: Logs tab on Docker Infrastructure page with search, container/level/collector filters, sortable columns, pagination, and live tail mode (polls every 2s). Log retention dropdown in Settings → Data Retention.
+
+**Collector model**: `log_level_filter` column (default "INFO") controls minimum log level shipped by each collector.
+
+### Redis Sentinel
+
+**Setup**: 3 sentinel nodes (central1-3), Redis primary on central1, replica on central2. All central apps connect via Sentinel for automatic failover.
+
+**Critical: `announce-ip`**: Sentinels and Redis instances run in Docker bridge mode. Without `sentinel announce-ip <host-ip>` in sentinel.conf and `--replica-announce-ip <host-ip>` in Redis command, sentinels advertise Docker-internal IPs (172.x.x.x) which are unreachable cross-host. This breaks quorum and causes stale master state after failovers.
+
+**Sentinel config** (`/opt/monctl/central-ha/sentinel.conf`): Each node has unique `sentinel announce-ip` pointing to its host IP. Template is copied to `/tmp/sentinel.conf` on container start — sentinel modifies it at runtime, so container must be recreated (not just restarted) to reset state.
+
+**Coordinated restart**: When sentinel state is corrupt, all 3 sentinels must be stopped simultaneously before restarting — otherwise running sentinels propagate stale state to newly started ones.
+
 ### System Settings
 
-Key-value pairs in `SystemSetting` table. Managed via `GET/PUT /v1/settings`. Notable settings: retention days (config, interface, performance, availability), `metabase_url`, `grafana_url`, `pypi_network_mode`, `session_idle_timeout_minutes`, `collector_central_url`.
+Key-value pairs in `SystemSetting` table. Managed via `GET/PUT /v1/settings`. Notable settings: retention days (config, interface, performance, availability, logs), `metabase_url`, `grafana_url`, `pypi_network_mode`, `session_idle_timeout_minutes`, `collector_central_url`.
 
 ---
 
@@ -364,7 +415,7 @@ SSH user: `monctl` for all servers.
 | clickhouse | `/opt/monctl/clickhouse/` | — | — | ClickHouse node | ClickHouse node |
 | haproxy | `/opt/monctl/haproxy/` | HAProxy + keepalived | HAProxy + keepalived | HAProxy + keepalived | HAProxy + keepalived (+ `/grafana` → central4:3000) |
 | etcd | `/opt/monctl/etcd/` | etcd | etcd | etcd | — |
-| docker-stats | `/opt/monctl/docker-stats/` | stats agent | stats agent | stats agent | stats agent |
+| docker-stats | `/opt/monctl/docker-stats/` | stats agent (push to VIP) | stats agent (push to VIP) | stats agent (push to VIP) | stats agent (push to VIP) |
 
 **Important**: Central1-3 use `central-ha` for the main app (binds :8443). Central4 uses `central` (also binds :8443). Do NOT start both `central-ha` and `central` on the same node — they conflict on port 8443.
 
