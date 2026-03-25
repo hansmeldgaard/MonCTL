@@ -595,7 +595,7 @@ async def get_jobs(
                     "role": "discovery",
                     "max_execution_time": 30,
                     "enabled": True,
-                    "updated_at": None,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
                     "connector_bindings": disc_bindings,
                 })
                 logger.info("discovery_job_injected", device_id=dev_id_str)
