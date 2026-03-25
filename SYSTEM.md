@@ -244,7 +244,11 @@ Hver tabel har en `_latest` materialized view (ReplacingMergeTree) der holder se
 
 **Loading**: `apps/manager.py` downloader connector-kode fra central, installerer venvs, og loader klasser. Venv site-packages tilføjes **permanent til sys.path** så lazy imports virker.
 
-**SNMP Connector**: Accepterer både `snmp_version` og `version` credential keys for bagudkompatibilitet. Bygger pysnmp v7 auth objects for v1/v2c/v3.
+**SNMP Connector**: Accepterer både `snmp_version` og `version` credential keys for bagudkompatibilitet. Bygger pysnmp v7 auth objects for v1/v2c/v3. `connect()` er **idempotent** — returnerer med det samme hvis allerede forbundet til samme host.
+
+**Connector lifecycle**: Polling engine styrer connect→use→close lifecycle. **Apps må IKKE kalde `connector.connect()` selv** — engine kalder det før appen får connector'en. Hvis en app kalder `connect()` alligevel, forhindrer den idempotente guard memory leaks.
+
+**Memory management**: Engine kalder `gc.collect()` + `malloc_trim(0)` efter hvert job. Workers bruger `MALLOC_ARENA_MAX=2`, `PYTHONMALLOC=malloc`, og `mem_limit: 1g` i docker-compose.
 
 ### Interface Monitoring
 

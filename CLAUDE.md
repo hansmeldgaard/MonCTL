@@ -134,7 +134,11 @@ packages/
 
 **Loading**: `apps/manager.py` downloads connector code from central, installs venvs, and loads classes. Venv site-packages are **permanently added to sys.path** so lazy imports (e.g., `import pysnmp`) work at runtime.
 
-**SNMP Connector**: Accepts both `snmp_version` and `version` credential keys for backward compatibility. Builds pysnmp v7 auth objects for v1/v2c/v3.
+**SNMP Connector**: Accepts both `snmp_version` and `version` credential keys for backward compatibility. Builds pysnmp v7 auth objects for v1/v2c/v3. `connect()` is **idempotent** — returns immediately if already connected to same host, closes previous engine if called with different host. This prevents memory leaks from apps that call `connect()` redundantly.
+
+**Connector lifecycle**: The polling engine manages the full connect→use→close lifecycle for connectors. **Apps must NOT call `connector.connect()` themselves** — the engine calls it before passing the connector to the app. If an app calls `connect()` anyway, the idempotent guard prevents leaks, but new apps should rely on the engine-managed lifecycle.
+
+**Memory management**: Polling engine calls `gc.collect()` + `malloc_trim(0)` after each job to return freed memory to OS. Workers use `MALLOC_ARENA_MAX=2` and `PYTHONMALLOC=malloc` env vars to reduce glibc arena fragmentation. All poll-workers have `mem_limit: 1g` as safety net.
 
 ### Interface Monitoring
 
