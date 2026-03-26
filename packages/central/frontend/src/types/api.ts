@@ -1561,6 +1561,12 @@ export interface QueryResult {
 
 // ── Custom Dashboards ────────────────────────────────────────────────────────
 
+export interface DashboardVariable {
+  name: string;
+  type: string;
+  default_value: string;
+}
+
 export interface AnalyticsWidgetConfig {
   sql: string;
   chart_type: "table" | "line" | "bar" | "area" | "pie";
@@ -1568,6 +1574,7 @@ export interface AnalyticsWidgetConfig {
   y_columns?: string[];
   group_by?: string;
   refresh_seconds?: number;
+  publishes?: { column: string; variable: string };
 }
 
 export interface AnalyticsWidgetLayout {
@@ -1591,6 +1598,7 @@ export interface AnalyticsDashboard {
   owner_id: string;
   owner_name: string;
   widgets: AnalyticsWidget[];
+  variables?: DashboardVariable[];
   created_at: string;
   updated_at: string;
 }

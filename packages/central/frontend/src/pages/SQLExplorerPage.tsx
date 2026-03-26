@@ -7,7 +7,7 @@ import { QueryResultTable } from "@/components/QueryResultTable.tsx";
 import { QueryResultChart } from "@/components/QueryResultChart.tsx";
 import {
   useAnalyticsTables, useExecuteQuery,
-  useAnalyticsDashboards, useCreateAnalyticsDashboard, useUpdateAnalyticsDashboard,
+  useAnalyticsDashboards, useCreateAnalyticsDashboard, useAppendDashboardWidget,
 } from "@/api/hooks.ts";
 import type { QueryResult } from "@/types/api.ts";
 
@@ -25,7 +25,7 @@ export function SQLExplorerPage() {
   const executeMut = useExecuteQuery();
   const { data: dashboards } = useAnalyticsDashboards();
   const createDashMut = useCreateAnalyticsDashboard();
-  const updateDashMut = useUpdateAnalyticsDashboard();
+  const appendWidgetMut = useAppendDashboardWidget();
 
   const result: QueryResult | undefined = executeMut.data?.data;
 
@@ -146,21 +146,17 @@ export function SQLExplorerPage() {
                       <button
                         key={d.id}
                         onClick={async () => {
-                          await updateDashMut.mutateAsync({
-                            id: d.id,
-                            widgets: [...([] as { title: string; config: Record<string, unknown>; layout: Record<string, number> }[]),
-                              {
-                                title: sqlText.slice(0, 50),
-                                config: {
-                                  sql: sqlText,
-                                  chart_type: resultTab === "chart" ? chartSettings.chartType : "table",
-                                  x_column: resultTab === "chart" ? chartSettings.xColumn : undefined,
-                                  y_columns: resultTab === "chart" ? chartSettings.yColumns : undefined,
-                                  group_by: resultTab === "chart" ? chartSettings.groupBy : undefined,
-                                },
-                                layout: { x: 0, y: 99, w: 12, h: 6 },
-                              },
-                            ],
+                          await appendWidgetMut.mutateAsync({
+                            dashboardId: d.id,
+                            title: sqlText.slice(0, 50),
+                            config: {
+                              sql: sqlText,
+                              chart_type: resultTab === "chart" ? chartSettings.chartType : "table",
+                              x_column: resultTab === "chart" ? chartSettings.xColumn : undefined,
+                              y_columns: resultTab === "chart" ? chartSettings.yColumns : undefined,
+                              group_by: resultTab === "chart" ? chartSettings.groupBy : undefined,
+                            },
+                            layout: { x: 0, y: 99, w: 12, h: 6 },
                           });
                           setShowSaveMenu(false);
                           navigate(`/analytics/dashboards/${d.id}`);
@@ -177,19 +173,17 @@ export function SQLExplorerPage() {
                           if (!name) return;
                           const res = await createDashMut.mutateAsync({ name });
                           const newId = res.data.id;
-                          await updateDashMut.mutateAsync({
-                            id: newId,
-                            widgets: [{
-                              title: sqlText.slice(0, 50),
-                              config: {
-                                sql: sqlText,
-                                chart_type: resultTab === "chart" ? chartSettings.chartType : "table",
-                                x_column: resultTab === "chart" ? chartSettings.xColumn : undefined,
-                                y_columns: resultTab === "chart" ? chartSettings.yColumns : undefined,
-                                group_by: resultTab === "chart" ? chartSettings.groupBy : undefined,
-                              },
-                              layout: { x: 0, y: 0, w: 12, h: 6 },
-                            }],
+                          await appendWidgetMut.mutateAsync({
+                            dashboardId: newId,
+                            title: sqlText.slice(0, 50),
+                            config: {
+                              sql: sqlText,
+                              chart_type: resultTab === "chart" ? chartSettings.chartType : "table",
+                              x_column: resultTab === "chart" ? chartSettings.xColumn : undefined,
+                              y_columns: resultTab === "chart" ? chartSettings.yColumns : undefined,
+                              group_by: resultTab === "chart" ? chartSettings.groupBy : undefined,
+                            },
+                            layout: { x: 0, y: 0, w: 12, h: 6 },
                           });
                           setShowSaveMenu(false);
                           navigate(`/analytics/dashboards/${newId}`);

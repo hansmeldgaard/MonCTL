@@ -6,16 +6,17 @@ import { SqlEditor } from "@/components/SqlEditor.tsx";
 import { QueryResultTable } from "@/components/QueryResultTable.tsx";
 import { QueryResultChart } from "@/components/QueryResultChart.tsx";
 import { useExecuteQuery } from "@/api/hooks.ts";
-import type { AnalyticsWidgetConfig, QueryResult } from "@/types/api.ts";
+import type { AnalyticsWidgetConfig, QueryResult, DashboardVariable } from "@/types/api.ts";
 
 type ChartType = AnalyticsWidgetConfig["chart_type"];
 
 interface Props {
   open: boolean;
   onClose: () => void;
-  onSave: (widget: { title: string; config: AnalyticsWidgetConfig }) => void;
+  onSave: (widget: { title: string; config: AnalyticsWidgetConfig; layout?: { w: number } }) => void;
   initial?: { title: string; config: AnalyticsWidgetConfig };
   schema?: Record<string, string[]>;
+  variableDefs?: DashboardVariable[];
 }
 
 const REFRESH_OPTIONS = [
@@ -26,7 +27,7 @@ const REFRESH_OPTIONS = [
   { label: "5m", value: 300 },
 ];
 
-export function AddWidgetDialog({ open, onClose, onSave, initial, schema }: Props) {
+export function AddWidgetDialog({ open, onClose, onSave, initial, schema, variableDefs }: Props) {
   const [title, setTitle] = useState(initial?.title || "");
   const [sqlText, setSqlText] = useState(initial?.config.sql || "SELECT 1");
   const [chartType, setChartType] = useState<ChartType>(initial?.config.chart_type || "table");
@@ -34,6 +35,9 @@ export function AddWidgetDialog({ open, onClose, onSave, initial, schema }: Prop
   const [yColumns, setYColumns] = useState<string[]>(initial?.config.y_columns || []);
   const [groupByCol, setGroupByCol] = useState(initial?.config.group_by || "");
   const [refreshSeconds, setRefreshSeconds] = useState(initial?.config.refresh_seconds || 0);
+  const [widgetWidth, setWidgetWidth] = useState<12 | 24>(12);
+  const [publishColumn, setPublishColumn] = useState(initial?.config.publishes?.column || "");
+  const [publishVariable, setPublishVariable] = useState(initial?.config.publishes?.variable || "");
 
   const executeMut = useExecuteQuery();
   const result: QueryResult | undefined = executeMut.data?.data;
@@ -46,6 +50,9 @@ export function AddWidgetDialog({ open, onClose, onSave, initial, schema }: Prop
   }
 
   function handleSave() {
+    const publishes = publishColumn && publishVariable
+      ? { column: publishColumn, variable: publishVariable }
+      : undefined;
     onSave({
       title: title.trim() || "Untitled",
       config: {
@@ -55,7 +62,9 @@ export function AddWidgetDialog({ open, onClose, onSave, initial, schema }: Prop
         y_columns: chartType !== "table" ? yColumns : undefined,
         group_by: chartType !== "table" && groupByCol ? groupByCol : undefined,
         refresh_seconds: refreshSeconds,
+        publishes,
       },
+      layout: { w: widgetWidth },
     });
     onClose();
   }
@@ -90,6 +99,12 @@ export function AddWidgetDialog({ open, onClose, onSave, initial, schema }: Prop
               </Button>
             </div>
             <SqlEditor value={sqlText} onChange={setSqlText} onExecute={handleTest} schema={schema} height="150px" />
+            <p className="text-[10px] text-zinc-600">
+              Use <code className="text-zinc-500">{"{time_from}"}</code> and <code className="text-zinc-500">{"{time_to}"}</code> for dashboard time range.
+              {variableDefs && variableDefs.length > 0 && (
+                <> Use <code className="text-zinc-500">{"{var:name}"}</code> for dashboard variables.</>
+              )}
+            </p>
           </div>
 
           {/* Error */}
@@ -183,7 +198,63 @@ export function AddWidgetDialog({ open, onClose, onSave, initial, schema }: Prop
                 ))}
               </select>
             </div>
+
+            <div className="space-y-1">
+              <label className="text-xs text-zinc-500">Width</label>
+              <div className="flex gap-1">
+                <button
+                  onClick={() => setWidgetWidth(12)}
+                  className={`px-2 py-1 text-xs rounded ${
+                    widgetWidth === 12
+                      ? "bg-brand-600/20 text-brand-400 border border-brand-600/40"
+                      : "text-zinc-500 hover:text-zinc-300 border border-zinc-700"
+                  }`}
+                >
+                  Half
+                </button>
+                <button
+                  onClick={() => setWidgetWidth(24)}
+                  className={`px-2 py-1 text-xs rounded ${
+                    widgetWidth === 24
+                      ? "bg-brand-600/20 text-brand-400 border border-brand-600/40"
+                      : "text-zinc-500 hover:text-zinc-300 border border-zinc-700"
+                  }`}
+                >
+                  Full
+                </button>
+              </div>
+            </div>
           </div>
+
+          {/* Publishes to variable (for table widgets) */}
+          {chartType === "table" && variableDefs && variableDefs.length > 0 && (
+            <div className="space-y-1">
+              <label className="text-xs text-zinc-500">Publishes to Variable (click row to set)</label>
+              <div className="flex gap-2 items-center">
+                <select
+                  value={publishColumn}
+                  onChange={(e) => setPublishColumn(e.target.value)}
+                  className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-300"
+                >
+                  <option value="">Column...</option>
+                  {result?.columns.map((c) => (
+                    <option key={c.name} value={c.name}>{c.name}</option>
+                  ))}
+                </select>
+                <span className="text-zinc-600 text-xs">&rarr;</span>
+                <select
+                  value={publishVariable}
+                  onChange={(e) => setPublishVariable(e.target.value)}
+                  className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-300"
+                >
+                  <option value="">Variable...</option>
+                  {variableDefs.map((v) => (
+                    <option key={v.name} value={v.name}>{v.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
 
           {/* Preview */}
           {result && (

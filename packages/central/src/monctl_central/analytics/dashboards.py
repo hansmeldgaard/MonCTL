@@ -38,6 +38,7 @@ def _fmt_dashboard(d: AnalyticsDashboard, *, include_widgets: bool = False) -> d
         "name": d.name,
         "description": d.description,
         "owner_id": str(d.owner_id) if d.owner_id else None,
+        "variables": d.variables or [],
         "created_at": d.created_at.isoformat() if d.created_at else None,
         "updated_at": d.updated_at.isoformat() if d.updated_at else None,
     }
@@ -66,6 +67,7 @@ class UpdateDashboardRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=5000)
     widgets: list[WidgetPayload] | None = None
+    variables: list[dict] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +200,8 @@ async def update_dashboard(
         dash.name = body.name
     if body.description is not None:
         dash.description = body.description
+    if body.variables is not None:
+        dash.variables = body.variables
     dash.updated_at = utc_now()
 
     # Full widget replacement if provided
@@ -220,6 +224,46 @@ async def update_dashboard(
     await db.commit()
 
     # Reload
+    stmt = (
+        select(AnalyticsDashboard)
+        .options(selectinload(AnalyticsDashboard.widgets))
+        .where(AnalyticsDashboard.id == dash.id)
+    )
+    dash = (await db.execute(stmt)).scalar_one()
+
+    return {"status": "success", "data": _fmt_dashboard(dash, include_widgets=True)}
+
+
+class AppendWidgetRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=255)
+    config: dict = Field(default_factory=dict)
+    layout: dict = Field(default_factory=dict)
+
+
+@router.post("/dashboards/{dashboard_id}/widgets", status_code=201)
+async def append_widget(
+    dashboard_id: _uuid.UUID,
+    body: AppendWidgetRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Append a single widget to an existing dashboard (does not replace)."""
+    stmt = select(AnalyticsDashboard).where(AnalyticsDashboard.id == dashboard_id)
+    dash = (await db.execute(stmt)).scalar_one_or_none()
+    if not dash:
+        raise HTTPException(status_code=404, detail="Dashboard not found")
+
+    widget = AnalyticsWidget(
+        dashboard_id=dash.id,
+        title=body.title,
+        config=body.config,
+        layout=body.layout,
+    )
+    db.add(widget)
+    dash.updated_at = utc_now()
+    await db.commit()
+
+    # Reload with widgets
     stmt = (
         select(AnalyticsDashboard)
         .options(selectinload(AnalyticsDashboard.widgets))

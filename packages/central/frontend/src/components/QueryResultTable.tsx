@@ -15,6 +15,7 @@ interface Props {
   rowCount: number;
   truncated: boolean;
   executionTimeMs: number;
+  onRowClick?: (row: unknown[]) => void;
 }
 
 function formatValue(val: unknown, type: string): string {
@@ -31,7 +32,7 @@ function isNumericType(type: string): boolean {
   return /^(U?Int|Float|Decimal)/i.test(type);
 }
 
-export function QueryResultTable({ columns, rows, rowCount, truncated, executionTimeMs }: Props) {
+export function QueryResultTable({ columns, rows, rowCount, truncated, executionTimeMs, onRowClick }: Props) {
   const [sortCol, setSortCol] = useState<number | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
@@ -84,7 +85,11 @@ export function QueryResultTable({ columns, rows, rowCount, truncated, execution
           </TableHeader>
           <TableBody>
             {sortedRows.map((row, ri) => (
-              <TableRow key={ri}>
+              <TableRow
+                key={ri}
+                onClick={onRowClick ? () => onRowClick(row) : undefined}
+                className={onRowClick ? "cursor-pointer hover:bg-zinc-800/60" : ""}
+              >
                 {row.map((val, ci) => (
                   <TableCell
                     key={ci}

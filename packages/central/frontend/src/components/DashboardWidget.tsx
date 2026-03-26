@@ -4,28 +4,76 @@ import { apiPost } from "@/api/client.ts";
 import { QueryResultTable } from "@/components/QueryResultTable.tsx";
 import { QueryResultChart } from "@/components/QueryResultChart.tsx";
 import type { AnalyticsWidgetConfig, QueryResult } from "@/types/api.ts";
+import type { TimeRange } from "@/components/DashboardTimePicker.tsx";
+
+function resolveTimestamp(input: string): string {
+  if (input === "now") return new Date().toISOString();
+  const match = input.match(/^now-(\d+)([mhd])$/);
+  if (match) {
+    const ms = { m: 60000, h: 3600000, d: 86400000 }[match[2]]!;
+    return new Date(Date.now() - Number(match[1]) * ms).toISOString();
+  }
+  return input;
+}
+
+function resolveSQL(
+  sql: string,
+  timeRange?: TimeRange,
+  variables?: Record<string, string>,
+): string {
+  let resolved = sql;
+  if (timeRange) {
+    resolved = resolved
+      .replace(/\{time_from\}/g, resolveTimestamp(timeRange.from))
+      .replace(/\{time_to\}/g, resolveTimestamp(timeRange.to));
+  }
+  if (variables) {
+    for (const [name, value] of Object.entries(variables)) {
+      const escaped = value.replace(/'/g, "''");
+      resolved = resolved.replace(new RegExp(`\\{var:${name}\\}`, "g"), escaped);
+    }
+  }
+  return resolved;
+}
 
 interface Props {
   id: string;
   title: string;
   config: AnalyticsWidgetConfig;
+  timeRange?: TimeRange;
+  variables?: Record<string, string>;
+  onVariableChange?: (name: string, value: string) => void;
   onEdit?: () => void;
   onDelete?: () => void;
 }
 
-export function DashboardWidget({ id, title, config, onEdit, onDelete }: Props) {
+export function DashboardWidget({
+  id, title, config, timeRange, variables, onVariableChange, onEdit, onDelete,
+}: Props) {
   const refetchInterval = config.refresh_seconds && config.refresh_seconds > 0
     ? config.refresh_seconds * 1000
     : undefined;
 
+  const resolvedSQL = resolveSQL(config.sql, timeRange, variables);
+
   const { data, isLoading, error } = useQuery({
-    queryKey: ["widget-query", id, config.sql],
-    queryFn: () => apiPost<QueryResult>("/analytics/query", { sql: config.sql, limit: 1000 }),
+    queryKey: ["widget-query", id, resolvedSQL],
+    queryFn: () => apiPost<QueryResult>("/analytics/query", { sql: resolvedSQL, limit: 1000 }),
     refetchInterval,
     retry: 1,
   });
 
   const result = data?.data;
+
+  function handleRowClick(row: unknown[]) {
+    if (!config.publishes || !onVariableChange || !result) return;
+    const colIdx = result.columns.findIndex((c) => c.name === config.publishes!.column);
+    if (colIdx === -1) return;
+    const value = row[colIdx];
+    if (value != null) {
+      onVariableChange(config.publishes!.variable, String(value));
+    }
+  }
 
   return (
     <div className="flex flex-col h-full bg-zinc-900 border border-zinc-800 rounded-md overflow-hidden">
@@ -65,6 +113,7 @@ export function DashboardWidget({ id, title, config, onEdit, onDelete }: Props) 
             rowCount={result.row_count}
             truncated={result.truncated}
             executionTimeMs={result.execution_time_ms}
+            onRowClick={config.publishes ? handleRowClick : undefined}
           />
         )}
         {result && config.chart_type !== "table" && (

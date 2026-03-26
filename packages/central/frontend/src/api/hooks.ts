@@ -3126,6 +3126,18 @@ export function useUpdateAnalyticsDashboard() {
   });
 }
 
+export function useAppendDashboardWidget() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ dashboardId, ...data }: { dashboardId: string; title: string; config: Record<string, unknown>; layout: Record<string, number> }) =>
+      apiPost(`/analytics/dashboards/${dashboardId}/widgets`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["analytics-dashboards"] });
+      qc.invalidateQueries({ queryKey: ["analytics-dashboard"] });
+    },
+  });
+}
+
 export function useDeleteAnalyticsDashboard() {
   const qc = useQueryClient();
   return useMutation({
