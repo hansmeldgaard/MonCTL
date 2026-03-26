@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef } from "react";
 import { EditorView, basicSetup } from "codemirror";
 import { keymap } from "@codemirror/view";
 import { oneDark } from "@codemirror/theme-one-dark";
@@ -67,14 +67,6 @@ export function SqlEditor({
       view.dispatch({ changes: { from: 0, to: current.length, insert: value } });
     }
   }, [value]);
-
-  const insertText = useCallback((text: string) => {
-    const view = viewRef.current;
-    if (!view) return;
-    const cursor = view.state.selection.main.head;
-    view.dispatch({ changes: { from: cursor, insert: text } });
-    view.focus();
-  }, []);
 
   return (
     <div
