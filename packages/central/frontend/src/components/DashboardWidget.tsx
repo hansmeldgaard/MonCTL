@@ -24,13 +24,13 @@ function resolveSQL(
   let resolved = sql;
   if (timeRange) {
     resolved = resolved
-      .replace(/\{time_from\}/g, resolveTimestamp(timeRange.from))
-      .replace(/\{time_to\}/g, resolveTimestamp(timeRange.to));
+      .replace(/\{time_from\}/g, `'${resolveTimestamp(timeRange.from)}'`)
+      .replace(/\{time_to\}/g, `'${resolveTimestamp(timeRange.to)}'`);
   }
   if (variables) {
     for (const [name, value] of Object.entries(variables)) {
       const escaped = value.replace(/'/g, "''");
-      resolved = resolved.replace(new RegExp(`\\{var:${name}\\}`, "g"), escaped);
+      resolved = resolved.replace(new RegExp(`\\{var:${name}\\}`, "g"), `'${escaped}'`);
     }
   }
   return resolved;
