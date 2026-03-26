@@ -1161,18 +1161,50 @@ function RegistrationTokensCard() {
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export function CollectorsPage() {
+  const createToken = useCreateRegistrationToken();
+  const [showSetupGuide, setShowSetupGuide] = useState<string | null>(null);
+  const [addingCollector, setAddingCollector] = useState(false);
+
+  async function handleAddCollector() {
+    setAddingCollector(true);
+    try {
+      const result = await createToken.mutateAsync({
+        name: `collector-${Date.now()}`,
+        one_time: true,
+      });
+      setShowSetupGuide(result.data?.short_code ?? result.data?.token ?? null);
+    } catch {
+      /* silent */
+    } finally {
+      setAddingCollector(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-lg font-semibold text-zinc-100">Collectors</h1>
-        <p className="text-sm text-zinc-500">
-          Manage collector groups, registered collectors, and registration tokens.
-        </p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-lg font-semibold text-zinc-100">Collectors</h1>
+          <p className="text-sm text-zinc-500">
+            Manage collector groups, registered collectors, and registration tokens.
+          </p>
+        </div>
+        <Button onClick={handleAddCollector} disabled={addingCollector} className="gap-1.5">
+          {addingCollector ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+          Add Collector
+        </Button>
       </div>
       <PendingCollectorsCard />
       <CollectorGroupsCard />
       <CollectorsCard />
       <RegistrationTokensCard />
+
+      {showSetupGuide && (
+        <SetupInstructionsDialog
+          code={showSetupGuide}
+          onClose={() => setShowSetupGuide(null)}
+        />
+      )}
     </div>
   );
 }
