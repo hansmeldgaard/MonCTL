@@ -3169,7 +3169,7 @@ export function useActions(params?: {
   const qs = query.toString();
   return useQuery({
     queryKey: ["actions", qs],
-    queryFn: () => apiGet<{ data: Action[]; total: number }>(`/automations/actions${qs ? `?${qs}` : ""}`),
+    queryFn: () => apiGetRaw<{ data: Action[]; total: number }>(`/automations/actions${qs ? `?${qs}` : ""}`),
     refetchInterval: POLL_LIST,
   });
 }
@@ -3239,7 +3239,7 @@ export function useAutomations(params?: {
   const qs = query.toString();
   return useQuery({
     queryKey: ["automations", qs],
-    queryFn: () => apiGet<{ data: Automation[]; total: number }>(`/automations/automations${qs ? `?${qs}` : ""}`),
+    queryFn: () => apiGetRaw<{ data: Automation[]; total: number }>(`/automations/automations${qs ? `?${qs}` : ""}`),
     refetchInterval: POLL_LIST,
   });
 }
@@ -3311,7 +3311,7 @@ export function useAutomationRuns(params?: {
   const qs = query.toString();
   return useQuery({
     queryKey: ["automation-runs", qs],
-    queryFn: () => apiGet<{ data: AutomationRun[]; total: number }>(`/automations/runs${qs ? `?${qs}` : ""}`),
+    queryFn: () => apiGetRaw<{ data: AutomationRun[]; total: number }>(`/automations/runs${qs ? `?${qs}` : ""}`),
     refetchInterval: POLL_LIST,
   });
 }
