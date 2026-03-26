@@ -194,6 +194,20 @@ Each table has a `*_latest` materialized view (ReplacingMergeTree) for instant l
 
 **Analytics Page** (`pages/AnalyticsPage.tsx`): Links to Metabase dashboards + SQL query builder. Reads `metabase_url` from system settings. Shows "Metabase not configured" empty state when URL not set.
 
+**Custom Dashboards** (`analytics/dashboards.py`): User-created dashboards with SQL-based widgets. `AnalyticsDashboard` model (PostgreSQL) with `variables` JSONB column for cross-widget context variables. `AnalyticsWidget` model stores per-widget SQL, chart config, and layout.
+
+**Dashboard Editor** (`pages/DashboardEditorPage.tsx`): Uses `react-grid-layout` v2.2.3 (hook-based API: `useContainerWidth`, `ResponsiveGridLayout`) for drag-and-drop + resize. 24-column grid, `rowHeight: 40`, `.drag-handle` on GripVertical icon. `onLayoutChange` updates widget positions and marks dirty.
+
+**Time Picker** (`components/DashboardTimePicker.tsx`): Dashboard-level time range with presets (15m, 1h, 6h, 24h, 7d, 30d) + custom datetime range. Widgets use `{time_from}` and `{time_to}` placeholders in SQL — client-side substitution via `resolveSQL()` in `DashboardWidget.tsx`.
+
+**Time format**: ClickHouse 24.3 cannot parse ISO 8601 (`2026-03-26T15:00:00.000Z`). `resolveTimestamp()` outputs `YYYY-MM-DD HH:MM:SS` format. All substituted values are wrapped in single quotes for valid SQL.
+
+**Cross-Widget Variables**: Dashboard-level named variables (`DashboardVariable`). Widgets reference `{var:name}` in SQL (client-side substitution, single-quote wrapped, SQL-escaped). Table widgets can "publish" a column value to a variable on row click (`config.publishes: {column, variable}`). `DashboardVariableBar` component shows active values as pills.
+
+**Widget Append**: `POST /v1/analytics/dashboards/{id}/widgets` appends a single widget without replacing existing ones. Used by SQL Explorer's "Save to Dashboard" feature (`useAppendDashboardWidget` hook).
+
+**Add Widget Dialog** (`components/AddWidgetDialog.tsx`): SQL editor + Test button (resolves placeholders with default "last 1h" range) + visualization picker + width selector (Half=12, Full=24) + X/Y/Group By config (visible after Test) + "Publishes to variable" config for table widgets.
+
 ### Config Data Optimization
 
 **Write suppression**: `collector_api/router.py` compares each config key's MD5 hash against `config_latest FINAL` before writing. Only changed keys and volatile keys are written to ClickHouse. In-memory LRU cache (60s TTL) avoids repeated ClickHouse lookups.

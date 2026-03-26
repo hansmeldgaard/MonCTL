@@ -353,6 +353,18 @@ Query: `GET /v1/logs` (filter, paginate, sort), `GET /v1/logs/filters` (distinct
 
 **Analytics Page** (`pages/AnalyticsPage.tsx`): Links til Metabase dashboards + SQL query builder. Læser `metabase_url` fra system settings. Sidebar: "Analytics" mellem Events og Upgrades.
 
+**Custom Dashboards** (`analytics/dashboards.py`): Bruger-oprettede dashboards med SQL-baserede widgets. `AnalyticsDashboard` model (PostgreSQL) med `variables` JSONB kolonne for cross-widget kontekst-variabler. `AnalyticsWidget` gemmer SQL, chart config og layout per widget.
+
+**Dashboard Editor** (`pages/DashboardEditorPage.tsx`): Bruger `react-grid-layout` v2.2.3 (hook-baseret API: `useContainerWidth`, `ResponsiveGridLayout`) for drag-and-drop + resize. 24-kolonne grid, `rowHeight: 40`, `.drag-handle` på GripVertical ikon.
+
+**Time Picker** (`components/DashboardTimePicker.tsx`): Dashboard-level tidsinterval med presets (15m, 1h, 6h, 24h, 7d, 30d) + custom datetime range. Widgets bruger `{time_from}` og `{time_to}` placeholders i SQL — client-side substitution via `resolveSQL()`. ClickHouse 24.3 kræver `YYYY-MM-DD HH:MM:SS` format (ikke ISO 8601). Værdier wrappes i single quotes.
+
+**Cross-Widget Variables**: Dashboard-level navngivne variabler (`DashboardVariable`). Widgets refererer `{var:name}` i SQL (client-side substitution, SQL-escaped). Tabel-widgets kan "publicere" en kolonne-værdi til en variabel ved row-klik (`config.publishes`). `DashboardVariableBar` viser aktive værdier som pills.
+
+**Widget Append**: `POST /v1/analytics/dashboards/{id}/widgets` tilføjer en widget uden at erstatte eksisterende. Bruges af SQL Explorer's "Save to Dashboard" (`useAppendDashboardWidget` hook).
+
+**Add Widget Dialog** (`components/AddWidgetDialog.tsx`): SQL editor + Test-knap (resolver placeholders med default "last 1h") + visualisering + bredde-valg (Half/Full) + X/Y/Group By config (synlig efter Test) + "Publishes to variable" for tabel-widgets.
+
 ### Packs System
 
 Import/export af monitoring packs (apps + connectors + alert definitions + credential templates + grafana dashboards). Preview + conflict detection. Version tracking. `grafana_dashboards` sektion eksporterer/importerer dashboards via Grafana API (tagging konvention: `pack:{uid}`).
