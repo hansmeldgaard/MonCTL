@@ -377,6 +377,13 @@ async def get_jobs(
             all_cred_ids.add(row.AppAssignment.credential_id)
         if row.Device and row.Device.default_credential_id:
             all_cred_ids.add(row.Device.default_credential_id)
+        # Per-protocol credentials from device.credentials JSONB
+        if row.Device and row.Device.credentials:
+            for cred_val in row.Device.credentials.values():
+                try:
+                    all_cred_ids.add(uuid.UUID(str(cred_val)))
+                except (ValueError, TypeError):
+                    pass
     for alias_map in overrides_map.values():
         all_cred_ids.update(alias_map.values())
 
@@ -447,12 +454,18 @@ async def get_jobs(
                 if acb.use_latest:
                     version_id = latest_connector_versions.get(acb.connector_id, version_id)
 
-                # Resolve credential: override > assignment > device default
+                # Resolve credential: override > assignment > device per-protocol > device default
                 cred_id: uuid.UUID | None = None
                 if acb.alias in cred_overrides:
                     cred_id = cred_overrides[acb.alias]
                 elif assignment.credential_id:
                     cred_id = assignment.credential_id
+                elif device and device.credentials and acb.alias in device.credentials:
+                    # Per-protocol credential from device.credentials JSONB
+                    try:
+                        cred_id = uuid.UUID(str(device.credentials[acb.alias]))
+                    except (ValueError, TypeError):
+                        pass
                 elif device and device.default_credential_id:
                     cred_id = device.default_credential_id
 
