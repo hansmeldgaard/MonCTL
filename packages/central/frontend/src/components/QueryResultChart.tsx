@@ -19,8 +19,9 @@ interface Props {
   initialChartType?: ChartType;
   initialXColumn?: string;
   initialYColumns?: string[];
+  initialGroupBy?: string;
   hideControls?: boolean;
-  onSettingsChange?: (settings: { chartType: ChartType; xColumn: string; yColumns: string[] }) => void;
+  onSettingsChange?: (settings: { chartType: ChartType; xColumn: string; yColumns: string[]; groupBy: string }) => void;
 }
 
 function isNumericType(type: string): boolean {
@@ -29,7 +30,7 @@ function isNumericType(type: string): boolean {
 
 export function QueryResultChart({
   columns, rows,
-  initialChartType = "line", initialXColumn, initialYColumns,
+  initialChartType = "line", initialXColumn, initialYColumns, initialGroupBy,
   hideControls = false, onSettingsChange,
 }: Props) {
   const numericCols = columns.filter((c) => isNumericType(c.type));
@@ -42,32 +43,66 @@ export function QueryResultChart({
   const [yColumns, setYColumns] = useState<string[]>(
     initialYColumns || numericCols.slice(0, 3).map((c) => c.name)
   );
+  const [groupBy, setGroupBy] = useState(initialGroupBy || "");
 
-  function updateSettings(updates: Partial<{ chartType: ChartType; xColumn: string; yColumns: string[] }>) {
+  function updateSettings(updates: Partial<{ chartType: ChartType; xColumn: string; yColumns: string[]; groupBy: string }>) {
     const next = {
       chartType: updates.chartType ?? chartType,
       xColumn: updates.xColumn ?? xColumn,
       yColumns: updates.yColumns ?? yColumns,
+      groupBy: updates.groupBy ?? groupBy,
     };
-    if (updates.chartType) setChartType(updates.chartType);
-    if (updates.xColumn) setXColumn(updates.xColumn);
-    if (updates.yColumns) setYColumns(updates.yColumns);
+    if (updates.chartType !== undefined) setChartType(updates.chartType);
+    if (updates.xColumn !== undefined) setXColumn(updates.xColumn);
+    if (updates.yColumns !== undefined) setYColumns(updates.yColumns);
+    if (updates.groupBy !== undefined) setGroupBy(updates.groupBy);
     onSettingsChange?.(next);
   }
 
-  const chartData = useMemo(() => {
+  // When groupBy is set, pivot data: one series per unique groupBy value
+  const { chartData, seriesKeys } = useMemo(() => {
     const xIdx = columns.findIndex((c) => c.name === xColumn);
-    if (xIdx === -1) return [];
+    if (xIdx === -1) return { chartData: [], seriesKeys: [] as string[] };
 
-    return rows.map((row) => {
-      const point: Record<string, unknown> = { [xColumn]: row[xIdx] };
-      for (const yCol of yColumns) {
-        const yIdx = columns.findIndex((c) => c.name === yCol);
-        if (yIdx !== -1) point[yCol] = row[yIdx];
+    const groupIdx = groupBy ? columns.findIndex((c) => c.name === groupBy) : -1;
+
+    // No group by — standard mode: each yColumn is a series
+    if (groupIdx === -1 || yColumns.length !== 1) {
+      const data = rows.map((row) => {
+        const point: Record<string, unknown> = { [xColumn]: row[xIdx] };
+        for (const yCol of yColumns) {
+          const yIdx = columns.findIndex((c) => c.name === yCol);
+          if (yIdx !== -1) point[yCol] = row[yIdx];
+        }
+        return point;
+      });
+      return { chartData: data, seriesKeys: yColumns };
+    }
+
+    // Group by mode: pivot yColumns[0] into one series per groupBy value
+    const yIdx = columns.findIndex((c) => c.name === yColumns[0]);
+    if (yIdx === -1) return { chartData: [], seriesKeys: [] as string[] };
+
+    // Collect unique group values and build pivoted data
+    const groupValues = new Set<string>();
+    const xMap = new Map<string, Record<string, unknown>>();
+
+    for (const row of rows) {
+      const xVal = String(row[xIdx] ?? "");
+      const gVal = String(row[groupIdx] ?? "");
+      const yVal = row[yIdx];
+      groupValues.add(gVal);
+
+      if (!xMap.has(xVal)) {
+        xMap.set(xVal, { [xColumn]: row[xIdx] });
       }
-      return point;
-    });
-  }, [rows, columns, xColumn, yColumns]);
+      xMap.get(xVal)![gVal] = yVal;
+    }
+
+    const sortedGroups = [...groupValues].sort().slice(0, 20); // cap at 20 series
+    const data = [...xMap.values()];
+    return { chartData: data, seriesKeys: sortedGroups };
+  }, [rows, columns, xColumn, yColumns, groupBy]);
 
   const tooltipStyle = {
     backgroundColor: "#18181b",
@@ -82,6 +117,9 @@ export function QueryResultChart({
       : [...yColumns, col];
     updateSettings({ yColumns: next });
   }
+
+  // Candidate columns for groupBy: non-numeric, not the xColumn
+  const groupByCandidates = nonNumericCols.filter((c) => c.name !== xColumn);
 
   return (
     <div className="space-y-3">
@@ -137,6 +175,22 @@ export function QueryResultChart({
               ))}
             </div>
           </div>
+
+          {groupByCandidates.length > 0 && (
+            <div className="space-y-1">
+              <label className="text-zinc-500 uppercase tracking-wide text-[10px] font-semibold">Group By</label>
+              <select
+                value={groupBy}
+                onChange={(e) => updateSettings({ groupBy: e.target.value })}
+                className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-300"
+              >
+                <option value="">None</option>
+                {groupByCandidates.map((c) => (
+                  <option key={c.name} value={c.name}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
       )}
 
@@ -149,7 +203,7 @@ export function QueryResultChart({
               <YAxis stroke="#52525b" fontSize={10} tickLine={false} axisLine={false} />
               <Tooltip contentStyle={tooltipStyle} />
               <Legend wrapperStyle={{ fontSize: 11, color: "#a1a1aa" }} />
-              {yColumns.map((col, i) => (
+              {seriesKeys.map((col, i) => (
                 <Line key={col} type="monotone" dataKey={col} stroke={COLORS[i % COLORS.length]}
                   strokeWidth={1.5} dot={false} isAnimationActive={false} />
               ))}
@@ -161,7 +215,7 @@ export function QueryResultChart({
               <YAxis stroke="#52525b" fontSize={10} tickLine={false} axisLine={false} />
               <Tooltip contentStyle={tooltipStyle} />
               <Legend wrapperStyle={{ fontSize: 11, color: "#a1a1aa" }} />
-              {yColumns.map((col, i) => (
+              {seriesKeys.map((col, i) => (
                 <Bar key={col} dataKey={col} fill={COLORS[i % COLORS.length]} />
               ))}
             </BarChart>
@@ -172,14 +226,14 @@ export function QueryResultChart({
               <YAxis stroke="#52525b" fontSize={10} tickLine={false} axisLine={false} />
               <Tooltip contentStyle={tooltipStyle} />
               <Legend wrapperStyle={{ fontSize: 11, color: "#a1a1aa" }} />
-              {yColumns.map((col, i) => (
+              {seriesKeys.map((col, i) => (
                 <Area key={col} type="monotone" dataKey={col} stroke={COLORS[i % COLORS.length]}
                   fill={COLORS[i % COLORS.length]} fillOpacity={0.15} isAnimationActive={false} />
               ))}
             </AreaChart>
           ) : (
             <PieChart>
-              <Pie data={chartData} dataKey={yColumns[0] || ""} nameKey={xColumn}
+              <Pie data={chartData} dataKey={seriesKeys[0] || ""} nameKey={xColumn}
                 cx="50%" cy="50%" outerRadius={100} label>
                 {chartData.map((_, i) => (
                   <Cell key={i} fill={COLORS[i % COLORS.length]} />
