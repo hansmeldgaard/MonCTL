@@ -1971,6 +1971,28 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
   const updateSettings = useUpdateInterfaceSettings();
   const bulkUpdate = useBulkUpdateInterfaceSettings();
   const refreshMeta = useRefreshInterfaceMetadata();
+  const [refreshQueuedAt, setRefreshQueuedAt] = useState<number | null>(null);
+  const [refreshDone, setRefreshDone] = useState(false);
+
+  // Detect metadata update after refresh was queued
+  useEffect(() => {
+    if (!refreshQueuedAt || !metadata?.length) return;
+    const maxUpdated = Math.max(
+      ...metadata.map((m) => (m.updated_at ? new Date(m.updated_at).getTime() : 0)),
+    );
+    if (maxUpdated > refreshQueuedAt) {
+      setRefreshDone(true);
+      setRefreshQueuedAt(null);
+    }
+  }, [refreshQueuedAt, metadata]);
+
+  // Auto-hide "Metadata refreshed" after 3 seconds
+  useEffect(() => {
+    if (!refreshDone) return;
+    const t = setTimeout(() => setRefreshDone(false), 3000);
+    return () => clearTimeout(t);
+  }, [refreshDone]);
+
   const updateIfacePrefs = useUpdateInterfacePreferences();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [timeRange, setTimeRange] = useState<TimeRangeValue>(() => {
@@ -2234,11 +2256,12 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
           ))}
           {activeSelectedCount > 0 && <Badge variant="default">{activeSelectedCount} selected</Badge>}
         </div>
-        <Button variant="outline" size="sm" className="h-7 text-xs gap-1" disabled={refreshMeta.isPending} onClick={() => refreshMeta.mutate(deviceId)}>
+        <Button variant="outline" size="sm" className="h-7 text-xs gap-1" disabled={refreshMeta.isPending} onClick={() => { setRefreshQueuedAt(Date.now()); setRefreshDone(false); refreshMeta.mutate(deviceId); }}>
           {refreshMeta.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
           Refresh Metadata
         </Button>
-        {refreshMeta.isSuccess && <span className="text-xs text-emerald-400">Queued</span>}
+        {refreshQueuedAt && !refreshDone && <span className="text-xs text-emerald-400">Queued</span>}
+        {refreshDone && <span className="text-xs text-emerald-400">Metadata refreshed</span>}
         <div className="ml-auto flex items-center gap-2">
           <Select value={trafficUnit} onChange={e => handleTrafficUnit(e.target.value as TrafficUnit)} className="h-7 text-xs w-24">
             <option value="auto">Auto</option>

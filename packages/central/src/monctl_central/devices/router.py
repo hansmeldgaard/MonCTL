@@ -865,7 +865,28 @@ async def refresh_interface_metadata(
     from monctl_central.cache import set_interface_refresh_flag
     await set_interface_refresh_flag(device_id)
 
-    return {"status": "success", "data": {"message": "Interface metadata refresh queued. Next poll will perform a full walk."}}
+    # Notify collectors via WebSocket to sync jobs immediately (same pattern as discovery)
+    ws_notified = 0
+    try:
+        from monctl_central.ws.router import manager as ws_manager
+        if device.collector_group_id:
+            result = await db.execute(
+                select(Collector.id).where(
+                    Collector.group_id == device.collector_group_id,
+                    Collector.status == "APPROVED",
+                )
+            )
+            for cid in result.scalars().all():
+                if ws_manager.is_connected_local(cid):
+                    try:
+                        await ws_manager.send_command(cid, "config_reload", {}, timeout=5)
+                        ws_notified += 1
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+    return {"status": "success", "data": {"message": "Interface metadata refresh queued.", "ws_notified": ws_notified}}
 
 
 @router.delete("/{device_id}", status_code=status.HTTP_204_NO_CONTENT)
