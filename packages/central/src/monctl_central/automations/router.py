@@ -27,6 +27,7 @@ class CreateActionRequest(BaseModel):
     target: str = Field(default="collector")
     source_code: str = ""
     credential_type: str | None = None
+    credential_id: str | None = None
     timeout_seconds: int = Field(default=60, ge=5, le=300)
     enabled: bool = True
 
@@ -37,6 +38,8 @@ class UpdateActionRequest(BaseModel):
     target: str | None = None
     source_code: str | None = None
     credential_type: str | None = None
+    credential_id: str | None = None
+    clear_credential_id: bool = False
     timeout_seconds: int | None = Field(default=None, ge=5, le=300)
     enabled: bool | None = None
 
@@ -95,6 +98,7 @@ def _fmt_action(a: Action) -> dict:
         "target": a.target,
         "source_code": a.source_code,
         "credential_type": a.credential_type,
+        "credential_id": str(a.credential_id) if a.credential_id else None,
         "timeout_seconds": a.timeout_seconds,
         "enabled": a.enabled,
         "created_at": a.created_at.isoformat() if a.created_at else None,
@@ -200,6 +204,7 @@ async def create_action(
         target=request.target,
         source_code=request.source_code,
         credential_type=request.credential_type,
+        credential_id=uuid.UUID(request.credential_id) if request.credential_id else None,
         timeout_seconds=request.timeout_seconds,
         enabled=request.enabled,
     )
@@ -232,6 +237,10 @@ async def update_action(
         action.source_code = request.source_code
     if request.credential_type is not None:
         action.credential_type = request.credential_type
+    if request.clear_credential_id:
+        action.credential_id = None
+    elif request.credential_id is not None:
+        action.credential_id = uuid.UUID(request.credential_id)
     if request.timeout_seconds is not None:
         action.timeout_seconds = request.timeout_seconds
     if request.enabled is not None:

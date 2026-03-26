@@ -1310,6 +1310,9 @@ class Action(Base):
     target: Mapped[str] = mapped_column(String(20), nullable=False, server_default="'collector'")
     source_code: Mapped[str] = mapped_column(Text, nullable=False, server_default="''")
     credential_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    credential_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("credentials.id", ondelete="SET NULL"), nullable=True
+    )
     timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False, server_default="60")
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     created_at: Mapped[datetime] = mapped_column(
@@ -1318,6 +1321,8 @@ class Action(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default="now()"
     )
+
+    credential: Mapped["Credential | None"] = relationship("Credential", foreign_keys=[credential_id])
 
 
 class Automation(Base):

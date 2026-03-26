@@ -334,18 +334,27 @@ class AutomationEngine:
                 continue
 
             # Resolve credential for this step
+            # Priority: direct credential_id on action → credential_type (device-resolved)
             credential_data = {}
-            cred_type = step.credential_type_override or action.credential_type
-            if cred_type and device_id:
+            if action.credential_id:
+                # Direct credential reference (e.g. central actions contacting external systems)
                 async with session_factory() as session:
-                    device_fresh = await session.get(Device, uuid.UUID(device_id))
-                    if device_fresh and device_fresh.credentials:
-                        cred_id_str = device_fresh.credentials.get(cred_type)
-                        if cred_id_str:
-                            cred = await session.get(Credential, uuid.UUID(cred_id_str))
-                            if cred:
-                                from monctl_central.credentials.crypto import decrypt_credential
-                                credential_data = decrypt_credential(cred.secret_data)
+                    cred = await session.get(Credential, action.credential_id)
+                    if cred:
+                        from monctl_central.credentials.crypto import decrypt_credential
+                        credential_data = decrypt_credential(cred.secret_data)
+            else:
+                cred_type = step.credential_type_override or action.credential_type
+                if cred_type and device_id:
+                    async with session_factory() as session:
+                        device_fresh = await session.get(Device, uuid.UUID(device_id))
+                        if device_fresh and device_fresh.credentials:
+                            cred_id_str = device_fresh.credentials.get(cred_type)
+                            if cred_id_str:
+                                cred = await session.get(Credential, uuid.UUID(cred_id_str))
+                                if cred:
+                                    from monctl_central.credentials.crypto import decrypt_credential
+                                    credential_data = decrypt_credential(cred.secret_data)
 
             # Build context
             timeout = step.timeout_override or action.timeout_seconds

@@ -21,6 +21,7 @@ import {
   SkipForward,
   Server,
   Monitor,
+  Key,
 } from "lucide-react";
 import { Button } from "@/components/ui/button.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
@@ -37,6 +38,7 @@ import {
   TableRow,
 } from "@/components/ui/table.tsx";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
+import { Tabs, TabsList, TabTrigger, TabsContent } from "@/components/ui/tabs.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
 import { ClearableInput } from "@/components/ui/clearable-input.tsx";
 import {
@@ -52,6 +54,7 @@ import {
   useAutomationRuns,
   useAutomationRun,
   useDevices,
+  useCredentials,
   useCredentialTypes,
   useEventPolicies,
   useLabelKeys,
@@ -149,7 +152,7 @@ function ActionsTab() {
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead className="w-24">Target</TableHead>
-                <TableHead className="w-32">Credential</TableHead>
+                <TableHead className="w-40">Credential</TableHead>
                 <TableHead className="w-24">Timeout</TableHead>
                 <TableHead className="w-20">Enabled</TableHead>
                 <TableHead className="w-20"></TableHead>
@@ -185,8 +188,14 @@ function ActionsTab() {
                         )}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-zinc-400 text-sm">
-                      {a.credential_type || <span className="text-zinc-600">-</span>}
+                    <TableCell className="text-sm">
+                      {a.credential_id ? (
+                        <span className="text-amber-400 flex items-center gap-1"><Key className="h-3 w-3" />direct</span>
+                      ) : a.credential_type ? (
+                        <span className="text-zinc-400">{a.credential_type}</span>
+                      ) : (
+                        <span className="text-zinc-600">-</span>
+                      )}
                     </TableCell>
                     <TableCell className="text-zinc-400 text-sm">{a.timeout_seconds}s</TableCell>
                     <TableCell>
@@ -236,7 +245,11 @@ function ActionFormDialog({ action, onClose }: { action: Action | null; onClose:
   const [description, setDescription] = useState(action?.description ?? "");
   const [target, setTarget] = useState(action?.target ?? "collector");
   const [sourceCode, setSourceCode] = useState(action?.source_code ?? "");
+  const [credMode, setCredMode] = useState<"none" | "type" | "direct">(
+    action?.credential_id ? "direct" : action?.credential_type ? "type" : "none"
+  );
   const [credentialType, setCredentialType] = useState(action?.credential_type ?? "");
+  const [credentialId, setCredentialId] = useState(action?.credential_id ?? "");
   const [timeout, setTimeout] = useState(String(action?.timeout_seconds ?? 60));
   const [enabled, setEnabled] = useState(action?.enabled ?? true);
   const [error, setError] = useState<string | null>(null);
@@ -244,21 +257,27 @@ function ActionFormDialog({ action, onClose }: { action: Action | null; onClose:
   const createMut = useCreateAction();
   const updateMut = useUpdateAction();
   const { data: credentialTypes = [] } = useCredentialTypes();
+  const { data: credentials = [] } = useCredentials();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     if (!name.trim()) { setError("Name is required."); return; }
 
-    const payload = {
+    const payload: Record<string, unknown> = {
       name: name.trim(),
       description: description.trim() || null,
       target,
       source_code: sourceCode,
-      credential_type: credentialType || null,
+      credential_type: credMode === "type" ? (credentialType || null) : null,
+      credential_id: credMode === "direct" ? (credentialId || null) : null,
       timeout_seconds: parseInt(timeout) || 60,
       enabled,
     };
+
+    if (isEdit && credMode !== "direct") {
+      payload.clear_credential_id = true;
+    }
 
     try {
       if (isEdit) {
@@ -296,20 +315,44 @@ function ActionFormDialog({ action, onClose }: { action: Action | null; onClose:
           <Input id="action-desc" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional description..." />
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="action-cred">Credential Type</Label>
-            <Select id="action-cred" value={credentialType} onChange={(e) => setCredentialType(e.target.value)}>
-              <option value="">None</option>
+        {/* Credential mode selector */}
+        <div className="space-y-2">
+          <Label>Credential</Label>
+          <div className="flex gap-3">
+            {(["none", "type", "direct"] as const).map((opt) => (
+              <label key={opt} className="flex items-center gap-1.5 text-sm text-zinc-300 cursor-pointer">
+                <input type="radio" name="cred-mode" checked={credMode === opt} onChange={() => setCredMode(opt)} className="border-zinc-600" />
+                {opt === "none" ? "None" : opt === "type" ? "By type (device)" : "Direct credential"}
+              </label>
+            ))}
+          </div>
+          {credMode === "type" && (
+            <Select value={credentialType} onChange={(e) => setCredentialType(e.target.value)}>
+              <option value="">Select credential type...</option>
               {Array.isArray(credentialTypes) && credentialTypes.map((ct: { id?: string; name: string }) => (
                 <option key={ct.name} value={ct.name}>{ct.name}</option>
               ))}
             </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="action-timeout">Timeout (seconds)</Label>
-            <Input id="action-timeout" type="number" min={5} max={300} value={timeout} onChange={(e) => setTimeout(e.target.value)} />
-          </div>
+          )}
+          {credMode === "direct" && (
+            <Select value={credentialId} onChange={(e) => setCredentialId(e.target.value)}>
+              <option value="">Select credential...</option>
+              {Array.isArray(credentials) && credentials.map((c: { id: string; name: string; credential_type?: string }) => (
+                <option key={c.id} value={c.id}>{c.name}{c.credential_type ? ` (${c.credential_type})` : ""}</option>
+              ))}
+            </Select>
+          )}
+          {credMode === "type" && (
+            <p className="text-xs text-zinc-500">Resolved from the device's per-protocol credentials at runtime.</p>
+          )}
+          {credMode === "direct" && (
+            <p className="text-xs text-zinc-500">Uses this specific credential directly (e.g. for central actions contacting external systems).</p>
+          )}
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="action-timeout">Timeout (seconds)</Label>
+          <Input id="action-timeout" type="number" min={5} max={300} value={timeout} onChange={(e) => setTimeout(e.target.value)} />
         </div>
 
         <div className="space-y-1.5">
@@ -544,23 +587,31 @@ function AutomationsTab({ prefill, onPrefillConsumed }: { prefill?: AutomationPr
 function AutomationFormDialog({ automation, prefill, onClose }: { automation: Automation | null; prefill?: AutomationPrefill | null; onClose: () => void }) {
   const isEdit = !!automation;
   const initDeviceIds = automation?.device_ids ?? prefill?.device_ids ?? [];
+
+  // ── Form state ──
   const [name, setName] = useState(automation?.name ?? "");
   const [description, setDescription] = useState(automation?.description ?? "");
   const [triggerType, setTriggerType] = useState((automation?.trigger_type ?? prefill?.trigger_type ?? "event") as "event" | "cron");
-  const [severityFilter, setSeverityFilter] = useState(automation?.event_severity_filter ?? prefill?.event_severity_filter ?? "");
-  const [selectedPolicyIds, setSelectedPolicyIds] = useState<string[]>(automation?.event_policy_ids ?? []);
   const [cronExpr, setCronExpr] = useState(automation?.cron_expression ?? "");
   const [cooldown, setCooldown] = useState(String(automation?.cooldown_seconds ?? 300));
-  const [selectedDeviceIds, setSelectedDeviceIds] = useState<string[]>(initDeviceIds);
+  const [enabled, setEnabled] = useState(automation?.enabled ?? true);
+
+  // Events tab
+  const [severityFilter, setSeverityFilter] = useState(automation?.event_severity_filter ?? prefill?.event_severity_filter ?? "");
+  const [selectedPolicyIds, setSelectedPolicyIds] = useState<string[]>(automation?.event_policy_ids ?? []);
+  const [policySearch, setPolicySearch] = useState("");
+
+  // Device scope tab
   const [deviceScope, setDeviceScope] = useState<"all" | "devices" | "labels">(
     initDeviceIds.length ? "devices" : automation?.device_label_filter ? "labels" : "all"
   );
+  const [selectedDeviceIds, setSelectedDeviceIds] = useState<string[]>(initDeviceIds);
+  const [deviceSearch, setDeviceSearch] = useState("");
   const [labelKey, setLabelKey] = useState(Object.keys(automation?.device_label_filter ?? {})[0] ?? "");
   const [labelValue, setLabelValue] = useState(Object.values(automation?.device_label_filter ?? {})[0] ?? "");
-  const [deviceSearch, setDeviceSearch] = useState("");
-  const [policySearch, setPolicySearch] = useState("");
   const [labelSearch, setLabelSearch] = useState("");
-  const [enabled, setEnabled] = useState(automation?.enabled ?? true);
+
+  // Actions tab
   const [steps, setSteps] = useState<Array<{ action_id: string; step_order: number; credential_type_override: string; timeout_override: string }>>(
     automation?.steps?.map((s) => ({
       action_id: s.action_id,
@@ -569,7 +620,9 @@ function AutomationFormDialog({ automation, prefill, onClose }: { automation: Au
       timeout_override: s.timeout_override ? String(s.timeout_override) : "",
     })) ?? []
   );
+
   const [error, setError] = useState<string | null>(null);
+  const [dialogTab, setDialogTab] = useState("general");
 
   const createMut = useCreateAutomation();
   const updateMut = useUpdateAutomation();
@@ -646,31 +699,70 @@ function AutomationFormDialog({ automation, prefill, onClose }: { automation: Au
 
   const isPending = createMut.isPending || updateMut.isPending;
 
+  const filteredPolicies = allPolicies.filter((p) =>
+    !policySearch || p.name.toLowerCase().includes(policySearch.toLowerCase()) || (p.definition_name || "").toLowerCase().includes(policySearch.toLowerCase())
+  );
+
+  const filteredDevices = allDevices.filter((d) => {
+    if (!deviceSearch) return true;
+    const q = deviceSearch.toLowerCase();
+    return d.name.toLowerCase().includes(q) || d.address.toLowerCase().includes(q);
+  });
+
   return (
-    <Dialog open onClose={onClose} title={isEdit ? "Edit Automation" : "New Automation"} size="lg">
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="auto-name">Name</Label>
-            <Input id="auto-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Auto-remediate link down" autoFocus />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="auto-trigger">Trigger Type</Label>
-            <Select id="auto-trigger" value={triggerType} onChange={(e) => setTriggerType(e.target.value as "event" | "cron")} disabled={isEdit}>
-              <option value="event">Event</option>
-              <option value="cron">Cron Schedule</option>
-            </Select>
-          </div>
-        </div>
+    <Dialog open onClose={onClose} title={isEdit ? "Edit Automation" : "New Automation"} size="xl">
+      <form onSubmit={handleSubmit} className="flex flex-col" style={{ minHeight: "480px" }}>
+        <Tabs value={dialogTab} onChange={setDialogTab}>
+          <TabsList>
+            <TabTrigger value="general">General</TabTrigger>
+            {triggerType === "event" && <TabTrigger value="events">Events {selectedPolicyIds.length > 0 && `(${selectedPolicyIds.length})`}</TabTrigger>}
+            <TabTrigger value="devices">Device Scope {deviceScope === "devices" && selectedDeviceIds.length > 0 && `(${selectedDeviceIds.length})`}</TabTrigger>
+            <TabTrigger value="actions">Actions {steps.length > 0 && `(${steps.length})`}</TabTrigger>
+          </TabsList>
 
-        <div className="space-y-1.5">
-          <Label htmlFor="auto-desc">Description</Label>
-          <Input id="auto-desc" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional..." />
-        </div>
+          {/* ── General Tab ── */}
+          <TabsContent value="general" className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="auto-name">Name</Label>
+                <Input id="auto-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Auto-remediate link down" autoFocus />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="auto-trigger">Trigger Type</Label>
+                <Select id="auto-trigger" value={triggerType} onChange={(e) => setTriggerType(e.target.value as "event" | "cron")} disabled={isEdit}>
+                  <option value="event">Event</option>
+                  <option value="cron">Cron Schedule</option>
+                </Select>
+              </div>
+            </div>
 
-        {triggerType === "event" && (
-          <div className="space-y-3">
-            {/* Event Policies */}
+            <div className="space-y-1.5">
+              <Label htmlFor="auto-desc">Description</Label>
+              <Input id="auto-desc" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional..." />
+            </div>
+
+            {triggerType === "cron" && (
+              <div className="space-y-1.5">
+                <Label htmlFor="auto-cron">Cron Expression</Label>
+                <Input id="auto-cron" value={cronExpr} onChange={(e) => setCronExpr(e.target.value)} placeholder="*/5 * * * *" className="font-mono" />
+                <p className="text-xs text-zinc-500">Standard cron format: minute hour day month weekday</p>
+              </div>
+            )}
+
+            <div className="space-y-1.5">
+              <Label htmlFor="auto-cooldown">Cooldown (seconds)</Label>
+              <Input id="auto-cooldown" type="number" min={0} value={cooldown} onChange={(e) => setCooldown(e.target.value)} />
+              <p className="text-xs text-zinc-500">Minimum seconds between runs per device. 0 = no cooldown.</p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <input type="checkbox" id="auto-enabled" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} className="rounded border-zinc-600" />
+              <Label htmlFor="auto-enabled">Enabled</Label>
+            </div>
+          </TabsContent>
+
+          {/* ── Events Tab ── */}
+          <TabsContent value="events" className="space-y-4">
             <div className="space-y-1.5">
               <Label>Event Policies {selectedPolicyIds.length > 0 && <span className="text-zinc-500">({selectedPolicyIds.length} selected)</span>}</Label>
               <ClearableInput
@@ -680,33 +772,35 @@ function AutomationFormDialog({ automation, prefill, onClose }: { automation: Au
                 onClear={() => setPolicySearch("")}
                 className="h-7 text-xs"
               />
-              <div className="max-h-32 overflow-y-auto rounded-md border border-zinc-700 bg-zinc-900">
+              <div className="max-h-64 overflow-y-auto rounded-md border border-zinc-700 bg-zinc-900">
                 {allPolicies.length === 0 ? (
                   <p className="text-xs text-zinc-500 px-3 py-2">No event policies configured</p>
+                ) : filteredPolicies.length === 0 ? (
+                  <p className="text-xs text-zinc-500 px-3 py-2">No policies match search</p>
                 ) : (
-                  allPolicies
-                    .filter((p) => !policySearch || p.name.toLowerCase().includes(policySearch.toLowerCase()) || (p.definition_name || "").toLowerCase().includes(policySearch.toLowerCase()))
-                    .map((p) => (
-                      <label key={p.id} className="flex items-center gap-2 px-3 py-1 hover:bg-zinc-800 cursor-pointer text-sm text-zinc-300">
-                        <input
-                          type="checkbox"
-                          checked={selectedPolicyIds.includes(p.id)}
-                          onChange={(e) => {
-                            if (e.target.checked) setSelectedPolicyIds((prev) => [...prev, p.id]);
-                            else setSelectedPolicyIds((prev) => prev.filter((id) => id !== p.id));
-                          }}
-                          className="rounded border-zinc-600"
-                        />
-                        <span className="flex-1 truncate">{p.name}</span>
-                        <span className="text-zinc-500 text-xs">{p.event_severity}</span>
-                      </label>
-                    ))
+                  filteredPolicies.map((p) => (
+                    <label key={p.id} className="flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-800 cursor-pointer text-sm text-zinc-300">
+                      <input
+                        type="checkbox"
+                        checked={selectedPolicyIds.includes(p.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) setSelectedPolicyIds((prev) => [...prev, p.id]);
+                          else setSelectedPolicyIds((prev) => prev.filter((id) => id !== p.id));
+                        }}
+                        className="rounded border-zinc-600"
+                      />
+                      <span className="flex-1 truncate">{p.name}</span>
+                      {p.definition_name && <span className="text-zinc-600 text-xs truncate max-w-[160px]">{p.definition_name}</span>}
+                      <Badge variant={p.event_severity === "critical" ? "destructive" : p.event_severity === "warning" ? "warning" : "default"} className="text-[10px] shrink-0">
+                        {p.event_severity}
+                      </Badge>
+                    </label>
+                  ))
                 )}
               </div>
               <p className="text-xs text-zinc-500">Leave empty to match all events. Select specific policies to narrow the trigger.</p>
             </div>
 
-            {/* Severity Filter */}
             <div className="space-y-1.5">
               <Label htmlFor="auto-severity">Severity Filter</Label>
               <Select id="auto-severity" value={severityFilter} onChange={(e) => setSeverityFilter(e.target.value)}>
@@ -717,156 +811,137 @@ function AutomationFormDialog({ automation, prefill, onClose }: { automation: Au
                 <option value="emergency">Emergency</option>
               </Select>
             </div>
-          </div>
-        )}
+          </TabsContent>
 
-        {triggerType === "cron" && (
-          <div className="space-y-1.5">
-            <Label htmlFor="auto-cron">Cron Expression</Label>
-            <Input id="auto-cron" value={cronExpr} onChange={(e) => setCronExpr(e.target.value)} placeholder="*/5 * * * *" className="font-mono" />
-            <p className="text-xs text-zinc-500">Standard cron format: minute hour day month weekday</p>
-          </div>
-        )}
-
-        {/* Device Scope */}
-        <div className="space-y-2">
-          <Label>Device Scope</Label>
-          <div className="flex gap-3">
-            {(["all", "devices", "labels"] as const).map((opt) => (
-              <label key={opt} className="flex items-center gap-1.5 text-sm text-zinc-300 cursor-pointer">
-                <input type="radio" name="device-scope" checked={deviceScope === opt} onChange={() => setDeviceScope(opt)} className="border-zinc-600" />
-                {opt === "all" ? "All devices" : opt === "devices" ? "Specific devices" : "By label"}
-              </label>
-            ))}
-          </div>
-          {deviceScope === "devices" && (
-            <div className="space-y-1.5">
-              <ClearableInput
-                placeholder="Search by name or IP..."
-                value={deviceSearch}
-                onChange={(e) => setDeviceSearch(e.target.value)}
-                onClear={() => setDeviceSearch("")}
-                className="h-7 text-xs"
-              />
-              {selectedDeviceIds.length > 0 && (
-                <p className="text-xs text-zinc-500">{selectedDeviceIds.length} device(s) selected</p>
-              )}
-              <div className="max-h-36 overflow-y-auto rounded-md border border-zinc-700 bg-zinc-900">
-                {allDevices
-                  .filter((d) => {
-                    if (!deviceSearch) return true;
-                    const q = deviceSearch.toLowerCase();
-                    return d.name.toLowerCase().includes(q) || d.address.toLowerCase().includes(q);
-                  })
-                  .map((d) => (
-                    <label key={d.id} className="flex items-center gap-2 px-3 py-1 hover:bg-zinc-800 cursor-pointer text-sm text-zinc-300">
-                      <input
-                        type="checkbox"
-                        checked={selectedDeviceIds.includes(d.id)}
-                        onChange={(e) => {
-                          if (e.target.checked) setSelectedDeviceIds((p) => [...p, d.id]);
-                          else setSelectedDeviceIds((p) => p.filter((id) => id !== d.id));
-                        }}
-                        className="rounded border-zinc-600"
-                      />
-                      <span className="truncate">{d.name}</span>
-                      <span className="text-zinc-500 text-xs ml-auto shrink-0">{d.address}</span>
-                    </label>
-                  ))}
+          {/* ── Device Scope Tab ── */}
+          <TabsContent value="devices" className="space-y-4">
+            <div className="space-y-2">
+              <Label>Device Scope</Label>
+              <div className="flex gap-3">
+                {(["all", "devices", "labels"] as const).map((opt) => (
+                  <label key={opt} className="flex items-center gap-1.5 text-sm text-zinc-300 cursor-pointer">
+                    <input type="radio" name="device-scope" checked={deviceScope === opt} onChange={() => setDeviceScope(opt)} className="border-zinc-600" />
+                    {opt === "all" ? "All devices" : opt === "devices" ? "Specific devices" : "By label"}
+                  </label>
+                ))}
               </div>
-            </div>
-          )}
-          {deviceScope === "labels" && (
-            <div className="space-y-1.5">
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
+
+              {deviceScope === "devices" && (
+                <div className="space-y-1.5">
                   <ClearableInput
-                    placeholder="Search labels..."
-                    value={labelSearch}
-                    onChange={(e) => setLabelSearch(e.target.value)}
-                    onClear={() => setLabelSearch("")}
+                    placeholder="Search by name or IP..."
+                    value={deviceSearch}
+                    onChange={(e) => setDeviceSearch(e.target.value)}
+                    onClear={() => setDeviceSearch("")}
                     className="h-7 text-xs"
                   />
-                  <Select value={labelKey} onChange={(e) => { setLabelKey(e.target.value); setLabelValue(""); }}>
-                    <option value="">Select label key...</option>
-                    {labelKeys
-                      .filter((lk) => !labelSearch || lk.key.toLowerCase().includes(labelSearch.toLowerCase()))
-                      .map((lk) => (
-                        <option key={lk.id} value={lk.key}>{lk.key}{lk.description ? ` — ${lk.description}` : ""}</option>
-                      ))}
-                  </Select>
+                  {selectedDeviceIds.length > 0 && (
+                    <p className="text-xs text-zinc-500">{selectedDeviceIds.length} device(s) selected</p>
+                  )}
+                  <div className="max-h-64 overflow-y-auto rounded-md border border-zinc-700 bg-zinc-900">
+                    {filteredDevices.map((d) => (
+                      <label key={d.id} className="flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-800 cursor-pointer text-sm text-zinc-300">
+                        <input
+                          type="checkbox"
+                          checked={selectedDeviceIds.includes(d.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) setSelectedDeviceIds((p) => [...p, d.id]);
+                            else setSelectedDeviceIds((p) => p.filter((id) => id !== d.id));
+                          }}
+                          className="rounded border-zinc-600"
+                        />
+                        <span className="truncate">{d.name}</span>
+                        <span className="text-zinc-500 text-xs ml-auto shrink-0">{d.address}</span>
+                      </label>
+                    ))}
+                  </div>
                 </div>
-                <div className="space-y-1">
-                  <p className="text-xs text-zinc-500 h-7 flex items-center">Value</p>
-                  <Select value={labelValue} onChange={(e) => setLabelValue(e.target.value)} disabled={!labelKey}>
-                    <option value="">Any value</option>
-                    {labelValues.map((v) => (
-                      <option key={v} value={v}>{v}</option>
+              )}
+
+              {deviceScope === "labels" && (
+                <div className="space-y-1.5">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <ClearableInput
+                        placeholder="Search labels..."
+                        value={labelSearch}
+                        onChange={(e) => setLabelSearch(e.target.value)}
+                        onClear={() => setLabelSearch("")}
+                        className="h-7 text-xs"
+                      />
+                      <Select value={labelKey} onChange={(e) => { setLabelKey(e.target.value); setLabelValue(""); }}>
+                        <option value="">Select label key...</option>
+                        {labelKeys
+                          .filter((lk) => !labelSearch || lk.key.toLowerCase().includes(labelSearch.toLowerCase()))
+                          .map((lk) => (
+                            <option key={lk.id} value={lk.key}>{lk.key}{lk.description ? ` — ${lk.description}` : ""}</option>
+                          ))}
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-xs text-zinc-500 h-7 flex items-center">Value</p>
+                      <Select value={labelValue} onChange={(e) => setLabelValue(e.target.value)} disabled={!labelKey}>
+                        <option value="">Any value</option>
+                        {labelValues.map((v) => (
+                          <option key={v} value={v}>{v}</option>
+                        ))}
+                      </Select>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </TabsContent>
+
+          {/* ── Actions Tab ── */}
+          <TabsContent value="actions" className="space-y-3">
+            <div className="flex items-center justify-between">
+              <Label>Steps</Label>
+              <Button type="button" variant="ghost" size="sm" onClick={addStep} className="gap-1">
+                <Plus className="h-3 w-3" /> Add Step
+              </Button>
+            </div>
+            {steps.length === 0 && (
+              <p className="text-xs text-zinc-500 py-2">No steps added. Steps are optional — automations can exist without actions.</p>
+            )}
+            <div className="max-h-72 overflow-y-auto space-y-2">
+              {steps.map((step, idx) => (
+                <div key={idx} className="flex items-center gap-2 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2">
+                  <span className="text-xs text-zinc-500 font-mono w-5">{step.step_order}.</span>
+                  <Select
+                    value={step.action_id}
+                    onChange={(e) => {
+                      const newSteps = [...steps];
+                      newSteps[idx] = { ...newSteps[idx], action_id: e.target.value };
+                      setSteps(newSteps);
+                    }}
+                    className="flex-1"
+                  >
+                    <option value="">Select action...</option>
+                    {availableActions.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name} ({a.target})
+                      </option>
                     ))}
                   </Select>
+                  <Button type="button" variant="ghost" size="icon" onClick={() => moveStep(idx, -1)} disabled={idx === 0} title="Move up">
+                    <ArrowUp className="h-3 w-3" />
+                  </Button>
+                  <Button type="button" variant="ghost" size="icon" onClick={() => moveStep(idx, 1)} disabled={idx === steps.length - 1} title="Move down">
+                    <ArrowDown className="h-3 w-3" />
+                  </Button>
+                  <Button type="button" variant="ghost" size="icon" onClick={() => removeStep(idx)} title="Remove">
+                    <Trash2 className="h-3 w-3 text-red-400" />
+                  </Button>
                 </div>
-              </div>
+              ))}
             </div>
-          )}
-        </div>
+          </TabsContent>
+        </Tabs>
 
-        <div className="space-y-1.5">
-          <Label htmlFor="auto-cooldown">Cooldown (seconds)</Label>
-          <Input id="auto-cooldown" type="number" min={0} value={cooldown} onChange={(e) => setCooldown(e.target.value)} />
-          <p className="text-xs text-zinc-500">Minimum seconds between runs per device. 0 = no cooldown.</p>
-        </div>
+        {error && <p className="text-sm text-red-400 mt-3">{error}</p>}
 
-        {/* Steps */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <Label>Steps</Label>
-            <Button type="button" variant="ghost" size="sm" onClick={addStep} className="gap-1">
-              <Plus className="h-3 w-3" /> Add Step
-            </Button>
-          </div>
-          {steps.length === 0 && (
-            <p className="text-xs text-zinc-500 py-2">No steps added. Add at least one action step.</p>
-          )}
-          {steps.map((step, idx) => (
-            <div key={idx} className="flex items-center gap-2 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2">
-              <span className="text-xs text-zinc-500 font-mono w-5">{step.step_order}.</span>
-              <Select
-                value={step.action_id}
-                onChange={(e) => {
-                  const newSteps = [...steps];
-                  newSteps[idx] = { ...newSteps[idx], action_id: e.target.value };
-                  setSteps(newSteps);
-                }}
-                className="flex-1"
-              >
-                <option value="">Select action...</option>
-                {availableActions.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name} ({a.target})
-                  </option>
-                ))}
-              </Select>
-              <Button type="button" variant="ghost" size="icon" onClick={() => moveStep(idx, -1)} disabled={idx === 0} title="Move up">
-                <ArrowUp className="h-3 w-3" />
-              </Button>
-              <Button type="button" variant="ghost" size="icon" onClick={() => moveStep(idx, 1)} disabled={idx === steps.length - 1} title="Move down">
-                <ArrowDown className="h-3 w-3" />
-              </Button>
-              <Button type="button" variant="ghost" size="icon" onClick={() => removeStep(idx)} title="Remove">
-                <Trash2 className="h-3 w-3 text-red-400" />
-              </Button>
-            </div>
-          ))}
-        </div>
-
-        <div className="flex items-center gap-2">
-          <input type="checkbox" id="auto-enabled" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} className="rounded border-zinc-600" />
-          <Label htmlFor="auto-enabled">Enabled</Label>
-        </div>
-
-        {error && <p className="text-sm text-red-400">{error}</p>}
-
-        <DialogFooter>
+        <DialogFooter className="mt-4">
           <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
           <Button type="submit" disabled={isPending}>
             {isPending && <Loader2 className="h-4 w-4 animate-spin" />}

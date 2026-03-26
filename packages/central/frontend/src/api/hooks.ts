@@ -3170,7 +3170,6 @@ export function useActions(params?: {
   return useQuery({
     queryKey: ["actions", qs],
     queryFn: () => apiGet<{ data: Action[]; total: number }>(`/automations/actions${qs ? `?${qs}` : ""}`),
-    select: (res) => res.data,
     refetchInterval: POLL_LIST,
   });
 }
@@ -3193,6 +3192,7 @@ export function useCreateAction() {
       target: string;
       source_code?: string;
       credential_type?: string;
+      credential_id?: string | null;
       timeout_seconds?: number;
     }) => apiPost("/automations/actions", data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["actions"] }),
@@ -3240,7 +3240,6 @@ export function useAutomations(params?: {
   return useQuery({
     queryKey: ["automations", qs],
     queryFn: () => apiGet<{ data: Automation[]; total: number }>(`/automations/automations${qs ? `?${qs}` : ""}`),
-    select: (res) => res.data,
     refetchInterval: POLL_LIST,
   });
 }
@@ -3313,7 +3312,6 @@ export function useAutomationRuns(params?: {
   return useQuery({
     queryKey: ["automation-runs", qs],
     queryFn: () => apiGet<{ data: AutomationRun[]; total: number }>(`/automations/runs${qs ? `?${qs}` : ""}`),
-    select: (res) => res.data,
     refetchInterval: POLL_LIST,
   });
 }

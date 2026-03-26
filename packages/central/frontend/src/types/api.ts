@@ -1621,6 +1621,7 @@ export interface Action {
   target: "collector" | "central";
   source_code: string;
   credential_type: string | null;
+  credential_id: string | null;
   timeout_seconds: number;
   enabled: boolean;
   created_at: string;
