@@ -86,6 +86,8 @@ async def run_query(
         else:
             sql = f"{sql}\nLIMIT {body.limit}"
 
+    import time as _time
+
     ch = get_clickhouse()
     client = ch._get_client()
 
@@ -94,6 +96,7 @@ async def run_query(
         "max_execution_time": 30,
     }
 
+    t0 = _time.monotonic()
     try:
         result = await asyncio.to_thread(
             client.query, sql, settings=query_settings,
@@ -111,21 +114,27 @@ async def run_query(
         raise HTTPException(status_code=400, detail=f"Query error: {msg}")
 
     columns = [
-        {"name": name, "type": col_type}
+        {"name": name, "type": getattr(col_type, "name", None) or str(col_type)}
         for name, col_type in zip(result.column_names, result.column_types)
     ]
+
+    elapsed_ms = round((_time.monotonic() - t0) * 1000, 1)
 
     # Convert rows to serialisable lists
     rows = []
     for row in result.result_rows:
         rows.append([_serialise(v) for v in row])
 
+    limit = body.limit or 1000
     return {
         "status": "success",
         "data": {
             "columns": columns,
             "rows": rows,
             "row_count": len(rows),
+            "truncated": len(rows) >= limit,
+            "execution_time_ms": elapsed_ms,
+            "query": body.sql,
         },
     }
 
