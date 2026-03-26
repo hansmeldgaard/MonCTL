@@ -76,6 +76,10 @@ packages/
 │   │   ├── events/             # Event policies, engine, active/cleared events
 │   │   │   ├── engine.py       # Event promotion engine (runs after alert engine)
 │   │   │   └── router.py       # Events CRUD, policies, acknowledge/clear
+│   │   ├── automations/         # Run Book Automation (actions + automations)
+│   │   │   ├── engine.py       # AutomationEngine: trigger evaluation, orchestration
+│   │   │   ├── executor.py     # Subprocess execution on central
+│   │   │   └── router.py       # CRUD for actions/automations + trigger + run history
 │   │   ├── dashboard/           # Aggregated dashboard summary endpoint
 │   │   ├── packs/              # Monitoring pack import/export
 │   │   ├── python_modules/     # Package registry + PyPI import + wheel distribution
@@ -179,6 +183,7 @@ packages/
 | `alert_log` | Alert fire/clear history | definition_id, entity_key, action, current_value, threshold_value |
 | `events` | Event lifecycle (active/ack/cleared) | definition_id, policy_id, severity, state |
 | `logs` | Centralized Docker/app logs | collector_name, container_name, level, message |
+| `rba_runs` | Automation run results | automation_id, device_id, status, step_results, duration_ms |
 
 Each table has a `*_latest` materialized view (ReplacingMergeTree) for instant latest-per-key lookups. Interface also has `interface_hourly` and `interface_daily` rollup tables.
 
@@ -261,6 +266,24 @@ Each table has a `*_latest` materialized view (ReplacingMergeTree) for instant l
 **Engine**: Runs every 30s via scheduler. Writes fire/clear records to `alert_log`. Resolves thresholds per-entity from 4-level hierarchy. Groups entities by effective threshold for batched ClickHouse queries.
 
 **Validation**: `POST /v1/alerts/validate-expression` returns `errors[]`, `warnings[]`, `referenced_metrics[]`, `threshold_params[]`, `has_arithmetic`, `has_division`.
+
+### Automations & Actions (Run Book Automation)
+
+**Two-layer system**: Actions are reusable Python scripts (stored in PostgreSQL). Automations chain one or more actions in sequence, triggered by events, cron schedules, or manual request.
+
+**Actions** (`actions` table): Python source code, target (`collector` or `central`), optional credential type, configurable timeout (5-300s). Execute in subprocess with `ActionContext` providing device info, credentials, event data, and shared data from previous steps. `context.set_output(key, value)` stores data for subsequent actions.
+
+**Automations** (`automations` table): Trigger type (`event` or `cron`), event filters (severity, device labels), cron expression + device scope, cooldown per device (default 300s). Steps ordered via `automation_steps` join table.
+
+**Execution**: `AutomationEngine` in `automations/engine.py`. Sequential fail-fast — if a step fails, the chain stops. Collector-targeted actions dispatched via WebSocket `run_action` command. Central-targeted actions run locally in subprocess. Results stored in ClickHouse `rba_runs` table.
+
+**Triggers**: Event-triggered automations fire from `events/engine.py` after event insertion. Cron-triggered automations evaluated every 30s in scheduler. Manual trigger via `POST /v1/automations/automations/{id}/trigger` with device_ids.
+
+**API**: `/v1/automations/actions` (CRUD), `/v1/automations/automations` (CRUD + trigger), `/v1/automations/runs` (history from ClickHouse).
+
+**Frontend**: `AutomationsPage.tsx` with 3 tabs (Automations, Actions, Run History). Code editor for action scripts, step builder for automation chains, run detail viewer with expandable step output.
+
+**Dependency**: `croniter>=2.0` for cron expression parsing.
 
 ### WebSocket Command Channel
 
