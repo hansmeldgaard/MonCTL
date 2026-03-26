@@ -135,54 +135,60 @@ export function AddWidgetDialog({ open, onClose, onSave, initial, schema, variab
               </div>
             </div>
 
-            {chartType !== "table" && result && (
+            {chartType !== "table" && (
               <>
-                <div className="space-y-1">
-                  <label className="text-xs text-zinc-500">X Axis</label>
-                  <select
-                    value={xColumn}
-                    onChange={(e) => setXColumn(e.target.value)}
-                    className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-300"
-                  >
-                    <option value="">Auto</option>
-                    {result.columns.map((c) => (
-                      <option key={c.name} value={c.name}>{c.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs text-zinc-500">Y Axis</label>
-                  <div className="flex flex-wrap gap-1">
-                    {result.columns.filter((c) => /^(U?Int|Float|Decimal)/i.test(c.type)).map((c) => (
-                      <button
-                        key={c.name}
-                        onClick={() => setYColumns((prev) =>
-                          prev.includes(c.name) ? prev.filter((x) => x !== c.name) : [...prev, c.name]
-                        )}
-                        className={`px-2 py-0.5 rounded text-[11px] ${
-                          yColumns.includes(c.name)
-                            ? "bg-brand-600/20 text-brand-400 border border-brand-600/40"
-                            : "text-zinc-500 hover:text-zinc-300 border border-zinc-700"
-                        }`}
+                {result ? (
+                  <>
+                    <div className="space-y-1">
+                      <label className="text-xs text-zinc-500">X Axis</label>
+                      <select
+                        value={xColumn}
+                        onChange={(e) => setXColumn(e.target.value)}
+                        className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-300"
                       >
-                        {c.name}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs text-zinc-500">Group By</label>
-                  <select
-                    value={groupByCol}
-                    onChange={(e) => setGroupByCol(e.target.value)}
-                    className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-300"
-                  >
-                    <option value="">None</option>
-                    {result.columns.filter((c) => !/^(U?Int|Float|Decimal)/i.test(c.type) && c.name !== xColumn).map((c) => (
-                      <option key={c.name} value={c.name}>{c.name}</option>
-                    ))}
-                  </select>
-                </div>
+                        <option value="">Auto</option>
+                        {result.columns.map((c) => (
+                          <option key={c.name} value={c.name}>{c.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs text-zinc-500">Y Axis</label>
+                      <div className="flex flex-wrap gap-1">
+                        {result.columns.filter((c) => /^(U?Int|Float|Decimal)/i.test(c.type)).map((c) => (
+                          <button
+                            key={c.name}
+                            onClick={() => setYColumns((prev) =>
+                              prev.includes(c.name) ? prev.filter((x) => x !== c.name) : [...prev, c.name]
+                            )}
+                            className={`px-2 py-0.5 rounded text-[11px] ${
+                              yColumns.includes(c.name)
+                                ? "bg-brand-600/20 text-brand-400 border border-brand-600/40"
+                                : "text-zinc-500 hover:text-zinc-300 border border-zinc-700"
+                            }`}
+                          >
+                            {c.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs text-zinc-500">Group By</label>
+                      <select
+                        value={groupByCol}
+                        onChange={(e) => setGroupByCol(e.target.value)}
+                        className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-300"
+                      >
+                        <option value="">None</option>
+                        {result.columns.filter((c) => !/^(U?Int|Float|Decimal)/i.test(c.type) && c.name !== xColumn).map((c) => (
+                          <option key={c.name} value={c.name}>{c.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-xs text-zinc-500 italic">Click Test to configure X/Y axes and Group By</p>
+                )}
               </>
             )}
 
