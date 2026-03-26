@@ -57,7 +57,6 @@ import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
 import type {
   Action,
   Automation,
-  AutomationRun,
   AutomationRunStepResult,
 } from "@/types/api.ts";
 
@@ -240,8 +239,7 @@ function ActionFormDialog({ action, onClose }: { action: Action | null; onClose:
 
   const createMut = useCreateAction();
   const updateMut = useUpdateAction();
-  const { data: credTypes } = useCredentialTypes();
-  const credentialTypes = credTypes?.data ?? credTypes ?? [];
+  const { data: credentialTypes = [] } = useCredentialTypes();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -282,7 +280,7 @@ function ActionFormDialog({ action, onClose }: { action: Action | null; onClose:
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="action-target">Target</Label>
-            <Select id="action-target" value={target} onChange={(e) => setTarget(e.target.value)}>
+            <Select id="action-target" value={target} onChange={(e) => setTarget(e.target.value as "collector" | "central")}>
               <option value="collector">Collector</option>
               <option value="central">Central</option>
             </Select>
@@ -623,7 +621,7 @@ function AutomationFormDialog({ automation, onClose }: { automation: Automation 
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="auto-trigger">Trigger Type</Label>
-            <Select id="auto-trigger" value={triggerType} onChange={(e) => setTriggerType(e.target.value)} disabled={isEdit}>
+            <Select id="auto-trigger" value={triggerType} onChange={(e) => setTriggerType(e.target.value as "event" | "cron")} disabled={isEdit}>
               <option value="event">Event</option>
               <option value="cron">Cron Schedule</option>
             </Select>
