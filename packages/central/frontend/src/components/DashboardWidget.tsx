@@ -6,12 +6,16 @@ import { QueryResultChart } from "@/components/QueryResultChart.tsx";
 import type { AnalyticsWidgetConfig, QueryResult } from "@/types/api.ts";
 import type { TimeRange } from "@/components/DashboardTimePicker.tsx";
 
+function toClickHouseDateTime(d: Date): string {
+  return d.toISOString().replace("T", " ").replace(/\.\d+Z$/, "");
+}
+
 function resolveTimestamp(input: string): string {
-  if (input === "now") return new Date().toISOString();
+  if (input === "now") return toClickHouseDateTime(new Date());
   const match = input.match(/^now-(\d+)([mhd])$/);
   if (match) {
     const ms = { m: 60000, h: 3600000, d: 86400000 }[match[2]]!;
-    return new Date(Date.now() - Number(match[1]) * ms).toISOString();
+    return toClickHouseDateTime(new Date(Date.now() - Number(match[1]) * ms));
   }
   return input;
 }
