@@ -64,6 +64,7 @@ export function TabTrigger({ value, children, className }: TabTriggerProps) {
   const isActive = ctx.value === value;
   return (
     <button
+      type="button"
       onClick={() => ctx.onChange(value)}
       className={cn(
         "px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px cursor-pointer",
