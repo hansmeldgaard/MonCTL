@@ -74,6 +74,7 @@ export function DashboardWidget({ id, title, config, onEdit, onDelete }: Props) 
             initialChartType={config.chart_type}
             initialXColumn={config.x_column}
             initialYColumns={config.y_columns}
+            initialGroupBy={config.group_by}
             hideControls
           />
         )}

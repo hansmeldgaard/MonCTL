@@ -32,6 +32,7 @@ export function AddWidgetDialog({ open, onClose, onSave, initial, schema }: Prop
   const [chartType, setChartType] = useState<ChartType>(initial?.config.chart_type || "table");
   const [xColumn, setXColumn] = useState(initial?.config.x_column || "");
   const [yColumns, setYColumns] = useState<string[]>(initial?.config.y_columns || []);
+  const [groupByCol, setGroupByCol] = useState(initial?.config.group_by || "");
   const [refreshSeconds, setRefreshSeconds] = useState(initial?.config.refresh_seconds || 0);
 
   const executeMut = useExecuteQuery();
@@ -52,6 +53,7 @@ export function AddWidgetDialog({ open, onClose, onSave, initial, schema }: Prop
         chart_type: chartType,
         x_column: chartType !== "table" ? xColumn : undefined,
         y_columns: chartType !== "table" ? yColumns : undefined,
+        group_by: chartType !== "table" && groupByCol ? groupByCol : undefined,
         refresh_seconds: refreshSeconds,
       },
     });
@@ -153,6 +155,19 @@ export function AddWidgetDialog({ open, onClose, onSave, initial, schema }: Prop
                     ))}
                   </div>
                 </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-zinc-500">Group By</label>
+                  <select
+                    value={groupByCol}
+                    onChange={(e) => setGroupByCol(e.target.value)}
+                    className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-300"
+                  >
+                    <option value="">None</option>
+                    {result.columns.filter((c) => !/^(U?Int|Float|Decimal)/i.test(c.type) && c.name !== xColumn).map((c) => (
+                      <option key={c.name} value={c.name}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
               </>
             )}
 
@@ -188,6 +203,7 @@ export function AddWidgetDialog({ open, onClose, onSave, initial, schema }: Prop
                   initialChartType={chartType}
                   initialXColumn={xColumn || undefined}
                   initialYColumns={yColumns.length > 0 ? yColumns : undefined}
+                  initialGroupBy={groupByCol || undefined}
                   hideControls
                 />
               )}

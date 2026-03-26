@@ -1566,6 +1566,7 @@ export interface AnalyticsWidgetConfig {
   chart_type: "table" | "line" | "bar" | "area" | "pie";
   x_column?: string;
   y_columns?: string[];
+  group_by?: string;
   refresh_seconds?: number;
 }
 

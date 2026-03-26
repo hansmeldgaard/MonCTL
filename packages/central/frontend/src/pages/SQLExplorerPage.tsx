@@ -1,21 +1,31 @@
 import { useState, useMemo } from "react";
-import { Loader2, Play, ChevronRight, ChevronDown, Table2, Database } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Loader2, Play, ChevronRight, ChevronDown, Table2, Database, Save } from "lucide-react";
 import { Button } from "@/components/ui/button.tsx";
 import { SqlEditor } from "@/components/SqlEditor.tsx";
 import { QueryResultTable } from "@/components/QueryResultTable.tsx";
 import { QueryResultChart } from "@/components/QueryResultChart.tsx";
-import { useAnalyticsTables, useExecuteQuery } from "@/api/hooks.ts";
+import {
+  useAnalyticsTables, useExecuteQuery,
+  useAnalyticsDashboards, useCreateAnalyticsDashboard, useUpdateAnalyticsDashboard,
+} from "@/api/hooks.ts";
 import type { QueryResult } from "@/types/api.ts";
 
 export function SQLExplorerPage() {
+  const navigate = useNavigate();
   const [sqlText, setSqlText] = useState(
     "SELECT device_name, state, rtt_ms, executed_at\nFROM availability_latency_latest FINAL\nWHERE device_name != ''\nORDER BY executed_at DESC\nLIMIT 100"
   );
   const [resultTab, setResultTab] = useState<"table" | "chart">("table");
   const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
+  const [showSaveMenu, setShowSaveMenu] = useState(false);
+  const [chartSettings, setChartSettings] = useState<{ chartType: string; xColumn: string; yColumns: string[]; groupBy: string }>({ chartType: "line", xColumn: "", yColumns: [], groupBy: "" });
 
   const { data: tables } = useAnalyticsTables();
   const executeMut = useExecuteQuery();
+  const { data: dashboards } = useAnalyticsDashboards();
+  const createDashMut = useCreateAnalyticsDashboard();
+  const updateDashMut = useUpdateAnalyticsDashboard();
 
   const result: QueryResult | undefined = executeMut.data?.data;
 
@@ -124,6 +134,75 @@ export function SQLExplorerPage() {
               Run
             </Button>
             <span className="text-[10px] text-zinc-600">Ctrl+Enter to execute</span>
+            {result && (
+              <div className="relative ml-auto">
+                <Button size="sm" variant="outline" onClick={() => setShowSaveMenu(!showSaveMenu)} className="gap-1">
+                  <Save className="h-3.5 w-3.5" />
+                  Save to Dashboard
+                </Button>
+                {showSaveMenu && (
+                  <div className="absolute right-0 top-full mt-1 z-20 bg-zinc-800 border border-zinc-700 rounded-md shadow-lg min-w-48 py-1">
+                    {(dashboards || []).map((d) => (
+                      <button
+                        key={d.id}
+                        onClick={async () => {
+                          await updateDashMut.mutateAsync({
+                            id: d.id,
+                            widgets: [...([] as { title: string; config: Record<string, unknown>; layout: Record<string, number> }[]),
+                              {
+                                title: sqlText.slice(0, 50),
+                                config: {
+                                  sql: sqlText,
+                                  chart_type: resultTab === "chart" ? chartSettings.chartType : "table",
+                                  x_column: resultTab === "chart" ? chartSettings.xColumn : undefined,
+                                  y_columns: resultTab === "chart" ? chartSettings.yColumns : undefined,
+                                  group_by: resultTab === "chart" ? chartSettings.groupBy : undefined,
+                                },
+                                layout: { x: 0, y: 99, w: 12, h: 6 },
+                              },
+                            ],
+                          });
+                          setShowSaveMenu(false);
+                          navigate(`/analytics/dashboards/${d.id}`);
+                        }}
+                        className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700"
+                      >
+                        {d.name}
+                      </button>
+                    ))}
+                    <div className="border-t border-zinc-700 mt-1 pt-1">
+                      <button
+                        onClick={async () => {
+                          const name = prompt("Dashboard name:");
+                          if (!name) return;
+                          const res = await createDashMut.mutateAsync({ name });
+                          const newId = res.data.id;
+                          await updateDashMut.mutateAsync({
+                            id: newId,
+                            widgets: [{
+                              title: sqlText.slice(0, 50),
+                              config: {
+                                sql: sqlText,
+                                chart_type: resultTab === "chart" ? chartSettings.chartType : "table",
+                                x_column: resultTab === "chart" ? chartSettings.xColumn : undefined,
+                                y_columns: resultTab === "chart" ? chartSettings.yColumns : undefined,
+                                group_by: resultTab === "chart" ? chartSettings.groupBy : undefined,
+                              },
+                              layout: { x: 0, y: 0, w: 12, h: 6 },
+                            }],
+                          });
+                          setShowSaveMenu(false);
+                          navigate(`/analytics/dashboards/${newId}`);
+                        }}
+                        className="w-full text-left px-3 py-1.5 text-xs text-brand-400 hover:bg-zinc-700"
+                      >
+                        + New Dashboard
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           <SqlEditor
             value={sqlText}
@@ -174,6 +253,7 @@ export function SQLExplorerPage() {
                 <QueryResultChart
                   columns={result.columns}
                   rows={result.rows}
+                  onSettingsChange={(s) => setChartSettings(s)}
                 />
               )}
             </div>
