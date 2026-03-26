@@ -53,6 +53,9 @@ import {
   useAutomationRun,
   useDevices,
   useCredentialTypes,
+  useEventPolicies,
+  useLabelKeys,
+  useLabelValues,
 } from "@/api/hooks.ts";
 import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
 import type {
@@ -545,6 +548,7 @@ function AutomationFormDialog({ automation, prefill, onClose }: { automation: Au
   const [description, setDescription] = useState(automation?.description ?? "");
   const [triggerType, setTriggerType] = useState((automation?.trigger_type ?? prefill?.trigger_type ?? "event") as "event" | "cron");
   const [severityFilter, setSeverityFilter] = useState(automation?.event_severity_filter ?? prefill?.event_severity_filter ?? "");
+  const [selectedPolicyIds, setSelectedPolicyIds] = useState<string[]>(automation?.event_policy_ids ?? []);
   const [cronExpr, setCronExpr] = useState(automation?.cron_expression ?? "");
   const [cooldown, setCooldown] = useState(String(automation?.cooldown_seconds ?? 300));
   const [selectedDeviceIds, setSelectedDeviceIds] = useState<string[]>(initDeviceIds);
@@ -553,6 +557,9 @@ function AutomationFormDialog({ automation, prefill, onClose }: { automation: Au
   );
   const [labelKey, setLabelKey] = useState(Object.keys(automation?.device_label_filter ?? {})[0] ?? "");
   const [labelValue, setLabelValue] = useState(Object.values(automation?.device_label_filter ?? {})[0] ?? "");
+  const [deviceSearch, setDeviceSearch] = useState("");
+  const [policySearch, setPolicySearch] = useState("");
+  const [labelSearch, setLabelSearch] = useState("");
   const [enabled, setEnabled] = useState(automation?.enabled ?? true);
   const [steps, setSteps] = useState<Array<{ action_id: string; step_order: number; credential_type_override: string; timeout_override: string }>>(
     automation?.steps?.map((s) => ({
@@ -568,8 +575,12 @@ function AutomationFormDialog({ automation, prefill, onClose }: { automation: Au
   const updateMut = useUpdateAutomation();
   const { data: actionsData } = useActions({ page_size: 100 });
   const availableActions = actionsData?.data ?? [];
-  const { data: devicesResp } = useDevices({ limit: 200 });
+  const { data: devicesResp } = useDevices({ limit: 500 });
   const allDevices = devicesResp?.data ?? [];
+  const { data: policiesResp } = useEventPolicies({ limit: 200 });
+  const allPolicies = policiesResp?.data ?? [];
+  const { data: labelKeys = [] } = useLabelKeys();
+  const { data: labelValues = [] } = useLabelValues(labelKey || null);
 
   function addStep() {
     setSteps((prev) => [...prev, { action_id: "", step_order: prev.length + 1, credential_type_override: "", timeout_override: "" }]);
@@ -609,6 +620,7 @@ function AutomationFormDialog({ automation, prefill, onClose }: { automation: Au
       description: description.trim() || null,
       trigger_type: triggerType,
       event_severity_filter: triggerType === "event" ? (severityFilter || null) : null,
+      event_policy_ids: triggerType === "event" && selectedPolicyIds.length > 0 ? selectedPolicyIds : null,
       event_label_filter: null,
       cron_expression: triggerType === "cron" ? cronExpr.trim() : null,
       cron_device_label_filter: null,
@@ -657,15 +669,54 @@ function AutomationFormDialog({ automation, prefill, onClose }: { automation: Au
         </div>
 
         {triggerType === "event" && (
-          <div className="space-y-1.5">
-            <Label htmlFor="auto-severity">Severity Filter</Label>
-            <Select id="auto-severity" value={severityFilter} onChange={(e) => setSeverityFilter(e.target.value)}>
-              <option value="">Any severity</option>
-              <option value="info">Info</option>
-              <option value="warning">Warning</option>
-              <option value="critical">Critical</option>
-              <option value="emergency">Emergency</option>
-            </Select>
+          <div className="space-y-3">
+            {/* Event Policies */}
+            <div className="space-y-1.5">
+              <Label>Event Policies {selectedPolicyIds.length > 0 && <span className="text-zinc-500">({selectedPolicyIds.length} selected)</span>}</Label>
+              <ClearableInput
+                placeholder="Search policies..."
+                value={policySearch}
+                onChange={(e) => setPolicySearch(e.target.value)}
+                onClear={() => setPolicySearch("")}
+                className="h-7 text-xs"
+              />
+              <div className="max-h-32 overflow-y-auto rounded-md border border-zinc-700 bg-zinc-900">
+                {allPolicies.length === 0 ? (
+                  <p className="text-xs text-zinc-500 px-3 py-2">No event policies configured</p>
+                ) : (
+                  allPolicies
+                    .filter((p) => !policySearch || p.name.toLowerCase().includes(policySearch.toLowerCase()) || (p.definition_name || "").toLowerCase().includes(policySearch.toLowerCase()))
+                    .map((p) => (
+                      <label key={p.id} className="flex items-center gap-2 px-3 py-1 hover:bg-zinc-800 cursor-pointer text-sm text-zinc-300">
+                        <input
+                          type="checkbox"
+                          checked={selectedPolicyIds.includes(p.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) setSelectedPolicyIds((prev) => [...prev, p.id]);
+                            else setSelectedPolicyIds((prev) => prev.filter((id) => id !== p.id));
+                          }}
+                          className="rounded border-zinc-600"
+                        />
+                        <span className="flex-1 truncate">{p.name}</span>
+                        <span className="text-zinc-500 text-xs">{p.event_severity}</span>
+                      </label>
+                    ))
+                )}
+              </div>
+              <p className="text-xs text-zinc-500">Leave empty to match all events. Select specific policies to narrow the trigger.</p>
+            </div>
+
+            {/* Severity Filter */}
+            <div className="space-y-1.5">
+              <Label htmlFor="auto-severity">Severity Filter</Label>
+              <Select id="auto-severity" value={severityFilter} onChange={(e) => setSeverityFilter(e.target.value)}>
+                <option value="">Any severity</option>
+                <option value="info">Info</option>
+                <option value="warning">Warning</option>
+                <option value="critical">Critical</option>
+                <option value="emergency">Emergency</option>
+              </Select>
+            </div>
           </div>
         )}
 
@@ -689,28 +740,72 @@ function AutomationFormDialog({ automation, prefill, onClose }: { automation: Au
             ))}
           </div>
           {deviceScope === "devices" && (
-            <div className="max-h-36 overflow-y-auto rounded-md border border-zinc-700 bg-zinc-900">
-              {allDevices.map((d) => (
-                <label key={d.id} className="flex items-center gap-2 px-3 py-1 hover:bg-zinc-800 cursor-pointer text-sm text-zinc-300">
-                  <input
-                    type="checkbox"
-                    checked={selectedDeviceIds.includes(d.id)}
-                    onChange={(e) => {
-                      if (e.target.checked) setSelectedDeviceIds((p) => [...p, d.id]);
-                      else setSelectedDeviceIds((p) => p.filter((id) => id !== d.id));
-                    }}
-                    className="rounded border-zinc-600"
-                  />
-                  {d.name}
-                  <span className="text-zinc-500 text-xs ml-auto">{d.address}</span>
-                </label>
-              ))}
+            <div className="space-y-1.5">
+              <ClearableInput
+                placeholder="Search by name or IP..."
+                value={deviceSearch}
+                onChange={(e) => setDeviceSearch(e.target.value)}
+                onClear={() => setDeviceSearch("")}
+                className="h-7 text-xs"
+              />
+              {selectedDeviceIds.length > 0 && (
+                <p className="text-xs text-zinc-500">{selectedDeviceIds.length} device(s) selected</p>
+              )}
+              <div className="max-h-36 overflow-y-auto rounded-md border border-zinc-700 bg-zinc-900">
+                {allDevices
+                  .filter((d) => {
+                    if (!deviceSearch) return true;
+                    const q = deviceSearch.toLowerCase();
+                    return d.name.toLowerCase().includes(q) || d.address.toLowerCase().includes(q);
+                  })
+                  .map((d) => (
+                    <label key={d.id} className="flex items-center gap-2 px-3 py-1 hover:bg-zinc-800 cursor-pointer text-sm text-zinc-300">
+                      <input
+                        type="checkbox"
+                        checked={selectedDeviceIds.includes(d.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) setSelectedDeviceIds((p) => [...p, d.id]);
+                          else setSelectedDeviceIds((p) => p.filter((id) => id !== d.id));
+                        }}
+                        className="rounded border-zinc-600"
+                      />
+                      <span className="truncate">{d.name}</span>
+                      <span className="text-zinc-500 text-xs ml-auto shrink-0">{d.address}</span>
+                    </label>
+                  ))}
+              </div>
             </div>
           )}
           {deviceScope === "labels" && (
-            <div className="grid grid-cols-2 gap-2">
-              <Input placeholder="Label key (e.g. site)" value={labelKey} onChange={(e) => setLabelKey(e.target.value)} />
-              <Input placeholder="Label value (e.g. aarhus)" value={labelValue} onChange={(e) => setLabelValue(e.target.value)} />
+            <div className="space-y-1.5">
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <ClearableInput
+                    placeholder="Search labels..."
+                    value={labelSearch}
+                    onChange={(e) => setLabelSearch(e.target.value)}
+                    onClear={() => setLabelSearch("")}
+                    className="h-7 text-xs"
+                  />
+                  <Select value={labelKey} onChange={(e) => { setLabelKey(e.target.value); setLabelValue(""); }}>
+                    <option value="">Select label key...</option>
+                    {labelKeys
+                      .filter((lk) => !labelSearch || lk.key.toLowerCase().includes(labelSearch.toLowerCase()))
+                      .map((lk) => (
+                        <option key={lk.id} value={lk.key}>{lk.key}{lk.description ? ` — ${lk.description}` : ""}</option>
+                      ))}
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-xs text-zinc-500 h-7 flex items-center">Value</p>
+                  <Select value={labelValue} onChange={(e) => setLabelValue(e.target.value)} disabled={!labelKey}>
+                    <option value="">Any value</option>
+                    {labelValues.map((v) => (
+                      <option key={v} value={v}>{v}</option>
+                    ))}
+                  </Select>
+                </div>
+              </div>
             </div>
           )}
         </div>

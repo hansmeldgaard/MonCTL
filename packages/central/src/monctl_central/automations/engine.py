@@ -103,6 +103,12 @@ class AutomationEngine:
 
     def _event_matches(self, automation: Automation, event: dict) -> bool:
         """Check if an event matches the automation's trigger filters."""
+        # Event policy filter: only trigger for specific event policies
+        if automation.event_policy_ids:
+            event_policy_id = str(event.get("policy_id", ""))
+            if event_policy_id not in automation.event_policy_ids:
+                return False
+
         if automation.event_severity_filter:
             if event.get("severity", "") != automation.event_severity_filter:
                 return False

@@ -1643,6 +1643,7 @@ export interface Automation {
   description: string | null;
   trigger_type: "event" | "cron";
   event_severity_filter: string | null;
+  event_policy_ids: string[] | null;
   event_label_filter: Record<string, string> | null;
   cron_expression: string | null;
   cron_device_label_filter: Record<string, string> | null;

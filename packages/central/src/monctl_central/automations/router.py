@@ -53,11 +53,11 @@ class CreateAutomationRequest(BaseModel):
     description: str | None = None
     trigger_type: str
     event_severity_filter: str | None = None
+    event_policy_ids: list[str] | None = None
     event_label_filter: dict | None = None
     cron_expression: str | None = None
     cron_device_label_filter: dict | None = None
     cron_device_ids: list[str] | None = None
-    # Unified device scope (works for both event and cron triggers)
     device_ids: list[str] | None = None
     device_label_filter: dict | None = None
     cooldown_seconds: int = Field(default=300, ge=0)
@@ -69,6 +69,7 @@ class UpdateAutomationRequest(BaseModel):
     name: str | None = Field(default=None, max_length=200)
     description: str | None = None
     event_severity_filter: str | None = None
+    event_policy_ids: list[str] | None = None
     event_label_filter: dict | None = None
     cron_expression: str | None = None
     cron_device_label_filter: dict | None = None
@@ -108,6 +109,7 @@ def _fmt_automation(a: Automation) -> dict:
         "description": a.description,
         "trigger_type": a.trigger_type,
         "event_severity_filter": a.event_severity_filter,
+        "event_policy_ids": a.event_policy_ids,
         "event_label_filter": a.event_label_filter,
         "cron_expression": a.cron_expression,
         "cron_device_label_filter": a.cron_device_label_filter,
@@ -347,6 +349,7 @@ async def create_automation(
         description=request.description,
         trigger_type=request.trigger_type,
         event_severity_filter=request.event_severity_filter,
+        event_policy_ids=request.event_policy_ids,
         event_label_filter=request.event_label_filter,
         cron_expression=request.cron_expression,
         cron_device_label_filter=request.cron_device_label_filter,
@@ -407,6 +410,8 @@ async def update_automation(
         automation.description = request.description
     if request.event_severity_filter is not None:
         automation.event_severity_filter = request.event_severity_filter
+    if request.event_policy_ids is not None:
+        automation.event_policy_ids = request.event_policy_ids
     if request.event_label_filter is not None:
         automation.event_label_filter = request.event_label_filter
     if request.cron_expression is not None:

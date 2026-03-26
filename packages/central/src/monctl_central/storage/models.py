@@ -1329,6 +1329,7 @@ class Automation(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     trigger_type: Mapped[str] = mapped_column(String(20), nullable=False)
     event_severity_filter: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    event_policy_ids: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     event_label_filter: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     cron_expression: Mapped[str | None] = mapped_column(String(100), nullable=True)
     cron_device_label_filter: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
