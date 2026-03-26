@@ -6,6 +6,7 @@ import { SqlEditor } from "@/components/SqlEditor.tsx";
 import { QueryResultTable } from "@/components/QueryResultTable.tsx";
 import { QueryResultChart } from "@/components/QueryResultChart.tsx";
 import { useExecuteQuery } from "@/api/hooks.ts";
+import { resolveSQL } from "@/components/DashboardWidget.tsx";
 import type { AnalyticsWidgetConfig, QueryResult, DashboardVariable } from "@/types/api.ts";
 
 type ChartType = AnalyticsWidgetConfig["chart_type"];
@@ -46,7 +47,8 @@ export function AddWidgetDialog({ open, onClose, onSave, initial, schema, variab
 
   function handleTest() {
     if (!sqlText.trim()) return;
-    executeMut.mutate({ sql: sqlText, limit: 100 });
+    const testSQL = resolveSQL(sqlText, { from: "now-1h", to: "now" });
+    executeMut.mutate({ sql: testSQL, limit: 100 });
   }
 
   function handleSave() {

@@ -6,11 +6,11 @@ import { QueryResultChart } from "@/components/QueryResultChart.tsx";
 import type { AnalyticsWidgetConfig, QueryResult } from "@/types/api.ts";
 import type { TimeRange } from "@/components/DashboardTimePicker.tsx";
 
-function toClickHouseDateTime(d: Date): string {
+export function toClickHouseDateTime(d: Date): string {
   return d.toISOString().replace("T", " ").replace(/\.\d+Z$/, "");
 }
 
-function resolveTimestamp(input: string): string {
+export function resolveTimestamp(input: string): string {
   if (input === "now") return toClickHouseDateTime(new Date());
   const match = input.match(/^now-(\d+)([mhd])$/);
   if (match) {
@@ -20,7 +20,7 @@ function resolveTimestamp(input: string): string {
   return input;
 }
 
-function resolveSQL(
+export function resolveSQL(
   sql: string,
   timeRange?: TimeRange,
   variables?: Record<string, string>,
