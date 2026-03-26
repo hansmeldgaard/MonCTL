@@ -512,6 +512,13 @@ async def list_assignments(
             dev = devices[a.device_id]
             if dev.default_credential_id:
                 all_cred_ids.add(dev.default_credential_id)
+            # Per-protocol credentials from device.credentials JSONB
+            if dev.credentials:
+                for cred_val in dev.credentials.values():
+                    try:
+                        all_cred_ids.add(uuid.UUID(str(cred_val)))
+                    except (ValueError, TypeError):
+                        pass
 
     # Load credential overrides for all assignments
     assignment_ids = [row.AppAssignment.id for row in rows]
@@ -553,6 +560,35 @@ async def list_assignments(
         coll_stmt = select(Collector.id, Collector.name).where(Collector.id.in_(collector_ids))
         coll_rows = (await db.execute(coll_stmt)).all()
         collector_name_map = {r.id: r.name for r in coll_rows}
+
+    def _resolve_device_credential_name(
+        assignment, app, devs: dict, cred_names: dict,
+    ) -> str | None:
+        """Resolve effective device-level credential name for display.
+
+        Priority: device.default_credential_id → device.credentials[connector_alias]
+        """
+        if not assignment.device_id or assignment.device_id not in devs:
+            return None
+        dev = devs[assignment.device_id]
+        # 1. Explicit default credential
+        if dev.default_credential_id:
+            name = cred_names.get(dev.default_credential_id)
+            if name:
+                return name
+        # 2. Per-protocol credential matching connector alias
+        if dev.credentials and app.connector_bindings:
+            for cb in app.connector_bindings:
+                alias = cb.alias
+                if alias in dev.credentials:
+                    try:
+                        cred_id = uuid.UUID(str(dev.credentials[alias]))
+                        name = cred_names.get(cred_id)
+                        if name:
+                            return name
+                    except (ValueError, TypeError):
+                        pass
+        return None
 
     return {
         "status": "success",
@@ -603,15 +639,8 @@ async def list_assignments(
                     }
                     for alias, cred_id in overrides_map.get(row.AppAssignment.id, {}).items()
                 ],
-                "device_default_credential_name": (
-                    cred_name_map.get(devices[row.AppAssignment.device_id].default_credential_id)
-                    if (
-                        row.AppAssignment.device_id
-                        and row.AppAssignment.device_id in devices
-                        and devices[row.AppAssignment.device_id].default_credential_id
-                        and row.App.connector_bindings
-                    )
-                    else None
+                "device_default_credential_name": _resolve_device_credential_name(
+                    row.AppAssignment, row.App, devices, cred_name_map,
                 ),
                 "connector_bindings": [
                     {
