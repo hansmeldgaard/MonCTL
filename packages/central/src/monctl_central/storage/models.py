@@ -1298,3 +1298,70 @@ class AnalyticsWidget(Base):
     )
 
     dashboard: Mapped["AnalyticsDashboard"] = relationship(back_populates="widgets")
+
+
+class Action(Base):
+    """A reusable Python script that can execute on a collector or on central."""
+    __tablename__ = "actions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target: Mapped[str] = mapped_column(String(20), nullable=False, server_default="'collector'")
+    source_code: Mapped[str] = mapped_column(Text, nullable=False, server_default="''")
+    credential_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False, server_default="60")
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default="now()"
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default="now()"
+    )
+
+
+class Automation(Base):
+    """An orchestration that chains one or more actions, triggered by events or cron."""
+    __tablename__ = "automations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    trigger_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    event_severity_filter: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    event_label_filter: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    cron_expression: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    cron_device_label_filter: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    cron_device_ids: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    cooldown_seconds: Mapped[int] = mapped_column(Integer, nullable=False, server_default="300")
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default="now()"
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default="now()"
+    )
+
+    steps: Mapped[list["AutomationStep"]] = relationship(
+        "AutomationStep", back_populates="automation",
+        cascade="all, delete-orphan", order_by="AutomationStep.step_order"
+    )
+
+
+class AutomationStep(Base):
+    """A single step in an automation chain, linking to an action."""
+    __tablename__ = "automation_steps"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    automation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("automations.id", ondelete="CASCADE"), nullable=False
+    )
+    action_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("actions.id", ondelete="RESTRICT"), nullable=False
+    )
+    step_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    credential_type_override: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    timeout_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    automation: Mapped["Automation"] = relationship("Automation", back_populates="steps")
+    action: Mapped["Action"] = relationship("Action")

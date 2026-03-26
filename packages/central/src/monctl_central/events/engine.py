@@ -66,6 +66,15 @@ class EventEngine:
                 except Exception:
                     logger.exception("events_insert_error")
 
+            # Notify automation engine of new events
+            if events_to_insert:
+                try:
+                    from monctl_central.automations.engine import AutomationEngine
+                    auto_engine = AutomationEngine(self._session_factory, self._ch)
+                    await auto_engine.on_new_events(events_to_insert)
+                except Exception:
+                    logger.exception("automation_event_trigger_error")
+
     async def _evaluate_policy(
         self, session: AsyncSession, policy: EventPolicy
     ) -> list[dict]:

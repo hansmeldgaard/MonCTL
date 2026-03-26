@@ -1611,3 +1611,83 @@ export interface AnalyticsDashboardSummary {
   widget_count: number;
   updated_at: string;
 }
+
+// ── Automations ───────────────────────────────────────────
+
+export interface Action {
+  id: string;
+  name: string;
+  description: string | null;
+  target: "collector" | "central";
+  source_code: string;
+  credential_type: string | null;
+  timeout_seconds: number;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AutomationStep {
+  id: string;
+  action_id: string;
+  action_name: string;
+  action_target: "collector" | "central";
+  step_order: number;
+  credential_type_override: string | null;
+  timeout_override: number | null;
+}
+
+export interface Automation {
+  id: string;
+  name: string;
+  description: string | null;
+  trigger_type: "event" | "cron";
+  event_severity_filter: string | null;
+  event_label_filter: Record<string, string> | null;
+  cron_expression: string | null;
+  cron_device_label_filter: Record<string, string> | null;
+  cron_device_ids: string[] | null;
+  cooldown_seconds: number;
+  enabled: boolean;
+  steps: AutomationStep[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AutomationRunStepResult {
+  step: number;
+  action_id: string;
+  action_name: string;
+  target: "collector" | "central";
+  status: "success" | "failed" | "timeout" | "skipped";
+  stdout: string;
+  stderr: string;
+  exit_code: number;
+  duration_ms: number;
+  output_data: Record<string, unknown>;
+}
+
+export interface AutomationRun {
+  run_id: string;
+  automation_id: string;
+  automation_name: string;
+  trigger_type: "event" | "cron" | "manual";
+  event_id: string;
+  event_severity: string;
+  event_message: string;
+  device_id: string;
+  device_name: string;
+  device_ip: string;
+  collector_id: string;
+  collector_name: string;
+  status: "running" | "success" | "failed" | "timeout";
+  total_steps: number;
+  completed_steps: number;
+  failed_step: number;
+  step_results: AutomationRunStepResult[];
+  shared_data: Record<string, unknown>;
+  started_at: string;
+  finished_at: string;
+  duration_ms: number;
+  triggered_by: string;
+}

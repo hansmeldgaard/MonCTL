@@ -62,6 +62,8 @@ class SchedulerRunner:
                 await self._evaluate_alerts()
                 # Event policy evaluation (runs after alerts)
                 await self._evaluate_event_policies()
+                # Cron automation evaluation (runs after events)
+                await self._evaluate_cron_automations()
                 # Rollup + cleanup (checked every cycle, runs based on time)
                 await self._run_rollups()
                 # App cache TTL cleanup every 5 min (every 10th cycle)
@@ -163,6 +165,20 @@ class SchedulerRunner:
             await engine.evaluate_all()
         except Exception:
             logger.exception("event_policy_evaluation_error")
+
+    async def _evaluate_cron_automations(self) -> None:
+        """Run cron automation evaluation if ClickHouse is available."""
+        if self._ch is None:
+            return
+        try:
+            from monctl_central.automations.engine import AutomationEngine
+            engine = AutomationEngine(
+                session_factory=self._session_factory,
+                ch_client=self._ch,
+            )
+            await engine.evaluate_cron_triggers()
+        except Exception:
+            logger.exception("cron_automation_error")
 
     async def _run_rollups(self) -> None:
         """Run hourly/daily rollups and retention cleanup when due."""

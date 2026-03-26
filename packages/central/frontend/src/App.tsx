@@ -23,6 +23,7 @@ import { SQLExplorerPage } from "@/pages/SQLExplorerPage.tsx";
 import { CustomDashboardsPage } from "@/pages/CustomDashboardsPage.tsx";
 import { DashboardEditorPage } from "@/pages/DashboardEditorPage.tsx";
 import { DeviceTypesPage } from "@/pages/DiscoveryRulesPage.tsx";
+import { AutomationsPage } from "@/pages/AutomationsPage.tsx";
 
 export function App() {
   return (
@@ -48,6 +49,7 @@ export function App() {
         <Route path="analytics/explorer" element={<SQLExplorerPage />} />
         <Route path="analytics/dashboards" element={<CustomDashboardsPage />} />
         <Route path="analytics/dashboards/:id" element={<DashboardEditorPage />} />
+        <Route path="automations" element={<AutomationsPage />} />
         <Route path="upgrades" element={<UpgradesPage />} />
         <Route path="device-types" element={<DeviceTypesPage />} />
         <Route path="settings" element={<SettingsPage />} />

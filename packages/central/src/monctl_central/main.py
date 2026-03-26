@@ -736,6 +736,7 @@ _TAGS = [
     {"name": "events",      "description": "Events and event policies. Events are promoted from alerts via configurable policies."},
     {"name": "upgrades", "description": "System upgrade management. Upload bundles, orchestrate rolling upgrades, manage OS patches."},
     {"name": "dashboard", "description": "Aggregated dashboard data for operational overview."},
+    {"name": "automations", "description": "Run Book Automation: actions, automations, and run history."},
 ]
 
 app = FastAPI(

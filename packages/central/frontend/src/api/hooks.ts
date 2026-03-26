@@ -97,6 +97,9 @@ import type {
   QueryResult,
   AnalyticsDashboardSummary,
   AnalyticsDashboard,
+  Action,
+  Automation,
+  AutomationRun,
 } from "@/types/api.ts";
 
 function buildListQs(params: ListParams): string {
@@ -3143,5 +3146,183 @@ export function useDeleteAnalyticsDashboard() {
   return useMutation({
     mutationFn: (id: string) => apiDelete(`/analytics/dashboards/${id}`),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["analytics-dashboards"] }); },
+  });
+}
+
+// ── Actions ──────────────────────────────────────────────
+
+export function useActions(params?: {
+  search?: string;
+  target?: string;
+  page?: number;
+  page_size?: number;
+  sort_by?: string;
+  sort_dir?: string;
+}) {
+  const query = new URLSearchParams();
+  if (params?.search) query.set("search", params.search);
+  if (params?.target) query.set("target", params.target);
+  if (params?.page) query.set("page", String(params.page));
+  if (params?.page_size) query.set("page_size", String(params.page_size));
+  if (params?.sort_by) query.set("sort_by", params.sort_by);
+  if (params?.sort_dir) query.set("sort_dir", params.sort_dir);
+  const qs = query.toString();
+  return useQuery({
+    queryKey: ["actions", qs],
+    queryFn: () => apiGet<{ data: Action[]; total: number }>(`/automations/actions${qs ? `?${qs}` : ""}`),
+    select: (res) => res.data,
+    refetchInterval: POLL_LIST,
+  });
+}
+
+export function useAction(id: string) {
+  return useQuery({
+    queryKey: ["action", id],
+    queryFn: () => apiGet<Action>(`/automations/actions/${id}`),
+    select: (res) => res.data,
+    enabled: !!id,
+  });
+}
+
+export function useCreateAction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: {
+      name: string;
+      description?: string;
+      target: string;
+      source_code?: string;
+      credential_type?: string;
+      timeout_seconds?: number;
+    }) => apiPost("/automations/actions", data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["actions"] }),
+  });
+}
+
+export function useUpdateAction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...data }: { id: string } & Record<string, unknown>) =>
+      apiPut(`/automations/actions/${id}`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["actions"] });
+      qc.invalidateQueries({ queryKey: ["action"] });
+    },
+  });
+}
+
+export function useDeleteAction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/automations/actions/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["actions"] }),
+  });
+}
+
+// ── Automations ──────────────────────────────────────────
+
+export function useAutomations(params?: {
+  search?: string;
+  trigger_type?: string;
+  page?: number;
+  page_size?: number;
+  sort_by?: string;
+  sort_dir?: string;
+}) {
+  const query = new URLSearchParams();
+  if (params?.search) query.set("search", params.search);
+  if (params?.trigger_type) query.set("trigger_type", params.trigger_type);
+  if (params?.page) query.set("page", String(params.page));
+  if (params?.page_size) query.set("page_size", String(params.page_size));
+  if (params?.sort_by) query.set("sort_by", params.sort_by);
+  if (params?.sort_dir) query.set("sort_dir", params.sort_dir);
+  const qs = query.toString();
+  return useQuery({
+    queryKey: ["automations", qs],
+    queryFn: () => apiGet<{ data: Automation[]; total: number }>(`/automations/automations${qs ? `?${qs}` : ""}`),
+    select: (res) => res.data,
+    refetchInterval: POLL_LIST,
+  });
+}
+
+export function useAutomation(id: string) {
+  return useQuery({
+    queryKey: ["automation", id],
+    queryFn: () => apiGet<Automation>(`/automations/automations/${id}`),
+    select: (res) => res.data,
+    enabled: !!id,
+  });
+}
+
+export function useCreateAutomation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: Record<string, unknown>) =>
+      apiPost("/automations/automations", data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["automations"] }),
+  });
+}
+
+export function useUpdateAutomation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...data }: { id: string } & Record<string, unknown>) =>
+      apiPut(`/automations/automations/${id}`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["automations"] });
+      qc.invalidateQueries({ queryKey: ["automation"] });
+    },
+  });
+}
+
+export function useDeleteAutomation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/automations/automations/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["automations"] }),
+  });
+}
+
+export function useTriggerAutomation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, device_ids }: { id: string; device_ids: string[] }) =>
+      apiPost(`/automations/automations/${id}/trigger`, { device_ids }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["automation-runs"] }),
+  });
+}
+
+// ── Automation Runs ──────────────────────────────────────
+
+export function useAutomationRuns(params?: {
+  automation_id?: string;
+  device_id?: string;
+  event_id?: string;
+  status?: string;
+  page?: number;
+  page_size?: number;
+}) {
+  const query = new URLSearchParams();
+  if (params?.automation_id) query.set("automation_id", params.automation_id);
+  if (params?.device_id) query.set("device_id", params.device_id);
+  if (params?.event_id) query.set("event_id", params.event_id);
+  if (params?.status) query.set("status", params.status);
+  if (params?.page) query.set("page", String(params.page));
+  if (params?.page_size) query.set("page_size", String(params.page_size));
+  const qs = query.toString();
+  return useQuery({
+    queryKey: ["automation-runs", qs],
+    queryFn: () => apiGet<{ data: AutomationRun[]; total: number }>(`/automations/runs${qs ? `?${qs}` : ""}`),
+    select: (res) => res.data,
+    refetchInterval: POLL_LIST,
+  });
+}
+
+export function useAutomationRun(runId: string) {
+  return useQuery({
+    queryKey: ["automation-run", runId],
+    queryFn: () => apiGet<AutomationRun>(`/automations/runs/${runId}`),
+    select: (res) => res.data,
+    enabled: !!runId,
   });
 }

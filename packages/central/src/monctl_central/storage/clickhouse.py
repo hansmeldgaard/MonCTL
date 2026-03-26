@@ -937,6 +937,72 @@ TTL toDateTime(timestamp) + INTERVAL 7 DAY
 SETTINGS index_granularity = 8192
 """
 
+_RBA_RUNS_DDL = """
+CREATE TABLE IF NOT EXISTS rba_runs ON CLUSTER '{cluster}'
+(
+    run_id             UUID          DEFAULT generateUUIDv4(),
+    automation_id      UUID,
+    automation_name    String        DEFAULT '',
+    trigger_type       String        DEFAULT '',
+    event_id           String        DEFAULT '',
+    event_severity     String        DEFAULT '',
+    event_message      String        DEFAULT '',
+    device_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    device_name        String        DEFAULT '',
+    device_ip          String        DEFAULT '',
+    collector_id       UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    collector_name     String        DEFAULT '',
+    status             String        DEFAULT 'running',
+    total_steps        UInt8         DEFAULT 0,
+    completed_steps    UInt8         DEFAULT 0,
+    failed_step        UInt8         DEFAULT 0,
+    step_results       String        DEFAULT '[]',
+    shared_data        String        DEFAULT '{}',
+    started_at         DateTime64(3, 'UTC'),
+    finished_at        DateTime64(3, 'UTC') DEFAULT toDateTime64(0, 3),
+    duration_ms        UInt32        DEFAULT 0,
+    triggered_by       String        DEFAULT ''
+)
+ENGINE = ReplicatedMergeTree(
+    '/clickhouse/tables/{{shard}}/rba_runs', '{{replica}}'
+)
+PARTITION BY toYYYYMM(started_at)
+ORDER BY (automation_id, started_at, run_id)
+SETTINGS index_granularity = 8192
+"""
+
+_RBA_RUNS_DDL_LOCAL = """
+CREATE TABLE IF NOT EXISTS rba_runs
+(
+    run_id             UUID          DEFAULT generateUUIDv4(),
+    automation_id      UUID,
+    automation_name    String        DEFAULT '',
+    trigger_type       String        DEFAULT '',
+    event_id           String        DEFAULT '',
+    event_severity     String        DEFAULT '',
+    event_message      String        DEFAULT '',
+    device_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    device_name        String        DEFAULT '',
+    device_ip          String        DEFAULT '',
+    collector_id       UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    collector_name     String        DEFAULT '',
+    status             String        DEFAULT 'running',
+    total_steps        UInt8         DEFAULT 0,
+    completed_steps    UInt8         DEFAULT 0,
+    failed_step        UInt8         DEFAULT 0,
+    step_results       String        DEFAULT '[]',
+    shared_data        String        DEFAULT '{}',
+    started_at         DateTime64(3, 'UTC'),
+    finished_at        DateTime64(3, 'UTC') DEFAULT toDateTime64(0, 3),
+    duration_ms        UInt32        DEFAULT 0,
+    triggered_by       String        DEFAULT ''
+)
+ENGINE = MergeTree()
+PARTITION BY toYYYYMM(started_at)
+ORDER BY (automation_id, started_at, run_id)
+SETTINGS index_granularity = 8192
+"""
+
 
 class ClickHouseClient:
     """Thin wrapper around clickhouse-connect for MonCTL operations."""
@@ -1089,6 +1155,7 @@ class ClickHouseClient:
                 _AVAIL_HOURLY_DDL,
                 _AVAIL_DAILY_DDL,
                 _LOGS_DDL,
+                _RBA_RUNS_DDL,
             ]:
                 client.command(ddl.format(cluster=self._cluster_name))
             for mv_ddl in [
@@ -1114,6 +1181,7 @@ class ClickHouseClient:
                 _AVAIL_HOURLY_DDL_LOCAL,
                 _AVAIL_DAILY_DDL_LOCAL,
                 _LOGS_DDL_LOCAL,
+                _RBA_RUNS_DDL_LOCAL,
             ]:
                 client.command(ddl)
             for mv_ddl in [
@@ -2024,3 +2092,96 @@ class ClickHouseClient:
             return result.result_rows[0][0] if result.result_rows else 0
         except Exception:
             return 0
+
+    # ── RBA Runs ─────────────────────────────────────────────────────────
+
+    _RBA_RUNS_INSERT_COLUMNS = [
+        "run_id", "automation_id", "automation_name",
+        "trigger_type", "event_id", "event_severity", "event_message",
+        "device_id", "device_name", "device_ip",
+        "collector_id", "collector_name",
+        "status", "total_steps", "completed_steps", "failed_step",
+        "step_results", "shared_data",
+        "started_at", "finished_at", "duration_ms",
+        "triggered_by",
+    ]
+
+    def insert_rba_run(self, run: dict) -> None:
+        """Insert a single RBA run result."""
+        client = self._get_client()
+        client.insert(
+            "rba_runs",
+            [[run.get(col, "") for col in self._RBA_RUNS_INSERT_COLUMNS]],
+            column_names=self._RBA_RUNS_INSERT_COLUMNS,
+        )
+
+    def query_rba_runs(
+        self,
+        automation_id: str | None = None,
+        device_id: str | None = None,
+        event_id: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[dict], int]:
+        """Query RBA runs with filters. Returns (rows, total_count)."""
+        client = self._get_client()
+        where_parts = ["1=1"]
+        params: dict = {}
+
+        if automation_id:
+            where_parts.append("automation_id = {automation_id:UUID}")
+            params["automation_id"] = automation_id
+        if device_id:
+            where_parts.append("device_id = {device_id:UUID}")
+            params["device_id"] = device_id
+        if event_id:
+            where_parts.append("event_id = {event_id:String}")
+            params["event_id"] = event_id
+        if status:
+            where_parts.append("status = {status:String}")
+            params["status"] = status
+
+        where_clause = " AND ".join(where_parts)
+
+        count_sql = f"SELECT count() FROM rba_runs WHERE {where_clause}"
+        count_result = client.query(count_sql, parameters=params)
+        total = count_result.result_rows[0][0] if count_result.result_rows else 0
+
+        sql = f"""
+            SELECT *
+            FROM rba_runs
+            WHERE {where_clause}
+            ORDER BY started_at DESC
+            LIMIT {{limit:UInt32}} OFFSET {{offset:UInt32}}
+        """
+        params["limit"] = limit
+        params["offset"] = offset
+        result = client.query(sql, parameters=params)
+
+        rows = []
+        for row in result.result_rows:
+            rows.append(dict(zip(result.column_names, row)))
+        return rows, total
+
+    def get_last_rba_run_time(
+        self, automation_id: str, device_id: str
+    ):
+        """Get the most recent run start time for an automation+device pair."""
+        client = self._get_client()
+        sql = """
+            SELECT max(started_at) as last_run
+            FROM rba_runs
+            WHERE automation_id = {automation_id:UUID}
+              AND device_id = {device_id:UUID}
+              AND started_at > now() - INTERVAL 1 DAY
+        """
+        result = client.query(sql, parameters={
+            "automation_id": automation_id,
+            "device_id": device_id,
+        })
+        if result.result_rows and result.result_rows[0][0]:
+            val = result.result_rows[0][0]
+            if hasattr(val, 'year') and val.year > 1970:
+                return val
+        return None

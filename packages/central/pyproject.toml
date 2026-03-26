@@ -19,6 +19,7 @@ dependencies = [
     "httpx>=0.27",
     # Scheduling
     "apscheduler>=3.10",
+    "croniter>=2.0",
     # Validation and serialization
     "pydantic>=2.5",
     "pydantic-settings>=2.1",

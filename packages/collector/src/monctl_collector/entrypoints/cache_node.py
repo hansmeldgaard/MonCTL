@@ -160,6 +160,9 @@ async def run(cfg: CollectorConfig) -> None:
     ws_client.register_handler("docker_health", handle_docker_health)
     ws_client.register_handler("docker_logs", handle_docker_logs)
 
+    from monctl_collector.central.action_handler import handle_run_action
+    ws_client.register_handler("run_action", handle_run_action)
+
     ws_task = asyncio.create_task(ws_client.run())
 
     # ── Log shipper ───────────────────────────────────────────────────────────
