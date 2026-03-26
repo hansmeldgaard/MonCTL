@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Plus, Loader2, ArrowLeft, Save } from "lucide-react";
 import { Button } from "@/components/ui/button.tsx";
@@ -10,10 +10,8 @@ import {
   useUpdateAnalyticsDashboard,
   useAnalyticsTables,
 } from "@/api/hooks.ts";
-import type { AnalyticsWidget, AnalyticsWidgetConfig } from "@/types/api.ts";
+import type { AnalyticsWidgetConfig } from "@/types/api.ts";
 
-// Grid constants
-const GRID_COLS = 24;
 const ROW_HEIGHT = 40;
 
 interface LocalWidget {
