@@ -57,6 +57,9 @@ class CreateAutomationRequest(BaseModel):
     cron_expression: str | None = None
     cron_device_label_filter: dict | None = None
     cron_device_ids: list[str] | None = None
+    # Unified device scope (works for both event and cron triggers)
+    device_ids: list[str] | None = None
+    device_label_filter: dict | None = None
     cooldown_seconds: int = Field(default=300, ge=0)
     enabled: bool = True
     steps: list[StepInput] = Field(default_factory=list)
@@ -70,6 +73,8 @@ class UpdateAutomationRequest(BaseModel):
     cron_expression: str | None = None
     cron_device_label_filter: dict | None = None
     cron_device_ids: list[str] | None = None
+    device_ids: list[str] | None = None
+    device_label_filter: dict | None = None
     cooldown_seconds: int | None = Field(default=None, ge=0)
     enabled: bool | None = None
     steps: list[StepInput] | None = None
@@ -107,6 +112,8 @@ def _fmt_automation(a: Automation) -> dict:
         "cron_expression": a.cron_expression,
         "cron_device_label_filter": a.cron_device_label_filter,
         "cron_device_ids": a.cron_device_ids,
+        "device_ids": a.device_ids,
+        "device_label_filter": a.device_label_filter,
         "cooldown_seconds": a.cooldown_seconds,
         "enabled": a.enabled,
         "steps": [
@@ -344,6 +351,8 @@ async def create_automation(
         cron_expression=request.cron_expression,
         cron_device_label_filter=request.cron_device_label_filter,
         cron_device_ids=request.cron_device_ids,
+        device_ids=request.device_ids,
+        device_label_filter=request.device_label_filter,
         cooldown_seconds=request.cooldown_seconds,
         enabled=request.enabled,
     )
@@ -411,6 +420,10 @@ async def update_automation(
         automation.cron_device_label_filter = request.cron_device_label_filter
     if request.cron_device_ids is not None:
         automation.cron_device_ids = request.cron_device_ids
+    if request.device_ids is not None:
+        automation.device_ids = request.device_ids
+    if request.device_label_filter is not None:
+        automation.device_label_filter = request.device_label_filter
     if request.cooldown_seconds is not None:
         automation.cooldown_seconds = request.cooldown_seconds
     if request.enabled is not None:

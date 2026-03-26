@@ -1647,6 +1647,8 @@ export interface Automation {
   cron_expression: string | null;
   cron_device_label_filter: Record<string, string> | null;
   cron_device_ids: string[] | null;
+  device_ids: string[] | null;
+  device_label_filter: Record<string, string> | null;
   cooldown_seconds: number;
   enabled: boolean;
   steps: AutomationStep[];

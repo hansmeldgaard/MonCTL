@@ -4,11 +4,13 @@ import {
   CheckCheck,
   Clock,
   Loader2,
+  Play,
   Plus,
   Settings2,
   Trash2,
   Zap,
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
@@ -153,6 +155,7 @@ function ActiveEventsTab({
   isFetching: boolean;
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const navigate = useNavigate();
   const ackMut = useAcknowledgeEvents();
   const clearMut = useClearEvents();
 
@@ -183,6 +186,25 @@ function ActiveEventsTab({
     setSelected(new Set());
   };
 
+  const handleCreateAutomation = () => {
+    // Collect unique severities and device IDs from selected events
+    const selectedEvents = events.filter((e) => selected.has(e.id));
+    const severities = [...new Set(selectedEvents.map((e) => e.severity).filter(Boolean))];
+    const deviceIds = [...new Set(selectedEvents.map((e) => e.device_id).filter(Boolean))];
+    const severity = severities.length === 1 ? severities[0] : "";
+
+    // Navigate to automations page with prefilled state
+    navigate("/automations", {
+      state: {
+        prefill: {
+          trigger_type: "event",
+          event_severity_filter: severity,
+          device_ids: deviceIds,
+        },
+      },
+    });
+  };
+
   return (
     <Card>
       <CardHeader>
@@ -210,6 +232,14 @@ function ActiveEventsTab({
               >
                 <CheckCheck className="h-3.5 w-3.5" />
                 Clear ({selected.size})
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleCreateAutomation}
+              >
+                <Play className="h-3.5 w-3.5" />
+                Create Automation
               </Button>
             </div>
           )}

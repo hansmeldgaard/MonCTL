@@ -1333,6 +1333,9 @@ class Automation(Base):
     cron_expression: Mapped[str | None] = mapped_column(String(100), nullable=True)
     cron_device_label_filter: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     cron_device_ids: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # Unified device scope (works for both event and cron triggers)
+    device_ids: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    device_label_filter: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     cooldown_seconds: Mapped[int] = mapped_column(Integer, nullable=False, server_default="300")
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     created_at: Mapped[datetime] = mapped_column(

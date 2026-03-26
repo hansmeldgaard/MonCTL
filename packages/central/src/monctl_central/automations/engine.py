@@ -107,6 +107,27 @@ class AutomationEngine:
             if event.get("severity", "") != automation.event_severity_filter:
                 return False
 
+        # Device scope: check if event's device is in the automation's device scope
+        device_ids = automation.device_ids or automation.cron_device_ids
+        if device_ids:
+            event_device_id = str(event.get("device_id", ""))
+            if event_device_id not in device_ids:
+                return False
+
+        # Device label filter
+        device_label_filter = automation.device_label_filter or automation.cron_device_label_filter
+        if device_label_filter:
+            event_data = event.get("data", "{}")
+            if isinstance(event_data, str):
+                try:
+                    event_data = json.loads(event_data)
+                except json.JSONDecodeError:
+                    event_data = {}
+            device_labels = event_data.get("labels", {})
+            for key, value in device_label_filter.items():
+                if device_labels.get(key) != value:
+                    return False
+
         if automation.event_label_filter:
             event_data = event.get("data", "{}")
             if isinstance(event_data, str):
@@ -177,16 +198,20 @@ class AutomationEngine:
         self, session: AsyncSession, automation: Automation
     ) -> list[Device]:
         """Resolve which devices a cron automation targets."""
-        if automation.cron_device_ids:
-            device_uuids = [uuid.UUID(d) for d in automation.cron_device_ids]
+        # Prefer unified fields, fallback to cron-specific fields
+        device_ids = automation.device_ids or automation.cron_device_ids
+        label_filter = automation.device_label_filter or automation.cron_device_label_filter
+
+        if device_ids:
+            device_uuids = [uuid.UUID(d) for d in device_ids]
             result = await session.execute(
                 select(Device).where(Device.id.in_(device_uuids))
             )
             return list(result.scalars().all())
 
-        if automation.cron_device_label_filter:
+        if label_filter:
             from sqlalchemy import text as sa_text
-            label_json = json.dumps(automation.cron_device_label_filter)
+            label_json = json.dumps(label_filter)
             result = await session.execute(
                 select(Device).where(
                     Device.labels.op("@>")(sa_text(f"'{label_json}'::jsonb"))

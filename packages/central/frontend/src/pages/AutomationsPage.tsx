@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useLocation } from "react-router-dom";
 import {
   ChevronDown,
   ChevronRight,
@@ -387,14 +388,24 @@ function DeleteActionDialog({ action, onClose }: { action: Action; onClose: () =
 
 // ── Automations Tab ─────────────────────────────────────────────────────────
 
-function AutomationsTab() {
+function AutomationsTab({ prefill, onPrefillConsumed }: { prefill?: AutomationPrefill | null; onPrefillConsumed?: () => void }) {
   const { pageSize } = useTablePreferences();
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
+  const [createPrefill, setCreatePrefill] = useState<AutomationPrefill | null>(null);
   const [editTarget, setEditTarget] = useState<Automation | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Automation | null>(null);
   const [triggerTarget, setTriggerTarget] = useState<Automation | null>(null);
+
+  // Auto-open create dialog when prefill arrives from Events page
+  useEffect(() => {
+    if (prefill) {
+      setCreatePrefill(prefill);
+      setCreateOpen(true);
+      onPrefillConsumed?.();
+    }
+  }, [prefill, onPrefillConsumed]);
 
   const { data, isLoading } = useAutomations({ search: search || undefined, page, page_size: pageSize });
   const automations = data?.data ?? [];
@@ -511,7 +522,8 @@ function AutomationsTab() {
       {(createOpen || editTarget) && (
         <AutomationFormDialog
           automation={editTarget}
-          onClose={() => { setCreateOpen(false); setEditTarget(null); }}
+          prefill={createOpen ? createPrefill : null}
+          onClose={() => { setCreateOpen(false); setEditTarget(null); setCreatePrefill(null); }}
         />
       )}
 
@@ -526,14 +538,21 @@ function AutomationsTab() {
   );
 }
 
-function AutomationFormDialog({ automation, onClose }: { automation: Automation | null; onClose: () => void }) {
+function AutomationFormDialog({ automation, prefill, onClose }: { automation: Automation | null; prefill?: AutomationPrefill | null; onClose: () => void }) {
   const isEdit = !!automation;
+  const initDeviceIds = automation?.device_ids ?? prefill?.device_ids ?? [];
   const [name, setName] = useState(automation?.name ?? "");
   const [description, setDescription] = useState(automation?.description ?? "");
-  const [triggerType, setTriggerType] = useState(automation?.trigger_type ?? "event");
-  const [severityFilter, setSeverityFilter] = useState(automation?.event_severity_filter ?? "");
+  const [triggerType, setTriggerType] = useState((automation?.trigger_type ?? prefill?.trigger_type ?? "event") as "event" | "cron");
+  const [severityFilter, setSeverityFilter] = useState(automation?.event_severity_filter ?? prefill?.event_severity_filter ?? "");
   const [cronExpr, setCronExpr] = useState(automation?.cron_expression ?? "");
   const [cooldown, setCooldown] = useState(String(automation?.cooldown_seconds ?? 300));
+  const [selectedDeviceIds, setSelectedDeviceIds] = useState<string[]>(initDeviceIds);
+  const [deviceScope, setDeviceScope] = useState<"all" | "devices" | "labels">(
+    initDeviceIds.length ? "devices" : automation?.device_label_filter ? "labels" : "all"
+  );
+  const [labelKey, setLabelKey] = useState(Object.keys(automation?.device_label_filter ?? {})[0] ?? "");
+  const [labelValue, setLabelValue] = useState(Object.values(automation?.device_label_filter ?? {})[0] ?? "");
   const [enabled, setEnabled] = useState(automation?.enabled ?? true);
   const [steps, setSteps] = useState<Array<{ action_id: string; step_order: number; credential_type_override: string; timeout_override: string }>>(
     automation?.steps?.map((s) => ({
@@ -549,6 +568,8 @@ function AutomationFormDialog({ automation, onClose }: { automation: Automation 
   const updateMut = useUpdateAutomation();
   const { data: actionsData } = useActions({ page_size: 100 });
   const availableActions = actionsData?.data ?? [];
+  const { data: devicesResp } = useDevices({ limit: 200 });
+  const allDevices = devicesResp?.data ?? [];
 
   function addStep() {
     setSteps((prev) => [...prev, { action_id: "", step_order: prev.length + 1, credential_type_override: "", timeout_override: "" }]);
@@ -592,6 +613,8 @@ function AutomationFormDialog({ automation, onClose }: { automation: Automation 
       cron_expression: triggerType === "cron" ? cronExpr.trim() : null,
       cron_device_label_filter: null,
       cron_device_ids: null,
+      device_ids: deviceScope === "devices" && selectedDeviceIds.length > 0 ? selectedDeviceIds : null,
+      device_label_filter: deviceScope === "labels" && labelKey ? { [labelKey]: labelValue } : null,
       cooldown_seconds: parseInt(cooldown) || 0,
       enabled,
       steps: stepsPayload,
@@ -653,6 +676,44 @@ function AutomationFormDialog({ automation, onClose }: { automation: Automation 
             <p className="text-xs text-zinc-500">Standard cron format: minute hour day month weekday</p>
           </div>
         )}
+
+        {/* Device Scope */}
+        <div className="space-y-2">
+          <Label>Device Scope</Label>
+          <div className="flex gap-3">
+            {(["all", "devices", "labels"] as const).map((opt) => (
+              <label key={opt} className="flex items-center gap-1.5 text-sm text-zinc-300 cursor-pointer">
+                <input type="radio" name="device-scope" checked={deviceScope === opt} onChange={() => setDeviceScope(opt)} className="border-zinc-600" />
+                {opt === "all" ? "All devices" : opt === "devices" ? "Specific devices" : "By label"}
+              </label>
+            ))}
+          </div>
+          {deviceScope === "devices" && (
+            <div className="max-h-36 overflow-y-auto rounded-md border border-zinc-700 bg-zinc-900">
+              {allDevices.map((d) => (
+                <label key={d.id} className="flex items-center gap-2 px-3 py-1 hover:bg-zinc-800 cursor-pointer text-sm text-zinc-300">
+                  <input
+                    type="checkbox"
+                    checked={selectedDeviceIds.includes(d.id)}
+                    onChange={(e) => {
+                      if (e.target.checked) setSelectedDeviceIds((p) => [...p, d.id]);
+                      else setSelectedDeviceIds((p) => p.filter((id) => id !== d.id));
+                    }}
+                    className="rounded border-zinc-600"
+                  />
+                  {d.name}
+                  <span className="text-zinc-500 text-xs ml-auto">{d.address}</span>
+                </label>
+              ))}
+            </div>
+          )}
+          {deviceScope === "labels" && (
+            <div className="grid grid-cols-2 gap-2">
+              <Input placeholder="Label key (e.g. site)" value={labelKey} onChange={(e) => setLabelKey(e.target.value)} />
+              <Input placeholder="Label value (e.g. aarhus)" value={labelValue} onChange={(e) => setLabelValue(e.target.value)} />
+            </div>
+          )}
+        </div>
 
         <div className="space-y-1.5">
           <Label htmlFor="auto-cooldown">Cooldown (seconds)</Label>
@@ -1000,8 +1061,27 @@ function RunDetailDialog({ runId, onClose }: { runId: string; onClose: () => voi
 
 // ── Main Page ───────────────────────────────────────────────────────────────
 
+interface AutomationPrefill {
+  trigger_type?: string;
+  event_severity_filter?: string;
+  device_ids?: string[];
+}
+
 export function AutomationsPage() {
   const [tab, setTab] = useState<Tab>("automations");
+  const location = useLocation();
+  const [prefill, setPrefill] = useState<AutomationPrefill | null>(null);
+
+  // Handle prefill from Events page navigation
+  useEffect(() => {
+    const state = location.state as { prefill?: AutomationPrefill } | null;
+    if (state?.prefill) {
+      setPrefill(state.prefill);
+      setTab("automations");
+      // Clear the state so it doesn't re-trigger on re-render
+      window.history.replaceState({}, "");
+    }
+  }, [location.state]);
 
   return (
     <div className="space-y-4">
@@ -1021,7 +1101,7 @@ export function AutomationsPage() {
         </Button>
       </div>
 
-      {tab === "automations" && <AutomationsTab />}
+      {tab === "automations" && <AutomationsTab prefill={prefill} onPrefillConsumed={() => setPrefill(null)} />}
       {tab === "actions" && <ActionsTab />}
       {tab === "runs" && <RunHistoryTab />}
     </div>
