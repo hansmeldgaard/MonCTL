@@ -79,7 +79,7 @@ async def trigger_discovery(
         collector_ids = result.scalars().all()
 
         for cid in collector_ids:
-            if ws_manager.is_connected(cid):
+            if ws_manager.is_connected_local(cid):
                 try:
                     await ws_manager.send_command(cid, "config_reload", {}, timeout=5)
                     ws_notified += 1

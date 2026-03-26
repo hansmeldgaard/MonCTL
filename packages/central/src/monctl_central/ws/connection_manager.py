@@ -1,8 +1,15 @@
-"""Manages active WebSocket connections and pending requests."""
+"""Manages active WebSocket connections and pending requests.
+
+Uses Redis to share connection state across multiple central nodes,
+so GET /ws-connections returns ALL connected collectors regardless
+of which central node handles the HTTP request.
+"""
 
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -14,6 +21,8 @@ logger = structlog.get_logger()
 
 REQUEST_TIMEOUT_SECONDS = 60
 KEEPALIVE_INTERVAL_SECONDS = 30
+_REDIS_WS_PREFIX = "ws:conn:"
+_REDIS_WS_TTL = 60  # seconds — refreshed every keepalive ping
 
 
 class CollectorConnection:
@@ -50,6 +59,9 @@ class CollectorConnection:
                     "payload": {},
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 })
+                self.last_seen_at = datetime.now(timezone.utc)
+                await _redis_set_connection(self.collector_id, self.name,
+                                            self.connected_at, self.last_seen_at)
             except Exception:
                 break
 
@@ -95,8 +107,72 @@ class CollectorConnection:
         return False
 
 
+async def _get_redis():
+    """Get the shared Redis connection (lazy import to avoid circular deps)."""
+    from monctl_central.cache import _redis
+    return _redis
+
+
+async def _redis_set_connection(
+    collector_id: uuid.UUID, name: str,
+    connected_at: datetime, last_seen_at: datetime,
+):
+    """Write connection info to Redis with TTL."""
+    r = await _get_redis()
+    if r is None:
+        return
+    try:
+        key = f"{_REDIS_WS_PREFIX}{collector_id}"
+        value = json.dumps({
+            "collector_id": str(collector_id),
+            "name": name,
+            "connected_at": connected_at.isoformat(),
+            "last_seen_at": last_seen_at.isoformat(),
+            "node": os.environ.get("HOSTNAME", "unknown"),
+        })
+        await r.set(key, value, ex=_REDIS_WS_TTL)
+    except Exception as exc:
+        logger.debug("ws_redis_set_failed", error=str(exc))
+
+
+async def _redis_del_connection(collector_id: uuid.UUID):
+    """Remove connection info from Redis."""
+    r = await _get_redis()
+    if r is None:
+        return
+    try:
+        await r.delete(f"{_REDIS_WS_PREFIX}{collector_id}")
+    except Exception as exc:
+        logger.debug("ws_redis_del_failed", error=str(exc))
+
+
+async def _redis_get_all_connections() -> list[dict]:
+    """Read all WS connections from Redis (across all central nodes)."""
+    r = await _get_redis()
+    if r is None:
+        return []
+    try:
+        keys = []
+        async for key in r.scan_iter(match=f"{_REDIS_WS_PREFIX}*", count=100):
+            keys.append(key)
+        if not keys:
+            return []
+        values = await r.mget(keys)
+        result = []
+        for v in values:
+            if v:
+                result.append(json.loads(v))
+        return result
+    except Exception as exc:
+        logger.debug("ws_redis_scan_failed", error=str(exc))
+        return []
+
+
 class ConnectionManager:
-    """Tracks all active collector WebSocket connections."""
+    """Tracks all active collector WebSocket connections.
+
+    Local in-memory dict for send/receive; Redis for cross-node status queries.
+    """
 
     def __init__(self):
         self._connections: dict[uuid.UUID, CollectorConnection] = {}
@@ -114,12 +190,14 @@ class ConnectionManager:
         conn = CollectorConnection(collector_id, name, websocket)
         self._connections[collector_id] = conn
         await conn.start_keepalive()
+        await _redis_set_connection(collector_id, name, conn.connected_at, conn.last_seen_at)
         logger.info("ws_collector_connected", collector_id=str(collector_id), name=name)
 
     def disconnect(self, collector_id: uuid.UUID):
         conn = self._connections.pop(collector_id, None)
         if conn:
             asyncio.ensure_future(conn.stop_keepalive())
+            asyncio.ensure_future(_redis_del_connection(collector_id))
             logger.info("ws_collector_removed", collector_id=str(collector_id), name=conn.name)
 
     async def handle_message(self, collector_id: uuid.UUID, data: dict):
@@ -151,10 +229,45 @@ class ConnectionManager:
             raise KeyError(f"Collector {collector_id} not connected via WebSocket")
         return await conn.send_request(msg_type, payload, timeout=timeout)
 
-    def is_connected(self, collector_id: uuid.UUID) -> bool:
+    def is_connected_local(self, collector_id: uuid.UUID) -> bool:
+        """Check local in-memory only (for command routing)."""
         return collector_id in self._connections
 
-    def get_status(self) -> list[dict]:
+    async def is_connected(self, collector_id: uuid.UUID) -> bool:
+        """Check if collector is connected on any central node (via Redis)."""
+        if collector_id in self._connections:
+            return True
+        r = await _get_redis()
+        if r is None:
+            return False
+        try:
+            return await r.exists(f"{_REDIS_WS_PREFIX}{collector_id}") > 0
+        except Exception:
+            return False
+
+    async def get_connection_info(self, collector_id: uuid.UUID) -> dict | None:
+        """Get connection info from local or Redis."""
+        conn = self._connections.get(collector_id)
+        if conn:
+            return {
+                "collector_id": str(collector_id),
+                "name": conn.name,
+                "connected_at": conn.connected_at.isoformat(),
+                "last_seen_at": conn.last_seen_at.isoformat(),
+            }
+        r = await _get_redis()
+        if r is None:
+            return None
+        try:
+            val = await r.get(f"{_REDIS_WS_PREFIX}{collector_id}")
+            if val:
+                return json.loads(val)
+        except Exception:
+            pass
+        return None
+
+    def get_local_status(self) -> list[dict]:
+        """Return connections on this node only (no Redis)."""
         return [
             {
                 "collector_id": str(cid),
@@ -165,13 +278,11 @@ class ConnectionManager:
             for cid, conn in self._connections.items()
         ]
 
-    def get_connection_info(self, collector_id: uuid.UUID) -> dict | None:
-        conn = self._connections.get(collector_id)
-        if not conn:
-            return None
-        return {
-            "collector_id": str(collector_id),
-            "name": conn.name,
-            "connected_at": conn.connected_at.isoformat(),
-            "last_seen_at": conn.last_seen_at.isoformat(),
-        }
+    async def get_status(self) -> list[dict]:
+        """Return all connections across all central nodes (via Redis)."""
+        connections = await _redis_get_all_connections()
+        if connections:
+            return connections
+        # Fallback to local-only if Redis unavailable
+        return self.get_local_status()
+

@@ -144,7 +144,11 @@ packages/
 
 **Loading**: `apps/manager.py` downloads connector code from central, installs venvs, and loads classes. Venv site-packages are **permanently added to sys.path** so lazy imports (e.g., `import pysnmp`) work at runtime.
 
-**SNMP Connector**: Accepts both `snmp_version` and `version` credential keys for backward compatibility. Builds pysnmp v7 auth objects for v1/v2c/v3. `connect()` is **idempotent** — returns immediately if already connected to same host, closes previous engine if called with different host. This prevents memory leaks from apps that call `connect()` redundantly.
+**SNMP Connector** (v1.3.1): Accepts both `snmp_version` and `version` credential keys for backward compatibility — the credential API returns `version` (from template key names), not `snmp_version`. Builds pysnmp v7 auth objects for v1/v2c/v3. `connect()` is **idempotent** — returns immediately if already connected to same host, closes previous engine if called with different host. This prevents memory leaks from apps that call `connect()` redundantly.
+
+**Connector credential keys**: Credential field names are defined by `CredentialTemplate` key definitions, and the collector API (`/api/v1/credentials/{name}`) returns values using those template key names. Connectors must match these exact key names — e.g., the SNMP credential template uses `version`, `username`, `auth_password`, `priv_password`, `auth_protocol`, `priv_protocol`, `security_level`, `port`.
+
+**Connector versioning**: Connectors are stored in DB with checksums. When a new version is uploaded (`POST /v1/connectors/{id}/versions` with `set_latest: true`), the next job-fetch returns the new checksum, triggering collectors to re-download automatically. Restart poll-workers to force immediate pickup.
 
 **Connector lifecycle**: The polling engine manages the full connect→use→close lifecycle for connectors. **Apps must NOT call `connector.connect()` themselves** — the engine calls it before passing the connector to the app. If an app calls `connect()` anyway, the idempotent guard prevents leaks, but new apps should rely on the engine-managed lifecycle.
 

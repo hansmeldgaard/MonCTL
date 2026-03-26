@@ -257,7 +257,11 @@ Hver tabel har en `_latest` materialized view (ReplacingMergeTree) der holder se
 
 **Loading**: `apps/manager.py` downloader connector-kode fra central, installerer venvs, og loader klasser. Venv site-packages tilføjes **permanent til sys.path** så lazy imports virker.
 
-**SNMP Connector**: Accepterer både `snmp_version` og `version` credential keys for bagudkompatibilitet. Bygger pysnmp v7 auth objects for v1/v2c/v3. `connect()` er **idempotent** — returnerer med det samme hvis allerede forbundet til samme host.
+**SNMP Connector** (v1.3.1): Accepterer både `snmp_version` og `version` credential keys for bagudkompatibilitet — credential API'et returnerer `version` (fra template key names), ikke `snmp_version`. Bygger pysnmp v7 auth objects for v1/v2c/v3. `connect()` er **idempotent** — returnerer med det samme hvis allerede forbundet til samme host.
+
+**Connector credential keys**: Credential-feltnavne defineres af `CredentialTemplate` key definitions, og collector API'et (`/api/v1/credentials/{name}`) returnerer værdier med disse template key names. SNMP credential template bruger: `version`, `username`, `auth_password`, `priv_password`, `auth_protocol`, `priv_protocol`, `security_level`, `port`.
+
+**Connector versionering**: Connectors gemmes i DB med checksums. Ny version (`POST /v1/connectors/{id}/versions` med `set_latest: true`) → næste job-fetch returnerer ny checksum → collectors re-downloader automatisk. Genstart poll-workers for at forcere øjeblikkelig opdatering.
 
 **Connector lifecycle**: Polling engine styrer connect→use→close lifecycle. **Apps må IKKE kalde `connector.connect()` selv** — engine kalder det før appen får connector'en. Hvis en app kalder `connect()` alligevel, forhindrer den idempotente guard memory leaks.
 

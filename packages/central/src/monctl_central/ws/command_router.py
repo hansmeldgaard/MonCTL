@@ -28,7 +28,7 @@ async def get_ws_status(
 ):
     """Check if a collector is connected via WebSocket."""
     cid = uuid.UUID(collector_id)
-    info = manager.get_connection_info(cid)
+    info = await manager.get_connection_info(cid)
     return {
         "status": "success",
         "data": {
@@ -43,7 +43,7 @@ async def list_ws_connections(
     auth: dict = Depends(require_auth),
 ):
     """List all active WebSocket connections."""
-    return {"status": "success", "data": {"connections": manager.get_status()}}
+    return {"status": "success", "data": {"connections": await manager.get_status()}}
 
 
 @router.post("/collectors/{collector_id}/command/{command_type}")

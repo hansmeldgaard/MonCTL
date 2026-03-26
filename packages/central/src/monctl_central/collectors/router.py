@@ -598,32 +598,29 @@ async def list_collectors(
     result = await db.execute(stmt)
     collectors = result.scalars().all()
 
-    return {
-        "status": "success",
-        "data": [
-            {
-                "id": str(c.id),
-                "name": c.name,
-                "hostname": c.hostname,
-                "status": c.status,
-                "labels": c.labels,
-                "ip_addresses": c.ip_addresses if isinstance(c.ip_addresses, list) else (list(c.ip_addresses.values()) if isinstance(c.ip_addresses, dict) else []),
-                "last_seen_at": c.last_seen_at.isoformat() if c.last_seen_at else None,
-                "cluster_id": str(c.cluster_id) if c.cluster_id else None,
-                "group_id": str(c.group_id) if c.group_id else None,
-                "group_name": c.group.name if c.group else None,
-                "fingerprint": c.fingerprint,
-                "approved_at": c.approved_at.isoformat() if c.approved_at else None,
-                "approved_by": c.approved_by,
-                "rejected_reason": c.rejected_reason,
-                "registered_at": c.registered_at.isoformat() if c.registered_at else None,
-                "log_level_filter": c.log_level_filter,
-                "ws_connected": ws_manager.is_connected(c.id),
-                "ws_connection": ws_manager.get_connection_info(c.id),
-            }
-            for c in collectors
-        ],
-    }
+    data = []
+    for c in collectors:
+        data.append({
+            "id": str(c.id),
+            "name": c.name,
+            "hostname": c.hostname,
+            "status": c.status,
+            "labels": c.labels,
+            "ip_addresses": c.ip_addresses if isinstance(c.ip_addresses, list) else (list(c.ip_addresses.values()) if isinstance(c.ip_addresses, dict) else []),
+            "last_seen_at": c.last_seen_at.isoformat() if c.last_seen_at else None,
+            "cluster_id": str(c.cluster_id) if c.cluster_id else None,
+            "group_id": str(c.group_id) if c.group_id else None,
+            "group_name": c.group.name if c.group else None,
+            "fingerprint": c.fingerprint,
+            "approved_at": c.approved_at.isoformat() if c.approved_at else None,
+            "approved_by": c.approved_by,
+            "rejected_reason": c.rejected_reason,
+            "registered_at": c.registered_at.isoformat() if c.registered_at else None,
+            "log_level_filter": c.log_level_filter,
+            "ws_connected": await ws_manager.is_connected(c.id),
+            "ws_connection": await ws_manager.get_connection_info(c.id),
+        })
+    return {"status": "success", "data": data}
 
 
 # ---------------------------------------------------------------------------
@@ -683,8 +680,8 @@ async def update_collector(
             "group_id": str(c.group_id) if c.group_id else None,
             "group_name": c.group.name if c.group else None,
             "log_level_filter": c.log_level_filter,
-            "ws_connected": ws_manager.is_connected(c.id),
-            "ws_connection": ws_manager.get_connection_info(c.id),
+            "ws_connected": await ws_manager.is_connected(c.id),
+            "ws_connection": await ws_manager.get_connection_info(c.id),
         },
     }
 
