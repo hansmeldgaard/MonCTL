@@ -2,6 +2,7 @@ import { NavLink } from "react-router-dom";
 import {
   AppWindow,
   BarChart3,
+  Terminal,
   Bell,
   Boxes,
   ChevronLeft,
@@ -40,7 +41,8 @@ const navItems = [
   { to: "/alerts", icon: Bell, label: "Alerts", end: false },
   { to: "/events", icon: Zap, label: "Events", end: false },
   { to: "/device-types", icon: Search, label: "Device Types", end: false },
-  { to: "/analytics", icon: BarChart3, label: "Analytics", end: true },
+  { to: "/analytics/explorer", icon: Terminal, label: "SQL Explorer", end: true },
+  { to: "/analytics/dashboards", icon: BarChart3, label: "Dashboards", end: false },
   { to: "/upgrades", icon: ArrowUpCircle, label: "Upgrades", end: false },
   { to: "/settings", icon: Settings, label: "Settings", end: false },
 ];

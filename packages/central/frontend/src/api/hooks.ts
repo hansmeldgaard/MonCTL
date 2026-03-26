@@ -93,6 +93,10 @@ import type {
   LogFiltersResponse,
   CollectorWsStatus,
   CollectorWsConnection,
+  AnalyticsTable,
+  QueryResult,
+  AnalyticsDashboardSummary,
+  AnalyticsDashboard,
 } from "@/types/api.ts";
 
 function buildListQs(params: ListParams): string {
@@ -3061,5 +3065,71 @@ export function useWsConnections() {
     queryFn: () =>
       apiGet<{ connections: CollectorWsConnection[] }>("/collectors/ws-connections"),
     refetchInterval: 15_000,
+  });
+}
+
+// ── Analytics ────────────────────────────────────────────
+
+export function useAnalyticsTables() {
+  return useQuery({
+    queryKey: ["analytics-tables"],
+    queryFn: () => apiGet<AnalyticsTable[]>("/analytics/tables"),
+    select: (res) => res.data,
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useExecuteQuery() {
+  return useMutation({
+    mutationFn: (data: { sql: string; limit?: number }) =>
+      apiPost<QueryResult>("/analytics/query", data),
+  });
+}
+
+// ── Custom Dashboards ────────────────────────────────────
+
+export function useAnalyticsDashboards() {
+  return useQuery({
+    queryKey: ["analytics-dashboards"],
+    queryFn: () => apiGet<AnalyticsDashboardSummary[]>("/analytics/dashboards"),
+    select: (res) => res.data,
+  });
+}
+
+export function useAnalyticsDashboard(id: string) {
+  return useQuery({
+    queryKey: ["analytics-dashboard", id],
+    queryFn: () => apiGet<AnalyticsDashboard>(`/analytics/dashboards/${id}`),
+    select: (res) => res.data,
+    enabled: !!id,
+  });
+}
+
+export function useCreateAnalyticsDashboard() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { name: string; description?: string }) =>
+      apiPost<{ id: string }>("/analytics/dashboards", data),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["analytics-dashboards"] }); },
+  });
+}
+
+export function useUpdateAnalyticsDashboard() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...data }: { id: string } & Record<string, unknown>) =>
+      apiPut(`/analytics/dashboards/${id}`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["analytics-dashboards"] });
+      qc.invalidateQueries({ queryKey: ["analytics-dashboard"] });
+    },
+  });
+}
+
+export function useDeleteAnalyticsDashboard() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/analytics/dashboards/${id}`),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["analytics-dashboards"] }); },
   });
 }

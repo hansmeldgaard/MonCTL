@@ -1529,3 +1529,76 @@ export interface CollectorWsStatus {
   connected: boolean;
   connection: CollectorWsConnection | null;
 }
+
+// ── Analytics ────────────────────────────────────────────────────────────────
+
+export interface AnalyticsTableColumn {
+  name: string;
+  type: string;
+}
+
+export interface AnalyticsTable {
+  name: string;
+  engine: string;
+  total_rows: number;
+  total_bytes: number;
+  columns: AnalyticsTableColumn[];
+}
+
+export interface QueryResultColumn {
+  name: string;
+  type: string;
+}
+
+export interface QueryResult {
+  columns: QueryResultColumn[];
+  rows: unknown[][];
+  row_count: number;
+  truncated: boolean;
+  execution_time_ms: number;
+  query: string;
+}
+
+// ── Custom Dashboards ────────────────────────────────────────────────────────
+
+export interface AnalyticsWidgetConfig {
+  sql: string;
+  chart_type: "table" | "line" | "bar" | "area" | "pie";
+  x_column?: string;
+  y_columns?: string[];
+  refresh_seconds?: number;
+}
+
+export interface AnalyticsWidgetLayout {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface AnalyticsWidget {
+  id: string;
+  title: string;
+  config: AnalyticsWidgetConfig;
+  layout: AnalyticsWidgetLayout;
+}
+
+export interface AnalyticsDashboard {
+  id: string;
+  name: string;
+  description: string;
+  owner_id: string;
+  owner_name: string;
+  widgets: AnalyticsWidget[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AnalyticsDashboardSummary {
+  id: string;
+  name: string;
+  description: string;
+  owner_name: string;
+  widget_count: number;
+  updated_at: string;
+}

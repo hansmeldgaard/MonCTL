@@ -19,7 +19,9 @@ import { SettingsPage } from "@/pages/SettingsPage.tsx";
 import { SystemHealthPage } from "@/pages/SystemHealthPage.tsx";
 import { DockerInfraPage } from "@/pages/DockerInfraPage.tsx";
 import { UpgradesPage } from "@/pages/UpgradesPage.tsx";
-import { AnalyticsPage } from "@/pages/AnalyticsPage.tsx";
+import { SQLExplorerPage } from "@/pages/SQLExplorerPage.tsx";
+import { CustomDashboardsPage } from "@/pages/CustomDashboardsPage.tsx";
+import { DashboardEditorPage } from "@/pages/DashboardEditorPage.tsx";
 import { DeviceTypesPage } from "@/pages/DiscoveryRulesPage.tsx";
 
 export function App() {
@@ -43,7 +45,9 @@ export function App() {
         <Route path="packs/:id" element={<PackDetailPage />} />
         <Route path="alerts" element={<AlertsPage />} />
         <Route path="events" element={<EventsPage />} />
-        <Route path="analytics" element={<AnalyticsPage />} />
+        <Route path="analytics/explorer" element={<SQLExplorerPage />} />
+        <Route path="analytics/dashboards" element={<CustomDashboardsPage />} />
+        <Route path="analytics/dashboards/:id" element={<DashboardEditorPage />} />
         <Route path="upgrades" element={<UpgradesPage />} />
         <Route path="device-types" element={<DeviceTypesPage />} />
         <Route path="settings" element={<SettingsPage />} />
