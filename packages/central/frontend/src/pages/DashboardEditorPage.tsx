@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Plus, Loader2, ArrowLeft, Save } from "lucide-react";
-import { Responsive, WidthProvider, type Layout } from "react-grid-layout";
+import { ResponsiveGridLayout, useContainerWidth, verticalCompactor, type LayoutItem } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import { Button } from "@/components/ui/button.tsx";
@@ -17,7 +17,6 @@ import {
 } from "@/api/hooks.ts";
 import type { AnalyticsWidgetConfig, DashboardVariable } from "@/types/api.ts";
 
-const ResponsiveGridLayout = WidthProvider(Responsive);
 const ROW_HEIGHT = 40;
 const COLS = 24;
 
@@ -48,6 +47,7 @@ export function DashboardEditorPage() {
   const [newVarName, setNewVarName] = useState("");
   const [newVarDefault, setNewVarDefault] = useState("");
   const mounted = useRef(false);
+  const { width: containerWidth, containerRef } = useContainerWidth();
 
   const schema = useMemo(() => {
     if (!tables) return undefined;
@@ -81,7 +81,7 @@ export function DashboardEditorPage() {
     }
   }, [dashboard]);
 
-  const handleLayoutChange = useCallback((layout: Layout[]) => {
+  const handleLayoutChange = useCallback((layout: readonly LayoutItem[], _layouts: unknown) => {
     if (!mounted.current) {
       mounted.current = true;
       return;
@@ -290,7 +290,7 @@ export function DashboardEditorPage() {
       )}
 
       {/* Widget grid */}
-      <div className="flex-1 overflow-auto p-4">
+      <div className="flex-1 overflow-auto p-4" ref={containerRef}>
         {widgets.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-64 text-zinc-600">
             <p className="text-sm mb-3">No widgets yet</p>
@@ -302,16 +302,16 @@ export function DashboardEditorPage() {
         ) : (
           <ResponsiveGridLayout
             className="dashboard-grid"
+            width={containerWidth}
             layouts={{ lg: gridLayout }}
             breakpoints={{ lg: 0 }}
             cols={{ lg: COLS }}
             rowHeight={ROW_HEIGHT}
-            draggableHandle=".drag-handle"
+            margin={[12, 12] as const}
+            dragConfig={{ enabled: true, handle: ".drag-handle", bounded: false, threshold: 3 }}
+            resizeConfig={{ enabled: true, handles: ["se"] as const }}
+            compactor={verticalCompactor}
             onLayoutChange={handleLayoutChange}
-            isResizable
-            isDraggable
-            compactType="vertical"
-            margin={[12, 12]}
           >
             {widgets.map((w, i) => (
               <div key={w.id}>
