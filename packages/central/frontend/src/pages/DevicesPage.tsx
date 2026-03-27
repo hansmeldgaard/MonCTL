@@ -32,7 +32,7 @@ import {
 } from "@/components/ui/table.tsx";
 import { Select } from "@/components/ui/select.tsx";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
-import { useDevices, useLatestResults, useBulkDeleteDevices, useBulkPatchDevices, useCollectorGroups, useTenants, useLabelKeys, useDeviceCategories, useResolveTemplates, useAutoApplyTemplates } from "@/api/hooks.ts";
+import { useDevices, useLatestResults, useBulkDeleteDevices, useBulkPatchDevices, useCollectorGroups, useTenants, useLabelKeys, useDeviceCategories, useAutoApplyTemplates } from "@/api/hooks.ts";
 import { ListChecks } from "lucide-react";
 import type { DeviceBulkPatchRequest } from "@/types/api.ts";
 import { useTablePreferences, PAGE_SIZE_OPTIONS } from "@/hooks/useTablePreferences.ts";
