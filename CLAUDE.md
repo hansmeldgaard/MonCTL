@@ -85,7 +85,9 @@ packages/
 │   │   ├── python_modules/     # Package registry + PyPI import + wheel distribution
 │   │   ├── docker_infra/       # Docker host monitoring (stats, logs, events, images)
 │   │   ├── roles/              # Custom RBAC roles + permissions
-│   │   ├── templates/router.py # Monitoring templates (bulk app assignment)
+│   │   ├── templates/          # Monitoring templates + hierarchical bindings
+│   │   │   ├── router.py      # Template CRUD, bindings CRUD, resolve, auto-apply
+│   │   │   └── resolver.py    # Hierarchical merge engine (category → type override)
 │   │   ├── tenants/router.py   # Multi-tenant support
 │   │   ├── users/router.py     # User CRUD + timezone + API keys
 │   │   ├── settings/router.py  # System settings (retention, intervals, etc.)
@@ -157,6 +159,24 @@ packages/
 **Connector lifecycle**: The polling engine manages the full connect→use→close lifecycle for connectors. **Apps must NOT call `connector.connect()` themselves** — the engine calls it before passing the connector to the app. If an app calls `connect()` anyway, the idempotent guard prevents leaks, but new apps should rely on the engine-managed lifecycle.
 
 **Memory management**: Polling engine calls `gc.collect()` + `malloc_trim(0)` after each job to return freed memory to OS. Workers use `MALLOC_ARENA_MAX=2` and `PYTHONMALLOC=malloc` env vars to reduce glibc arena fragmentation. All poll-workers have `mem_limit: 1g` as safety net.
+
+### Template Hierarchy (App Auto-Assignment)
+
+**Two-level binding system**: Templates can be linked to `DeviceCategory` (broad, e.g. "cisco-router") and `DeviceType` (specific, e.g. "Cisco ASR 1002-X") via many-to-many binding tables with priority.
+
+**Models**: `DeviceCategoryTemplateBinding` and `DeviceTypeTemplateBinding` — each has `priority` (int, higher overrides lower within same level) and `pack_id` (for pack import/export).
+
+**Merge logic** (`templates/resolver.py`): Category-level templates merge first (low→high priority), then type-level templates overlay. Per-role monitoring overrides, per-app_name app overrides, dict-merge for labels, last-writer-wins for scalars.
+
+**API endpoints** (under `/v1/templates/`):
+- `POST/DELETE /bindings/category`, `GET /bindings/category/{id}` — category binding CRUD
+- `POST/DELETE /bindings/device-type`, `GET /bindings/device-type/{id}` — type binding CRUD
+- `POST /resolve` — preview merged config per device (no side effects)
+- `POST /auto-apply` — resolve + create assignments
+
+**Discovery integration**: `auto_apply_templates_on_discovery` system setting (default: false). When enabled, templates are auto-applied after SNMP device type matching in `discovery/service.py`.
+
+**Pack support**: Bindings export as `template_bindings_category` and `template_bindings_device_type` sections, referenced by name (not UUID). Imported after all entities are created.
 
 ### Interface Monitoring
 
