@@ -653,36 +653,6 @@ function TemplateAppCard({
   );
 }
 
-/* ── Per-app credential picker (None / Device Default / specific) ── */
-
-function CredentialPicker({
-  value,
-  onChange,
-  disabled,
-}: {
-  value: string | null | undefined;
-  onChange: (id: string | undefined) => void;
-  disabled?: boolean;
-}) {
-  const { data: credentials } = useCredentials();
-
-  return (
-    <Select
-      value={value || ""}
-      onChange={(e) => onChange(e.target.value || undefined)}
-      disabled={disabled}
-    >
-      <option value="">-- None --</option>
-      <option value="device_default">Use Device Default Credential</option>
-      {(credentials ?? []).map((c) => (
-        <option key={c.id} value={c.id}>
-          {c.name} ({c.credential_type})
-        </option>
-      ))}
-    </Select>
-  );
-}
-
 /* ── Section 2: Credential ── */
 
 function CredentialSection({

@@ -290,36 +290,99 @@ function HostSidebarItem({ host, selected, onClick }: { host: { label: string; s
 
 // ── Host summary header ─────────────────────────────────────────────────────
 
+function MiniBar({ pct }: { pct: number }) {
+  const color = pct > 90 ? "bg-red-500" : pct > 70 ? "bg-amber-500" : "bg-emerald-500";
+  return (
+    <div className="h-1 w-full rounded-full bg-zinc-800 mt-1">
+      <div className={`h-1 rounded-full ${color}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+    </div>
+  );
+}
+
 function HostSummaryHeader({ system }: { system: DockerSystemInfo }) {
   const h = system.host;
   const d = system.docker;
   const c = system.containers;
+
+  const memUsed = h.mem_total_bytes != null && h.mem_available_bytes != null
+    ? h.mem_total_bytes - h.mem_available_bytes : null;
+  const memPct = memUsed != null && h.mem_total_bytes ? Math.round((memUsed / h.mem_total_bytes) * 100) : null;
+  const diskPct = h.disk_used_bytes != null && h.disk_total_bytes
+    ? Math.round((h.disk_used_bytes / h.disk_total_bytes) * 100) : null;
+  const loadColor = (v: number) => {
+    const perCpu = v / (d.cpus || 1);
+    return perCpu >= 2 ? "text-red-400" : perCpu >= 1 ? "text-amber-400" : "text-emerald-400";
+  };
+
   return (
     <Card>
-      <CardContent className="py-3">
-        <div className="flex items-center gap-6 text-xs text-zinc-400 flex-wrap">
-          <span className="font-mono">Docker {d.version}</span>
+      <CardContent className="py-2.5">
+        {/* Row 1: Identity + status — single compact line */}
+        <div className="text-xs text-zinc-400 whitespace-nowrap overflow-x-auto">
+          <span className="font-mono text-zinc-300">Docker {d.version}</span>
+          <span className="text-zinc-600 mx-1.5">&middot;</span>
           <span>{d.os}</span>
-          <span>Kernel {d.kernel}</span>
-          <span>CPUs: {d.cpus}</span>
-          {h.mem_total_bytes != null && h.mem_available_bytes != null && (
-            <span className="font-mono">
-              Mem: {formatBytes(h.mem_total_bytes - h.mem_available_bytes)} / {formatBytes(h.mem_total_bytes)}
-            </span>
+          <span className="text-zinc-600 mx-1.5">&middot;</span>
+          <span>{d.cpus} CPUs</span>
+          {h.uptime_seconds != null && (
+            <>
+              <span className="text-zinc-600 mx-1.5">&middot;</span>
+              <span>Up {formatUptime(h.uptime_seconds)}</span>
+            </>
           )}
-          {h.load_avg && (
-            <span className="font-mono">Load: {h.load_avg["1m"]} / {h.load_avg["5m"]} / {h.load_avg["15m"]}</span>
-          )}
-          {h.disk_total_bytes != null && h.disk_used_bytes != null && (
-            <span className="font-mono">
-              Disk: {formatBytes(h.disk_used_bytes)} / {formatBytes(h.disk_total_bytes)}
-            </span>
-          )}
-          {h.uptime_seconds != null && <span>Up: {formatUptime(h.uptime_seconds)}</span>}
+          <span className="text-zinc-600 mx-1.5">&middot;</span>
           <span className="font-mono">
             <span className="text-emerald-400">{c.running}</span> running
             {c.stopped > 0 && <span className="text-zinc-500"> / {c.stopped} stopped</span>}
           </span>
+        </div>
+
+        {/* Row 2: Resource gauges */}
+        <div className="grid grid-cols-3 gap-x-5 gap-y-2 mt-2.5">
+          {/* Memory */}
+          {memUsed != null && h.mem_total_bytes != null && (
+            <div className="min-w-0">
+              <div className="flex items-baseline justify-between text-[11px] gap-2">
+                <span className="text-zinc-500 shrink-0">Mem</span>
+                <span className="font-mono text-zinc-300 truncate">
+                  {formatBytes(memUsed)}<span className="text-zinc-600">/</span>{formatBytes(h.mem_total_bytes)}
+                  <span className="text-zinc-500 ml-1">{memPct}%</span>
+                </span>
+              </div>
+              <MiniBar pct={memPct ?? 0} />
+            </div>
+          )}
+
+          {/* Load */}
+          {h.load_avg && (
+            <div className="min-w-0">
+              <div className="flex items-baseline justify-between text-[11px] gap-2">
+                <span className="text-zinc-500 shrink-0">Load</span>
+                <span className="font-mono truncate">
+                  <span className={loadColor(h.load_avg["1m"])}>{h.load_avg["1m"]}</span>
+                  <span className="text-zinc-600">/</span>
+                  <span className={loadColor(h.load_avg["5m"])}>{h.load_avg["5m"]}</span>
+                  <span className="text-zinc-600">/</span>
+                  <span className={loadColor(h.load_avg["15m"])}>{h.load_avg["15m"]}</span>
+                </span>
+              </div>
+              <MiniBar pct={Math.min((h.load_avg["1m"] / (d.cpus || 1)) * 100, 100)} />
+            </div>
+          )}
+
+          {/* Disk */}
+          {h.disk_used_bytes != null && h.disk_total_bytes != null && (
+            <div className="min-w-0">
+              <div className="flex items-baseline justify-between text-[11px] gap-2">
+                <span className="text-zinc-500 shrink-0">Disk</span>
+                <span className="font-mono text-zinc-300 truncate">
+                  {formatBytes(h.disk_used_bytes)}<span className="text-zinc-600">/</span>{formatBytes(h.disk_total_bytes)}
+                  <span className="text-zinc-500 ml-1">{diskPct}%</span>
+                </span>
+              </div>
+              <MiniBar pct={diskPct ?? 0} />
+            </div>
+          )}
         </div>
       </CardContent>
     </Card>
@@ -375,8 +438,8 @@ function ContainersTab({ hostLabel }: { hostLabel: string }) {
             <SortHead label="Container" field="name" />
             <SortHead label="Status" field="status" className="w-20" />
             <SortHead label="CPU" field="cpu_pct" className="w-16 text-right" />
-            <SortHead label="Memory" field="mem_pct" className="w-28 text-right" />
-            <TableHead className="text-xs py-1 w-20 text-right">Net I/O</TableHead>
+            <SortHead label="Memory" field="mem_pct" className="w-32 text-right" />
+            <TableHead className="text-xs py-1 w-28 text-right">Net I/O</TableHead>
             <SortHead label="Restarts" field="restart_count" className="w-16 text-right" />
             <TableHead className="text-xs py-1 w-24 text-right">Uptime</TableHead>
           </TableRow>
@@ -388,7 +451,7 @@ function ContainersTab({ hostLabel }: { hostLabel: string }) {
               className={`cursor-pointer ${c.health === "unhealthy" ? "bg-red-500/5" : c.status !== "running" ? "bg-zinc-800/30" : ""} ${selectedContainer === c.name ? "bg-blue-500/10" : "hover:bg-zinc-800/50"}`}
               onClick={() => setSelectedContainer(selectedContainer === c.name ? null : c.name)}
             >
-              <TableCell className="py-1 text-xs font-mono">{c.name}</TableCell>
+              <TableCell className="py-1 text-xs font-mono min-w-[180px]">{c.name}</TableCell>
               <TableCell className="py-1 text-xs">
                 <span className="flex items-center gap-1.5">
                   <span className={`h-2 w-2 rounded-full ${c.status === "running" ? (c.health === "unhealthy" ? "bg-red-400" : "bg-emerald-400") : "bg-zinc-600"}`} />
