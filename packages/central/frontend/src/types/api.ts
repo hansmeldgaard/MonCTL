@@ -888,6 +888,7 @@ export interface TemplateMonitoringCheck {
   app_name: string;
   config: Record<string, unknown>;
   interval_seconds: number;
+  credential_id?: string | null; // UUID or "device_default"
 }
 
 export interface TemplateMonitoringConfig {
@@ -902,6 +903,7 @@ export interface TemplateAppEntry {
   schedule_value: string;
   config: Record<string, unknown>;
   role?: string;
+  credential_id?: string | null; // UUID or "device_default"
 }
 
 export interface TemplateConfig {

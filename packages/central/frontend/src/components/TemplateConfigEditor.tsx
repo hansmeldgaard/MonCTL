@@ -431,6 +431,11 @@ function MonitoringRoleRow({
               ))}
             </Select>
           </div>
+          <CredentialPicker
+            value={check.credential_id}
+            onChange={(id) => onChange({ ...check, credential_id: id || undefined })}
+            disabled={disabled}
+          />
           {check.app_name && hasSchema && (
             <SchemaConfigFields
               schema={appDetail!.config_schema}
@@ -601,19 +606,29 @@ function TemplateAppCard({
             </div>
           </div>
 
-          <div>
-            <Label className="text-xs text-zinc-400">
-              Role <span className="text-zinc-600">(optional)</span>
-            </Label>
-            <Select
-              value={entry.role || ""}
-              onChange={(e) => onChange({ ...entry, role: e.target.value || undefined })}
-              disabled={disabled}
-            >
-              <option value="">-- None --</option>
-              <option value="performance">performance</option>
-              <option value="config">config</option>
-            </Select>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs text-zinc-400">
+                Role <span className="text-zinc-600">(optional)</span>
+              </Label>
+              <Select
+                value={entry.role || ""}
+                onChange={(e) => onChange({ ...entry, role: e.target.value || undefined })}
+                disabled={disabled}
+              >
+                <option value="">-- None --</option>
+                <option value="performance">performance</option>
+                <option value="config">config</option>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs text-zinc-400">Credential</Label>
+              <CredentialPicker
+                value={entry.credential_id}
+                onChange={(id) => onChange({ ...entry, credential_id: id || undefined })}
+                disabled={disabled}
+              />
+            </div>
           </div>
 
           {/* Schema-driven config fields */}
@@ -650,6 +665,36 @@ function TemplateAppCard({
         </div>
       )}
     </div>
+  );
+}
+
+/* ── Per-app credential picker (None / Device Default / specific) ── */
+
+function CredentialPicker({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string | null | undefined;
+  onChange: (id: string | undefined) => void;
+  disabled?: boolean;
+}) {
+  const { data: credentials } = useCredentials();
+
+  return (
+    <Select
+      value={value || ""}
+      onChange={(e) => onChange(e.target.value || undefined)}
+      disabled={disabled}
+    >
+      <option value="">-- None --</option>
+      <option value="device_default">Use Device Default Credential</option>
+      {(credentials ?? []).map((c) => (
+        <option key={c.id} value={c.id}>
+          {c.name} ({c.credential_type})
+        </option>
+      ))}
+    </Select>
   );
 }
 

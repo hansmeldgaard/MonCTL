@@ -77,6 +77,20 @@ _ROLE_TARGET_TABLE = {
 _MONITORING_ROLES = {"availability", "latency", "interface"}
 
 
+def _resolve_credential_id(cred_value: str | None, device: Device) -> uuid.UUID | None:
+    """Resolve credential_id from template config value.
+
+    - None / empty: no credential
+    - "device_default": use device.default_credential_id
+    - UUID string: use as-is
+    """
+    if not cred_value:
+        return None
+    if cred_value == "device_default":
+        return device.default_credential_id
+    return uuid.UUID(cred_value)
+
+
 async def apply_config_to_device(
     device: Device, config: dict, db: AsyncSession
 ) -> None:
@@ -146,6 +160,7 @@ async def apply_config_to_device(
                 schedule_type="interval",
                 schedule_value=str(interval),
                 role=role_name,
+                credential_id=_resolve_credential_id(check_config.get("credential_id"), device),
                 enabled=True,
             )
             db.add(assignment)
@@ -181,6 +196,7 @@ async def apply_config_to_device(
             schedule_type=app_config.get("schedule_type", "interval"),
             schedule_value=app_config.get("schedule_value", "60"),
             role=app_config.get("role"),
+            credential_id=_resolve_credential_id(app_config.get("credential_id"), device),
             enabled=True,
         )
         db.add(assignment)
