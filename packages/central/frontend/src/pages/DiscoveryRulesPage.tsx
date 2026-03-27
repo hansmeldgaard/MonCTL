@@ -30,12 +30,18 @@ import {
   useUpdateDeviceType,
   useDeleteDeviceType,
   useDeviceCategories,
+  useDeviceTypeTemplateBindings,
+  useCategoryTemplateBindings,
+  useBindDeviceTypeTemplate,
+  useUnbindDeviceTypeTemplate,
+  useTemplates,
 } from "@/api/hooks.ts";
 import { useListState } from "@/hooks/useListState.ts";
 import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
 import { DeviceCategoriesPage } from "@/pages/DeviceTypesPage.tsx";
 import { cn } from "@/lib/utils.ts";
-import type { DeviceType } from "@/types/api.ts";
+import type { DeviceType, TemplateBinding } from "@/types/api.ts";
+import { ChevronDown, FileText, X } from "lucide-react";
 
 const TABS = [
   { key: "types", label: "Device Types", icon: Search },
@@ -96,6 +102,7 @@ function DeviceTypesTab() {
   const [showCreate, setShowCreate] = useState(false);
   const [editTarget, setEditTarget] = useState<DeviceType | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeviceType | null>(null);
+  const [expandedRow, setExpandedRow] = useState<string | null>(null);
 
   if (isLoading) {
     return (
@@ -149,56 +156,75 @@ function DeviceTypesTab() {
                 </TableRow>
               ) : (
                 rules.map((rule) => (
-                  <TableRow key={rule.id}>
-                    <TableCell className="font-medium text-zinc-100">
-                      {rule.name}
-                      {rule.pack_id && (
-                        <Badge variant="default" className="ml-2 text-xs text-zinc-500">pack</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-zinc-400">
-                      {rule.sys_object_id_pattern}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="info" className="text-xs">
-                        {rule.device_category_name || "—"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-zinc-300">
-                      {rule.vendor || "—"}
-                    </TableCell>
-                    <TableCell className="text-zinc-400 text-sm">
-                      {rule.model || "—"}
-                    </TableCell>
-                    <TableCell className="text-zinc-400 text-sm">
-                      {rule.os_family || "—"}
-                    </TableCell>
-                    <TableCell className="text-zinc-500 text-sm tabular-nums">
-                      {rule.priority}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1">
-                        {rule.pack_id ? (
-                          <span className="text-xs text-zinc-600 italic">pack-managed</span>
-                        ) : (
-                          <>
-                            <button
-                              onClick={() => setEditTarget(rule)}
-                              className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer"
-                            >
-                              <Pencil className="h-3.5 w-3.5" />
-                            </button>
-                            <button
-                              onClick={() => setDeleteTarget(rule)}
-                              className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
+                  <>
+                    <TableRow
+                      key={rule.id}
+                      className="cursor-pointer hover:bg-zinc-800/50"
+                      onClick={() => setExpandedRow(expandedRow === rule.id ? null : rule.id)}
+                    >
+                      <TableCell className="font-medium text-zinc-100">
+                        <span className="flex items-center gap-1.5">
+                          <ChevronDown className={cn("h-3.5 w-3.5 text-zinc-600 transition-transform", expandedRow === rule.id ? "" : "-rotate-90")} />
+                          {rule.name}
+                          {rule.pack_id && (
+                            <Badge variant="default" className="text-xs text-zinc-500">pack</Badge>
+                          )}
+                        </span>
+                      </TableCell>
+                      <TableCell className="font-mono text-xs text-zinc-400">
+                        {rule.sys_object_id_pattern}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="info" className="text-xs">
+                          {rule.device_category_name || "—"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-zinc-300">
+                        {rule.vendor || "—"}
+                      </TableCell>
+                      <TableCell className="text-zinc-400 text-sm">
+                        {rule.model || "—"}
+                      </TableCell>
+                      <TableCell className="text-zinc-400 text-sm">
+                        {rule.os_family || "—"}
+                      </TableCell>
+                      <TableCell className="text-zinc-500 text-sm tabular-nums">
+                        {rule.priority}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                          {rule.pack_id ? (
+                            <span className="text-xs text-zinc-600 italic">pack-managed</span>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => setEditTarget(rule)}
+                                className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                onClick={() => setDeleteTarget(rule)}
+                                className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                    {expandedRow === rule.id && (
+                      <TableRow key={`${rule.id}-templates`}>
+                        <TableCell colSpan={8} className="bg-zinc-900/50 px-6 py-3">
+                          <DeviceTypeTemplateBindingsPanel
+                            deviceTypeId={rule.id}
+                            deviceCategoryId={rule.device_category_id}
+                          />
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </>
                 ))
               )}
             </TableBody>
@@ -404,5 +430,126 @@ function DeleteRuleDialog({
         </Button>
       </DialogFooter>
     </Dialog>
+  );
+}
+
+
+/* ── Template bindings panel (shown inside expanded row) ── */
+
+function DeviceTypeTemplateBindingsPanel({
+  deviceTypeId,
+  deviceCategoryId,
+}: {
+  deviceTypeId: string;
+  deviceCategoryId: string;
+}) {
+  const { data: typeBindingsData, refetch: refetchType } = useDeviceTypeTemplateBindings(deviceTypeId);
+  const { data: catBindingsData } = useCategoryTemplateBindings(deviceCategoryId);
+  const bindTemplate = useBindDeviceTypeTemplate();
+  const unbindTemplate = useUnbindDeviceTypeTemplate();
+  const { data: templatesData } = useTemplates({ limit: 200 });
+
+  const typeBindings: TemplateBinding[] = typeBindingsData?.data ?? [];
+  const catBindings: TemplateBinding[] = catBindingsData?.data ?? [];
+  const allTemplates = templatesData?.data ?? [];
+
+  const [addTemplateId, setAddTemplateId] = useState("");
+  const [addPriority, setAddPriority] = useState("0");
+
+  // Templates already bound at type level
+  const boundTypeIds = new Set(typeBindings.map((b) => b.template_id));
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 text-xs font-medium text-zinc-400">
+        <FileText className="h-3.5 w-3.5" />
+        Linked Templates
+      </div>
+
+      {/* Inherited from category */}
+      {catBindings.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-xs text-zinc-500">Inherited from category</p>
+          <div className="space-y-1">
+            {catBindings.map((b) => (
+              <div key={b.id} className="flex items-center gap-2 rounded border border-zinc-800/50 bg-zinc-800/20 px-2.5 py-1.5 text-sm">
+                <span className="flex-1 truncate text-zinc-400">{b.template_name}</span>
+                <Badge variant="default" className="text-[10px]">category</Badge>
+                <span className="text-xs text-zinc-600 tabular-nums">pri {b.priority}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Type-level bindings */}
+      <div className="space-y-1">
+        {catBindings.length > 0 && typeBindings.length > 0 && (
+          <p className="text-xs text-zinc-500">Device type overrides</p>
+        )}
+        {typeBindings.map((b) => (
+          <div key={b.id} className="flex items-center gap-2 rounded border border-zinc-800 bg-zinc-800/40 px-2.5 py-1.5 text-sm">
+            <span className="flex-1 truncate text-zinc-200">{b.template_name}</span>
+            <Badge variant="info" className="text-[10px]">type</Badge>
+            <span className="text-xs text-zinc-500 tabular-nums">pri {b.priority}</span>
+            <button
+              type="button"
+              onClick={async () => {
+                await unbindTemplate.mutateAsync(b.id);
+                refetchType();
+              }}
+              className="rounded p-0.5 text-zinc-600 hover:text-red-400 cursor-pointer"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        ))}
+        {typeBindings.length === 0 && catBindings.length === 0 && (
+          <p className="text-xs text-zinc-500 italic">No templates linked.</p>
+        )}
+      </div>
+
+      {/* Add binding */}
+      <div className="flex items-end gap-2">
+        <div className="flex-1 space-y-1">
+          <Label className="text-xs text-zinc-500">Add template</Label>
+          <Select value={addTemplateId} onChange={(e) => setAddTemplateId(e.target.value)}>
+            <option value="">Select template…</option>
+            {allTemplates
+              .filter((t) => !boundTypeIds.has(t.id))
+              .map((t) => (
+                <option key={t.id} value={t.id}>{t.name}</option>
+              ))}
+          </Select>
+        </div>
+        <div className="w-20 space-y-1">
+          <Label className="text-xs text-zinc-500">Priority</Label>
+          <Input
+            type="number"
+            value={addPriority}
+            onChange={(e) => setAddPriority(e.target.value)}
+            min={0}
+          />
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          disabled={!addTemplateId || bindTemplate.isPending}
+          onClick={async () => {
+            if (!addTemplateId) return;
+            await bindTemplate.mutateAsync({
+              device_type_id: deviceTypeId,
+              template_id: addTemplateId,
+              priority: parseInt(addPriority) || 0,
+            });
+            setAddTemplateId("");
+            setAddPriority("0");
+            refetchType();
+          }}
+        >
+          {bindTemplate.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+        </Button>
+      </div>
+    </div>
   );
 }
