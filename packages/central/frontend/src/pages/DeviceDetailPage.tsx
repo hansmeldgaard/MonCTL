@@ -4284,6 +4284,7 @@ export function DeviceDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { data: deviceResults, isLoading: resultsLoading } = useDeviceResults(id);
   const { data: device, isLoading: deviceLoading } = useDevice(id);
+  const { data: allCategories } = useDeviceCategories();
   const [activeTab, setActiveTab] = useState("overview");
 
   const isLoading = deviceLoading || (resultsLoading && !device);
@@ -4317,7 +4318,6 @@ export function DeviceDetailPage() {
   const deviceName = device?.name ?? deviceResults?.device_name ?? "Unknown";
   const deviceAddress = device?.address ?? deviceResults?.device_address ?? "";
   const deviceCategory = device?.device_category ?? deviceResults?.device_category ?? "";
-  const { data: allCategories } = useDeviceCategories();
   const dc = (allCategories ?? []).find((c) => c.name === deviceCategory);
   const deviceId = id!;
   const upStatus = deviceResults?.up;
