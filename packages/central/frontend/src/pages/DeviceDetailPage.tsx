@@ -4419,7 +4419,7 @@ export function DeviceDetailPage() {
                   <Badge variant={t.level === "device_type" ? "info" : "default"}>
                     {t.level === "device_type" ? "Type" : "Category"}
                   </Badge>
-                  <span className="text-xs text-zinc-500 tabular-nums">pri {t.priority}</span>
+                  <span className="text-xs text-zinc-500 tabular-nums">step {t.step}</span>
                 </div>
               ))}
             </div>

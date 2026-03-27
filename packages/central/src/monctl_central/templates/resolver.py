@@ -99,7 +99,7 @@ async def resolve_templates_for_device(
                 "template_name": binding.template.name,
                 "level": "category",
                 "category_name": binding.device_category.name,
-                "priority": binding.priority,
+                "step": binding.priority,
             })
 
     # Phase 2: type-level (overrides category)
@@ -122,7 +122,7 @@ async def resolve_templates_for_device(
                 "template_name": binding.template.name,
                 "level": "device_type",
                 "device_type_name": binding.device_type.name,
-                "priority": binding.priority,
+                "step": binding.priority,
             })
 
     return {"config": merged, "source_templates": source_templates}

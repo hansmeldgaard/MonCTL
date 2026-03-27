@@ -2207,7 +2207,7 @@ export function useDeviceTypeTemplateBindings(deviceTypeId: string | undefined) 
 export function useBindCategoryTemplate() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { device_category_id: string; template_id: string; priority?: number }) =>
+    mutationFn: (data: { device_category_id: string; template_id: string; step?: number }) =>
       apiPost<TemplateBinding>("/templates/bindings/category", data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["template-bindings-category"] });
@@ -2228,7 +2228,7 @@ export function useUnbindCategoryTemplate() {
 export function useBindDeviceTypeTemplate() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { device_type_id: string; template_id: string; priority?: number }) =>
+    mutationFn: (data: { device_type_id: string; template_id: string; step?: number }) =>
       apiPost<TemplateBinding>("/templates/bindings/device-type", data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["template-bindings-device-type"] });

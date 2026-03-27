@@ -172,7 +172,7 @@ async def export_pack(pack_id: uuid.UUID, db: AsyncSession) -> dict:
             {
                 "device_category_name": b.device_category.name,
                 "template_name": b.template.name,
-                "priority": b.priority,
+                "step": b.priority,
             }
             for b in cat_bindings
         ]
@@ -191,7 +191,7 @@ async def export_pack(pack_id: uuid.UUID, db: AsyncSession) -> dict:
             {
                 "device_type_name": b.device_type.name,
                 "template_name": b.template.name,
-                "priority": b.priority,
+                "step": b.priority,
             }
             for b in type_bindings
         ]
@@ -675,14 +675,15 @@ async def import_pack(
                     DeviceCategoryTemplateBinding.template_id == tmpl.id,
                 )
             )).scalar_one_or_none()
+            step = binding_data.get("step", binding_data.get("priority", 0))
             if existing:
-                existing.priority = binding_data.get("priority", 0)
+                existing.priority = step
                 existing.pack_id = pack.id
             else:
                 db.add(DeviceCategoryTemplateBinding(
                     device_category_id=dc.id,
                     template_id=tmpl.id,
-                    priority=binding_data.get("priority", 0),
+                    priority=step,
                     pack_id=pack.id,
                 ))
                 stats["created"] += 1
@@ -701,14 +702,15 @@ async def import_pack(
                     DeviceTypeTemplateBinding.template_id == tmpl.id,
                 )
             )).scalar_one_or_none()
+            step = binding_data.get("step", binding_data.get("priority", 0))
             if existing:
-                existing.priority = binding_data.get("priority", 0)
+                existing.priority = step
                 existing.pack_id = pack.id
             else:
                 db.add(DeviceTypeTemplateBinding(
                     device_type_id=dt.id,
                     template_id=tmpl.id,
-                    priority=binding_data.get("priority", 0),
+                    priority=step,
                     pack_id=pack.id,
                 ))
                 stats["created"] += 1

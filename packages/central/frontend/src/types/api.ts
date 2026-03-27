@@ -931,7 +931,7 @@ export interface TemplateBinding {
   device_type_name?: string;
   template_id: string;
   template_name: string;
-  priority: number;
+  step: number;
   created_at: string;
 }
 
@@ -941,7 +941,7 @@ export interface TemplateSourceInfo {
   level: "category" | "device_type";
   category_name?: string;
   device_type_name?: string;
-  priority: number;
+  step: number;
 }
 
 export interface ResolvedTemplateResult {

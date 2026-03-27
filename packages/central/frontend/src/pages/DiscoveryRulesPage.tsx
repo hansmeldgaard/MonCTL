@@ -41,7 +41,7 @@ import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
 import { DeviceCategoriesPage } from "@/pages/DeviceTypesPage.tsx";
 import { cn } from "@/lib/utils.ts";
 import type { DeviceType, TemplateBinding } from "@/types/api.ts";
-import { ChevronDown, FileText, X } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronDown, FileText, X } from "lucide-react";
 
 const TABS = [
   { key: "types", label: "Device Types", icon: Search },
@@ -454,10 +454,32 @@ function DeviceTypeTemplateBindingsPanel({
   const allTemplates = templatesData?.data ?? [];
 
   const [addTemplateId, setAddTemplateId] = useState("");
-  const [addPriority, setAddPriority] = useState("0");
 
-  // Templates already bound at type level
   const boundTypeIds = new Set(typeBindings.map((b) => b.template_id));
+
+  async function handleSwap(idx: number, dir: -1 | 1) {
+    const target = idx + dir;
+    if (target < 0 || target >= typeBindings.length) return;
+    const a = typeBindings[idx];
+    const b = typeBindings[target];
+    await Promise.all([
+      bindTemplate.mutateAsync({ device_type_id: deviceTypeId, template_id: a.template_id, step: b.step }),
+      bindTemplate.mutateAsync({ device_type_id: deviceTypeId, template_id: b.template_id, step: a.step }),
+    ]);
+    refetchType();
+  }
+
+  async function handleAdd() {
+    if (!addTemplateId) return;
+    const nextStep = typeBindings.length > 0 ? Math.max(...typeBindings.map((b) => b.step)) + 1 : 100;
+    await bindTemplate.mutateAsync({
+      device_type_id: deviceTypeId,
+      template_id: addTemplateId,
+      step: nextStep,
+    });
+    setAddTemplateId("");
+    refetchType();
+  }
 
   return (
     <div className="space-y-3">
@@ -466,6 +488,10 @@ function DeviceTypeTemplateBindingsPanel({
         Linked Templates
       </div>
 
+      <p className="text-xs text-zinc-500">
+        Device type templates (step 100 → 199) are applied after category templates (step 1 → 99). Same app names at type level override category level.
+      </p>
+
       {/* Inherited from category */}
       {catBindings.length > 0 && (
         <div className="space-y-1">
@@ -473,9 +499,9 @@ function DeviceTypeTemplateBindingsPanel({
           <div className="space-y-1">
             {catBindings.map((b) => (
               <div key={b.id} className="flex items-center gap-2 rounded border border-zinc-800/50 bg-zinc-800/20 px-2.5 py-1.5 text-sm">
+                <span className="w-8 text-center text-xs text-zinc-600 tabular-nums font-mono">{b.step}</span>
                 <span className="flex-1 truncate text-zinc-400">{b.template_name}</span>
                 <Badge variant="default" className="text-[10px]">category</Badge>
-                <span className="text-xs text-zinc-600 tabular-nums">pri {b.priority}</span>
               </div>
             ))}
           </div>
@@ -487,11 +513,29 @@ function DeviceTypeTemplateBindingsPanel({
         {catBindings.length > 0 && typeBindings.length > 0 && (
           <p className="text-xs text-zinc-500">Device type overrides</p>
         )}
-        {typeBindings.map((b) => (
+        {typeBindings.map((b, idx) => (
           <div key={b.id} className="flex items-center gap-2 rounded border border-zinc-800 bg-zinc-800/40 px-2.5 py-1.5 text-sm">
+            <span className="w-8 text-center text-xs text-zinc-500 tabular-nums font-mono">{b.step}</span>
             <span className="flex-1 truncate text-zinc-200">{b.template_name}</span>
             <Badge variant="info" className="text-[10px]">type</Badge>
-            <span className="text-xs text-zinc-500 tabular-nums">pri {b.priority}</span>
+            <div className="flex items-center gap-0.5">
+              <button
+                type="button"
+                disabled={idx === 0}
+                onClick={() => handleSwap(idx, -1)}
+                className="rounded p-1 text-zinc-600 hover:text-zinc-300 disabled:opacity-20 disabled:cursor-default cursor-pointer"
+              >
+                <ArrowUp className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                disabled={idx === typeBindings.length - 1}
+                onClick={() => handleSwap(idx, 1)}
+                className="rounded p-1 text-zinc-600 hover:text-zinc-300 disabled:opacity-20 disabled:cursor-default cursor-pointer"
+              >
+                <ArrowDown className="h-3.5 w-3.5" />
+              </button>
+            </div>
             <button
               type="button"
               onClick={async () => {
@@ -522,30 +566,11 @@ function DeviceTypeTemplateBindingsPanel({
               ))}
           </Select>
         </div>
-        <div className="w-20 space-y-1">
-          <Label className="text-xs text-zinc-500">Priority</Label>
-          <Input
-            type="number"
-            value={addPriority}
-            onChange={(e) => setAddPriority(e.target.value)}
-            min={0}
-          />
-        </div>
         <Button
           type="button"
           size="sm"
           disabled={!addTemplateId || bindTemplate.isPending}
-          onClick={async () => {
-            if (!addTemplateId) return;
-            await bindTemplate.mutateAsync({
-              device_type_id: deviceTypeId,
-              template_id: addTemplateId,
-              priority: parseInt(addPriority) || 0,
-            });
-            setAddTemplateId("");
-            setAddPriority("0");
-            refetchType();
-          }}
+          onClick={handleAdd}
         >
           {bindTemplate.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
         </Button>

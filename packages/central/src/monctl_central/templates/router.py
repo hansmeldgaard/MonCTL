@@ -52,7 +52,7 @@ def _fmt_category_binding(b: DeviceCategoryTemplateBinding) -> dict:
         "device_category_name": b.device_category.name if b.device_category else None,
         "template_id": str(b.template_id),
         "template_name": b.template.name if b.template else None,
-        "priority": b.priority,
+        "step": b.priority,
         "created_at": b.created_at.isoformat() if b.created_at else None,
     }
 
@@ -64,7 +64,7 @@ def _fmt_type_binding(b: DeviceTypeTemplateBinding) -> dict:
         "device_type_name": b.device_type.name if b.device_type else None,
         "template_id": str(b.template_id),
         "template_name": b.template.name if b.template else None,
-        "priority": b.priority,
+        "step": b.priority,
         "created_at": b.created_at.isoformat() if b.created_at else None,
     }
 
@@ -228,7 +228,7 @@ class ApplyTemplateRequest(BaseModel):
 class BindCategoryRequest(BaseModel):
     device_category_id: str
     template_id: str
-    priority: int = 0
+    step: int = 0
 
     @field_validator("device_category_id", "template_id")
     @classmethod
@@ -240,7 +240,7 @@ class BindCategoryRequest(BaseModel):
 class BindDeviceTypeRequest(BaseModel):
     device_type_id: str
     template_id: str
-    priority: int = 0
+    step: int = 0
 
     @field_validator("device_type_id", "template_id")
     @classmethod
@@ -344,7 +344,7 @@ async def bind_category_template(
         )
     )).scalar_one_or_none()
     if existing:
-        existing.priority = request.priority
+        existing.priority = request.step
         await db.flush()
         stmt = select(DeviceCategoryTemplateBinding).where(
             DeviceCategoryTemplateBinding.id == existing.id
@@ -358,7 +358,7 @@ async def bind_category_template(
     binding = DeviceCategoryTemplateBinding(
         device_category_id=cat_id,
         template_id=tmpl_id,
-        priority=request.priority,
+        priority=request.step,
     )
     db.add(binding)
     await db.flush()
@@ -430,7 +430,7 @@ async def bind_device_type_template(
         )
     )).scalar_one_or_none()
     if existing:
-        existing.priority = request.priority
+        existing.priority = request.step
         await db.flush()
         stmt = select(DeviceTypeTemplateBinding).where(
             DeviceTypeTemplateBinding.id == existing.id
@@ -444,7 +444,7 @@ async def bind_device_type_template(
     binding = DeviceTypeTemplateBinding(
         device_type_id=dt_id,
         template_id=tmpl_id,
-        priority=request.priority,
+        priority=request.step,
     )
     db.add(binding)
     await db.flush()

@@ -2,9 +2,12 @@ import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
 import { validateShortName } from "@/lib/validation.ts";
 import {
+  ArrowDown,
+  ArrowUp,
   ChevronDown,
   Cpu,
   Database,
+  FileText,
   Globe,
   HardDrive,
   Loader2,
@@ -27,6 +30,14 @@ import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { Select } from "@/components/ui/select.tsx";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table.tsx";
 import {
   useCreateDeviceCategory,
   useUpdateDeviceCategory,
@@ -174,30 +185,6 @@ export function DeviceCategoriesPage() {
     return () => obs.disconnect();
   }, [loadMore]);
 
-  // Group displayed types by category for visual grouping
-  const grouped = useMemo(() => {
-    const map = new Map<string, DeviceCategory[]>();
-    for (const dt of allTypes) {
-      const cat = dt.category || "other";
-      if (!map.has(cat)) map.set(cat, []);
-      map.get(cat)!.push(dt);
-    }
-    return CATEGORIES
-      .filter((c) => map.has(c))
-      .map((c) => ({ category: c, types: map.get(c)! }));
-  }, [allTypes]);
-
-  // Collapsible sections
-  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
-  function toggleSection(cat: string) {
-    setCollapsedSections((prev) => {
-      const next = new Set(prev);
-      if (next.has(cat)) next.delete(cat);
-      else next.add(cat);
-      return next;
-    });
-  }
-
   // CRUD dialogs state
   const [addOpen, setAddOpen] = useState(false);
   const nameField = useField("", validateShortName);
@@ -215,15 +202,8 @@ export function DeviceCategoriesPage() {
 
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
 
-  // Template bindings for edit dialog
-  const { data: bindingsData, refetch: refetchBindings } = useCategoryTemplateBindings(editTarget?.id);
-  const bindings: TemplateBinding[] = bindingsData?.data ?? [];
-  const bindTemplate = useBindCategoryTemplate();
-  const unbindTemplate = useUnbindCategoryTemplate();
-  const { data: templatesData } = useTemplates({ limit: 200 });
-  const allTemplates = templatesData?.data ?? [];
-  const [bindTemplateId, setBindTemplateId] = useState("");
-  const [bindPriority, setBindPriority] = useState("0");
+  // Expanded row for template bindings
+  const [expandedRow, setExpandedRow] = useState<string | null>(null);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -301,7 +281,7 @@ export function DeviceCategoriesPage() {
         <div className="relative flex-1 max-w-sm">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
           <Input
-            placeholder="Search device types..."
+            placeholder="Search categories..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-8 pr-7"
@@ -317,13 +297,13 @@ export function DeviceCategoriesPage() {
           )}
         </div>
         <span className="text-xs text-zinc-500 tabular-nums whitespace-nowrap">
-          {total} type{total !== 1 ? "s" : ""}
+          {total} categor{total !== 1 ? "ies" : "y"}
         </span>
         {isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-600" />}
         <div className="ml-auto">
           <Button size="sm" onClick={() => setAddOpen(true)} className="gap-1.5">
             <Plus className="h-4 w-4" />
-            Add Type
+            Add Category
           </Button>
         </div>
       </div>
@@ -371,67 +351,94 @@ export function DeviceCategoriesPage() {
         })}
       </div>
 
-      {/* Types grid — grouped by category when showing all */}
+      {/* Categories list view */}
       {allTypes.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-lg border border-zinc-800 py-16 text-zinc-500">
           <Server className="mb-2 h-8 w-8 text-zinc-600" />
           <p className="text-sm">
             {debouncedSearch || activeCategory
-              ? "No types match your filters"
-              : "No device types defined"}
+              ? "No categories match your filters"
+              : "No device categories defined"}
           </p>
         </div>
-      ) : activeCategory ? (
-        /* Single category — flat grid */
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-2">
-          {allTypes.map((dt) => (
-            <TypeCard key={dt.id} dt={dt} onEdit={openEdit} onDelete={setDeleteTarget} />
-          ))}
-        </div>
       ) : (
-        /* All categories — grouped sections */
-        <div className="space-y-2">
-          {grouped.map(({ category: cat, types: catTypes }) => {
-            const meta = CATEGORY_META[cat] ?? CATEGORY_META.other;
-            const Icon = meta.icon;
-            const isCollapsed = collapsedSections.has(cat);
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Category</TableHead>
+              <TableHead>Description</TableHead>
+              <TableHead className="w-20"></TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {allTypes.map((dt) => {
+              const isBuiltin = BUILTIN_CATEGORIES.has(dt.name);
+              const isPackManaged = !!dt.pack_id;
+              const catMeta = CATEGORY_META[dt.category] ?? CATEGORY_META.other;
+              const CatIcon = catMeta.icon;
+              const isExpanded = expandedRow === dt.id;
 
-            return (
-              <div
-                key={cat}
-                className="rounded-lg border border-zinc-800 bg-zinc-900 overflow-hidden"
-              >
-                <button
-                  type="button"
-                  onClick={() => toggleSection(cat)}
-                  className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left transition-colors hover:bg-zinc-800/50 cursor-pointer"
-                >
-                  <Icon className={cn("h-4 w-4 shrink-0", meta.accent)} />
-                  <span className="text-sm font-medium text-zinc-200">
-                    {meta.label}
-                  </span>
-                  <span className="text-xs text-zinc-500 tabular-nums">
-                    {catTypes.length}
-                  </span>
-                  <ChevronDown
-                    className={cn(
-                      "ml-auto h-4 w-4 text-zinc-600 transition-transform duration-200",
-                      isCollapsed && "-rotate-90",
-                    )}
-                  />
-                </button>
-
-                {!isCollapsed && (
-                  <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-2 px-3 pb-3">
-                    {catTypes.map((dt) => (
-                      <TypeCard key={dt.id} dt={dt} onEdit={openEdit} onDelete={setDeleteTarget} />
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+              return (
+                <>
+                  <TableRow
+                    key={dt.id}
+                    className="cursor-pointer hover:bg-zinc-800/50"
+                    onClick={() => setExpandedRow(isExpanded ? null : dt.id)}
+                  >
+                    <TableCell>
+                      <span className="flex items-center gap-2">
+                        <ChevronDown className={cn("h-3.5 w-3.5 text-zinc-600 transition-transform", !isExpanded && "-rotate-90")} />
+                        <DeviceIcon
+                          icon={dt.icon}
+                          customIconUrl={dt.has_custom_icon ? categoryIconUrl(dt.id) : null}
+                          className="h-4 w-4 text-zinc-400"
+                        />
+                        <span className="font-mono text-sm font-medium text-zinc-200">{dt.name}</span>
+                        {isBuiltin && <Lock className="h-3 w-3 text-zinc-600" />}
+                        {isPackManaged && <Package className="h-3 w-3 text-violet-500/70" />}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <span className="flex items-center gap-1.5">
+                        <CatIcon className={cn("h-3.5 w-3.5", catMeta.accent)} />
+                        <span className="text-sm text-zinc-400">{catMeta.label}</span>
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-sm text-zinc-500 truncate max-w-xs">
+                      {dt.description || "—"}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          onClick={() => openEdit(dt)}
+                          className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                        {!isBuiltin && !isPackManaged && (
+                          <button
+                            onClick={() => setDeleteTarget({ id: dt.id, name: dt.name })}
+                            className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                  {isExpanded && (
+                    <TableRow key={`${dt.id}-templates`}>
+                      <TableCell colSpan={4} className="bg-zinc-900/50 px-6 py-3">
+                        <CategoryTemplateBindingsPanel categoryId={dt.id} />
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </>
+              );
+            })}
+          </TableBody>
+        </Table>
       )}
 
       {/* Infinite scroll sentinel */}
@@ -441,8 +448,8 @@ export function DeviceCategoriesPage() {
         </div>
       )}
 
-      {/* Add Type Dialog */}
-      <Dialog open={addOpen} onClose={() => { setAddOpen(false); setFormError(null); }} title="Add Device Type">
+      {/* Add Category Dialog */}
+      <Dialog open={addOpen} onClose={() => { setAddOpen(false); setFormError(null); }} title="Add Device Category">
         <form onSubmit={handleCreate} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="dt-name">Name</Label>
@@ -497,14 +504,14 @@ export function DeviceCategoriesPage() {
             </Button>
             <Button type="submit" disabled={createType.isPending}>
               {createType.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-              Add Type
+              Add Category
             </Button>
           </DialogFooter>
         </form>
       </Dialog>
 
-      {/* Edit Type Dialog */}
-      <Dialog open={!!editTarget} onClose={() => setEditTarget(null)} title="Edit Device Type">
+      {/* Edit Category Dialog */}
+      <Dialog open={!!editTarget} onClose={() => setEditTarget(null)} title="Edit Device Category">
         <form onSubmit={handleEdit} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="dt-edit-name">Name</Label>
@@ -517,7 +524,7 @@ export function DeviceCategoriesPage() {
               autoFocus
             />
             {editTarget && BUILTIN_CATEGORIES.has(editTarget.name) && (
-              <p className="text-xs text-zinc-500">Built-in type names cannot be changed.</p>
+              <p className="text-xs text-zinc-500">Built-in category names cannot be changed.</p>
             )}
           </div>
           <div className="space-y-1.5">
@@ -554,7 +561,6 @@ export function DeviceCategoriesPage() {
                   onClick={async () => {
                     if (editTarget) {
                       await deleteIcon.mutateAsync(editTarget.id);
-                      // Refresh the editTarget reference
                       editTarget.has_custom_icon = false;
                     }
                   }}
@@ -593,76 +599,6 @@ export function DeviceCategoriesPage() {
               placeholder="Short description"
             />
           </div>
-          {/* Linked Templates */}
-          <div className="space-y-2">
-            <Label>Linked Templates</Label>
-            {bindings.length > 0 ? (
-              <div className="space-y-1">
-                {bindings.map((b) => (
-                  <div key={b.id} className="flex items-center gap-2 rounded border border-zinc-800 bg-zinc-800/40 px-2.5 py-1.5 text-sm">
-                    <span className="flex-1 truncate text-zinc-200">{b.template_name}</span>
-                    <span className="text-xs text-zinc-500 tabular-nums">pri {b.priority}</span>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        await unbindTemplate.mutateAsync(b.id);
-                        refetchBindings();
-                      }}
-                      className="rounded p-0.5 text-zinc-600 hover:text-red-400 cursor-pointer"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-xs text-zinc-500">No templates linked to this category.</p>
-            )}
-            <div className="flex items-end gap-2">
-              <div className="flex-1 space-y-1">
-                <Label className="text-xs text-zinc-500">Template</Label>
-                <Select
-                  value={bindTemplateId}
-                  onChange={(e) => setBindTemplateId(e.target.value)}
-                >
-                  <option value="">Select template…</option>
-                  {allTemplates
-                    .filter((t) => !bindings.some((b) => b.template_id === t.id))
-                    .map((t) => (
-                      <option key={t.id} value={t.id}>{t.name}</option>
-                    ))}
-                </Select>
-              </div>
-              <div className="w-20 space-y-1">
-                <Label className="text-xs text-zinc-500">Priority</Label>
-                <Input
-                  type="number"
-                  value={bindPriority}
-                  onChange={(e) => setBindPriority(e.target.value)}
-                  min={0}
-                />
-              </div>
-              <Button
-                type="button"
-                size="sm"
-                disabled={!bindTemplateId || bindTemplate.isPending}
-                onClick={async () => {
-                  if (!editTarget || !bindTemplateId) return;
-                  await bindTemplate.mutateAsync({
-                    device_category_id: editTarget.id,
-                    template_id: bindTemplateId,
-                    priority: parseInt(bindPriority) || 0,
-                  });
-                  setBindTemplateId("");
-                  setBindPriority("0");
-                  refetchBindings();
-                }}
-              >
-                {bindTemplate.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-              </Button>
-            </div>
-          </div>
-
           {editError && <p className="text-sm text-red-400">{editError}</p>}
           <DialogFooter>
             <Button type="button" variant="secondary" onClick={() => setEditTarget(null)}>
@@ -680,13 +616,13 @@ export function DeviceCategoriesPage() {
       <Dialog
         open={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
-        title="Delete Device Type"
+        title="Delete Device Category"
       >
         <p className="text-sm text-zinc-400">
-          Are you sure you want to delete the device type{" "}
+          Are you sure you want to delete the device category{" "}
           <span className="font-mono text-zinc-200">{deleteTarget?.name}</span>?
-          Devices already using this type will retain the value, but it will
-          no longer appear in the type selector.
+          Devices already using this category will retain the value, but it will
+          no longer appear in the category selector.
         </p>
         <DialogFooter>
           <Button variant="secondary" onClick={() => setDeleteTarget(null)}>
@@ -706,83 +642,119 @@ export function DeviceCategoriesPage() {
   );
 }
 
-/* ── Type card with icon-forward design ────────────────── */
 
-const ICON_TINTS: Record<string, { bg: string; fg: string }> = {
-  router:      { bg: "bg-sky-500/10",    fg: "text-sky-400" },
-  switch:      { bg: "bg-sky-500/10",    fg: "text-sky-400" },
-  server:      { bg: "bg-zinc-400/10",   fg: "text-zinc-300" },
-  firewall:    { bg: "bg-orange-500/10", fg: "text-orange-400" },
-  printer:     { bg: "bg-zinc-500/10",   fg: "text-zinc-400" },
-  cloud:       { bg: "bg-violet-500/10", fg: "text-violet-400" },
-  database:    { bg: "bg-blue-500/10",   fg: "text-blue-400" },
-  container:   { bg: "bg-cyan-500/10",   fg: "text-cyan-400" },
-  cpu:         { bg: "bg-teal-500/10",   fg: "text-teal-400" },
-  globe:       { bg: "bg-violet-500/10", fg: "text-violet-400" },
-  "hard-drive": { bg: "bg-amber-500/10", fg: "text-amber-400" },
-  monitor:     { bg: "bg-zinc-400/10",   fg: "text-zinc-300" },
-};
+/* ── Category template bindings panel (shown in expanded row) ── */
 
-function TypeCard({
-  dt,
-  onEdit,
-  onDelete,
-}: {
-  dt: DeviceCategory;
-  onEdit: (dt: DeviceCategory) => void;
-  onDelete: (t: { id: string; name: string }) => void;
-}) {
-  const isBuiltin = BUILTIN_CATEGORIES.has(dt.name);
-  const tint = ICON_TINTS[dt.icon ?? ""] ?? { bg: "bg-zinc-500/10", fg: "text-zinc-400" };
-  const isPackManaged = !!dt.pack_id;
+function CategoryTemplateBindingsPanel({ categoryId }: { categoryId: string }) {
+  const { data: bindingsData, refetch } = useCategoryTemplateBindings(categoryId);
+  const bindTemplate = useBindCategoryTemplate();
+  const unbindTemplate = useUnbindCategoryTemplate();
+  const { data: templatesData } = useTemplates({ limit: 200 });
+
+  const bindings: TemplateBinding[] = bindingsData?.data ?? [];
+  const allTemplates = templatesData?.data ?? [];
+  const boundIds = new Set(bindings.map((b) => b.template_id));
+
+  const [addTemplateId, setAddTemplateId] = useState("");
+
+  async function handleSwap(idx: number, dir: -1 | 1) {
+    const target = idx + dir;
+    if (target < 0 || target >= bindings.length) return;
+    const a = bindings[idx];
+    const b = bindings[target];
+    // Swap steps by re-binding with swapped step values
+    await Promise.all([
+      bindTemplate.mutateAsync({ device_category_id: categoryId, template_id: a.template_id, step: b.step }),
+      bindTemplate.mutateAsync({ device_category_id: categoryId, template_id: b.template_id, step: a.step }),
+    ]);
+    refetch();
+  }
+
+  async function handleAdd() {
+    if (!addTemplateId) return;
+    const nextStep = bindings.length > 0 ? Math.max(...bindings.map((b) => b.step)) + 1 : 1;
+    await bindTemplate.mutateAsync({
+      device_category_id: categoryId,
+      template_id: addTemplateId,
+      step: nextStep,
+    });
+    setAddTemplateId("");
+    refetch();
+  }
 
   return (
-    <div className="group relative flex items-center gap-3 rounded-md border border-zinc-800 bg-zinc-800/40 px-3 py-2.5 transition-colors hover:border-zinc-700 hover:bg-zinc-800/70">
-      {/* Icon well */}
-      <div className={cn("flex shrink-0 items-center justify-center rounded-md h-9 w-9", dt.has_custom_icon ? "bg-zinc-800" : tint.bg)}>
-        <DeviceIcon
-          icon={dt.icon}
-          customIconUrl={dt.has_custom_icon ? categoryIconUrl(dt.id) : null}
-          className={cn("h-5 w-5", dt.has_custom_icon ? "" : tint.fg)}
-        />
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <FileText className="h-3.5 w-3.5 text-zinc-400" />
+        <span className="text-xs font-medium text-zinc-400">Linked Templates</span>
       </div>
 
-      {/* Content */}
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5">
-          <span className="truncate font-mono text-sm font-medium text-zinc-200">
-            {dt.name}
-          </span>
-          {isBuiltin && (
-            <Lock className="h-3 w-3 shrink-0 text-zinc-600" />
-          )}
-          {isPackManaged && (
-            <Package className="h-3 w-3 shrink-0 text-violet-500/70" />
-          )}
+      <p className="text-xs text-zinc-500">
+        Templates are applied in step order (1 → 99). Device type templates (step 100 → 199) are applied after and override on app name overlap.
+      </p>
+
+      {bindings.length > 0 ? (
+        <div className="space-y-1">
+          {bindings.map((b, idx) => (
+            <div key={b.id} className="flex items-center gap-2 rounded border border-zinc-800 bg-zinc-800/40 px-2.5 py-1.5 text-sm">
+              <span className="w-8 text-center text-xs text-zinc-500 tabular-nums font-mono">{b.step}</span>
+              <span className="flex-1 truncate text-zinc-200">{b.template_name}</span>
+              <div className="flex items-center gap-0.5">
+                <button
+                  type="button"
+                  disabled={idx === 0}
+                  onClick={() => handleSwap(idx, -1)}
+                  className="rounded p-1 text-zinc-600 hover:text-zinc-300 disabled:opacity-20 disabled:cursor-default cursor-pointer"
+                >
+                  <ArrowUp className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  disabled={idx === bindings.length - 1}
+                  onClick={() => handleSwap(idx, 1)}
+                  className="rounded p-1 text-zinc-600 hover:text-zinc-300 disabled:opacity-20 disabled:cursor-default cursor-pointer"
+                >
+                  <ArrowDown className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={async () => {
+                  await unbindTemplate.mutateAsync(b.id);
+                  refetch();
+                }}
+                className="rounded p-0.5 text-zinc-600 hover:text-red-400 cursor-pointer"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ))}
         </div>
-        {dt.description && (
-          <p className="mt-0.5 truncate text-xs text-zinc-500" title={dt.description}>
-            {dt.description}
-          </p>
-        )}
-      </div>
+      ) : (
+        <p className="text-xs text-zinc-500 italic">No templates linked.</p>
+      )}
 
-      {/* Hover actions */}
-      <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-        <button
-          onClick={() => onEdit(dt)}
-          className="rounded p-1 text-zinc-600 transition-colors hover:bg-zinc-700 hover:text-zinc-300 cursor-pointer"
+      {/* Add template */}
+      <div className="flex items-end gap-2">
+        <div className="flex-1 space-y-1">
+          <Label className="text-xs text-zinc-500">Add template</Label>
+          <Select value={addTemplateId} onChange={(e) => setAddTemplateId(e.target.value)}>
+            <option value="">Select template…</option>
+            {allTemplates
+              .filter((t) => !boundIds.has(t.id))
+              .map((t) => (
+                <option key={t.id} value={t.id}>{t.name}</option>
+              ))}
+          </Select>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          disabled={!addTemplateId || bindTemplate.isPending}
+          onClick={handleAdd}
         >
-          <Pencil className="h-3.5 w-3.5" />
-        </button>
-        {!isBuiltin && !isPackManaged && (
-          <button
-            onClick={() => onDelete({ id: dt.id, name: dt.name })}
-            className="rounded p-1 text-zinc-600 transition-colors hover:bg-red-500/10 hover:text-red-400 cursor-pointer"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
-        )}
+          {bindTemplate.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+        </Button>
       </div>
     </div>
   );
