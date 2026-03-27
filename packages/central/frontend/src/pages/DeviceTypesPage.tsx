@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
 import { validateShortName } from "@/lib/validation.ts";
 import {
@@ -91,8 +91,6 @@ const ICON_OPTIONS = [
   { value: "monitor", label: "Monitor" },
 ] as const;
 
-const PAGE_SIZE = 60;
-
 export function DeviceCategoriesPage() {
   const createType = useCreateDeviceCategory();
   const updateType = useUpdateDeviceCategory();
@@ -116,7 +114,7 @@ export function DeviceCategoriesPage() {
 
   // Paginated type list
   const listParams = useMemo(() => ({
-    limit: PAGE_SIZE,
+    limit: 500,
     offset: 0,
     sort_by: "name" as const,
     sort_dir: "asc" as const,
@@ -126,64 +124,8 @@ export function DeviceCategoriesPage() {
 
   const { data: listData, isLoading, isFetching } = useDeviceCategoryList(listParams);
 
-  const meta = listData?.meta;
-  const total = meta?.total ?? 0;
-
-  // Infinite scroll: accumulate pages
-  const [pages, setPages] = useState<DeviceCategory[][]>([]);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const sentinelRef = useRef<HTMLDivElement>(null);
-
-  // Reset accumulated pages when filters change
-  useEffect(() => {
-    setPages([]);
-  }, [debouncedSearch, activeCategory]);
-
-  // Store first page
-  useEffect(() => {
-    if (listData?.data && listData.meta.offset === 0) {
-      setPages([listData.data]);
-    }
-  }, [listData]);
-
-  const allTypes = useMemo(() => pages.flat(), [pages]);
-  const displayHasMore = total > allTypes.length;
-
-  const loadMore = useCallback(async () => {
-    if (loadingMore || !displayHasMore) return;
-    setLoadingMore(true);
-    try {
-      const nextOffset = allTypes.length;
-      const qs = new URLSearchParams({
-        limit: String(PAGE_SIZE),
-        offset: String(nextOffset),
-        sort_by: "name",
-        sort_dir: "asc",
-      });
-      if (debouncedSearch) qs.set("search", debouncedSearch);
-      if (activeCategory) qs.set("category", activeCategory);
-
-      const res = await fetch(`/v1/device-categories?${qs}`, { credentials: "include" });
-      const json = await res.json();
-      if (json.data) {
-        setPages((prev) => [...prev, json.data]);
-      }
-    } finally {
-      setLoadingMore(false);
-    }
-  }, [loadingMore, displayHasMore, allTypes.length, debouncedSearch, activeCategory]);
-
-  // IntersectionObserver for infinite scroll
-  useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el) return;
-    const obs = new IntersectionObserver(
-      ([entry]) => { if (entry.isIntersecting) loadMore(); },
-      { rootMargin: "200px" },
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [loadMore]);
+  const allTypes: DeviceCategory[] = listData?.data ?? [];
+  const total = listData?.meta?.total ?? 0;
 
   // CRUD dialogs state
   const [addOpen, setAddOpen] = useState(false);
@@ -266,7 +208,7 @@ export function DeviceCategoriesPage() {
     }
   }
 
-  if (isLoading && pages.length === 0) {
+  if (isLoading) {
     return (
       <div className="flex h-64 items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
@@ -439,13 +381,6 @@ export function DeviceCategoriesPage() {
             })}
           </TableBody>
         </Table>
-      )}
-
-      {/* Infinite scroll sentinel */}
-      {displayHasMore && (
-        <div ref={sentinelRef} className="flex items-center justify-center py-4">
-          {loadingMore && <Loader2 className="h-5 w-5 animate-spin text-zinc-600" />}
-        </div>
       )}
 
       {/* Add Category Dialog */}
