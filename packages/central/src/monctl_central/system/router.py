@@ -435,6 +435,81 @@ async def _check_clickhouse() -> dict:
             elif used_pct > 90 and status != "critical":
                 status = "degraded"
 
+    # --- Build cluster object in the format the frontend expects ---
+    cluster_obj = None
+    if cluster_topology:
+        shard_set = set()
+        for node in cluster_topology:
+            shard_set.add(node.get("host_name", ""))
+        cluster_obj = {
+            "cluster_name": ch._cluster_name or "monctl_cluster",
+            "shard_count": 1,
+            "replica_count": len(cluster_topology),
+            "nodes": [
+                {
+                    "shard": 1,
+                    "replica": i + 1,
+                    "host": n.get("host_name", ""),
+                    "address": n.get("host_name", ""),
+                    "port": n.get("port", 9000),
+                    "is_local": bool(n.get("is_local", False)),
+                }
+                for i, n in enumerate(cluster_topology)
+            ],
+        }
+
+    # --- Build server resources object ---
+    server_obj = None
+    if disks or async_metrics:
+        os_mem_total = async_metrics.get("OSMemoryTotal", 0)
+        os_mem_free = async_metrics.get("OSMemoryFreeWithoutCached", 0)
+        server_obj = {
+            "disks": [
+                {
+                    "name": dk["name"],
+                    "free_bytes": dk["free_space"],
+                    "total_bytes": dk["total_space"],
+                    "used_pct": round(((dk["total_space"] - dk["free_space"]) / dk["total_space"]) * 100, 1) if dk["total_space"] > 0 else 0,
+                }
+                for dk in disks
+            ],
+            "os_memory_total_bytes": os_mem_total,
+            "os_memory_free_bytes": os_mem_free,
+            "ch_memory_resident_bytes": 0,
+            "cpu_user_pct": round(async_metrics.get("OSCPUUser", 0), 1),
+            "cpu_system_pct": round(async_metrics.get("OSCPUSystem", 0), 1),
+            "cpu_iowait_pct": 0,
+            "cpu_idle_pct": round(100 - async_metrics.get("OSCPUUser", 0) - async_metrics.get("OSCPUSystem", 0), 1),
+            "load_average": [
+                round(async_metrics.get("LoadAverage1", 0), 2),
+                round(async_metrics.get("LoadAverage5", 0), 2),
+                round(async_metrics.get("LoadAverage15", 0), 2),
+            ],
+            "tcp_connections": 0,
+            "max_parts_per_partition": 0,
+        }
+
+    # --- Build replication array ---
+    replication_list = [
+        {
+            "table": tbl,
+            "is_leader": False,
+            "is_readonly": rep.get("is_readonly", False),
+            "queue_size": rep.get("queue_size", 0),
+            "absolute_delay": rep.get("absolute_delay", 0),
+            "active_replicas": rep.get("active_replicas", 0),
+            "total_replicas": rep.get("total_replicas", 0),
+            "is_session_expired": rep.get("is_session_expired", False),
+            "log_lag": 0,
+            "inserts_in_queue": 0,
+            "merges_in_queue": 0,
+        }
+        for tbl, rep in replication.items()
+    ]
+
+    # --- Build keeper object ---
+    keeper_obj = {"reachable": keeper_ok or False, "session_expired": False} if keeper_ok is not None else None
+
     return {
         "status": status,
         "latency_ms": latency_ms,
@@ -447,14 +522,17 @@ async def _check_clickhouse() -> dict:
             "total_rows": total_rows_all,
             "pk_memory_bytes": pk_memory_bytes,
             "cluster_topology": cluster_topology,
-            "replication": replication,
+            "cluster": cluster_obj,
+            "replication": replication_list,
             "merges": merges,
             "mutations": mutations,
             "keeper_ok": keeper_ok,
+            "keeper": keeper_obj,
             "slow_queries_last_hour": slow_queries,
             "recent_errors": recent_errors,
             "disks": disks,
             "async_metrics": async_metrics,
+            "server": server_obj,
         },
     }
 
