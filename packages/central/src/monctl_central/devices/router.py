@@ -58,6 +58,7 @@ class CreateDeviceRequest(BaseModel):
     tenant_id: str | None = Field(default=None, description="UUID of the owning tenant")
     collector_group_id: str | None = Field(default=None, description="UUID of the collector group")
     default_credential_id: str | None = Field(default=None, description="UUID of the default credential")
+    device_type_id: str | None = Field(default=None, description="UUID of the device type (optional, auto-detected via SNMP if not set)")
     credentials: dict[str, str] = Field(default_factory=dict, description="Per-protocol credential mapping: {credential_type: credential_id}")
     labels: dict[str, str] = Field(default_factory=dict, description="Key-value labels")
     metadata: dict = Field(default_factory=dict, description="Additional metadata")
@@ -77,7 +78,7 @@ class CreateDeviceRequest(BaseModel):
     def check_metadata(cls, v: dict) -> dict:
         return validate_metadata(v)
 
-    @field_validator("collector_id", "tenant_id", "collector_group_id", "default_credential_id")
+    @field_validator("collector_id", "tenant_id", "collector_group_id", "default_credential_id", "device_type_id")
     @classmethod
     def check_uuids(cls, v: str | None, info) -> str | None:
         if v is not None:
@@ -93,6 +94,7 @@ class UpdateDeviceRequest(BaseModel):
     tenant_id: str | None = None
     collector_group_id: str | None = None
     default_credential_id: str | None = None
+    device_type_id: str | None = None
     credentials: dict[str, str] | None = None
     labels: dict[str, str] | None = None
     metadata: dict | None = None
@@ -119,7 +121,7 @@ class UpdateDeviceRequest(BaseModel):
             return validate_metadata(v)
         return v
 
-    @field_validator("collector_id", "tenant_id", "collector_group_id", "default_credential_id")
+    @field_validator("collector_id", "tenant_id", "collector_group_id", "default_credential_id", "device_type_id")
     @classmethod
     def check_uuids(cls, v: str | None, info) -> str | None:
         if v is not None and v != "":
@@ -298,6 +300,7 @@ async def create_device(
         tenant_id=uuid.UUID(request.tenant_id) if request.tenant_id else None,
         collector_group_id=uuid.UUID(request.collector_group_id) if request.collector_group_id else None,
         default_credential_id=uuid.UUID(request.default_credential_id) if request.default_credential_id else None,
+        device_type_id=uuid.UUID(request.device_type_id) if request.device_type_id else None,
         credentials=request.credentials,
         labels=request.labels,
         metadata_=request.metadata,
@@ -472,6 +475,8 @@ async def update_device(
 
     if request.default_credential_id is not None:
         device.default_credential_id = uuid.UUID(request.default_credential_id) if request.default_credential_id != "" else None
+    if request.device_type_id is not None:
+        device.device_type_id = uuid.UUID(request.device_type_id) if request.device_type_id != "" else None
     if request.credentials is not None:
         device.credentials = request.credentials
     if request.labels is not None:

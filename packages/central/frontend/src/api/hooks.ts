@@ -885,10 +885,11 @@ export function useCreateDevice() {
     mutationFn: (data: {
       name: string;
       address: string;
-      device_category: string;
+      device_category?: string;
       tenant_id?: string;
       collector_group_id?: string;
       default_credential_id?: string;
+      device_type_id?: string;
       credentials?: Record<string, string>;
       labels?: Record<string, string>;
     }) => apiPost<Device>("/devices", data),
@@ -942,6 +943,7 @@ export function useUpdateDevice() {
         name: string;
         address: string;
         device_category: string;
+        device_type_id: string | null;
         tenant_id: string | null;
         collector_group_id: string | null;
         credentials: Record<string, string>;
@@ -1592,6 +1594,15 @@ export function useDeleteRegistrationToken() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["registration-tokens"] });
     },
+  });
+}
+
+export function useCollectorSetupContext() {
+  return useQuery({
+    queryKey: ["collector-setup-context"],
+    queryFn: () => apiGet<{ collector_api_key: string; central_url: string }>("/collectors/setup-context"),
+    select: (res) => res.data,
+    enabled: false,
   });
 }
 
