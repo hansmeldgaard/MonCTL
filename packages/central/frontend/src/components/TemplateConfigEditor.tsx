@@ -431,11 +431,13 @@ function MonitoringRoleRow({
               ))}
             </Select>
           </div>
-          <CredentialPicker
-            value={check.credential_id}
-            onChange={(id) => onChange({ ...check, credential_id: id || undefined })}
-            disabled={disabled}
-          />
+          {role === "interface" && (
+            <CredentialPicker
+              value={check.credential_id}
+              onChange={(id) => onChange({ ...check, credential_id: id || undefined })}
+              disabled={disabled}
+            />
+          )}
           {check.app_name && hasSchema && (
             <SchemaConfigFields
               schema={appDetail!.config_schema}
