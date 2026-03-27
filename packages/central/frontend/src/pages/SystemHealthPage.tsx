@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   ArrowDown,
   ArrowDownToLine,
@@ -11,10 +12,13 @@ import {
   Database,
   HardDrive,
   HeartPulse,
+  LayoutDashboard,
   Loader2,
   Radio,
+  Network,
   RefreshCw,
   Server,
+  Shield,
   X,
   Zap,
 } from "lucide-react";
@@ -31,7 +35,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table.tsx";
-import { useSystemHealth } from "@/api/hooks.ts";
+import { useSystemHealth, useDockerOverview } from "@/api/hooks.ts";
 import { timeAgo, formatBytes, formatUptime, formatNumber } from "@/lib/utils.ts";
 import type { SubsystemStatus, CollectorHealthDetail } from "@/types/api.ts";
 
@@ -196,7 +200,12 @@ function IngestionCard({ sub }: { sub: { status: SubsystemStatus; details: Recor
 
 function PostgreSQLCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: number | null; details: Record<string, unknown> } }) {
   const d = sub.details;
+  const conns = d.connections as { active: number; total: number; max: number } | undefined;
+  const replication = d.replication as { client_addr: string | null; state: string; replay_lag_ms: number | null; write_lag_ms: number | null; replay_lag_bytes: number | null }[] | undefined;
+  const vacuumStats = d.vacuum_stats as { table: string; dead_tuples: number; live_tuples: number; last_autovacuum: string | null }[] | undefined;
+  const longQueries = d.long_running_queries as { pid: number; user: string; duration_s: number; query_preview: string }[] | undefined;
   const tableCounts = d.table_counts as Record<string, number | null> | undefined;
+
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between pb-2">
@@ -206,21 +215,106 @@ function PostgreSQLCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: n
           <StatusBadge status={sub.status} />
         </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-0">
         <DetailGrid>
           <DetailRow label="Version" value={String(d.version ?? "\u2014")} />
           <DetailRow label="DB size" value={d.db_size_bytes ? formatBytes(Number(d.db_size_bytes)) : "\u2014"} />
-          <DetailRow label="Pool" value={`${d.pool_size} size \u00b7 ${d.checked_out} out \u00b7 ${d.overflow} overflow`} />
-          <DetailRow label="Connections" value={String(d.active_connections ?? "\u2014")} />
-          {tableCounts && (
-            <>
-              <SectionTitle>Table counts</SectionTitle>
+          <DetailRow label="Pool" value={`${d.pool_size} size · ${d.checked_out} out · ${d.overflow} overflow`} />
+          {conns && <DetailRow label="Connections" value={`${conns.active} active · ${conns.total} / ${conns.max} total`} />}
+          {!conns && <DetailRow label="Connections" value={String(d.active_connections ?? "\u2014")} />}
+        </DetailGrid>
+
+        {/* Cache & performance */}
+        <SectionTitle>Performance</SectionTitle>
+        <DetailGrid>
+          <DetailRow label="Cache hit ratio" value={d.cache_hit_pct != null ? `${d.cache_hit_pct}%` : "\u2014"} />
+          <DetailRow label="Index hit ratio" value={d.index_hit_pct != null ? `${d.index_hit_pct}%` : "\u2014"} />
+          <DetailRow label="XID age" value={d.xid_age != null ? formatNumber(Number(d.xid_age)) : "\u2014"} />
+          <DetailRow label="Waiting locks" value={String(d.waiting_locks ?? 0)} />
+          <DetailRow label="Deadlocks (total)" value={formatNumber(Number(d.deadlocks_total ?? 0))} />
+          <DetailRow label="Temp bytes (total)" value={d.temp_bytes_total ? formatBytes(Number(d.temp_bytes_total)) : "0"} />
+        </DetailGrid>
+
+        {/* Replication */}
+        {replication && replication.length > 0 && (
+          <>
+            <SectionTitle>Replication</SectionTitle>
+            <Table>
+              <TableHeader><TableRow>
+                <TableHead className="text-xs py-1">Client</TableHead>
+                <TableHead className="text-xs py-1">State</TableHead>
+                <TableHead className="text-xs py-1">Replay lag</TableHead>
+                <TableHead className="text-xs py-1">Lag bytes</TableHead>
+              </TableRow></TableHeader>
+              <TableBody>
+                {replication.map((r, i) => (
+                  <TableRow key={i}>
+                    <TableCell className="text-xs py-1 font-mono">{r.client_addr ?? "\u2014"}</TableCell>
+                    <TableCell className="text-xs py-1">{r.state}</TableCell>
+                    <TableCell className="text-xs py-1 font-mono">{r.replay_lag_ms != null ? `${r.replay_lag_ms}ms` : "\u2014"}</TableCell>
+                    <TableCell className="text-xs py-1 font-mono">{r.replay_lag_bytes != null ? formatBytes(r.replay_lag_bytes) : "\u2014"}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </>
+        )}
+
+        {/* Vacuum stats */}
+        {vacuumStats && vacuumStats.length > 0 && (
+          <>
+            <SectionTitle>Vacuum (top dead tuples)</SectionTitle>
+            <Table>
+              <TableHeader><TableRow>
+                <TableHead className="text-xs py-1">Table</TableHead>
+                <TableHead className="text-xs py-1">Dead</TableHead>
+                <TableHead className="text-xs py-1">Live</TableHead>
+                <TableHead className="text-xs py-1">Last vacuum</TableHead>
+              </TableRow></TableHeader>
+              <TableBody>
+                {vacuumStats.map((v, i) => (
+                  <TableRow key={i}>
+                    <TableCell className="text-xs py-1 font-mono">{v.table}</TableCell>
+                    <TableCell className="text-xs py-1 font-mono text-amber-400">{formatNumber(v.dead_tuples)}</TableCell>
+                    <TableCell className="text-xs py-1 font-mono">{formatNumber(v.live_tuples)}</TableCell>
+                    <TableCell className="text-xs py-1">{v.last_autovacuum ? timeAgo(v.last_autovacuum) : "never"}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </>
+        )}
+
+        {/* Long-running queries */}
+        {longQueries && longQueries.length > 0 && (
+          <>
+            <SectionTitle>Long-running queries (&gt;5min)</SectionTitle>
+            {longQueries.map((q, i) => (
+              <div key={i} className="rounded border border-zinc-800 bg-zinc-800/30 p-2 mb-1">
+                <div className="flex items-center gap-2 text-xs text-zinc-400">
+                  <span>PID {q.pid}</span>
+                  <span>·</span>
+                  <span>{q.user}</span>
+                  <span>·</span>
+                  <span className="text-amber-400">{q.duration_s}s</span>
+                </div>
+                <p className="text-xs font-mono text-zinc-500 mt-1 truncate">{q.query_preview}</p>
+              </div>
+            ))}
+          </>
+        )}
+
+        {/* Table counts */}
+        {tableCounts && (
+          <>
+            <SectionTitle>Table counts</SectionTitle>
+            <DetailGrid>
               {Object.entries(tableCounts).map(([name, count]) => (
                 <DetailRow key={name} label={name} value={count != null ? formatNumber(count) : "\u2014"} />
               ))}
-            </>
-          )}
-        </DetailGrid>
+            </DetailGrid>
+          </>
+        )}
       </CardContent>
     </Card>
   );
@@ -734,8 +828,306 @@ function CollectorsSection({ sub }: { sub: { status: SubsystemStatus; details: R
 
 // ── Main page ────────────────────────────────────────────────────────────────
 
+// ── Per-node ClickHouse card ────────────────────────────────────────────────
+
+type CHNodeData = {
+  host: string;
+  reachable: boolean;
+  latency_ms: number | null;
+  error?: string;
+  server?: {
+    disks: { name: string; free_bytes: number; total_bytes: number; used_pct: number }[];
+    os_memory_total_bytes: number;
+    os_memory_free_bytes: number;
+    ch_memory_resident_bytes: number;
+    cpu_user_pct: number;
+    cpu_system_pct: number;
+    cpu_iowait_pct: number;
+    cpu_idle_pct: number;
+    load_average: [number, number, number];
+    tcp_connections: number;
+    max_parts_per_partition: number;
+  };
+  replication?: { table: string; queue_size: number; absolute_delay: number; active_replicas: number; total_replicas: number; is_readonly: boolean; is_session_expired: boolean }[];
+  merges?: { active_count: number; longest_seconds: number; total_bytes_merging: number };
+  mutations?: { total: number; pending: number; failed: number };
+  recent_errors?: { name: string; count: number; last_time: string | null; message: string | null }[];
+};
+
+function CHNodeCard({ node }: { node: CHNodeData }) {
+  const s = node.server;
+  if (!node.reachable) {
+    return (
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between pb-2">
+          <CardTitle className="text-sm font-mono">{node.host}</CardTitle>
+          <StatusBadge status="critical" />
+        </CardHeader>
+        <CardContent>
+          <p className="text-xs text-red-400">Unreachable: {node.error || "Connection failed"}</p>
+        </CardContent>
+      </Card>
+    );
+  }
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between pb-2">
+        <CardTitle className="text-sm font-mono">{node.host}</CardTitle>
+        <div className="flex items-center gap-2">
+          {node.latency_ms != null && <span className="text-xs text-zinc-500 font-mono">{node.latency_ms}ms</span>}
+          <StatusBadge status="healthy" />
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {s && (
+          <>
+            {s.disks?.map((disk) => (
+              <div key={disk.name} className="space-y-0.5">
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="text-zinc-500">Disk: {disk.name}</span>
+                  <span className="text-zinc-400 font-mono">{formatBytes(disk.total_bytes - disk.free_bytes)} / {formatBytes(disk.total_bytes)} ({disk.used_pct}%)</span>
+                </div>
+                <ProgressBar pct={disk.used_pct} />
+              </div>
+            ))}
+            <DetailGrid>
+              <DetailRow label="Memory" value={`OS ${formatBytes(s.os_memory_total_bytes - s.os_memory_free_bytes)} / ${formatBytes(s.os_memory_total_bytes)}`} />
+              <DetailRow label="CPU" value={`user ${s.cpu_user_pct}% \u00b7 sys ${s.cpu_system_pct}% \u00b7 idle ${s.cpu_idle_pct}%`} />
+              <DetailRow label="Load" value={`${s.load_average[0]} / ${s.load_average[1]} / ${s.load_average[2]}`} />
+            </DetailGrid>
+          </>
+        )}
+        <DetailGrid>
+          {node.merges && <DetailRow label="Merges" value={`${node.merges.active_count} active${node.merges.longest_seconds > 0 ? ` (${node.merges.longest_seconds}s)` : ""}`} />}
+          {node.mutations && (
+            <DetailRow label="Mutations" value={
+              <span className={node.mutations.failed > 0 ? "text-red-400" : ""}>
+                {node.mutations.pending} pending{node.mutations.failed > 0 ? ` \u00b7 ${node.mutations.failed} failed` : ""}
+              </span>
+            } />
+          )}
+        </DetailGrid>
+        {node.recent_errors && node.recent_errors.length > 0 && (
+          <Collapsible title="Errors" badge={<Badge variant="destructive" className="ml-2 text-[10px]">{node.recent_errors.length}</Badge>}>
+            {node.recent_errors.slice(0, 5).map((e, i) => (
+              <div key={i} className="text-xs py-0.5">
+                <span className="text-red-400 font-mono">{e.name}</span>
+                <span className="text-zinc-500"> ({e.count}x)</span>
+              </div>
+            ))}
+          </Collapsible>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Patroni card ─────────────────────────────────────────────────────────────
+
+function PatroniCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: number | null; details: Record<string, unknown> } }) {
+  const d = sub.details;
+  const members = d.members as { name: string; role: string; state: string; host: string; lag: number | null; pending_restart: boolean; timeline: number }[] | undefined;
+  const history = d.failover_history as unknown[] | undefined;
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between pb-2">
+        <div className="flex items-center gap-2"><Shield className="h-4 w-4 text-zinc-400" /><CardTitle>Patroni HA</CardTitle></div>
+        <div className="flex items-center gap-2">
+          {sub.latency_ms != null && <span className="text-xs text-zinc-500 font-mono">{sub.latency_ms}ms</span>}
+          <StatusBadge status={sub.status} />
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-0">
+        <DetailGrid>
+          <DetailRow label="Leader" value={String(d.leader ?? "none")} />
+          <DetailRow label="Timeline" value={String(d.timeline ?? "\u2014")} />
+          <DetailRow label="Members" value={`${d.member_count ?? 0} total · ${d.replica_count ?? 0} replicas`} />
+        </DetailGrid>
+
+        {members && members.length > 0 && (
+          <>
+            <SectionTitle>Members</SectionTitle>
+            <Table>
+              <TableHeader><TableRow>
+                <TableHead className="text-xs py-1">Name</TableHead>
+                <TableHead className="text-xs py-1">Role</TableHead>
+                <TableHead className="text-xs py-1">State</TableHead>
+                <TableHead className="text-xs py-1">Lag</TableHead>
+                <TableHead className="text-xs py-1">Restart</TableHead>
+              </TableRow></TableHeader>
+              <TableBody>
+                {members.map((m) => (
+                  <TableRow key={m.name}>
+                    <TableCell className="text-xs py-1 font-mono">{m.name}</TableCell>
+                    <TableCell className="text-xs py-1">
+                      <Badge variant={m.role === "leader" ? "success" : "default"}>{m.role}</Badge>
+                    </TableCell>
+                    <TableCell className="text-xs py-1">
+                      <Badge variant={m.state === "running" ? "success" : "destructive"}>{m.state}</Badge>
+                    </TableCell>
+                    <TableCell className="text-xs py-1 font-mono">{m.lag != null ? formatBytes(m.lag) : "\u2014"}</TableCell>
+                    <TableCell className="text-xs py-1">{m.pending_restart ? <Badge variant="destructive">yes</Badge> : "no"}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </>
+        )}
+
+        {history && history.length > 0 && (
+          <>
+            <SectionTitle>Failover history (last 5)</SectionTitle>
+            <div className="space-y-1">
+              {history.map((h, i) => (
+                <p key={i} className="text-xs text-zinc-500 font-mono">{JSON.stringify(h)}</p>
+              ))}
+            </div>
+          </>
+        )}
+
+        {d.error ? <p className="text-xs text-red-400 mt-2">{String(d.error)}</p> : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── etcd card ────────────────────────────────────────────────────────────────
+
+function EtcdCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: number | null; details: Record<string, unknown> } }) {
+  const d = sub.details;
+  const nodes = d.nodes as { name: string; host: string; healthy: boolean; error?: string }[] | undefined;
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between pb-2">
+        <div className="flex items-center gap-2"><Network className="h-4 w-4 text-zinc-400" /><CardTitle>etcd</CardTitle></div>
+        <div className="flex items-center gap-2">
+          {sub.latency_ms != null && <span className="text-xs text-zinc-500 font-mono">{sub.latency_ms}ms</span>}
+          <StatusBadge status={sub.status} />
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-0">
+        <DetailGrid>
+          <DetailRow label="Healthy" value={`${d.healthy_count ?? 0} / ${d.total_nodes ?? 0}`} />
+          <DetailRow label="Members" value={String(d.member_count ?? "\u2014")} />
+          <DetailRow label="Leader ID" value={String(d.leader_id ?? "none")} />
+          {d.db_size_bytes != null && <DetailRow label="DB size" value={formatBytes(Number(d.db_size_bytes))} />}
+        </DetailGrid>
+
+        {nodes && nodes.length > 0 && (
+          <>
+            <SectionTitle>Nodes</SectionTitle>
+            {nodes.map((n) => (
+              <div key={n.name} className="flex items-center gap-2 text-xs py-0.5">
+                <span className={`h-2 w-2 rounded-full ${n.healthy ? "bg-green-500" : "bg-red-500"}`} />
+                <span className="text-zinc-300 font-mono">{n.name}</span>
+                <span className="text-zinc-500">{n.host}</span>
+                {n.error && <span className="text-red-400 truncate">{String(n.error)}</span>}
+              </div>
+            ))}
+          </>
+        )}
+
+        {d.error ? <p className="text-xs text-red-400 mt-2">{String(d.error)}</p> : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Overview mini-cards ──────────────────────────────────────────────────────
+
+function OverviewMiniCard({ icon: Icon, title, status, lines, onClick }: {
+  icon: React.ElementType;
+  title: string;
+  status: SubsystemStatus;
+  lines: string[];
+  onClick?: () => void;
+}) {
+  return (
+    <Card className={`cursor-pointer hover:border-zinc-600 transition-colors ${onClick ? "" : ""}`} onClick={onClick}>
+      <CardContent className="py-3 px-4">
+        <div className="flex items-center justify-between mb-1.5">
+          <div className="flex items-center gap-1.5">
+            <Icon className="h-3.5 w-3.5 text-zinc-500" />
+            <span className="text-xs font-semibold text-zinc-300">{title}</span>
+          </div>
+          <span className={`inline-block h-2 w-2 rounded-full ${statusDotColors[status]}`} />
+        </div>
+        {lines.map((line, i) => (
+          <p key={i} className="text-[11px] text-zinc-500 font-mono leading-relaxed truncate">{line}</p>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Docker Infra tab (lazy import) ──────────────────────────────────────────
+
+function DockerInfraTab() {
+  const { data: dockerResp } = useDockerOverview();
+  const hosts = dockerResp?.data?.hosts ?? [];
+
+  if (!hosts.length) {
+    return (
+      <div className="flex h-40 flex-col items-center justify-center gap-2 text-zinc-500">
+        <Server className="h-8 w-8" />
+        <p className="text-sm">No Docker hosts available</p>
+      </div>
+    );
+  }
+
+  const statusMap = (s: string): SubsystemStatus =>
+    s === "ok" ? "healthy" : s === "degraded" ? "degraded" : s === "unreachable" || s === "stale" ? "critical" : "unknown";
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-zinc-500">{hosts.length} Docker hosts reporting.</p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {hosts.map((h) => {
+          const info = h.data;
+          const containers = info?.containers;
+          return (
+            <Card key={h.label}>
+              <CardContent className="py-3 px-4">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm font-mono text-zinc-200">{h.label}</span>
+                  <span className={`inline-block h-2 w-2 rounded-full ${statusDotColors[statusMap(h.status)]}`} />
+                </div>
+                <div className="text-[11px] text-zinc-500 font-mono space-y-0.5">
+                  {info?.docker && <p>Docker {info.docker.version}</p>}
+                  {containers && <p>{containers.running} running / {containers.total} total</p>}
+                  {info?.host?.load_avg && <p>Load: {info.host.load_avg["1m"]}</p>}
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Tabs ─────────────────────────────────────────────────────────────────────
+
+const TABS = [
+  { key: "overview", label: "Overview", icon: LayoutDashboard },
+  { key: "postgresql", label: "PostgreSQL", icon: Database },
+  { key: "patroni", label: "Patroni HA", icon: Shield },
+  { key: "etcd", label: "etcd", icon: Network },
+  { key: "clickhouse", label: "ClickHouse", icon: HardDrive },
+  { key: "redis", label: "Redis & Scheduler", icon: Zap },
+  { key: "collectors", label: "Collectors", icon: Radio },
+  { key: "docker", label: "Docker Infra", icon: Server },
+] as const;
+
+type TabKey = typeof TABS[number]["key"];
+
 export function SystemHealthPage() {
   const { data, isLoading, refetch, isFetching } = useSystemHealth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = (searchParams.get("tab") as TabKey) || "overview";
+  const setTab = (tab: TabKey) => setSearchParams({ tab }, { replace: true });
 
   if (isLoading) {
     return (
@@ -757,6 +1149,10 @@ export function SystemHealthPage() {
   const subs = data.subsystems;
   const central = subs.central;
   const centralDetails = central?.details ?? {};
+
+  // Extract per-node ClickHouse data
+  const chDetails = (subs.clickhouse?.details ?? {}) as Record<string, unknown>;
+  const chNodes = (chDetails.nodes ?? {}) as Record<string, CHNodeData>;
 
   return (
     <div className="space-y-4">
@@ -782,28 +1178,140 @@ export function SystemHealthPage() {
         </div>
       </div>
 
-      {/* Top row: Central + Alerts + Ingestion */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        {central && <CentralCard d={centralDetails} />}
-        {subs.alerts && <AlertsCard sub={subs.alerts as { status: SubsystemStatus; details: Record<string, unknown> }} />}
-        {subs.ingestion && <IngestionCard sub={subs.ingestion as { status: SubsystemStatus; details: Record<string, unknown> }} />}
+      {/* Tab bar */}
+      <div className="flex gap-1 border-b border-zinc-800 pb-px overflow-x-auto">
+        {TABS.map(({ key, label, icon: Icon }) => {
+          const isActive = activeTab === key;
+          // Get status for badge dot
+          let tabStatus: SubsystemStatus = "unknown";
+          if (key === "overview") tabStatus = data.overall_status;
+          else if (key === "postgresql") tabStatus = (subs.postgresql?.status as SubsystemStatus) ?? "unknown";
+          else if (key === "clickhouse") tabStatus = (subs.clickhouse?.status as SubsystemStatus) ?? "unknown";
+          else if (key === "redis") {
+            const rs = (subs.redis?.status as SubsystemStatus) ?? "unknown";
+            const ss = (subs.scheduler?.status as SubsystemStatus) ?? "unknown";
+            tabStatus = rs === "critical" || ss === "critical" ? "critical" : rs === "degraded" || ss === "degraded" ? "degraded" : rs === "healthy" && ss === "healthy" ? "healthy" : "unknown";
+          }
+          else if (key === "collectors") tabStatus = (subs.collectors?.status as SubsystemStatus) ?? "unknown";
+          else if (key === "docker") tabStatus = (subs.docker?.status as SubsystemStatus) ?? "unknown";
+          return (
+            <button
+              key={key}
+              onClick={() => setTab(key)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-t whitespace-nowrap cursor-pointer ${
+                isActive
+                  ? "bg-zinc-800 text-zinc-100 border-b-2 border-blue-500"
+                  : "text-zinc-400 hover:text-zinc-200"
+              }`}
+            >
+              <Icon className="h-3.5 w-3.5" />
+              {label}
+              {key !== "overview" && tabStatus !== "unknown" && (
+                <span className={`ml-1 inline-block h-1.5 w-1.5 rounded-full ${statusDotColors[tabStatus]}`} />
+              )}
+            </button>
+          );
+        })}
       </div>
 
-      {/* PostgreSQL */}
-      {subs.postgresql && <PostgreSQLCard sub={subs.postgresql as { status: SubsystemStatus; latency_ms: number | null; details: Record<string, unknown> }} />}
+      {/* Tab content */}
+      {activeTab === "overview" && (
+        <div className="space-y-4">
+          {/* Mini cards grid */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <OverviewMiniCard icon={Server} title="Central" status={(central?.status as SubsystemStatus) ?? "unknown"}
+              lines={[`Role: ${centralDetails.role ?? "—"}`, `Up ${formatUptime(Number(centralDetails.uptime_seconds ?? 0))}`]}
+              onClick={() => setTab("overview")} />
+            <OverviewMiniCard icon={Database} title="PostgreSQL" status={(subs.postgresql?.status as SubsystemStatus) ?? "unknown"}
+              lines={[
+                `${(subs.postgresql?.details as Record<string, unknown>)?.db_size ?? "—"}`,
+                `${(subs.postgresql?.details as Record<string, unknown>)?.active_connections ?? "?"} connections`,
+              ]}
+              onClick={() => setTab("postgresql")} />
+            <OverviewMiniCard icon={HardDrive} title="ClickHouse" status={(subs.clickhouse?.status as SubsystemStatus) ?? "unknown"}
+              lines={[
+                `${formatBytes(Number(chDetails.total_bytes ?? 0))} \u00b7 ${formatNumber(Number(chDetails.total_rows ?? 0))} rows`,
+                `${Object.values(chNodes).filter(n => n.reachable).length}/${Object.keys(chNodes).length || "?"} nodes`,
+              ]}
+              onClick={() => setTab("clickhouse")} />
+            <OverviewMiniCard icon={Zap} title="Redis" status={(subs.redis?.status as SubsystemStatus) ?? "unknown"}
+              lines={[
+                `${(subs.redis?.details as Record<string, unknown>)?.total_keys ?? "?"} keys`,
+                `${(subs.redis?.details as Record<string, unknown>)?.connected_clients ?? "?"} clients`,
+              ]}
+              onClick={() => setTab("redis")} />
+            <OverviewMiniCard icon={Bell} title="Alerts" status={(subs.alerts?.status as SubsystemStatus) ?? "unknown"}
+              lines={[
+                `${(subs.alerts?.details as Record<string, unknown>)?.firing_count ?? 0} firing`,
+                `${(subs.alerts?.details as Record<string, unknown>)?.total_rules ?? "?"} rules`,
+              ]}
+              onClick={() => setTab("overview")} />
+            <OverviewMiniCard icon={ArrowDownToLine} title="Ingestion" status={(subs.ingestion?.status as SubsystemStatus) ?? "unknown"}
+              lines={[`${(subs.ingestion?.details as Record<string, unknown>)?.total_rows_per_sec ?? 0} rows/s`]}
+              onClick={() => setTab("overview")} />
+            <OverviewMiniCard icon={Radio} title="Collectors" status={(subs.collectors?.status as SubsystemStatus) ?? "unknown"}
+              lines={[
+                `${(subs.collectors?.details as Record<string, unknown>)?.active_count ?? 0} active`,
+                `${(subs.collectors?.details as Record<string, unknown>)?.total_jobs ?? 0} jobs`,
+              ]}
+              onClick={() => setTab("collectors")} />
+            <OverviewMiniCard icon={Server} title="Docker" status={(subs.docker?.status as SubsystemStatus) ?? "unknown"}
+              lines={[`${(subs.docker?.details as Record<string, unknown>)?.host_count ?? 0} hosts`]}
+              onClick={() => setTab("docker")} />
+          </div>
 
-      {/* ClickHouse */}
-      {subs.clickhouse && <ClickHouseCard sub={subs.clickhouse as { status: SubsystemStatus; latency_ms: number | null; details: Record<string, unknown> }} />}
+          {/* Detail cards for Central + Alerts + Ingestion (always visible on overview) */}
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            {central && <CentralCard d={centralDetails} />}
+            {subs.alerts && <AlertsCard sub={subs.alerts as { status: SubsystemStatus; details: Record<string, unknown> }} />}
+            {subs.ingestion && <IngestionCard sub={subs.ingestion as { status: SubsystemStatus; details: Record<string, unknown> }} />}
+          </div>
+        </div>
+      )}
 
-      {/* Redis + Scheduler */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        {subs.redis && <RedisCard sub={subs.redis as { status: SubsystemStatus; latency_ms: number | null; details: Record<string, unknown> }} />}
-        {subs.scheduler && <SchedulerCard sub={subs.scheduler as { status: SubsystemStatus; details: Record<string, unknown> }} />}
-      </div>
+      {activeTab === "postgresql" && subs.postgresql && (
+        <PostgreSQLCard sub={subs.postgresql as { status: SubsystemStatus; latency_ms: number | null; details: Record<string, unknown> }} />
+      )}
 
-      {/* Collectors */}
-      {subs.collectors && <CollectorsSection sub={subs.collectors as { status: SubsystemStatus; details: Record<string, unknown> }} />}
+      {activeTab === "patroni" && subs.patroni && (
+        <PatroniCard sub={subs.patroni as { status: SubsystemStatus; latency_ms: number | null; details: Record<string, unknown> }} />
+      )}
 
+      {activeTab === "etcd" && subs.etcd && (
+        <EtcdCard sub={subs.etcd as { status: SubsystemStatus; latency_ms: number | null; details: Record<string, unknown> }} />
+      )}
+
+      {activeTab === "clickhouse" && subs.clickhouse && (
+        <div className="space-y-4">
+          {/* Per-node cards */}
+          {Object.keys(chNodes).length > 0 && (
+            <>
+              <SectionTitle>Cluster Nodes</SectionTitle>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {Object.values(chNodes).map((node) => (
+                  <CHNodeCard key={node.host} node={node} />
+                ))}
+              </div>
+            </>
+          )}
+
+          {/* Shared cluster data (existing ClickHouse card) */}
+          <ClickHouseCard sub={subs.clickhouse as { status: SubsystemStatus; latency_ms: number | null; details: Record<string, unknown> }} />
+        </div>
+      )}
+
+      {activeTab === "redis" && (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {subs.redis && <RedisCard sub={subs.redis as { status: SubsystemStatus; latency_ms: number | null; details: Record<string, unknown> }} />}
+          {subs.scheduler && <SchedulerCard sub={subs.scheduler as { status: SubsystemStatus; details: Record<string, unknown> }} />}
+        </div>
+      )}
+
+      {activeTab === "collectors" && subs.collectors && (
+        <CollectorsSection sub={subs.collectors as { status: SubsystemStatus; details: Record<string, unknown> }} />
+      )}
+
+      {activeTab === "docker" && <DockerInfraTab />}
     </div>
   );
 }

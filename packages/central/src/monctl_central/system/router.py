@@ -60,7 +60,7 @@ async def _check_central() -> dict:
 
 
 async def _check_postgresql(db: AsyncSession) -> dict:
-    """Check PostgreSQL connectivity, pool status, version, and table counts."""
+    """Comprehensive PostgreSQL health check."""
     t0 = time.monotonic()
     await db.execute(text("SELECT 1"))
     latency_ms = round((time.monotonic() - t0) * 1000, 2)
@@ -80,17 +80,146 @@ async def _check_postgresql(db: AsyncSession) -> dict:
         await db.execute(text("SELECT pg_database_size(current_database())"))
     ).scalar()
 
-    # Active connections
-    active_conns = (
-        await db.execute(
-            text(
-                "SELECT count(*) FROM pg_stat_activity"
-                " WHERE state = 'active'"
-            )
-        )
-    ).scalar()
+    # Active connections + max
+    active_conns = (await db.execute(text(
+        "SELECT count(*) FROM pg_stat_activity WHERE state = 'active'"
+    ))).scalar()
+    total_conns = (await db.execute(text(
+        "SELECT count(*) FROM pg_stat_activity"
+    ))).scalar()
+    max_conns = (await db.execute(text(
+        "SELECT setting::int FROM pg_settings WHERE name = 'max_connections'"
+    ))).scalar()
 
-    # Table counts for key tables
+    # ── Replication ──
+    replication = []
+    try:
+        rows = (await db.execute(text(
+            "SELECT client_addr, state, sent_lsn, write_lsn, flush_lsn, replay_lsn,"
+            " (EXTRACT(EPOCH FROM replay_lag) * 1000)::bigint AS replay_lag_ms,"
+            " (EXTRACT(EPOCH FROM write_lag) * 1000)::bigint AS write_lag_ms,"
+            " pg_wal_lsn_diff(sent_lsn, replay_lsn) AS replay_lag_bytes"
+            " FROM pg_stat_replication"
+        ))).all()
+        for r in rows:
+            replication.append({
+                "client_addr": str(r[0]) if r[0] else None,
+                "state": r[1],
+                "replay_lag_ms": int(r[6]) if r[6] is not None else None,
+                "write_lag_ms": int(r[7]) if r[7] is not None else None,
+                "replay_lag_bytes": int(r[8]) if r[8] is not None else None,
+            })
+    except Exception:
+        pass
+
+    # ── Cache hit ratio ──
+    cache_hit = None
+    index_hit = None
+    try:
+        row = (await db.execute(text(
+            "SELECT"
+            " CASE WHEN (blks_hit + blks_read) > 0"
+            "   THEN round(100.0 * blks_hit / (blks_hit + blks_read), 2)"
+            "   ELSE 100 END AS cache_hit_pct"
+            " FROM pg_stat_database WHERE datname = current_database()"
+        ))).one()
+        cache_hit = float(row[0])
+    except Exception:
+        pass
+    try:
+        row = (await db.execute(text(
+            "SELECT"
+            " CASE WHEN (idx_blks_hit + idx_blks_read) > 0"
+            "   THEN round(100.0 * idx_blks_hit / (idx_blks_hit + idx_blks_read), 2)"
+            "   ELSE 100 END"
+            " FROM pg_statio_all_tables"
+            " WHERE (idx_blks_hit + idx_blks_read) > 0"
+            " ORDER BY (idx_blks_hit + idx_blks_read) DESC LIMIT 1"
+        ))).scalar_one_or_none()
+        if row is not None:
+            index_hit = float(row)
+    except Exception:
+        pass
+
+    # ── Vacuum stats (top dead-tuple tables) ──
+    vacuum_stats = []
+    try:
+        rows = (await db.execute(text(
+            "SELECT schemaname || '.' || relname AS table_name,"
+            " n_dead_tup, n_live_tup,"
+            " last_autovacuum, last_autoanalyze"
+            " FROM pg_stat_user_tables"
+            " WHERE n_dead_tup > 0"
+            " ORDER BY n_dead_tup DESC LIMIT 10"
+        ))).all()
+        for r in rows:
+            vacuum_stats.append({
+                "table": r[0],
+                "dead_tuples": r[1],
+                "live_tuples": r[2],
+                "last_autovacuum": r[3].isoformat() if r[3] else None,
+                "last_autoanalyze": r[4].isoformat() if r[4] else None,
+            })
+    except Exception:
+        pass
+
+    # ── XID age (transaction ID wraparound risk) ──
+    xid_age = None
+    try:
+        xid_age = (await db.execute(text(
+            "SELECT age(datfrozenxid) FROM pg_database WHERE datname = current_database()"
+        ))).scalar()
+    except Exception:
+        pass
+
+    # ── Long-running queries ──
+    long_queries = []
+    try:
+        rows = (await db.execute(text(
+            "SELECT pid, usename, state,"
+            " EXTRACT(EPOCH FROM (now() - query_start))::int AS duration_s,"
+            " left(query, 200) AS query_preview"
+            " FROM pg_stat_activity"
+            " WHERE state = 'active' AND query NOT LIKE '%pg_stat_activity%'"
+            " AND (now() - query_start) > interval '5 minutes'"
+            " ORDER BY query_start ASC LIMIT 10"
+        ))).all()
+        for r in rows:
+            long_queries.append({
+                "pid": r[0], "user": r[1], "state": r[2],
+                "duration_s": r[3], "query_preview": r[4],
+            })
+    except Exception:
+        pass
+
+    # ── Locks ──
+    waiting_locks = 0
+    try:
+        waiting_locks = (await db.execute(text(
+            "SELECT count(*) FROM pg_locks WHERE NOT granted"
+        ))).scalar() or 0
+    except Exception:
+        pass
+
+    # ── Deadlocks ──
+    deadlocks = 0
+    try:
+        deadlocks = (await db.execute(text(
+            "SELECT deadlocks FROM pg_stat_database WHERE datname = current_database()"
+        ))).scalar() or 0
+    except Exception:
+        pass
+
+    # ── Temp files ──
+    temp_bytes = 0
+    try:
+        temp_bytes = (await db.execute(text(
+            "SELECT temp_bytes FROM pg_stat_database WHERE datname = current_database()"
+        ))).scalar() or 0
+    except Exception:
+        pass
+
+    # ── Table counts ──
     key_tables = [
         "devices", "collectors", "apps", "app_assignments",
         "alert_definitions", "alert_entities", "credentials", "tenants", "users",
@@ -98,17 +227,24 @@ async def _check_postgresql(db: AsyncSession) -> dict:
     table_counts = {}
     for tbl in key_tables:
         try:
-            cnt = (
-                await db.execute(text(f"SELECT count(*) FROM {tbl}"))  # noqa: S608
-            ).scalar()
+            cnt = (await db.execute(text(f"SELECT count(*) FROM {tbl}"))).scalar()  # noqa: S608
             table_counts[tbl] = cnt
         except Exception:
             table_counts[tbl] = None
 
-    if latency_ms > 500 or overflow > 5:
+    # ── Status determination ──
+    status = "healthy"
+    max_replay_lag_ms = max((r.get("replay_lag_ms") or 0 for r in replication), default=0)
+
+    if (latency_ms > 500 or overflow > 5 or max_replay_lag_ms > 5000
+            or (cache_hit is not None and cache_hit < 99)
+            or waiting_locks > 5 or len(long_queries) > 0
+            or (xid_age is not None and xid_age > 500_000_000)):
         status = "degraded"
-    else:
-        status = "healthy"
+    if (max_replay_lag_ms > 30000
+            or (cache_hit is not None and cache_hit < 95)
+            or (xid_age is not None and xid_age > 1_000_000_000)):
+        status = "critical"
 
     return {
         "status": status,
@@ -116,23 +252,385 @@ async def _check_postgresql(db: AsyncSession) -> dict:
         "details": {
             "version": ver_row,
             "db_size_bytes": db_size_row,
-            "active_connections": active_conns,
+            "connections": {
+                "active": active_conns,
+                "total": total_conns,
+                "max": max_conns,
+            },
             "pool_size": pool_size,
             "checked_out": checked_out,
             "overflow": overflow,
             "pool_status": pool_status,
+            "replication": replication,
+            "cache_hit_pct": cache_hit,
+            "index_hit_pct": index_hit,
+            "vacuum_stats": vacuum_stats,
+            "xid_age": xid_age,
+            "long_running_queries": long_queries,
+            "waiting_locks": waiting_locks,
+            "deadlocks_total": deadlocks,
+            "temp_bytes_total": temp_bytes,
             "table_counts": table_counts,
         },
     }
 
 
+async def _check_patroni() -> dict:
+    """Check Patroni HA cluster status via REST API."""
+    import httpx
+
+    # Patroni REST API on central nodes
+    patroni_nodes = [
+        ("central1", "10.145.210.41"),
+        ("central2", "10.145.210.42"),
+    ]
+    t0 = time.monotonic()
+    status = "healthy"
+    members = []
+    leader_name = None
+    cluster_timeline = None
+    history = []
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            # Try each node until we get cluster info
+            cluster_data = None
+            for name, ip in patroni_nodes:
+                try:
+                    resp = await client.get(f"http://{ip}:8008/cluster")
+                    if resp.status_code == 200:
+                        cluster_data = resp.json()
+                        break
+                except Exception:
+                    continue
+
+            if cluster_data is None:
+                return {
+                    "status": "critical",
+                    "latency_ms": round((time.monotonic() - t0) * 1000, 2),
+                    "details": {"error": "No Patroni node reachable"},
+                }
+
+            # Parse cluster members
+            for m in cluster_data.get("members", []):
+                member = {
+                    "name": m.get("name"),
+                    "role": m.get("role"),
+                    "state": m.get("state"),
+                    "host": m.get("host"),
+                    "port": m.get("port"),
+                    "timeline": m.get("timeline"),
+                    "lag": m.get("lag"),
+                    "pending_restart": m.get("tags", {}).get("pending_restart", False),
+                }
+                members.append(member)
+                if m.get("role") == "leader":
+                    leader_name = m.get("name")
+                    cluster_timeline = m.get("timeline")
+
+            # Fetch recent failover history from leader
+            if leader_name:
+                for name, ip in patroni_nodes:
+                    try:
+                        resp = await client.get(f"http://{ip}:8008/history")
+                        if resp.status_code == 200:
+                            raw = resp.json()
+                            history = raw[-5:] if isinstance(raw, list) else []
+                            break
+                    except Exception:
+                        continue
+
+    except Exception as exc:
+        return {
+            "status": "critical",
+            "latency_ms": round((time.monotonic() - t0) * 1000, 2),
+            "details": {"error": str(exc)},
+        }
+
+    latency_ms = round((time.monotonic() - t0) * 1000, 2)
+
+    # Status determination
+    if not leader_name:
+        status = "critical"
+    else:
+        replicas = [m for m in members if m["role"] in ("replica", "sync_standby")]
+        if len(replicas) == 0:
+            status = "degraded"
+        for m in members:
+            if m["state"] != "running":
+                status = "degraded"
+            if m.get("lag") and m["lag"] > 10_000_000:  # >10MB lag
+                status = "degraded"
+            if m.get("pending_restart"):
+                status = "degraded" if status == "healthy" else status
+
+    return {
+        "status": status,
+        "latency_ms": latency_ms,
+        "details": {
+            "leader": leader_name,
+            "timeline": cluster_timeline,
+            "members": members,
+            "member_count": len(members),
+            "replica_count": len([m for m in members if m["role"] in ("replica", "sync_standby")]),
+            "failover_history": history,
+        },
+    }
+
+
+async def _check_etcd() -> dict:
+    """Check etcd cluster health."""
+    import httpx
+
+    etcd_nodes = [
+        ("central1", "10.145.210.41"),
+        ("central2", "10.145.210.42"),
+        ("central3", "10.145.210.43"),
+    ]
+    t0 = time.monotonic()
+    node_health = []
+    leader_id = None
+    member_count = 0
+    db_size = None
+    status = "healthy"
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            # Check each node's health
+            for name, ip in etcd_nodes:
+                node = {"name": name, "host": ip, "healthy": False}
+                try:
+                    resp = await client.get(f"http://{ip}:2379/health")
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        node["healthy"] = data.get("health") == "true"
+                except Exception as exc:
+                    node["error"] = str(exc)
+                node_health.append(node)
+
+            # Get cluster status from first healthy node
+            for node in node_health:
+                if not node["healthy"]:
+                    continue
+                try:
+                    resp = await client.post(
+                        f"http://{node['host']}:2379/v3/maintenance/status",
+                        json={},
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        leader_id = data.get("leader")
+                        db_size = data.get("dbSize")
+                        break
+                except Exception:
+                    continue
+
+            # Get member list
+            for node in node_health:
+                if not node["healthy"]:
+                    continue
+                try:
+                    resp = await client.post(
+                        f"http://{node['host']}:2379/v3/cluster/member/list",
+                        json={},
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        member_count = len(data.get("members", []))
+                        break
+                except Exception:
+                    continue
+
+    except Exception as exc:
+        return {
+            "status": "critical",
+            "latency_ms": round((time.monotonic() - t0) * 1000, 2),
+            "details": {"error": str(exc)},
+        }
+
+    latency_ms = round((time.monotonic() - t0) * 1000, 2)
+
+    healthy_count = sum(1 for n in node_health if n["healthy"])
+    if healthy_count == 0 or not leader_id:
+        status = "critical"
+    elif healthy_count < len(etcd_nodes):
+        status = "degraded"
+    elif member_count < 3:
+        status = "degraded"
+
+    # etcd db size warning (>2GB)
+    if db_size and db_size > 2_000_000_000:
+        status = "degraded" if status == "healthy" else status
+
+    return {
+        "status": status,
+        "latency_ms": latency_ms,
+        "details": {
+            "nodes": node_health,
+            "healthy_count": healthy_count,
+            "total_nodes": len(etcd_nodes),
+            "leader_id": str(leader_id) if leader_id else None,
+            "member_count": member_count,
+            "db_size_bytes": db_size,
+        },
+    }
+
+
+def _query_node_resources(host: str, port: int, username: str, password: str, database: str) -> dict:
+    """Query a single ClickHouse node for per-node metrics (server resources, replication, merges, errors)."""
+    import clickhouse_connect
+
+    result: dict = {"host": host, "reachable": False, "latency_ms": None}
+    try:
+        t0 = time.monotonic()
+        client = clickhouse_connect.get_client(
+            host=host, port=port, username=username, password=password,
+            database=database, connect_timeout=5, send_receive_timeout=10,
+        )
+        client.query("SELECT 1")
+        result["reachable"] = True
+        result["latency_ms"] = round((time.monotonic() - t0) * 1000, 2)
+    except Exception as exc:
+        result["error"] = str(exc)
+        return result
+
+    # --- replication ---
+    replication = []
+    try:
+        r = client.query(
+            "SELECT table, is_readonly, is_session_expired,"
+            " queue_size, total_replicas, active_replicas, absolute_delay"
+            " FROM system.replicas WHERE database = currentDatabase()"
+        )
+        for row in r.named_results():
+            replication.append({
+                "table": row["table"],
+                "is_readonly": row["is_readonly"],
+                "is_session_expired": row["is_session_expired"],
+                "queue_size": row["queue_size"],
+                "total_replicas": row["total_replicas"],
+                "active_replicas": row["active_replicas"],
+                "absolute_delay": row["absolute_delay"],
+            })
+    except Exception:
+        pass
+    result["replication"] = replication
+
+    # --- merges ---
+    try:
+        r = client.query(
+            "SELECT count() AS cnt, max(elapsed) AS longest_seconds,"
+            " sum(total_size_bytes_compressed) AS total_bytes FROM system.merges"
+        )
+        if r.result_rows:
+            result["merges"] = {
+                "active_count": r.first_row[0],
+                "longest_seconds": round(r.first_row[1], 1) if r.first_row[1] else 0,
+                "total_bytes_merging": r.first_row[2],
+            }
+    except Exception:
+        pass
+
+    # --- mutations ---
+    try:
+        r = client.query(
+            "SELECT count() AS total, countIf(is_done = 0) AS pending,"
+            " countIf(latest_fail_reason != '') AS failed"
+            " FROM system.mutations WHERE database = currentDatabase()"
+        )
+        if r.result_rows:
+            result["mutations"] = {"total": r.first_row[0], "pending": r.first_row[1], "failed": r.first_row[2]}
+    except Exception:
+        pass
+
+    # --- server resources (disks, memory, CPU, load) ---
+    disks = []
+    try:
+        r = client.query("SELECT name, path, free_space, total_space FROM system.disks")
+        for row in r.named_results():
+            total = row["total_space"]
+            free = row["free_space"]
+            disks.append({
+                "name": row["name"],
+                "free_bytes": free,
+                "total_bytes": total,
+                "used_pct": round(((total - free) / total) * 100, 1) if total > 0 else 0,
+            })
+    except Exception:
+        pass
+
+    async_metrics = {}
+    try:
+        r = client.query(
+            "SELECT metric, value FROM system.asynchronous_metrics"
+            " WHERE metric IN ("
+            "'OSMemoryTotal', 'OSMemoryFreeWithoutCached',"
+            " 'LoadAverage1', 'LoadAverage5', 'LoadAverage15',"
+            " 'OSCPUUser', 'OSCPUSystem')"
+        )
+        for row in r.named_results():
+            async_metrics[row["metric"]] = row["value"]
+    except Exception:
+        pass
+
+    os_mem_total = async_metrics.get("OSMemoryTotal", 0)
+    os_mem_free = async_metrics.get("OSMemoryFreeWithoutCached", 0)
+    result["server"] = {
+        "disks": disks,
+        "os_memory_total_bytes": os_mem_total,
+        "os_memory_free_bytes": os_mem_free,
+        "ch_memory_resident_bytes": 0,
+        "cpu_user_pct": round(async_metrics.get("OSCPUUser", 0), 1),
+        "cpu_system_pct": round(async_metrics.get("OSCPUSystem", 0), 1),
+        "cpu_iowait_pct": 0,
+        "cpu_idle_pct": round(100 - async_metrics.get("OSCPUUser", 0) - async_metrics.get("OSCPUSystem", 0), 1),
+        "load_average": [
+            round(async_metrics.get("LoadAverage1", 0), 2),
+            round(async_metrics.get("LoadAverage5", 0), 2),
+            round(async_metrics.get("LoadAverage15", 0), 2),
+        ],
+        "tcp_connections": 0,
+        "max_parts_per_partition": 0,
+    }
+
+    # --- recent errors ---
+    recent_errors = []
+    try:
+        r = client.query(
+            "SELECT name, value, last_error_time, last_error_message"
+            " FROM system.errors ORDER BY last_error_time DESC LIMIT 10"
+            " SETTINGS max_memory_usage = 500000000"
+        )
+        for row in r.named_results():
+            recent_errors.append({
+                "name": row["name"], "count": row["value"],
+                "last_time": str(row["last_error_time"]),
+                "message": row.get("last_error_message"),
+            })
+    except Exception:
+        pass
+    result["recent_errors"] = recent_errors
+
+    try:
+        client.close()
+    except Exception:
+        pass
+    return result
+
+
 async def _check_clickhouse() -> dict:
-    """Check ClickHouse connectivity, row counts, data freshness, and internals."""
+    """Check ClickHouse connectivity, row counts, data freshness, and per-node internals."""
     ch = get_clickhouse()
 
     def _run():  # noqa: C901
+        import clickhouse_connect
+
         t0 = time.monotonic()
-        client = ch._get_client()
+        client = clickhouse_connect.get_client(
+            host=ch._hosts[0], port=ch._port,
+            username=ch._username, password=ch._password,
+            database=ch._database, connect_timeout=5, send_receive_timeout=10,
+        )
         client.query("SELECT 1")
         latency_ms = round((time.monotonic() - t0) * 1000, 2)
 
@@ -239,67 +737,6 @@ async def _check_clickhouse() -> dict:
         except Exception:
             pass
 
-        # --- replication status ---
-        replication = {}
-        try:
-            r = client.query(
-                "SELECT database, table, is_readonly, is_session_expired,"
-                " future_parts, parts_to_check, inserts_in_queue,"
-                " merges_in_queue, queue_size, log_pointer,"
-                " total_replicas, active_replicas,"
-                " absolute_delay"
-                " FROM system.replicas"
-                " WHERE database = currentDatabase()"
-            )
-            for row in r.named_results():
-                replication[row["table"]] = {
-                    "is_readonly": row["is_readonly"],
-                    "is_session_expired": row["is_session_expired"],
-                    "queue_size": row["queue_size"],
-                    "total_replicas": row["total_replicas"],
-                    "active_replicas": row["active_replicas"],
-                    "absolute_delay": row["absolute_delay"],
-                }
-        except Exception:
-            pass
-
-        # --- merge activity ---
-        merges = {}
-        try:
-            r = client.query(
-                "SELECT count() AS cnt,"
-                " max(elapsed) AS longest_seconds,"
-                " sum(total_size_bytes_compressed) AS total_bytes"
-                " FROM system.merges"
-            )
-            if r.result_rows:
-                merges = {
-                    "active_count": r.first_row[0],
-                    "longest_seconds": round(r.first_row[1], 1) if r.first_row[1] else 0,
-                    "total_bytes_merging": r.first_row[2],
-                }
-        except Exception:
-            pass
-
-        # --- mutations ---
-        mutations = {}
-        try:
-            r = client.query(
-                "SELECT count() AS total,"
-                " countIf(is_done = 0) AS pending,"
-                " countIf(latest_fail_reason != '') AS failed"
-                " FROM system.mutations"
-                " WHERE database = currentDatabase()"
-            )
-            if r.result_rows:
-                mutations = {
-                    "total": r.first_row[0],
-                    "pending": r.first_row[1],
-                    "failed": r.first_row[2],
-                }
-        except Exception:
-            pass
-
         # --- Keeper health ---
         keeper_ok = None
         try:
@@ -324,69 +761,56 @@ async def _check_clickhouse() -> dict:
         except Exception:
             pass
 
-        # --- recent errors ---
-        recent_errors = []
         try:
-            r = client.query(
-                "SELECT name, value, last_error_time, last_error_message"
-                " FROM system.errors"
-                " ORDER BY last_error_time DESC LIMIT 10"
-                " SETTINGS max_memory_usage = 500000000"
-            )
-            for row in r.named_results():
-                recent_errors.append({
-                    "name": row["name"],
-                    "count": row["value"],
-                    "last_time": str(row["last_error_time"]),
-                    "message": row.get("last_error_message"),
-                })
-        except Exception:
-            pass
-
-        # --- server resources ---
-        disks = []
-        try:
-            r = client.query(
-                "SELECT name, path, free_space, total_space"
-                " FROM system.disks"
-            )
-            for row in r.named_results():
-                disks.append({
-                    "name": row["name"],
-                    "path": row["path"],
-                    "free_space": row["free_space"],
-                    "total_space": row["total_space"],
-                })
-        except Exception:
-            pass
-
-        async_metrics = {}
-        try:
-            r = client.query(
-                "SELECT metric, value FROM system.asynchronous_metrics"
-                " WHERE metric IN ("
-                "'OSMemoryTotal', 'OSMemoryFreeWithoutCached',"
-                " 'LoadAverage1', 'LoadAverage5', 'LoadAverage15',"
-                " 'OSCPUUser', 'OSCPUSystem')"
-            )
-            for row in r.named_results():
-                async_metrics[row["metric"]] = row["value"]
+            client.close()
         except Exception:
             pass
 
         return (
             latency_ms, tables, version, uptime_seconds,
             table_storage, total_bytes, total_rows_all, pk_memory_bytes,
-            cluster_topology, replication, merges, mutations,
-            keeper_ok, slow_queries, recent_errors, disks, async_metrics,
+            cluster_topology, keeper_ok, slow_queries,
         )
 
     (
         latency_ms, tables, version, uptime_seconds,
         table_storage, total_bytes, total_rows_all, pk_memory_bytes,
-        cluster_topology, replication, merges, mutations,
-        keeper_ok, slow_queries, recent_errors, disks, async_metrics,
+        cluster_topology, keeper_ok, slow_queries,
     ) = await asyncio.to_thread(_run)
+
+    # --- Query each CH node independently for per-node metrics ---
+    hosts = ch._hosts
+    node_results = {}
+    node_futures = []
+    for host in hosts:
+        node_futures.append(
+            asyncio.to_thread(
+                _query_node_resources,
+                host, ch._port, ch._username, ch._password, ch._database,
+            )
+        )
+    for nr in await asyncio.gather(*node_futures, return_exceptions=True):
+        if isinstance(nr, Exception):
+            continue
+        node_results[nr["host"]] = nr
+
+    # Build merged replication/merges/mutations from first reachable node
+    replication: dict = {}
+    merges: dict = {}
+    mutations: dict = {}
+    recent_errors: list = []
+    for nr in node_results.values():
+        if nr.get("reachable"):
+            if not replication and nr.get("replication"):
+                for rep in nr["replication"]:
+                    replication[rep["table"]] = rep
+            if not merges:
+                merges = nr.get("merges", {})
+            if not mutations:
+                mutations = nr.get("mutations", {})
+            if not recent_errors:
+                recent_errors = nr.get("recent_errors", [])
+            break
 
     # --- Data freshness check (existing logic) ---
     from datetime import datetime, timedelta, timezone as tz
@@ -424,16 +848,17 @@ async def _check_clickhouse() -> dict:
     if mutations.get("failed", 0) > 0 and status != "critical":
         status = "degraded"
 
-    # --- Disk usage ---
-    for d in disks:
-        total = d.get("total_space", 0)
-        free = d.get("free_space", 0)
-        if total > 0:
-            used_pct = ((total - free) / total) * 100
-            if used_pct > 95:
-                status = "critical"
-            elif used_pct > 90 and status != "critical":
-                status = "degraded"
+    # --- Disk usage (from per-node data) ---
+    for nr in node_results.values():
+        for dk in (nr.get("server") or {}).get("disks", []):
+            total = dk.get("total_bytes", 0)
+            free = dk.get("free_bytes", 0)
+            if total > 0:
+                used_pct = ((total - free) / total) * 100
+                if used_pct > 95:
+                    status = "critical"
+                elif used_pct > 90 and status != "critical":
+                    status = "degraded"
 
     # --- Build cluster object in the format the frontend expects ---
     cluster_obj = None
@@ -458,38 +883,7 @@ async def _check_clickhouse() -> dict:
             ],
         }
 
-    # --- Build server resources object ---
-    server_obj = None
-    if disks or async_metrics:
-        os_mem_total = async_metrics.get("OSMemoryTotal", 0)
-        os_mem_free = async_metrics.get("OSMemoryFreeWithoutCached", 0)
-        server_obj = {
-            "disks": [
-                {
-                    "name": dk["name"],
-                    "free_bytes": dk["free_space"],
-                    "total_bytes": dk["total_space"],
-                    "used_pct": round(((dk["total_space"] - dk["free_space"]) / dk["total_space"]) * 100, 1) if dk["total_space"] > 0 else 0,
-                }
-                for dk in disks
-            ],
-            "os_memory_total_bytes": os_mem_total,
-            "os_memory_free_bytes": os_mem_free,
-            "ch_memory_resident_bytes": 0,
-            "cpu_user_pct": round(async_metrics.get("OSCPUUser", 0), 1),
-            "cpu_system_pct": round(async_metrics.get("OSCPUSystem", 0), 1),
-            "cpu_iowait_pct": 0,
-            "cpu_idle_pct": round(100 - async_metrics.get("OSCPUUser", 0) - async_metrics.get("OSCPUSystem", 0), 1),
-            "load_average": [
-                round(async_metrics.get("LoadAverage1", 0), 2),
-                round(async_metrics.get("LoadAverage5", 0), 2),
-                round(async_metrics.get("LoadAverage15", 0), 2),
-            ],
-            "tcp_connections": 0,
-            "max_parts_per_partition": 0,
-        }
-
-    # --- Build replication array ---
+    # --- Build replication array (from merged dict) ---
     replication_list = [
         {
             "table": tbl,
@@ -509,6 +903,13 @@ async def _check_clickhouse() -> dict:
 
     # --- Build keeper object ---
     keeper_obj = {"reachable": keeper_ok or False, "session_expired": False} if keeper_ok is not None else None
+
+    # --- Use first reachable node's server data as legacy "server" field ---
+    server_obj = None
+    for nr in node_results.values():
+        if nr.get("reachable") and nr.get("server"):
+            server_obj = nr["server"]
+            break
 
     return {
         "status": status,
@@ -530,9 +931,8 @@ async def _check_clickhouse() -> dict:
             "keeper": keeper_obj,
             "slow_queries_last_hour": slow_queries,
             "recent_errors": recent_errors,
-            "disks": disks,
-            "async_metrics": async_metrics,
             "server": server_obj,
+            "nodes": node_results,
         },
     }
 
@@ -1143,6 +1543,8 @@ async def system_health(
     results = await asyncio.gather(
         _run_check("central", _check_central()),
         _run_check("postgresql", _check_postgresql_standalone()),
+        _run_check("patroni", _check_patroni()),
+        _run_check("etcd", _check_etcd()),
         _run_check("clickhouse", _check_clickhouse()),
         _run_check("redis", _check_redis()),
         _run_check("collectors", _check_collectors_standalone()),

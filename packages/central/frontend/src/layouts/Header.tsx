@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button.tsx";
 const pageTitles: Record<string, string> = {
   "/": "Dashboard",
   "/system-health": "System Health",
-  "/docker-infrastructure": "Docker Infrastructure",
   "/devices": "Devices",
   "/apps": "Apps",
   "/connectors": "Connectors",

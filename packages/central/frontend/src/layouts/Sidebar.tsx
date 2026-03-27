@@ -30,8 +30,7 @@ interface SidebarProps {
 
 const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard", end: true },
-  { to: "/system-health", icon: HeartPulse, label: "System Health", end: true },
-  { to: "/docker-infrastructure", icon: Boxes, label: "Docker Infra", end: true },
+  { to: "/system-health", icon: HeartPulse, label: "System Health", end: false },
   { to: "/devices", icon: Monitor, label: "Devices", end: false },
   { to: "/apps", icon: AppWindow, label: "Apps", end: false },
   { to: "/connectors", icon: Plug, label: "Connectors", end: false },
