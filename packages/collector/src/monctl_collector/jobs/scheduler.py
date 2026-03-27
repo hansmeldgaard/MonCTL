@@ -283,6 +283,17 @@ class JobScheduler:
             total_jobs=len(self._my_jobs),
         )
 
+    def get_job_costs(self) -> dict[str, float]:
+        """Return {assignment_id: avg_execution_time} for stable profiles.
+
+        Only includes jobs with 3+ executions so the EMA is meaningful.
+        """
+        costs: dict[str, float] = {}
+        for job_id, profile in self._profiles.items():
+            if profile.execution_count >= 3 and job_id in self._my_jobs:
+                costs[job_id] = round(profile.avg_execution_time, 3)
+        return costs
+
     # ── Private helpers ──────────────────────────────────────────────────────
 
     def _get_or_create_profile(self, job_id: str) -> JobProfile:

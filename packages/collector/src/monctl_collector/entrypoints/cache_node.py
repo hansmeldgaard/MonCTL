@@ -421,12 +421,14 @@ async def _heartbeat_loop(
             load_info = dataclasses.asdict(scheduler.get_current_load_info())
             container_states = await _get_container_states()
             queue_stats = _get_queue_stats(scheduler)
+            job_costs = scheduler.get_job_costs()
 
             ok = await central_client.post_heartbeat(
                 node_id,
                 load_info,
                 container_states=container_states,
                 queue_stats=queue_stats,
+                job_costs=job_costs or None,
             )
             if ok:
                 logger.debug("heartbeat_sent", node_id=node_id,

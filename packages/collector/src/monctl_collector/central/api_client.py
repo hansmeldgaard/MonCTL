@@ -213,6 +213,7 @@ class CentralAPIClient:
         peer_states: dict[str, str] | None = None,
         container_states: dict[str, str] | None = None,
         queue_stats: dict | None = None,
+        job_costs: dict[str, float] | None = None,
     ) -> bool:
         """Send a heartbeat with current load information.
 
@@ -232,6 +233,7 @@ class CentralAPIClient:
             "peer_states": peer_states,
             "container_states": container_states,
             "queue_stats": queue_stats,
+            "job_costs": job_costs,
             "system_stats": {
                 "monctl_version": "0.1.0",
                 "os_info": {

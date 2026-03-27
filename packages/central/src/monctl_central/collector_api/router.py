@@ -14,7 +14,6 @@ import bisect
 import hashlib
 import json
 import re
-import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,7 +21,7 @@ from pathlib import Path
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from monctl_central.credentials.crypto import decrypt_dict
@@ -79,33 +78,6 @@ async def _require_active_collector(auth: dict, db: AsyncSession) -> None:
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
-
-def _compute_capacity_weights(
-    collectors: list[Collector], stale_threshold: float = 120.0,
-) -> dict[str, float]:
-    """Compute capacity weights for each collector based on load metrics.
-
-    Returns {collector.hostname: weight} where higher weight = more capacity.
-    """
-    now_ts = time.time()
-    weights: dict[str, float] = {}
-    for c in collectors:
-        # Stale or missing load data → fallback to equal weight
-        if c.load_updated_at is None:
-            weights[c.hostname] = 1.0
-            continue
-        age = now_ts - c.load_updated_at.timestamp()
-        if age > stale_threshold:
-            weights[c.hostname] = 1.0
-            continue
-
-        capacity = max(0.05, 1.0 - c.effective_load)
-        # Penalty for high deadline miss rate
-        if c.deadline_miss_rate > 0.1:
-            capacity *= 0.5
-        weights[c.hostname] = capacity
-    return weights
-
 
 def _weighted_job_owner(
     assignment_id: str,
@@ -251,7 +223,11 @@ async def get_jobs(
 
     # ── Server-side weighted job partitioning ────────────────────────────
     # Partitioning applies ONLY to unpinned (group-level) assignments.
+    # Uses a cached weight snapshot on CollectorGroup so the hash ring is
+    # stable between rebalancer runs — prevents dual-polling.
     if group_id is not None and coll is not None:
+        from monctl_central.storage.models import CollectorGroup
+
         group_stmt = (
             select(Collector)
             .where(Collector.group_id == group_id, Collector.status == "ACTIVE")
@@ -262,7 +238,16 @@ async def get_jobs(
 
         if len(group_collectors) > 1:
             my_hostname = coll.hostname
-            weights = _compute_capacity_weights(group_collectors)
+            active_hostnames = {c.hostname for c in group_collectors}
+
+            # Use cached weight snapshot if it matches current topology
+            group_obj = await db.get(CollectorGroup, group_id)
+            snapshot = group_obj.weight_snapshot if group_obj else None
+            if snapshot and set(snapshot.keys()) == active_hostnames:
+                weights = snapshot
+            else:
+                # Topology changed or no snapshot — use equal weights
+                weights = {c.hostname: 1.0 for c in group_collectors}
 
             if my_hostname in weights:
                 total_before = len(rows)
@@ -1669,6 +1654,7 @@ class HeartbeatRequest(BaseModel):
     peer_states: dict[str, str] | None = None  # {node_id: "ALIVE"|"SUSPECTED"|"DEAD"}
     container_states: dict[str, str] | None = None
     queue_stats: dict | None = None
+    job_costs: dict[str, float] | None = None  # {assignment_id: avg_execution_time_seconds}
 
 
 @router.post("/heartbeat", tags=["collector-api"])
@@ -1713,6 +1699,22 @@ async def collector_heartbeat(
         collector.deadline_miss_rate = request.deadline_miss_rate
         collector.load_updated_at = utc_now()
         await db.flush()
+
+        # Persist per-assignment execution times for cost-aware rebalancing
+        if request.job_costs:
+            from monctl_central.storage.models import AppAssignment
+
+            for aid_str, avg_time in request.job_costs.items():
+                try:
+                    aid = uuid.UUID(aid_str)
+                except ValueError:
+                    continue
+                await db.execute(
+                    update(AppAssignment)
+                    .where(AppAssignment.id == aid)
+                    .values(avg_execution_time=avg_time)
+                )
+            await db.flush()
 
     return {
         "ok": True,

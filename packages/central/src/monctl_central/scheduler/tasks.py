@@ -69,6 +69,9 @@ class SchedulerRunner:
                 # App cache TTL cleanup every 5 min (every 10th cycle)
                 if cycle % 10 == 0:
                     await self._cleanup_app_cache()
+                # Cost-aware job rebalancing every 5 min (every 10th cycle)
+                if cycle % 10 == 5:
+                    await self._rebalance_collector_groups()
                 # OS update check (daily)
                 await self._check_os_updates()
             except asyncio.CancelledError:
@@ -79,7 +82,7 @@ class SchedulerRunner:
     async def _health_check(self) -> None:
         """Mark stale collectors as DOWN and bump surviving group members."""
         from sqlalchemy import select, update
-        from monctl_central.storage.models import Collector
+        from monctl_central.storage.models import Collector, CollectorGroup
         from monctl_common.utils import utc_now
 
         stale_seconds = 90
@@ -112,6 +115,10 @@ class SchedulerRunner:
                             updated_at=utc_now(),
                         )
                     )
+                    # Invalidate weight snapshot — topology changed
+                    group = await session.get(CollectorGroup, c.group_id)
+                    if group:
+                        group.weight_snapshot = None
 
             if stale:
                 await session.commit()
@@ -731,3 +738,184 @@ class SchedulerRunner:
 
         except Exception:
             logger.exception("os_update_check_error")
+
+    async def _rebalance_collector_groups(self) -> None:
+        """Periodically rebalance job weights across collector groups.
+
+        For each group with 2+ active collectors, compute total cost per
+        collector using avg_execution_time from AppAssignment. If the
+        imbalance exceeds 50%, update the weight_snapshot on CollectorGroup
+        so that subsequent GET /jobs requests use the new weights.
+        """
+        import bisect
+        import hashlib
+
+        from sqlalchemy import func, select
+        from monctl_central.storage.models import (
+            AppAssignment, Collector, CollectorGroup, Device,
+        )
+        from monctl_common.utils import utc_now
+
+        try:
+            async with self._session_factory() as session:
+                # Find groups with 2+ active collectors
+                group_stmt = (
+                    select(CollectorGroup.id)
+                    .join(Collector, Collector.group_id == CollectorGroup.id)
+                    .where(Collector.status == "ACTIVE")
+                    .group_by(CollectorGroup.id)
+                    .having(func.count(Collector.id) >= 2)
+                )
+                group_ids = (await session.execute(group_stmt)).scalars().all()
+
+                for gid in group_ids:
+                    await self._rebalance_group(session, gid)
+
+                if group_ids:
+                    await session.commit()
+
+        except Exception:
+            logger.exception("rebalance_collector_groups_error")
+
+    async def _rebalance_group(self, session, group_id) -> None:
+        """Rebalance a single collector group if cost imbalance exceeds threshold."""
+        import bisect
+        import hashlib
+
+        from sqlalchemy import select
+        from monctl_central.storage.models import (
+            AppAssignment, Collector, CollectorGroup, Device,
+        )
+
+        # Get active collectors
+        coll_stmt = (
+            select(Collector)
+            .where(Collector.group_id == group_id, Collector.status == "ACTIVE")
+            .order_by(Collector.hostname)
+        )
+        collectors = (await session.execute(coll_stmt)).scalars().all()
+        if len(collectors) < 2:
+            return
+
+        active_hostnames = {c.hostname for c in collectors}
+        group = await session.get(CollectorGroup, group_id)
+        if not group:
+            return
+
+        # Get current weights (snapshot or equal)
+        snapshot = group.weight_snapshot
+        if snapshot and set(snapshot.keys()) == active_hostnames:
+            current_weights = snapshot
+        else:
+            current_weights = {c.hostname: 1.0 for c in collectors}
+
+        # Get all unpinned assignments for devices in this group
+        assign_stmt = (
+            select(
+                AppAssignment.id,
+                AppAssignment.avg_execution_time,
+                AppAssignment.schedule_value,
+            )
+            .join(Device, AppAssignment.device_id == Device.id)
+            .where(
+                Device.collector_group_id == group_id,
+                AppAssignment.collector_id.is_(None),
+                AppAssignment.enabled == True,  # noqa: E712
+                Device.is_enabled == True,  # noqa: E712
+            )
+        )
+        assignments = (await session.execute(assign_stmt)).all()
+        if not assignments:
+            return
+
+        # Simulate hash-ring to compute cost per collector
+        cost_per_collector: dict[str, float] = {h: 0.0 for h in active_hostnames}
+        for aid, avg_time, schedule_value in assignments:
+            owner = self._hash_ring_owner(str(aid), current_weights)
+            if owner not in cost_per_collector:
+                continue
+            # Cost = avg_execution_time / interval (load contribution)
+            try:
+                interval = float(schedule_value)
+            except (ValueError, TypeError):
+                interval = 300.0
+            avg = avg_time if avg_time is not None else 5.0  # default estimate
+            cost_per_collector[owner] += avg / max(interval, 1.0)
+
+        # Check imbalance
+        costs = list(cost_per_collector.values())
+        min_cost = min(costs)
+        max_cost = max(costs)
+        if min_cost <= 0:
+            min_cost = 0.001  # avoid division by zero
+
+        imbalance_ratio = max_cost / min_cost
+        if imbalance_ratio <= 1.5:
+            # Balanced enough — update topology count but keep current weights
+            group.weight_snapshot = current_weights
+            group.weight_snapshot_topology = len(collectors)
+            return
+
+        # Compute new weights inversely proportional to current cost
+        new_weights: dict[str, float] = {}
+        for hostname, cost in cost_per_collector.items():
+            # Inverse: high cost → low weight → fewer jobs
+            new_weights[hostname] = 1.0 / max(cost, 0.001)
+
+        # Normalize so max = 1.0
+        max_w = max(new_weights.values())
+        if max_w > 0:
+            new_weights = {h: round(w / max_w, 4) for h, w in new_weights.items()}
+
+        # Hysteresis: only apply if any weight changed by more than 15%
+        significant_change = False
+        for h in active_hostnames:
+            old_w = current_weights.get(h, 1.0)
+            new_w = new_weights.get(h, 1.0)
+            if abs(new_w - old_w) / max(old_w, 0.01) > 0.15:
+                significant_change = True
+                break
+
+        if significant_change:
+            group.weight_snapshot = new_weights
+            group.weight_snapshot_topology = len(collectors)
+            logger.info(
+                "rebalance_applied group=%s imbalance=%.2f old=%s new=%s",
+                group.name, imbalance_ratio, current_weights, new_weights,
+            )
+        else:
+            # Small drift — keep current weights, just update topology
+            group.weight_snapshot = current_weights
+            group.weight_snapshot_topology = len(collectors)
+
+    @staticmethod
+    def _hash_ring_owner(
+        assignment_id: str,
+        weights: dict[str, float],
+        vnodes_base: int = 100,
+    ) -> str:
+        """Consistent hash ring — same algorithm as collector_api/router.py."""
+        import bisect
+        import hashlib
+
+        if not weights:
+            return ""
+        if len(weights) == 1:
+            return next(iter(weights))
+
+        max_w = max(weights.values()) or 1.0
+        ring_hashes: list[int] = []
+        ring_nodes: list[str] = []
+        for hostname, w in sorted(weights.items()):
+            n_vnodes = max(1, int(vnodes_base * (w / max_w)))
+            for i in range(n_vnodes):
+                h = int(hashlib.sha256(f"{hostname}:{i}".encode()).hexdigest(), 16)
+                idx = bisect.bisect_left(ring_hashes, h)
+                ring_hashes.insert(idx, h)
+                ring_nodes.insert(idx, hostname)
+
+        key_hash = int(hashlib.sha256(assignment_id.encode()).hexdigest(), 16)
+        idx = bisect.bisect_left(ring_hashes, key_hash)
+        if idx >= len(ring_hashes):
+            idx = 0
+        return ring_nodes[idx]

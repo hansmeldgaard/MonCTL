@@ -100,6 +100,9 @@ class CollectorGroup(Base):
         DateTime(timezone=True), nullable=False, server_default="now()"
     )
 
+    weight_snapshot: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    weight_snapshot_topology: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+
     collectors: Mapped[list["Collector"]] = relationship(back_populates="group", foreign_keys="Collector.group_id")
     devices: Mapped[list["Device"]] = relationship(back_populates="collector_group", foreign_keys="Device.collector_group_id")
 
@@ -387,6 +390,7 @@ class AppAssignment(Base):
     credential_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("credentials.id", ondelete="SET NULL"), nullable=True
     )
+    avg_execution_time: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default="now()"
     )

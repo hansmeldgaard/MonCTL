@@ -10,8 +10,12 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import os
+
+from starlette.requests import Request
+
 from monctl_central.dependencies import get_db, require_collector_key, require_auth, require_admin
-from monctl_central.storage.models import ApiKey, Collector, CollectorGroup, RegistrationToken
+from monctl_central.storage.models import ApiKey, Collector, CollectorGroup, RegistrationToken, SystemSetting
 from monctl_central.ws.router import manager as ws_manager
 from monctl_common.utils import generate_api_key, hash_api_key, key_prefix_display, utc_now
 from monctl_common.constants import COLLECTOR_KEY_PREFIX
@@ -98,6 +102,40 @@ class ApproveRequest(BaseModel):
 
 class RejectRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=1000)
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/collectors/setup-context  (admin-only)
+# ---------------------------------------------------------------------------
+
+@router.get("/setup-context")
+async def get_setup_context(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_admin),
+):
+    """Return collector API key and central URL for the setup guide."""
+    collector_api_key = os.environ.get("MONCTL_COLLECTOR_API_KEY", "")
+    if not collector_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="MONCTL_COLLECTOR_API_KEY is not configured on central. Set this environment variable and restart.",
+        )
+
+    # Prefer collector_central_url from system settings, fall back to request origin
+    result = await db.execute(
+        select(SystemSetting).where(SystemSetting.key == "collector_central_url")
+    )
+    setting = result.scalar_one_or_none()
+    central_url = (setting.value if setting and setting.value else "") or str(request.base_url).rstrip("/")
+
+    return {
+        "status": "success",
+        "data": {
+            "collector_api_key": collector_api_key,
+            "central_url": central_url,
+        },
+    }
 
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
@@ -282,6 +320,8 @@ async def approve_collector(
     collector.approved_by = auth.get("username", "admin")
     collector.rejected_reason = None
     collector.updated_at = utc_now()
+    # Invalidate weight snapshot — new collector joined the group
+    group.weight_snapshot = None
     await db.flush()
 
     return {
@@ -653,6 +693,11 @@ async def update_collector(
         c.log_level_filter = request.log_level_filter
 
     if request.group_id is not None:
+        # Invalidate weight snapshot on old group (collector leaving)
+        if c.group_id:
+            old_group = await db.get(CollectorGroup, c.group_id)
+            if old_group:
+                old_group.weight_snapshot = None
         if request.group_id == "":
             c.group_id = None
         else:
@@ -660,6 +705,8 @@ async def update_collector(
             if group is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Collector group not found")
             c.group_id = group.id
+            # Invalidate weight snapshot on new group (collector joining)
+            group.weight_snapshot = None
 
     c.updated_at = utc_now()
     await db.flush()
