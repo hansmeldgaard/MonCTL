@@ -146,11 +146,12 @@ export function SchemaConfigFields({
                 onChange={(e) => setField(key, e.target.value ? `$credential:${e.target.value}` : "")}
                 disabled={disabled}
               >
-                {deviceCred ? (
-                  <option value="">Device default ({deviceCred.name})</option>
-                ) : (
-                  <option value="">-- {title} --</option>
-                )}
+                <option value="">-- None --</option>
+                <option value="$credential:__device_default__">
+                  {deviceCred
+                    ? `Use Device Default (${deviceCred.name})`
+                    : "Use Device Default Credential"}
+                </option>
                 {(credentials ?? []).map((c) => (
                   <option key={c.id} value={c.name}>{c.name}</option>
                 ))}
