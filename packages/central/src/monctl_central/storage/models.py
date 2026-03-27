@@ -12,6 +12,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -168,6 +169,8 @@ class DeviceCategory(Base):
         String(64), nullable=True,
         comment="Icon identifier, e.g. 'router', 'switch', 'server', 'firewall', 'printer', 'cloud'"
     )
+    icon_data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True, comment="Custom icon image (PNG/SVG, max 256KB)")
+    icon_mime_type: Mapped[str | None] = mapped_column(String(32), nullable=True, comment="MIME type of custom icon")
     pack_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("packs.id", ondelete="SET NULL"), nullable=True, index=True
     )

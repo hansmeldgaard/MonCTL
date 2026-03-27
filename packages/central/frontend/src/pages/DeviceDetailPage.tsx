@@ -123,6 +123,7 @@ import { PerformanceChart } from "@/components/PerformanceChart.tsx";
 import { MultiInterfaceChart, formatTraffic } from "@/components/InterfaceTrafficChart.tsx";
 import type { TrafficUnit, ChartMetric, ChartMode } from "@/components/InterfaceTrafficChart.tsx";
 import { CredentialCell } from "@/components/CredentialCell.tsx";
+import { DeviceIcon, categoryIconUrl } from "@/components/DeviceIcon.tsx";
 import { RuleFormDialog } from "@/pages/DiscoveryRulesPage.tsx";
 import { timeAgo, formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
@@ -2983,7 +2984,7 @@ function formatCredentialType(type: string): string {
 function SettingsTab({ deviceId }: { deviceId: string }) {
   const { data: device, isLoading: deviceLoading } = useDevice(deviceId);
   const { data: deviceCategories } = useDeviceCategories();
-  const { data: allDeviceTypes } = useDeviceTypes({ limit: 1000 });
+  const { data: allDeviceTypes } = useDeviceTypes({ limit: 500 });
   const deviceTypes = allDeviceTypes?.data ?? [];
   const { data: tenants } = useTenants();
   const { data: collectorGroups } = useCollectorGroups();
@@ -3413,8 +3414,9 @@ function DiscoveryCard({ deviceId, device }: { deviceId: string; device: DeviceM
     }
   }, [discoveryPhase]);
 
-  // Show "Create Device Type" when sysObjectID exists but no match
-  const canCreateType = !!(meta?.sys_object_id && !device?.device_type_name);
+  // Show "Create Device Type" when sysObjectID is known
+  const hasSysOid = !!meta?.sys_object_id;
+  const hasMatch = !!device?.device_type_name;
 
   return (
     <Card>
@@ -3486,10 +3488,12 @@ function DiscoveryCard({ deviceId, device }: { deviceId: string; device: DeviceM
             )}
           </div>
         )}
-        {canCreateType && discoveryPhase === "idle" && (
+        {hasSysOid && discoveryPhase === "idle" && (
           <div className="mt-3 pt-3 border-t border-zinc-800">
             <p className="text-xs text-zinc-500 mb-2">
-              No matching device type found for sysObjectID <span className="font-mono">{meta?.sys_object_id}</span>
+              {hasMatch
+                ? <>Matched <span className="text-zinc-300">{device?.device_type_name}</span> — you can create a more specific type for this sysObjectID.</>
+                : <>No matching device type found for sysObjectID <span className="font-mono">{meta?.sys_object_id}</span></>}
             </p>
             <Button
               size="sm"
@@ -3497,7 +3501,7 @@ function DiscoveryCard({ deviceId, device }: { deviceId: string; device: DeviceM
               onClick={() => setShowCreateType(true)}
             >
               <Plus className="h-3.5 w-3.5" />
-              Create Device Type
+              {hasMatch ? "Create Specific Type" : "Create Device Type"}
             </Button>
           </div>
         )}
@@ -4313,6 +4317,8 @@ export function DeviceDetailPage() {
   const deviceName = device?.name ?? deviceResults?.device_name ?? "Unknown";
   const deviceAddress = device?.address ?? deviceResults?.device_address ?? "";
   const deviceCategory = device?.device_category ?? deviceResults?.device_category ?? "";
+  const { data: allCategories } = useDeviceCategories();
+  const dc = (allCategories ?? []).find((c) => c.name === deviceCategory);
   const deviceId = id!;
   const upStatus = deviceResults?.up;
 
@@ -4344,7 +4350,16 @@ export function DeviceDetailPage() {
         </div>
         <div className="flex items-center gap-3 text-sm text-zinc-500">
           <span className="font-mono">{deviceAddress}</span>
-          {deviceCategory && <Badge variant="info">{deviceCategory}</Badge>}
+          {deviceCategory && (
+            <span className="inline-flex items-center gap-1">
+              <DeviceIcon
+                icon={dc?.icon}
+                customIconUrl={dc?.has_custom_icon ? categoryIconUrl(dc.id) : null}
+                className="h-3.5 w-3.5 text-zinc-400"
+              />
+              <Badge variant="info">{deviceCategory}</Badge>
+            </span>
+          )}
           {device?.device_type_name && (
             <span className="text-xs text-zinc-500">
               type: <span className="text-zinc-300">{device.device_type_name}</span>

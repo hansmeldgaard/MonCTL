@@ -39,6 +39,7 @@ export interface DeviceCategory {
   description: string | null;
   category: string;
   icon: string | null;
+  has_custom_icon: boolean;
   pack_id: string | null;
   created_at: string;
 }

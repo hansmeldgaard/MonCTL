@@ -723,6 +723,30 @@ export function useDeleteDeviceCategory() {
   });
 }
 
+export function useUploadDeviceCategoryIcon() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, file }: { id: string; file: File }) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      return apiPostFormData<DeviceCategory>(`/device-categories/${id}/icon`, fd);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["device-categories"] });
+    },
+  });
+}
+
+export function useDeleteDeviceCategoryIcon() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/device-categories/${id}/icon`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["device-categories"] });
+    },
+  });
+}
+
 export function useDeviceCategoryList(params: ListParams) {
   const qs = buildListQs(params);
   return useQuery<{ status: string; data: DeviceCategory[]; meta: DeviceCategoryListMeta }>({

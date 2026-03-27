@@ -32,11 +32,12 @@ import {
 } from "@/components/ui/table.tsx";
 import { Select } from "@/components/ui/select.tsx";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
-import { useDevices, useLatestResults, useBulkDeleteDevices, useBulkPatchDevices, useCollectorGroups, useTenants, useLabelKeys } from "@/api/hooks.ts";
+import { useDevices, useLatestResults, useBulkDeleteDevices, useBulkPatchDevices, useCollectorGroups, useTenants, useLabelKeys, useDeviceCategories } from "@/api/hooks.ts";
 import type { DeviceBulkPatchRequest } from "@/types/api.ts";
 import { useTablePreferences, PAGE_SIZE_OPTIONS } from "@/hooks/useTablePreferences.ts";
 import { AddDeviceDialog } from "@/components/AddDeviceDialog.tsx";
 import { ApplyTemplateDialog } from "@/components/ApplyTemplateDialog.tsx";
+import { DeviceIcon, categoryIconUrl } from "@/components/DeviceIcon.tsx";
 
 export function DevicesPage() {
   // ── Table preferences ──────────────────────────────────
@@ -122,6 +123,11 @@ export function DevicesPage() {
       Object.entries(debouncedFilters).filter(([, v]) => v !== ""),
     ),
   });
+
+  const { data: deviceCategories } = useDeviceCategories();
+  const categoryMap = new Map(
+    (deviceCategories ?? []).map((dc) => [dc.name, dc]),
+  );
 
   const devices = response?.data ?? [];
   const meta = (response as any)?.meta ?? {
@@ -555,6 +561,7 @@ export function DevicesPage() {
                     ) : devices.map((device) => {
                       const isUp = deviceReachability.get(device.id);
                       const latencyInfo = deviceLatency.get(device.id);
+                      const dc = categoryMap.get(device.device_category);
                       const labelEntries = Object.entries(device.labels ?? {});
                       const shownLabels = labelEntries.slice(0, 2);
                       const extraLabelCount = labelEntries.length - 2;
@@ -629,7 +636,14 @@ export function DevicesPage() {
 
                           {/* Category */}
                           <TableCell>
-                            <Badge variant="info">{device.device_category}</Badge>
+                            <div className="flex items-center gap-1.5">
+                              <DeviceIcon
+                                icon={dc?.icon}
+                                customIconUrl={dc?.has_custom_icon ? categoryIconUrl(dc.id) : null}
+                                className="h-4 w-4 text-zinc-400"
+                              />
+                              <span className="text-sm text-zinc-300">{device.device_category}</span>
+                            </div>
                           </TableCell>
 
                           {/* Device Type */}

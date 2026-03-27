@@ -20,7 +20,8 @@ import {
   Wrench,
   X,
 } from "lucide-react";
-import { DeviceIcon } from "@/components/DeviceIcon.tsx";
+import { Upload } from "lucide-react";
+import { DeviceIcon, categoryIconUrl } from "@/components/DeviceIcon.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
@@ -30,6 +31,8 @@ import {
   useCreateDeviceCategory,
   useUpdateDeviceCategory,
   useDeleteDeviceCategory,
+  useUploadDeviceCategoryIcon,
+  useDeleteDeviceCategoryIcon,
   useDeviceCategoryList,
   useDeviceCategoryCounts,
 } from "@/api/hooks.ts";
@@ -79,6 +82,8 @@ export function DeviceCategoriesPage() {
   const createType = useCreateDeviceCategory();
   const updateType = useUpdateDeviceCategory();
   const deleteType = useDeleteDeviceCategory();
+  const uploadIcon = useUploadDeviceCategoryIcon();
+  const deleteIcon = useDeleteDeviceCategoryIcon();
 
   // Search + category filter
   const [search, setSearch] = useState("");
@@ -517,6 +522,54 @@ export function DeviceCategoriesPage() {
               ))}
             </Select>
           </div>
+          {/* Custom icon upload */}
+          <div className="space-y-1.5">
+            <Label>Custom Icon <span className="font-normal text-zinc-500">(optional, overrides built-in)</span></Label>
+            {editTarget?.has_custom_icon ? (
+              <div className="flex items-center gap-3">
+                <img
+                  src={categoryIconUrl(editTarget.id)}
+                  alt=""
+                  className="h-8 w-8 rounded border border-zinc-700 bg-zinc-800 object-contain p-0.5"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="text-red-400 hover:text-red-300"
+                  onClick={async () => {
+                    if (editTarget) {
+                      await deleteIcon.mutateAsync(editTarget.id);
+                      // Refresh the editTarget reference
+                      editTarget.has_custom_icon = false;
+                    }
+                  }}
+                  disabled={deleteIcon.isPending}
+                >
+                  <X className="h-3.5 w-3.5 mr-1" />
+                  Remove
+                </Button>
+              </div>
+            ) : (
+              <label className="flex items-center gap-2 cursor-pointer rounded-md border border-dashed border-zinc-700 px-3 py-2 text-sm text-zinc-500 hover:border-zinc-600 hover:text-zinc-400 transition-colors">
+                <Upload className="h-4 w-4" />
+                Upload image (PNG, JPEG, SVG, WebP &mdash; max 256 KB)
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (file && editTarget) {
+                      await uploadIcon.mutateAsync({ id: editTarget.id, file });
+                      editTarget.has_custom_icon = true;
+                    }
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+            )}
+          </div>
           <div className="space-y-1.5">
             <Label htmlFor="dt-edit-description">Description</Label>
             <Input
@@ -602,8 +655,12 @@ function TypeCard({
   return (
     <div className="group relative flex items-center gap-3 rounded-md border border-zinc-800 bg-zinc-800/40 px-3 py-2.5 transition-colors hover:border-zinc-700 hover:bg-zinc-800/70">
       {/* Icon well */}
-      <div className={cn("flex shrink-0 items-center justify-center rounded-md h-9 w-9", tint.bg)}>
-        <DeviceIcon icon={dt.icon} className={cn("h-5 w-5", tint.fg)} />
+      <div className={cn("flex shrink-0 items-center justify-center rounded-md h-9 w-9", dt.has_custom_icon ? "bg-zinc-800" : tint.bg)}>
+        <DeviceIcon
+          icon={dt.icon}
+          customIconUrl={dt.has_custom_icon ? categoryIconUrl(dt.id) : null}
+          className={cn("h-5 w-5", dt.has_custom_icon ? "" : tint.fg)}
+        />
       </div>
 
       {/* Content */}

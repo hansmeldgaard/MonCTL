@@ -5,7 +5,8 @@ from __future__ import annotations
 import uuid
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +15,9 @@ from monctl_central.dependencies import get_db, require_auth
 from monctl_central.storage.models import DeviceCategory
 
 router = APIRouter()
+
+MAX_ICON_SIZE = 256 * 1024  # 256 KB
+ALLOWED_MIME_TYPES = {"image/png", "image/svg+xml", "image/jpeg", "image/webp"}
 
 
 class CreateDeviceCategoryRequest(BaseModel):
@@ -37,6 +41,7 @@ def _fmt(dt: DeviceCategory) -> dict:
         "description": dt.description,
         "category": dt.category,
         "icon": dt.icon,
+        "has_custom_icon": dt.icon_data is not None,
         "pack_id": str(dt.pack_id) if dt.pack_id else None,
         "created_at": dt.created_at.isoformat() if dt.created_at else None,
     }
@@ -201,3 +206,67 @@ async def delete_device_category(
     if dt is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device category not found")
     await db.delete(dt)
+
+
+# ── Custom icon endpoints ──────────────────────────────────
+
+
+@router.post("/{type_id}/icon")
+async def upload_device_category_icon(
+    type_id: str,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Upload a custom icon for a device category. Accepts PNG, JPEG, WebP, or SVG up to 256 KB."""
+    dt = await db.get(DeviceCategory, uuid.UUID(type_id))
+    if dt is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device category not found")
+
+    content_type = file.content_type or ""
+    if content_type not in ALLOWED_MIME_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported file type '{content_type}'. Allowed: PNG, JPEG, WebP, SVG.",
+        )
+
+    data = await file.read()
+    if len(data) > MAX_ICON_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Icon too large ({len(data)} bytes). Maximum size is 256 KB.",
+        )
+
+    dt.icon_data = data
+    dt.icon_mime_type = content_type
+    return {"status": "success", "data": _fmt(dt)}
+
+
+@router.get("/{type_id}/icon")
+async def get_device_category_icon(
+    type_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Serve the custom icon image for a device category. No auth required (used in <img> tags)."""
+    dt = await db.get(DeviceCategory, uuid.UUID(type_id))
+    if dt is None or dt.icon_data is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No custom icon")
+    return Response(
+        content=dt.icon_data,
+        media_type=dt.icon_mime_type or "image/png",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+@router.delete("/{type_id}/icon", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_device_category_icon(
+    type_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Remove the custom icon from a device category."""
+    dt = await db.get(DeviceCategory, uuid.UUID(type_id))
+    if dt is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device category not found")
+    dt.icon_data = None
+    dt.icon_mime_type = None
