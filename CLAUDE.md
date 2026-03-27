@@ -160,6 +160,18 @@ packages/
 
 **Memory management**: Polling engine calls `gc.collect()` + `malloc_trim(0)` after each job to return freed memory to OS. Workers use `MALLOC_ARENA_MAX=2` and `PYTHONMALLOC=malloc` env vars to reduce glibc arena fragmentation. All poll-workers have `mem_limit: 1g` as safety net.
 
+### Job Partitioning & Cost-Aware Rebalancing
+
+**Partitioning**: Unpinned (group-level) assignments are distributed across collectors in a group via consistent hashing (`_weighted_job_owner()` in `collector_api/router.py`). Pinned assignments (`AppAssignment.collector_id != NULL`) always go to the specified collector.
+
+**Weight snapshot**: Each `CollectorGroup` has a `weight_snapshot` (JSONB) that stores `{hostname: weight}` used by the hash ring. All collectors in the group see the same snapshot, ensuring deterministic assignment. If the snapshot is `NULL` or doesn't match the current active collector set, equal weights (`1.0`) are used.
+
+**Cost reporting**: Collectors report `job_costs` (`{assignment_id: avg_execution_time}`) in their heartbeat. Central persists this to `AppAssignment.avg_execution_time`. Only profiles with 3+ executions are reported (stable EMA).
+
+**Rebalancer**: Scheduler task (`_rebalance_collector_groups()`) runs every 5 minutes on the leader. For each group, simulates the hash ring to compute total cost per collector (`sum(avg_execution_time / interval)`). If imbalance ratio exceeds 1.5 (50%), computes new weights inversely proportional to cost. Hysteresis: only applies new weights if any collector's weight changes by >15%.
+
+**Topology invalidation**: `weight_snapshot` is set to `NULL` when: a collector is marked DOWN (health check), a collector is approved into a group, or a collector changes group. This forces equal-weight fallback until the rebalancer runs.
+
 ### Template Hierarchy (App Auto-Assignment)
 
 **Two-level binding system**: Templates can be linked to `DeviceCategory` (broad, e.g. "cisco-router") and `DeviceType` (specific, e.g. "Cisco ASR 1002-X") via many-to-many binding tables with priority.
