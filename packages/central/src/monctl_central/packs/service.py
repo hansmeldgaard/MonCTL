@@ -19,7 +19,9 @@ from monctl_central.storage.models import (
     ConnectorVersion,
     CredentialTemplate,
     DeviceCategory,
+    DeviceCategoryTemplateBinding,
     DeviceType,
+    DeviceTypeTemplateBinding,
     LabelKey,
     Pack,
     PackVersion,
@@ -155,6 +157,44 @@ async def export_pack(pack_id: uuid.UUID, db: AsyncSession) -> dict:
     )).scalars().all()
     if connectors:
         result["contents"]["connectors"] = [_export_connector(c) for c in connectors]
+
+    # Template hierarchy bindings (category-level)
+    cat_bindings = (await db.execute(
+        select(DeviceCategoryTemplateBinding)
+        .options(
+            selectinload(DeviceCategoryTemplateBinding.device_category),
+            selectinload(DeviceCategoryTemplateBinding.template),
+        )
+        .where(DeviceCategoryTemplateBinding.pack_id == pack.id)
+    )).scalars().all()
+    if cat_bindings:
+        result["contents"]["template_bindings_category"] = [
+            {
+                "device_category_name": b.device_category.name,
+                "template_name": b.template.name,
+                "priority": b.priority,
+            }
+            for b in cat_bindings
+        ]
+
+    # Template hierarchy bindings (type-level)
+    type_bindings = (await db.execute(
+        select(DeviceTypeTemplateBinding)
+        .options(
+            selectinload(DeviceTypeTemplateBinding.device_type),
+            selectinload(DeviceTypeTemplateBinding.template),
+        )
+        .where(DeviceTypeTemplateBinding.pack_id == pack.id)
+    )).scalars().all()
+    if type_bindings:
+        result["contents"]["template_bindings_device_type"] = [
+            {
+                "device_type_name": b.device_type.name,
+                "template_name": b.template.name,
+                "priority": b.priority,
+            }
+            for b in type_bindings
+        ]
 
     # Grafana dashboards (optional — only if Grafana URL is configured)
     grafana_url = await _get_system_setting(db, "grafana_url")
@@ -616,6 +656,61 @@ async def import_pack(
                     )
                 elif section == "connectors":
                     await _create_connector_versions(db, entity, item.get("versions", []))
+                stats["created"] += 1
+
+    await db.flush()
+
+    # Import template hierarchy bindings (after all entities are imported)
+    for binding_data in data.get("contents", {}).get("template_bindings_category", []):
+        dc = (await db.execute(
+            select(DeviceCategory).where(DeviceCategory.name == binding_data["device_category_name"])
+        )).scalar_one_or_none()
+        tmpl = (await db.execute(
+            select(Template).where(Template.name == binding_data["template_name"])
+        )).scalar_one_or_none()
+        if dc and tmpl:
+            existing = (await db.execute(
+                select(DeviceCategoryTemplateBinding).where(
+                    DeviceCategoryTemplateBinding.device_category_id == dc.id,
+                    DeviceCategoryTemplateBinding.template_id == tmpl.id,
+                )
+            )).scalar_one_or_none()
+            if existing:
+                existing.priority = binding_data.get("priority", 0)
+                existing.pack_id = pack.id
+            else:
+                db.add(DeviceCategoryTemplateBinding(
+                    device_category_id=dc.id,
+                    template_id=tmpl.id,
+                    priority=binding_data.get("priority", 0),
+                    pack_id=pack.id,
+                ))
+                stats["created"] += 1
+
+    for binding_data in data.get("contents", {}).get("template_bindings_device_type", []):
+        dt = (await db.execute(
+            select(DeviceType).where(DeviceType.name == binding_data["device_type_name"])
+        )).scalar_one_or_none()
+        tmpl = (await db.execute(
+            select(Template).where(Template.name == binding_data["template_name"])
+        )).scalar_one_or_none()
+        if dt and tmpl:
+            existing = (await db.execute(
+                select(DeviceTypeTemplateBinding).where(
+                    DeviceTypeTemplateBinding.device_type_id == dt.id,
+                    DeviceTypeTemplateBinding.template_id == tmpl.id,
+                )
+            )).scalar_one_or_none()
+            if existing:
+                existing.priority = binding_data.get("priority", 0)
+                existing.pack_id = pack.id
+            else:
+                db.add(DeviceTypeTemplateBinding(
+                    device_type_id=dt.id,
+                    template_id=tmpl.id,
+                    priority=binding_data.get("priority", 0),
+                    pack_id=pack.id,
+                ))
                 stats["created"] += 1
 
     await db.flush()

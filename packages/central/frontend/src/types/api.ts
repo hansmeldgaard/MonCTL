@@ -921,6 +921,37 @@ export interface Template {
   updated_at: string;
 }
 
+// ── Template Bindings ────────────────────────────────────
+
+export interface TemplateBinding {
+  id: string;
+  device_category_id?: string;
+  device_category_name?: string;
+  device_type_id?: string;
+  device_type_name?: string;
+  template_id: string;
+  template_name: string;
+  priority: number;
+  created_at: string;
+}
+
+export interface TemplateSourceInfo {
+  template_id: string;
+  template_name: string;
+  level: "category" | "device_type";
+  category_name?: string;
+  device_type_name?: string;
+  priority: number;
+}
+
+export interface ResolvedTemplateResult {
+  device_id: string;
+  device_name: string;
+  device_address: string;
+  resolved_config: TemplateConfig;
+  source_templates: TemplateSourceInfo[];
+}
+
 // ── Credential Detail ────────────────────────────────────
 
 export interface CredentialDetail extends Credential {

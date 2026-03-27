@@ -100,6 +100,8 @@ import type {
   Action,
   Automation,
   AutomationRun,
+  TemplateBinding,
+  ResolvedTemplateResult,
 } from "@/types/api.ts";
 
 function buildListQs(params: ListParams): string {
@@ -2180,6 +2182,85 @@ export function useApplyTemplate() {
       apiPost<{ applied: number }>(`/templates/${templateId}/apply`, { device_ids: deviceIds }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["devices"] });
+    },
+  });
+}
+
+// ── Template Bindings ────────────────────────────────────
+
+export function useCategoryTemplateBindings(categoryId: string | undefined) {
+  return useQuery({
+    queryKey: ["template-bindings-category", categoryId],
+    queryFn: () => apiGet<TemplateBinding[]>(`/templates/bindings/category/${categoryId}`),
+    enabled: !!categoryId,
+  });
+}
+
+export function useDeviceTypeTemplateBindings(deviceTypeId: string | undefined) {
+  return useQuery({
+    queryKey: ["template-bindings-device-type", deviceTypeId],
+    queryFn: () => apiGet<TemplateBinding[]>(`/templates/bindings/device-type/${deviceTypeId}`),
+    enabled: !!deviceTypeId,
+  });
+}
+
+export function useBindCategoryTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { device_category_id: string; template_id: string; priority?: number }) =>
+      apiPost<TemplateBinding>("/templates/bindings/category", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["template-bindings-category"] });
+    },
+  });
+}
+
+export function useUnbindCategoryTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (bindingId: string) => apiDelete(`/templates/bindings/category/${bindingId}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["template-bindings-category"] });
+    },
+  });
+}
+
+export function useBindDeviceTypeTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { device_type_id: string; template_id: string; priority?: number }) =>
+      apiPost<TemplateBinding>("/templates/bindings/device-type", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["template-bindings-device-type"] });
+    },
+  });
+}
+
+export function useUnbindDeviceTypeTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (bindingId: string) => apiDelete(`/templates/bindings/device-type/${bindingId}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["template-bindings-device-type"] });
+    },
+  });
+}
+
+export function useResolveTemplates() {
+  return useMutation({
+    mutationFn: (deviceIds: string[]) =>
+      apiPost<ResolvedTemplateResult[]>("/templates/resolve", { device_ids: deviceIds }),
+  });
+}
+
+export function useAutoApplyTemplates() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (deviceIds: string[]) =>
+      apiPost<{ applied: number; details: ResolvedTemplateResult[] }>("/templates/auto-apply", { device_ids: deviceIds }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["devices"] });
+      qc.invalidateQueries({ queryKey: ["assignments"] });
     },
   });
 }

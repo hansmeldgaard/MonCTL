@@ -35,8 +35,12 @@ import {
   useDeleteDeviceCategoryIcon,
   useDeviceCategoryList,
   useDeviceCategoryCounts,
+  useCategoryTemplateBindings,
+  useBindCategoryTemplate,
+  useUnbindCategoryTemplate,
+  useTemplates,
 } from "@/api/hooks.ts";
-import type { DeviceCategory } from "@/types/api.ts";
+import type { DeviceCategory, TemplateBinding } from "@/types/api.ts";
 import { cn } from "@/lib/utils.ts";
 
 // Built-in (seeded) categories that shouldn't be deleted
@@ -210,6 +214,16 @@ export function DeviceCategoriesPage() {
   const [editError, setEditError] = useState<string | null>(null);
 
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+
+  // Template bindings for edit dialog
+  const { data: bindingsData, refetch: refetchBindings } = useCategoryTemplateBindings(editTarget?.id);
+  const bindings: TemplateBinding[] = bindingsData?.data ?? [];
+  const bindTemplate = useBindCategoryTemplate();
+  const unbindTemplate = useUnbindCategoryTemplate();
+  const { data: templatesData } = useTemplates({ limit: 200 });
+  const allTemplates = templatesData?.data ?? [];
+  const [bindTemplateId, setBindTemplateId] = useState("");
+  const [bindPriority, setBindPriority] = useState("0");
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -579,6 +593,76 @@ export function DeviceCategoriesPage() {
               placeholder="Short description"
             />
           </div>
+          {/* Linked Templates */}
+          <div className="space-y-2">
+            <Label>Linked Templates</Label>
+            {bindings.length > 0 ? (
+              <div className="space-y-1">
+                {bindings.map((b) => (
+                  <div key={b.id} className="flex items-center gap-2 rounded border border-zinc-800 bg-zinc-800/40 px-2.5 py-1.5 text-sm">
+                    <span className="flex-1 truncate text-zinc-200">{b.template_name}</span>
+                    <span className="text-xs text-zinc-500 tabular-nums">pri {b.priority}</span>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await unbindTemplate.mutateAsync(b.id);
+                        refetchBindings();
+                      }}
+                      className="rounded p-0.5 text-zinc-600 hover:text-red-400 cursor-pointer"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-zinc-500">No templates linked to this category.</p>
+            )}
+            <div className="flex items-end gap-2">
+              <div className="flex-1 space-y-1">
+                <Label className="text-xs text-zinc-500">Template</Label>
+                <Select
+                  value={bindTemplateId}
+                  onChange={(e) => setBindTemplateId(e.target.value)}
+                >
+                  <option value="">Select template…</option>
+                  {allTemplates
+                    .filter((t) => !bindings.some((b) => b.template_id === t.id))
+                    .map((t) => (
+                      <option key={t.id} value={t.id}>{t.name}</option>
+                    ))}
+                </Select>
+              </div>
+              <div className="w-20 space-y-1">
+                <Label className="text-xs text-zinc-500">Priority</Label>
+                <Input
+                  type="number"
+                  value={bindPriority}
+                  onChange={(e) => setBindPriority(e.target.value)}
+                  min={0}
+                />
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                disabled={!bindTemplateId || bindTemplate.isPending}
+                onClick={async () => {
+                  if (!editTarget || !bindTemplateId) return;
+                  await bindTemplate.mutateAsync({
+                    device_category_id: editTarget.id,
+                    template_id: bindTemplateId,
+                    priority: parseInt(bindPriority) || 0,
+                  });
+                  setBindTemplateId("");
+                  setBindPriority("0");
+                  refetchBindings();
+                }}
+              >
+                {bindTemplate.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+              </Button>
+            </div>
+          </div>
+
           {editError && <p className="text-sm text-red-400">{editError}</p>}
           <DialogFooter>
             <Button type="button" variant="secondary" onClick={() => setEditTarget(null)}>

@@ -32,7 +32,8 @@ import {
 } from "@/components/ui/table.tsx";
 import { Select } from "@/components/ui/select.tsx";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
-import { useDevices, useLatestResults, useBulkDeleteDevices, useBulkPatchDevices, useCollectorGroups, useTenants, useLabelKeys, useDeviceCategories } from "@/api/hooks.ts";
+import { useDevices, useLatestResults, useBulkDeleteDevices, useBulkPatchDevices, useCollectorGroups, useTenants, useLabelKeys, useDeviceCategories, useResolveTemplates, useAutoApplyTemplates } from "@/api/hooks.ts";
+import { ListChecks } from "lucide-react";
 import type { DeviceBulkPatchRequest } from "@/types/api.ts";
 import { useTablePreferences, PAGE_SIZE_OPTIONS } from "@/hooks/useTablePreferences.ts";
 import { AddDeviceDialog } from "@/components/AddDeviceDialog.tsx";
@@ -98,6 +99,7 @@ export function DevicesPage() {
   const [showMoveTenantDialog, setShowMoveTenantDialog] = useState(false);
   const [selectedGroupId, setSelectedGroupId] = useState("");
   const [selectedTenantId, setSelectedTenantId] = useState("");
+  const autoApplyTemplates = useAutoApplyTemplates();
 
   // ── Add dialog ──────────────────────────────────────────
   const [addOpen, setAddOpen] = useState(false);
@@ -338,6 +340,19 @@ export function DevicesPage() {
               className="gap-1.5"
             >
               <Building2 className="h-3.5 w-3.5" /> Move to Tenant
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={async () => {
+                const ids = Array.from(selected);
+                await autoApplyTemplates.mutateAsync(ids);
+                setSelected(new Set());
+              }}
+              disabled={autoApplyTemplates.isPending}
+              className="gap-1.5"
+            >
+              {autoApplyTemplates.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ListChecks className="h-3.5 w-3.5" />} Auto-Assign
             </Button>
             <Button
               size="sm"

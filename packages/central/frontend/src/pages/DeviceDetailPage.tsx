@@ -109,9 +109,11 @@ import {
   useClearEvents,
   useDiscoverDevice,
   useDeviceTypes,
+  useResolveTemplates,
+  useAutoApplyTemplates,
 } from "@/api/hooks.ts";
 import { useAuth } from "@/hooks/useAuth.tsx";
-import type { Device as DeviceModel, DeviceAssignment, DeviceThresholdRow, ConfigDiffEntry, AlertLogEntry, MonitoringEvent } from "@/types/api.ts";
+import type { Device as DeviceModel, DeviceAssignment, DeviceThresholdRow, ConfigDiffEntry, AlertLogEntry, MonitoringEvent, ResolvedTemplateResult } from "@/types/api.ts";
 import { useListState } from "@/hooks/useListState.ts";
 import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
 import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
@@ -4287,6 +4289,11 @@ export function DeviceDetailPage() {
   const { data: allCategories } = useDeviceCategories();
   const [activeTab, setActiveTab] = useState("overview");
 
+  // Auto-assign templates
+  const resolveTemplates = useResolveTemplates();
+  const autoApplyTemplates = useAutoApplyTemplates();
+  const [autoAssignPreview, setAutoAssignPreview] = useState<ResolvedTemplateResult | null>(null);
+
   const isLoading = deviceLoading || (resultsLoading && !device);
 
   if (isLoading) {
@@ -4376,8 +4383,88 @@ export function DeviceDetailPage() {
               collector group: <span className="text-zinc-300">{device.collector_group_name}</span>
             </span>
           )}
+          <Button
+            variant="secondary"
+            size="sm"
+            className="ml-auto gap-1.5"
+            disabled={resolveTemplates.isPending}
+            onClick={async () => {
+              const res = await resolveTemplates.mutateAsync([deviceId]);
+              const result = res.data?.[0];
+              if (result && result.source_templates.length > 0) {
+                setAutoAssignPreview(result);
+              } else {
+                setAutoAssignPreview(null);
+                alert("No templates are linked to this device's category or type.");
+              }
+            }}
+          >
+            {resolveTemplates.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ListChecks className="h-3.5 w-3.5" />}
+            Auto-Assign
+          </Button>
         </div>
       </div>
+
+      {/* Auto-Assign Preview Dialog */}
+      <Dialog open={!!autoAssignPreview} onClose={() => setAutoAssignPreview(null)} title="Auto-Assign Templates">
+        {autoAssignPreview && (
+          <div className="space-y-4">
+            <p className="text-sm text-zinc-400">
+              The following templates will be applied based on device category and type hierarchy:
+            </p>
+            <div className="space-y-1.5">
+              {autoAssignPreview.source_templates.map((t, i) => (
+                <div key={i} className="flex items-center gap-2 rounded border border-zinc-800 bg-zinc-800/40 px-3 py-2 text-sm">
+                  <span className="flex-1 text-zinc-200">{t.template_name}</span>
+                  <Badge variant={t.level === "device_type" ? "info" : "default"}>
+                    {t.level === "device_type" ? "Type" : "Category"}
+                  </Badge>
+                  <span className="text-xs text-zinc-500 tabular-nums">pri {t.priority}</span>
+                </div>
+              ))}
+            </div>
+            {autoAssignPreview.resolved_config.monitoring && (
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-zinc-400">Monitoring</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {Object.entries(autoAssignPreview.resolved_config.monitoring).map(([role, check]) =>
+                    check ? (
+                      <Badge key={role} variant="info">
+                        {role}: {check.app_name} ({check.interval_seconds}s)
+                      </Badge>
+                    ) : null,
+                  )}
+                </div>
+              </div>
+            )}
+            {autoAssignPreview.resolved_config.apps && autoAssignPreview.resolved_config.apps.length > 0 && (
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-zinc-400">Apps</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {autoAssignPreview.resolved_config.apps.map((a, i) => (
+                    <Badge key={i} variant="default">
+                      {a.app_name} ({a.schedule_value}s)
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+            <DialogFooter>
+              <Button variant="secondary" onClick={() => setAutoAssignPreview(null)}>Cancel</Button>
+              <Button
+                disabled={autoApplyTemplates.isPending}
+                onClick={async () => {
+                  await autoApplyTemplates.mutateAsync([deviceId]);
+                  setAutoAssignPreview(null);
+                }}
+              >
+                {autoApplyTemplates.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+                Apply
+              </Button>
+            </DialogFooter>
+          </div>
+        )}
+      </Dialog>
 
       {/* 4-tab layout */}
       <Tabs value={activeTab} onChange={setActiveTab}>

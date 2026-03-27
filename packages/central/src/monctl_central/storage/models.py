@@ -178,6 +178,10 @@ class DeviceCategory(Base):
         DateTime(timezone=True), nullable=False, server_default="now()"
     )
 
+    template_bindings: Mapped[list["DeviceCategoryTemplateBinding"]] = relationship(
+        back_populates="device_category", cascade="all, delete-orphan"
+    )
+
 
 class DeviceType(Base):
     """Specific device model/type with SNMP sysObjectID pattern for auto-discovery."""
@@ -208,6 +212,9 @@ class DeviceType(Base):
     )
 
     device_category: Mapped["DeviceCategory"] = relationship(foreign_keys=[device_category_id])
+    template_bindings: Mapped[list["DeviceTypeTemplateBinding"]] = relationship(
+        back_populates="device_type", cascade="all, delete-orphan"
+    )
 
 
 class Device(Base):
@@ -780,6 +787,71 @@ class Template(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
+
+    category_bindings: Mapped[list["DeviceCategoryTemplateBinding"]] = relationship(
+        back_populates="template", cascade="all, delete-orphan"
+    )
+    type_bindings: Mapped[list["DeviceTypeTemplateBinding"]] = relationship(
+        back_populates="template", cascade="all, delete-orphan"
+    )
+
+
+class DeviceCategoryTemplateBinding(Base):
+    """Links templates to device categories (many-to-many with priority)."""
+    __tablename__ = "device_category_template_bindings"
+    __table_args__ = (
+        UniqueConstraint("device_category_id", "template_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_category_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("device_categories.id", ondelete="CASCADE"), nullable=False
+    )
+    template_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("templates.id", ondelete="CASCADE"), nullable=False
+    )
+    priority: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0",
+        comment="Higher priority templates override lower ones within same level"
+    )
+    pack_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("packs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+    device_category: Mapped["DeviceCategory"] = relationship(back_populates="template_bindings")
+    template: Mapped["Template"] = relationship(back_populates="category_bindings")
+
+
+class DeviceTypeTemplateBinding(Base):
+    """Links templates to device types (many-to-many with priority)."""
+    __tablename__ = "device_type_template_bindings"
+    __table_args__ = (
+        UniqueConstraint("device_type_id", "template_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_type_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("device_types.id", ondelete="CASCADE"), nullable=False
+    )
+    template_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("templates.id", ondelete="CASCADE"), nullable=False
+    )
+    priority: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0",
+        comment="Higher priority templates override lower ones within same level"
+    )
+    pack_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("packs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+    device_type: Mapped["DeviceType"] = relationship(back_populates="template_bindings")
+    template: Mapped["Template"] = relationship(back_populates="type_bindings")
 
 
 class PythonModule(Base):

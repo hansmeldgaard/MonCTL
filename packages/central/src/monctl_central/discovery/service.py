@@ -20,6 +20,7 @@ from monctl_central.storage.models import (
     Device,
     DeviceCategory,
     DeviceType,
+    SystemSetting,
 )
 
 logger = logging.getLogger(__name__)
@@ -108,6 +109,27 @@ async def process_discovery_result(
         device.device_type_id = None
 
     await db.flush()
+
+    # 6. Auto-apply hierarchical templates if enabled
+    if match_result and match_result.matched:
+        auto_apply = (await db.execute(
+            select(SystemSetting).where(SystemSetting.key == "auto_apply_templates_on_discovery")
+        )).scalar_one_or_none()
+        if auto_apply and auto_apply.value == "true":
+            try:
+                from monctl_central.templates.resolver import resolve_templates_for_device
+                from monctl_central.templates.router import apply_config_to_device
+
+                resolved = await resolve_templates_for_device(device, db)
+                if resolved["config"]:
+                    await apply_config_to_device(device, resolved["config"], db)
+                    await db.flush()
+                    changes["auto_applied_templates"] = "true"
+                    logger.info("discovery_auto_applied_templates",
+                                device_id=device_id,
+                                templates=[t["template_name"] for t in resolved["source_templates"]])
+            except Exception:
+                logger.exception("discovery_auto_apply_failed", device_id=device_id)
 
     logger.info("discovery_applied",
                 device_id=device_id,
