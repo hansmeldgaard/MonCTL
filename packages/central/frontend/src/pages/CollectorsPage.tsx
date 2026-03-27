@@ -766,8 +766,8 @@ function CollectorsCard() {
 
 // ── Registration Tokens Section ──────────────────────────────────────────────
 
-import { KeyRound, Copy, Check } from "lucide-react";
-import { useSystemSettings } from "@/api/hooks.ts";
+import { KeyRound, Copy, Check, FileDown } from "lucide-react";
+import { useCollectorSetupContext } from "@/api/hooks.ts";
 
 // ── Copyable Code Block ──────────────────────────────────────────────────────
 
@@ -796,23 +796,101 @@ function CopyBlock({ content, label }: { content: string; label?: string }) {
 
 // ── Setup Instructions Dialog ────────────────────────────────────────────────
 
-function SetupInstructionsDialog({ code, onClose }: { code: string; onClose: () => void }) {
-  const { data: settings } = useSystemSettings();
-  const centralUrl = settings?.collector_central_url || window.location.origin;
-  const [codeCopied, setCodeCopied] = useState(false);
+function SetupInstructionsDialog({ onClose }: { onClose: () => void }) {
+  const [collectorName, setCollectorName] = useState("");
+  const [phase, setPhase] = useState<"name" | "guide">("name");
+  const [regCode, setRegCode] = useState("");
+  const [ctx, setCtx] = useState<{ collector_api_key: string; central_url: string } | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState("");
 
-  function handleCopyCode() {
-    navigator.clipboard.writeText(code);
-    setCodeCopied(true);
-    setTimeout(() => setCodeCopied(false), 2000);
+  const createToken = useCreateRegistrationToken();
+  const { refetch: fetchContext } = useCollectorSetupContext();
+
+  async function handleGenerate() {
+    const name = collectorName.trim();
+    if (!name) return;
+    setGenerating(true);
+    setError("");
+    try {
+      const [tokenResult, ctxResult] = await Promise.all([
+        createToken.mutateAsync({ name: `setup-${name}`, one_time: true }),
+        fetchContext(),
+      ]);
+      const code = tokenResult.data?.short_code ?? tokenResult.data?.token ?? "";
+      if (!code) { setError("Failed to create registration token."); return; }
+      if (!ctxResult.data) { setError("Failed to fetch setup context. Is MONCTL_COLLECTOR_API_KEY configured on central?"); return; }
+      setRegCode(code);
+      setCtx(ctxResult.data);
+      setPhase("guide");
+    } catch (e: any) {
+      setError(e?.message || "Failed to generate setup guide.");
+    } finally {
+      setGenerating(false);
+    }
   }
 
-  const envContent = `NODE_ID=collector-NEW
-CENTRAL_URL=${centralUrl}
-CENTRAL_API_KEY=<from central .env COLLECTOR_API_KEY>
-VERIFY_SSL=false`;
+  if (phase === "name") {
+    return (
+      <Dialog open onClose={onClose} title="Add Collector" size="sm">
+        <div className="space-y-4">
+          <div>
+            <Label>Collector Name</Label>
+            <Input
+              placeholder="e.g. worker5"
+              value={collectorName}
+              onChange={(e) => setCollectorName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleGenerate()}
+              autoFocus
+            />
+            <p className="text-xs text-zinc-500 mt-1">A unique name for this collector node.</p>
+          </div>
+          {error && <p className="text-sm text-red-400">{error}</p>}
+        </div>
+        <DialogFooter>
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button onClick={handleGenerate} disabled={!collectorName.trim() || generating}>
+            {generating && <Loader2 className="h-4 w-4 animate-spin" />}
+            Generate Setup Guide
+          </Button>
+        </DialogFooter>
+      </Dialog>
+    );
+  }
 
-  const composeContent = `services:
+  // Phase 2: full setup guide
+  const name = collectorName.trim();
+  const centralUrl = ctx!.central_url;
+  const apiKey = ctx!.collector_api_key;
+  const pushUrl = `${centralUrl}/api/v1/docker-stats/push`;
+
+  const step1 = `# Create monctl user and install Docker (run as root)
+useradd -m -s /bin/bash monctl
+apt-get update && apt-get install -y ca-certificates curl gnupg
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+chmod a+r /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" > /etc/apt/sources.list.d/docker.list
+apt-get update && apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+usermod -aG docker monctl`;
+
+  const step2 = `mkdir -p /opt/monctl/collector /var/lib/monctl
+chown -R monctl:monctl /opt/monctl /var/lib/monctl`;
+
+  const step3 = `cat << 'EOF' > /opt/monctl/collector/.env
+NODE_ID=${name}
+CENTRAL_URL=${centralUrl}
+CENTRAL_API_KEY=${apiKey}
+VERIFY_SSL=false
+REGISTRATION_TOKEN=${regCode}
+DOCKER_STATS_PUSH_URL=${pushUrl}
+EOF
+chown monctl:monctl /opt/monctl/collector/.env
+chmod 600 /opt/monctl/collector/.env`;
+
+  const composeYml = `cat << 'COMPOSEEOF' > /opt/monctl/collector/docker-compose.yml
+services:
+
   cache-node:
     image: monctl-collector:latest
     command: monctl-cache-node
@@ -822,16 +900,16 @@ VERIFY_SSL=false`;
       - "50051:50051"
       - "127.0.0.1:50052:50052"
     environment:
-      MONCTL_NODE_ID:           \${NODE_ID}
-      MONCTL_CENTRAL_URL:       \${CENTRAL_URL}
-      MONCTL_CENTRAL_API_KEY:   \${CENTRAL_API_KEY}
-      MONCTL_VERIFY_SSL:        \${VERIFY_SSL:-true}
-      MONCTL_GRPC_ADDRESS:      0.0.0.0:50051
-      MONCTL_DB_PATH:           /data/cache.db
-      MONCTL_COLLECTOR_ID:      \${MONCTL_COLLECTOR_ID:-}
-      MONCTL_COLLECTOR_API_KEY: \${CENTRAL_API_KEY}
+      MONCTL_NODE_ID:              \${NODE_ID}
+      MONCTL_CENTRAL_URL:          \${CENTRAL_URL}
+      MONCTL_CENTRAL_API_KEY:      \${CENTRAL_API_KEY}
+      MONCTL_VERIFY_SSL:           \${VERIFY_SSL:-false}
+      MONCTL_GRPC_ADDRESS:         0.0.0.0:50051
+      MONCTL_DB_PATH:              /data/cache.db
+      MONCTL_REGISTRATION_TOKEN:   \${REGISTRATION_TOKEN}
     volumes:
       - cache_data:/data
+      - /var/lib/monctl:/var/lib/monctl
       - /var/run/docker.sock:/var/run/docker.sock:ro
     restart: unless-stopped
     healthcheck:
@@ -846,17 +924,21 @@ VERIFY_SSL=false`;
     image: monctl-collector:latest
     command: monctl-poll-worker
     container_name: poll-worker-1
+    entrypoint: [""]
     environment:
       MONCTL_CACHE_NODE:        cache-node:50051
       MONCTL_WORKER_ID:         \${NODE_ID:-node}-worker-1
       MONCTL_CENTRAL_URL:       \${CENTRAL_URL}
       MONCTL_CENTRAL_API_KEY:   \${CENTRAL_API_KEY}
-      MONCTL_VERIFY_SSL:        \${VERIFY_SSL:-true}
+      MONCTL_VERIFY_SSL:        \${VERIFY_SSL:-false}
       MONCTL_APPS_DIR:          /data/apps
       MONCTL_VENVS_DIR:         /data/venvs
       MONCTL_DB_PATH:           /data/worker.db
+      MALLOC_ARENA_MAX:         "2"
+      PYTHONMALLOC:             "malloc"
     volumes:
       - app_data:/data
+    mem_limit: 1g
     depends_on:
       cache-node:
         condition: service_healthy
@@ -866,11 +948,12 @@ VERIFY_SSL=false`;
     image: monctl-collector:latest
     command: monctl-forwarder
     container_name: forwarder
+    entrypoint: [""]
     environment:
       MONCTL_NODE_ID:           \${NODE_ID}
       MONCTL_CENTRAL_URL:       \${CENTRAL_URL}
       MONCTL_CENTRAL_API_KEY:   \${CENTRAL_API_KEY}
-      MONCTL_VERIFY_SSL:        \${VERIFY_SSL:-true}
+      MONCTL_VERIFY_SSL:        \${VERIFY_SSL:-false}
       MONCTL_DB_PATH:           /data/cache.db
     volumes:
       - cache_data:/data
@@ -879,67 +962,144 @@ VERIFY_SSL=false`;
         condition: service_healthy
     restart: unless-stopped
 
+  docker-stats:
+    image: monctl-docker-stats:latest
+    container_name: monctl-docker-stats
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /:/host_root:ro
+    environment:
+      MONCTL_HOST_LABEL:        \${NODE_ID:-unknown}
+      MONCTL_PUSH_URL:          \${DOCKER_STATS_PUSH_URL}
+      MONCTL_PUSH_API_KEY:      \${CENTRAL_API_KEY}
+      MONCTL_PUSH_VERIFY_SSL:   "false"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9100/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
 volumes:
   cache_data:
-  app_data:`;
+  app_data:
+COMPOSEEOF
+chown monctl:monctl /opt/monctl/collector/docker-compose.yml`;
+
+  const step5 = `# Run from your build machine — replace <COLLECTOR_IP> with the server IP:
+docker save monctl-collector:latest | ssh monctl@<COLLECTOR_IP> 'docker load'
+docker save monctl-docker-stats:latest | ssh monctl@<COLLECTOR_IP> 'docker load'`;
+
+  const step6 = `su - monctl -c 'cd /opt/monctl/collector && docker compose up -d'`;
+
+  // Full script for "Copy all" button
+  const fullScript = `#!/bin/bash
+set -euo pipefail
+# MonCTL Collector Setup — ${name}
+# Generated ${new Date().toISOString().slice(0, 10)}
+
+# Step 1: Create user and install Docker
+${step1}
+
+# Step 2: Create directories
+${step2}
+
+# Step 3: Write .env
+${step3}
+
+# Step 4: Write docker-compose.yml
+${composeYml}
+
+# Step 5: Transfer Docker images (run from build machine)
+# docker save monctl-collector:latest | ssh monctl@<COLLECTOR_IP> 'docker load'
+# docker save monctl-docker-stats:latest | ssh monctl@<COLLECTOR_IP> 'docker load'
+
+# Step 6: Start services
+${step6}
+
+echo "Done! Approve the collector in MonCTL UI."`;
+
+  const [codeCopied, setCodeCopied] = useState(false);
+  const [scriptCopied, setScriptCopied] = useState(false);
+
+  function handleCopyCode() {
+    navigator.clipboard.writeText(regCode);
+    setCodeCopied(true);
+    setTimeout(() => setCodeCopied(false), 2000);
+  }
+  function handleCopyScript() {
+    navigator.clipboard.writeText(fullScript);
+    setScriptCopied(true);
+    setTimeout(() => setScriptCopied(false), 2000);
+  }
 
   return (
-    <Dialog open onClose={onClose} title="Setup Instructions" size="lg">
+    <Dialog open onClose={onClose} title={`Setup: ${name}`} size="lg">
       <div className="space-y-5 max-h-[70vh] overflow-y-auto pr-1">
-        {/* Registration code */}
-        <div className="flex items-center justify-center gap-3 rounded-lg bg-zinc-800 px-4 py-4">
-          <span className="text-xs text-zinc-500 uppercase tracking-wider">Registration Code</span>
-          <code className="text-2xl font-mono font-bold text-emerald-400 tracking-[0.3em]">{code}</code>
-          <button
-            type="button"
-            onClick={handleCopyCode}
-            className="rounded p-1.5 text-zinc-400 hover:text-zinc-100 transition-colors cursor-pointer"
-            title="Copy code"
-          >
-            {codeCopied ? <Check className="h-4 w-4 text-emerald-400" /> : <Copy className="h-4 w-4" />}
+        {/* Registration code + copy-all */}
+        <div className="flex items-center justify-between rounded-lg bg-zinc-800 px-4 py-3">
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-zinc-500 uppercase tracking-wider">Registration Code</span>
+            <code className="text-2xl font-mono font-bold text-emerald-400 tracking-[0.3em]">{regCode}</code>
+            <button type="button" onClick={handleCopyCode}
+              className="rounded p-1.5 text-zinc-400 hover:text-zinc-100 transition-colors cursor-pointer" title="Copy code">
+              {codeCopied ? <Check className="h-4 w-4 text-emerald-400" /> : <Copy className="h-4 w-4" />}
+            </button>
+          </div>
+          <button type="button" onClick={handleCopyScript}
+            className="flex items-center gap-1.5 rounded-md border border-zinc-600 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer"
+            title="Copy complete setup script">
+            {scriptCopied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <FileDown className="h-3.5 w-3.5" />}
+            {scriptCopied ? "Copied!" : "Copy Full Script"}
           </button>
         </div>
 
+        <p className="text-xs text-zinc-500">Run all commands as <code className="bg-zinc-800 px-1 py-0.5 rounded">root</code> on a fresh Ubuntu 22.04+ server. Or use "Copy Full Script" for a single script.</p>
+
         {/* Step 1 */}
         <div>
-          <h3 className="text-sm font-medium text-zinc-200 mb-2">Step 1: Prepare the server</h3>
-          <CopyBlock content={`sudo mkdir -p /opt/monctl/collector
-sudo chown -R monctl:monctl /opt/monctl`} />
+          <h3 className="text-sm font-medium text-zinc-200 mb-2">Step 1: Create user &amp; install Docker</h3>
+          <CopyBlock content={step1} />
         </div>
 
         {/* Step 2 */}
         <div>
-          <h3 className="text-sm font-medium text-zinc-200 mb-2">Step 2: Create <code className="text-xs bg-zinc-800 px-1 py-0.5 rounded">/opt/monctl/collector/.env</code></h3>
-          <CopyBlock content={envContent} />
-          <p className="text-xs text-zinc-500 mt-1.5">
-            Find <code className="bg-zinc-800 px-1 py-0.5 rounded">COLLECTOR_API_KEY</code> in your central deployment's <code className="bg-zinc-800 px-1 py-0.5 rounded">.env</code> file.
-            Change <code className="bg-zinc-800 px-1 py-0.5 rounded">NODE_ID</code> to a unique name for this collector.
-          </p>
+          <h3 className="text-sm font-medium text-zinc-200 mb-2">Step 2: Create directories</h3>
+          <CopyBlock content={step2} />
         </div>
 
         {/* Step 3 */}
         <div>
-          <h3 className="text-sm font-medium text-zinc-200 mb-2">Step 3: Create <code className="text-xs bg-zinc-800 px-1 py-0.5 rounded">/opt/monctl/collector/docker-compose.yml</code></h3>
-          <CopyBlock content={composeContent} />
+          <h3 className="text-sm font-medium text-zinc-200 mb-2">Step 3: Write <code className="text-xs bg-zinc-800 px-1 py-0.5 rounded">.env</code></h3>
+          <CopyBlock content={step3} />
         </div>
 
         {/* Step 4 */}
         <div>
-          <h3 className="text-sm font-medium text-zinc-200 mb-2">Step 4: Load the collector image</h3>
-          <CopyBlock content={`# From your build machine:
-docker save monctl-collector:latest | ssh monctl@<worker-ip> 'docker load'`} />
+          <h3 className="text-sm font-medium text-zinc-200 mb-2">Step 4: Write <code className="text-xs bg-zinc-800 px-1 py-0.5 rounded">docker-compose.yml</code></h3>
+          <CopyBlock content={composeYml} />
         </div>
 
         {/* Step 5 */}
         <div>
-          <h3 className="text-sm font-medium text-zinc-200 mb-2">Step 5: Start</h3>
-          <CopyBlock content={`cd /opt/monctl/collector && docker compose up -d`} />
+          <h3 className="text-sm font-medium text-zinc-200 mb-2">Step 5: Transfer Docker images</h3>
+          <CopyBlock content={step5} />
+          <p className="text-xs text-zinc-500 mt-1.5">
+            Replace <code className="bg-zinc-800 px-1 py-0.5 rounded">&lt;COLLECTOR_IP&gt;</code> with the server's IP address.
+          </p>
         </div>
 
         {/* Step 6 */}
+        <div>
+          <h3 className="text-sm font-medium text-zinc-200 mb-2">Step 6: Start services</h3>
+          <CopyBlock content={step6} />
+        </div>
+
+        {/* Step 7 */}
         <div className="rounded-lg bg-amber-500/10 border border-amber-500/20 px-4 py-3">
           <p className="text-sm text-amber-400">
-            <strong>Step 6:</strong> Return here and approve the collector when it appears in the Pending list above.
+            <strong>Step 7:</strong> The collector registers automatically using the registration code and appears
+            in the <strong>Pending Approval</strong> list above. Approve it and assign a collector group.
           </p>
         </div>
       </div>
@@ -1134,7 +1294,6 @@ function RegistrationTokensCard() {
       {/* Setup Instructions dialog */}
       {createdToken && (
         <SetupInstructionsDialog
-          code={createdToken}
           onClose={() => setCreatedToken(null)}
         />
       )}
@@ -1161,24 +1320,7 @@ function RegistrationTokensCard() {
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export function CollectorsPage() {
-  const createToken = useCreateRegistrationToken();
-  const [showSetupGuide, setShowSetupGuide] = useState<string | null>(null);
-  const [addingCollector, setAddingCollector] = useState(false);
-
-  async function handleAddCollector() {
-    setAddingCollector(true);
-    try {
-      const result = await createToken.mutateAsync({
-        name: `collector-${Date.now()}`,
-        one_time: true,
-      });
-      setShowSetupGuide(result.data?.short_code ?? result.data?.token ?? null);
-    } catch {
-      /* silent */
-    } finally {
-      setAddingCollector(false);
-    }
-  }
+  const [showSetupGuide, setShowSetupGuide] = useState(false);
 
   return (
     <div className="space-y-6">
@@ -1189,8 +1331,8 @@ export function CollectorsPage() {
             Manage collector groups, registered collectors, and registration tokens.
           </p>
         </div>
-        <Button onClick={handleAddCollector} disabled={addingCollector} className="gap-1.5">
-          {addingCollector ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+        <Button onClick={() => setShowSetupGuide(true)} className="gap-1.5">
+          <Plus className="h-4 w-4" />
           Add Collector
         </Button>
       </div>
@@ -1200,10 +1342,7 @@ export function CollectorsPage() {
       <RegistrationTokensCard />
 
       {showSetupGuide && (
-        <SetupInstructionsDialog
-          code={showSetupGuide}
-          onClose={() => setShowSetupGuide(null)}
-        />
+        <SetupInstructionsDialog onClose={() => setShowSetupGuide(false)} />
       )}
     </div>
   );
