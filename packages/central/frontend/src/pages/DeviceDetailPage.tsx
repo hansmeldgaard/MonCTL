@@ -1,5 +1,6 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
 import { validateName, validateAddress } from "@/lib/validation.ts";
 import {
@@ -107,6 +108,7 @@ import {
   useAcknowledgeEvents,
   useClearEvents,
   useDiscoverDevice,
+  useDeviceTypes,
 } from "@/api/hooks.ts";
 import { useAuth } from "@/hooks/useAuth.tsx";
 import type { Device as DeviceModel, DeviceAssignment, DeviceThresholdRow, ConfigDiffEntry, AlertLogEntry, MonitoringEvent } from "@/types/api.ts";
@@ -121,6 +123,7 @@ import { PerformanceChart } from "@/components/PerformanceChart.tsx";
 import { MultiInterfaceChart, formatTraffic } from "@/components/InterfaceTrafficChart.tsx";
 import type { TrafficUnit, ChartMetric, ChartMode } from "@/components/InterfaceTrafficChart.tsx";
 import { CredentialCell } from "@/components/CredentialCell.tsx";
+import { RuleFormDialog } from "@/pages/DiscoveryRulesPage.tsx";
 import { timeAgo, formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 
@@ -2980,6 +2983,8 @@ function formatCredentialType(type: string): string {
 function SettingsTab({ deviceId }: { deviceId: string }) {
   const { data: device, isLoading: deviceLoading } = useDevice(deviceId);
   const { data: deviceCategories } = useDeviceCategories();
+  const { data: allDeviceTypes } = useDeviceTypes({ limit: 1000 });
+  const deviceTypes = allDeviceTypes?.data ?? [];
   const { data: tenants } = useTenants();
   const { data: collectorGroups } = useCollectorGroups();
   const { data: allCredentials } = useCredentials();
@@ -2990,6 +2995,7 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
   const settingsNameField = useField("", validateName);
   const settingsAddressField = useField("", validateAddress);
   const [deviceCategory, setDeviceCategory] = useState("");
+  const [deviceTypeId, setDeviceTypeId] = useState("");
   const [tenantId, setTenantId] = useState("");
   const [collectorGroupId, setCollectorGroupId] = useState("");
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -3016,6 +3022,7 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
       settingsNameField.reset(device.name);
       settingsAddressField.reset(device.address);
       setDeviceCategory(device.device_category);
+      setDeviceTypeId(device.device_type_id ?? "");
       setTenantId(device.tenant_id ?? "");
       setCollectorGroupId(device.collector_group_id ?? "");
       setLabels(device.labels ?? {});
@@ -3041,6 +3048,7 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
           name: settingsNameField.value.trim(),
           address: settingsAddressField.value.trim(),
           device_category: deviceCategory,
+          device_type_id: deviceTypeId || null,
           tenant_id: tenantId || null,
           collector_group_id: collectorGroupId || null,
           labels,
@@ -3161,6 +3169,15 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
                   {settingsAddressField.error && <p className="text-xs text-red-400 mt-0.5">{settingsAddressField.error}</p>}
                 </div>
               </div>
+              <div className="grid grid-cols-[110px_1fr] items-center gap-2">
+                <Label htmlFor="s-devtype" className="text-right">Device Type</Label>
+                <Select id="s-devtype" value={deviceTypeId} onChange={(e) => setDeviceTypeId(e.target.value)}>
+                  <option value="">{"\u2014"} No device type {"\u2014"}</option>
+                  {deviceTypes.map((dt) => (
+                    <option key={dt.id} value={dt.id}>{dt.name}</option>
+                  ))}
+                </Select>
+              </div>
               {tenants && tenants.length > 0 ? (
                 <div className="grid grid-cols-[110px_1fr] items-center gap-2">
                   <Label htmlFor="s-tenant" className="text-right">Tenant</Label>
@@ -3202,7 +3219,7 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Key className="h-4 w-4" />
-            Credentials
+            Default Credentials
             {credsModified && (
               <Button
                 size="sm"
@@ -3334,9 +3351,15 @@ function SettingsTab({ deviceId }: { deviceId: string }) {
 
 function DiscoveryCard({ deviceId, device }: { deviceId: string; device: DeviceModel | undefined }) {
   const discoverMut = useDiscoverDevice();
+  const qc = useQueryClient();
   const tz = useTimezone();
   const meta = device?.metadata as Record<string, string> | undefined;
   const discovered = meta?.discovered_at;
+
+  // --- Discovery polling state ---
+  const [discoveryPhase, setDiscoveryPhase] = useState<"idle" | "polling" | "done" | "timeout">("idle");
+  const preDiscoverAt = useRef<string | undefined>(undefined);
+  const [showCreateType, setShowCreateType] = useState(false);
 
   const fields = [
     { label: "Matched Type", value: device?.device_type_name || undefined },
@@ -3349,8 +3372,49 @@ function DiscoveryCard({ deviceId, device }: { deviceId: string; device: DeviceM
   ];
 
   const handleDiscover = () => {
+    preDiscoverAt.current = discovered;
+    setDiscoveryPhase("polling");
     discoverMut.mutate(deviceId);
   };
+
+  // Fast-poll device while waiting for discovery result
+  useEffect(() => {
+    if (discoveryPhase !== "polling") return;
+    const iv = setInterval(() => {
+      qc.invalidateQueries({ queryKey: ["device", deviceId] });
+    }, 2000);
+    return () => clearInterval(iv);
+  }, [discoveryPhase, deviceId, qc]);
+
+  // Detect when discovered_at changes → discovery complete
+  useEffect(() => {
+    if (discoveryPhase !== "polling") return;
+    if (discovered && discovered !== preDiscoverAt.current) {
+      setDiscoveryPhase("done");
+    }
+  }, [discoveryPhase, discovered]);
+
+  // Timeout after 60s
+  useEffect(() => {
+    if (discoveryPhase !== "polling") return;
+    const t = setTimeout(() => setDiscoveryPhase("timeout"), 60_000);
+    return () => clearTimeout(t);
+  }, [discoveryPhase]);
+
+  // Auto-dismiss done / timeout messages
+  useEffect(() => {
+    if (discoveryPhase === "done") {
+      const t = setTimeout(() => setDiscoveryPhase("idle"), 4000);
+      return () => clearTimeout(t);
+    }
+    if (discoveryPhase === "timeout") {
+      const t = setTimeout(() => setDiscoveryPhase("idle"), 8000);
+      return () => clearTimeout(t);
+    }
+  }, [discoveryPhase]);
+
+  // Show "Create Device Type" when sysObjectID exists but no match
+  const canCreateType = !!(meta?.sys_object_id && !device?.device_type_name);
 
   return (
     <Card>
@@ -3364,9 +3428,9 @@ function DiscoveryCard({ deviceId, device }: { deviceId: string; device: DeviceM
             size="sm"
             variant="outline"
             onClick={handleDiscover}
-            disabled={discoverMut.isPending}
+            disabled={discoverMut.isPending || discoveryPhase === "polling"}
           >
-            {discoverMut.isPending
+            {discoverMut.isPending || discoveryPhase === "polling"
               ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
               : <Search className="h-3.5 w-3.5" />}
             {discovered ? "Re-discover" : "Discover"}
@@ -3374,17 +3438,29 @@ function DiscoveryCard({ deviceId, device }: { deviceId: string; device: DeviceM
         </div>
       </CardHeader>
       <CardContent>
-        {discoverMut.isSuccess && (
-          <p className="text-xs text-amber-400 mb-3">
+        {discoveryPhase === "polling" && (
+          <p className="text-xs text-amber-400 mb-3 flex items-center gap-1.5">
+            <Loader2 className="h-3 w-3 animate-spin" />
             Discovery queued — waiting for collector to complete SNMP query...
           </p>
         )}
-        {discoverMut.isError && (
+        {discoveryPhase === "done" && (
+          <p className="text-xs text-emerald-400 mb-3 flex items-center gap-1.5">
+            <Check className="h-3 w-3" />
+            Discovery complete — device updated.
+          </p>
+        )}
+        {discoveryPhase === "timeout" && (
+          <p className="text-xs text-amber-400 mb-3">
+            Discovery timed out — collector may be offline.
+          </p>
+        )}
+        {discoverMut.isError && discoveryPhase === "idle" && (
           <p className="text-xs text-red-400 mb-3">
             {discoverMut.error instanceof Error ? discoverMut.error.message : "Discovery failed"}
           </p>
         )}
-        {!discovered && !discoverMut.isSuccess ? (
+        {!discovered && discoveryPhase === "idle" && !discoverMut.isError ? (
           <p className="text-sm text-zinc-500">
             This device has not been discovered yet. Assign an SNMP credential and click Discover.
           </p>
@@ -3409,6 +3485,40 @@ function DiscoveryCard({ deviceId, device }: { deviceId: string; device: DeviceM
               </div>
             )}
           </div>
+        )}
+        {canCreateType && discoveryPhase === "idle" && (
+          <div className="mt-3 pt-3 border-t border-zinc-800">
+            <p className="text-xs text-zinc-500 mb-2">
+              No matching device type found for sysObjectID <span className="font-mono">{meta?.sys_object_id}</span>
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setShowCreateType(true)}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Create Device Type
+            </Button>
+          </div>
+        )}
+        {showCreateType && (
+          <RuleFormDialog
+            prefill={{
+              sys_object_id_pattern: meta?.sys_object_id ?? "",
+              vendor: meta?.vendor ?? "",
+              model: meta?.model ?? "",
+              os_family: meta?.os_family ?? "",
+              name: [meta?.vendor, meta?.model].filter(Boolean).join(" ") || "",
+            }}
+            onClose={() => setShowCreateType(false)}
+            onSuccess={() => {
+              setShowCreateType(false);
+              // Re-discover so device gets linked to new type
+              preDiscoverAt.current = discovered;
+              setDiscoveryPhase("polling");
+              discoverMut.mutate(deviceId);
+            }}
+          />
         )}
       </CardContent>
     </Card>

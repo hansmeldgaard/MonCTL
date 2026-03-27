@@ -232,24 +232,36 @@ function DeviceTypesTab() {
 
 /* ── Rule form dialog (create + edit) ────────────────────── */
 
-function RuleFormDialog({
+export interface RuleFormPrefill {
+  sys_object_id_pattern?: string;
+  vendor?: string;
+  model?: string;
+  os_family?: string;
+  name?: string;
+}
+
+export function RuleFormDialog({
   rule,
+  prefill,
   onClose,
+  onSuccess,
 }: {
   rule?: DeviceType;
+  prefill?: RuleFormPrefill;
   onClose: () => void;
+  onSuccess?: () => void;
 }) {
   const { data: deviceCategories } = useDeviceCategories();
   const createMut = useCreateDeviceType();
   const updateMut = useUpdateDeviceType();
   const isEdit = !!rule;
 
-  const [name, setName] = useState(rule?.name ?? "");
-  const [pattern, setPattern] = useState(rule?.sys_object_id_pattern ?? "");
+  const [name, setName] = useState(rule?.name ?? prefill?.name ?? "");
+  const [pattern, setPattern] = useState(rule?.sys_object_id_pattern ?? prefill?.sys_object_id_pattern ?? "");
   const [deviceCategoryId, setDeviceCategoryId] = useState(rule?.device_category_id ?? "");
-  const [vendor, setVendor] = useState(rule?.vendor ?? "");
-  const [model, setModel] = useState(rule?.model ?? "");
-  const [osFamily, setOsFamily] = useState(rule?.os_family ?? "");
+  const [vendor, setVendor] = useState(rule?.vendor ?? prefill?.vendor ?? "");
+  const [model, setModel] = useState(rule?.model ?? prefill?.model ?? "");
+  const [osFamily, setOsFamily] = useState(rule?.os_family ?? prefill?.os_family ?? "");
   const [description, setDescription] = useState(rule?.description ?? "");
   const [priority, setPriority] = useState(rule?.priority ?? 0);
   const [error, setError] = useState<string | null>(null);
@@ -277,6 +289,7 @@ function RuleFormDialog({
           priority,
         });
       }
+      onSuccess?.();
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save device type");
