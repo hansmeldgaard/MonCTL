@@ -222,8 +222,12 @@ class Poller(BasePoller):
 
                 metrics_mode = metrics_lookup.get(idx, "all")
 
-                in_octets = _safe_int(raw.get("ifHCInOctets", {}).get(idx, raw.get("ifInOctets", {}).get(idx, 0)))
-                out_octets = _safe_int(raw.get("ifHCOutOctets", {}).get(idx, raw.get("ifOutOctets", {}).get(idx, 0)))
+                hc_in = raw.get("ifHCInOctets", {}).get(idx)
+                hc_out = raw.get("ifHCOutOctets", {}).get(idx)
+                has_hc = hc_in is not None or hc_out is not None
+                in_octets = _safe_int(hc_in if hc_in is not None else raw.get("ifInOctets", {}).get(idx, 0))
+                out_octets = _safe_int(hc_out if hc_out is not None else raw.get("ifOutOctets", {}).get(idx, 0))
+                counter_bits = 64 if has_hc else 32
 
                 high_speed = raw.get("ifHighSpeed", {}).get(idx)
                 if high_speed and _safe_int(high_speed) > 0:
@@ -250,6 +254,7 @@ class Poller(BasePoller):
                     "in_unicast_pkts": _safe_int(raw.get("ifInUcastPkts", {}).get(idx, 0)) if metrics_mode == "all" else 0,
                     "out_unicast_pkts": _safe_int(raw.get("ifOutUcastPkts", {}).get(idx, 0)) if metrics_mode == "all" else 0,
                     "poll_interval_sec": poll_interval,
+                    "counter_bits": counter_bits,
                 }
                 interface_rows.append(row)
 

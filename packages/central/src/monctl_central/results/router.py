@@ -268,6 +268,7 @@ def _format_interface_row(r: dict) -> dict:
         "in_utilization_pct": r.get("in_utilization_pct", 0),
         "out_utilization_pct": r.get("out_utilization_pct", 0),
         "poll_interval_sec": r.get("poll_interval_sec", 0),
+        "counter_bits": r.get("counter_bits", 64),
         "state": r.get("state", 0),
         "executed_at": _ensure_utc_iso(r.get("executed_at")) or "",
         "received_at": _ensure_utc_iso(r.get("received_at")) or "",

@@ -2420,7 +2420,14 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
                     <div className={`h-2.5 w-2.5 rounded-full ${iface.if_oper_status === "up" ? "bg-emerald-500" : iface.if_oper_status === "down" ? "bg-red-500" : "bg-zinc-600"}`} />
                   </TableCell>
                   <TableCell className="font-mono text-xs text-zinc-500">{iface.if_index}</TableCell>
-                  <TableCell className="font-medium text-zinc-100">{iface.if_name}</TableCell>
+                  <TableCell className="font-medium text-zinc-100">
+                    <span className="flex items-center gap-1.5">
+                      {iface.if_name}
+                      {iface.counter_bits === 32 && (
+                        <span className="inline-flex items-center rounded px-1 py-0.5 text-[10px] font-medium leading-none bg-amber-500/15 text-amber-400 border border-amber-500/30" title="32-bit SNMP counters — may wrap on high-speed links">32-bit</span>
+                      )}
+                    </span>
+                  </TableCell>
                   <TableCell className="text-zinc-400 text-sm">{iface.if_alias || "\u2014"}</TableCell>
                   <TableCell className="text-zinc-300 text-sm">{formatSpeed(iface.if_speed_mbps)}</TableCell>
                   <TableCell className="font-mono text-xs text-cyan-400">

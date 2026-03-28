@@ -802,6 +802,7 @@ export interface InterfaceRecord {
   in_utilization_pct: number;
   out_utilization_pct: number;
   poll_interval_sec: number;
+  counter_bits: number;
   state: number;
   executed_at: string;
   collector_name: string;
@@ -1250,6 +1251,24 @@ export interface DockerImagesResponse {
   image_count: number;
   dangling_count: number;
   volume_count: number;
+}
+
+export interface DockerContainerStats {
+  name: string;
+  image?: string;
+  status: string;
+  health: string | null;
+  cpu_pct: number | null;
+  mem_usage_bytes: number | null;
+  mem_limit_bytes: number | null;
+  mem_pct: number | null;
+  net_rx_bytes: number | null;
+  net_tx_bytes: number | null;
+  restart_count: number;
+  started_at?: string;
+  block_read_bytes?: number | null;
+  block_write_bytes?: number | null;
+  pids?: number | null;
 }
 
 export interface DockerOverviewHost {

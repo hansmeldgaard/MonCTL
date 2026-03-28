@@ -1387,6 +1387,7 @@ async def submit_results(
                     "in_utilization_pct": in_util,
                     "out_utilization_pct": out_util,
                     "poll_interval_sec": ri.get("poll_interval_sec", 0),
+                    "counter_bits": ri.get("counter_bits", 64),
                     "state": ri.get("state", 0),
                     "executed_at": executed_at,
                     "collector_name": request.collector_node,

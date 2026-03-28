@@ -149,6 +149,7 @@ CREATE TABLE IF NOT EXISTS interface ON CLUSTER '{cluster}'
     in_utilization_pct Float32       DEFAULT 0,
     out_utilization_pct Float32      DEFAULT 0,
     poll_interval_sec  UInt16        DEFAULT 0,
+    counter_bits       UInt8         DEFAULT 64,
 
     state              UInt8         DEFAULT 0,
 
@@ -620,7 +621,7 @@ _IFACE_INSERT_COLUMNS = [
     "in_octets", "out_octets", "in_errors", "out_errors",
     "in_discards", "out_discards", "in_unicast_pkts", "out_unicast_pkts",
     "in_rate_bps", "out_rate_bps", "in_utilization_pct", "out_utilization_pct",
-    "poll_interval_sec", "state",
+    "poll_interval_sec", "counter_bits", "state",
     "executed_at",
     "collector_name", "device_name", "app_name", "tenant_id", "tenant_name",
 ]
@@ -1205,6 +1206,10 @@ class ClickHouseClient:
             # Add metric/threshold values to alert_log
             "ALTER TABLE alert_log ADD COLUMN IF NOT EXISTS metric_values String DEFAULT '{}' AFTER message",
             "ALTER TABLE alert_log ADD COLUMN IF NOT EXISTS threshold_values String DEFAULT '{}' AFTER metric_values",
+            # Add counter_bits to interface tables
+            "ALTER TABLE interface ADD COLUMN IF NOT EXISTS counter_bits UInt8 DEFAULT 64 AFTER poll_interval_sec",
+            "ALTER TABLE interface_hourly ADD COLUMN IF NOT EXISTS counter_bits UInt8 DEFAULT 64",
+            "ALTER TABLE interface_daily ADD COLUMN IF NOT EXISTS counter_bits UInt8 DEFAULT 64",
         ]
         for alter_sql in _TENANT_NAME_ALTERS:
             try:
