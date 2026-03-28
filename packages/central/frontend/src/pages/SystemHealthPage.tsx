@@ -37,7 +37,8 @@ import {
 } from "@/components/ui/table.tsx";
 import { useSystemHealth, useDockerOverview } from "@/api/hooks.ts";
 import { timeAgo, formatBytes, formatUptime, formatNumber } from "@/lib/utils.ts";
-import type { SubsystemStatus, CollectorHealthDetail } from "@/types/api.ts";
+import type { SubsystemStatus, CollectorHealthDetail, DockerOverviewHost, DockerContainerStats } from "@/types/api.ts";
+import { AlertTriangle } from "lucide-react";
 
 // ── Status styling ───────────────────────────────────────────────────────────
 
@@ -74,10 +75,20 @@ function DetailGrid({ children }: { children: React.ReactNode }) {
   );
 }
 
-function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
+function Tip({ label, tip }: { label: string; tip: string }) {
+  return (
+    <span className="border-b border-dashed border-zinc-600 cursor-help" title={tip}>
+      {label}
+    </span>
+  );
+}
+
+function DetailRow({ label, value, tip }: { label: string; value: React.ReactNode; tip?: string }) {
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="text-[11px] text-zinc-500 leading-none">{label}</span>
+      <span className="text-[11px] text-zinc-500 leading-none">
+        {tip ? <Tip label={label} tip={tip} /> : label}
+      </span>
       <span className="text-zinc-300 font-mono text-xs leading-snug">{value ?? "\u2014"}</span>
     </div>
   );
@@ -218,21 +229,21 @@ function PostgreSQLCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: n
       <CardContent className="space-y-0">
         <DetailGrid>
           <DetailRow label="Version" value={String(d.version ?? "\u2014")} />
-          <DetailRow label="DB size" value={d.db_size_bytes ? formatBytes(Number(d.db_size_bytes)) : "\u2014"} />
-          <DetailRow label="Pool" value={`${d.pool_size} size · ${d.checked_out} out · ${d.overflow} overflow`} />
-          {conns && <DetailRow label="Connections" value={`${conns.active} active · ${conns.total} / ${conns.max} total`} />}
-          {!conns && <DetailRow label="Connections" value={String(d.active_connections ?? "\u2014")} />}
+          <DetailRow label="DB size" value={d.db_size_bytes ? formatBytes(Number(d.db_size_bytes)) : "\u2014"} tip="Total size of the PostgreSQL database on disk, including indexes and TOAST data." />
+          <DetailRow label="Pool" value={`${d.pool_size} size · ${d.checked_out} out · ${d.overflow} overflow`} tip="SQLAlchemy connection pool. Size = pre-allocated connections, Out = currently in use, Overflow = extra connections beyond pool size." />
+          {conns && <DetailRow label="Connections" value={`${conns.active} active · ${conns.total} / ${conns.max} total`} tip="Active = currently executing queries. Total = all connections (active + idle). Max = PostgreSQL max_connections setting." />}
+          {!conns && <DetailRow label="Connections" value={String(d.active_connections ?? "\u2014")} tip="Number of active database connections." />}
         </DetailGrid>
 
         {/* Cache & performance */}
         <SectionTitle>Performance</SectionTitle>
         <DetailGrid>
-          <DetailRow label="Cache hit ratio" value={d.cache_hit_pct != null ? `${d.cache_hit_pct}%` : "\u2014"} />
-          <DetailRow label="Index hit ratio" value={d.index_hit_pct != null ? `${d.index_hit_pct}%` : "\u2014"} />
-          <DetailRow label="XID age" value={d.xid_age != null ? formatNumber(Number(d.xid_age)) : "\u2014"} />
-          <DetailRow label="Waiting locks" value={String(d.waiting_locks ?? 0)} />
-          <DetailRow label="Deadlocks (total)" value={formatNumber(Number(d.deadlocks_total ?? 0))} />
-          <DetailRow label="Temp bytes (total)" value={d.temp_bytes_total ? formatBytes(Number(d.temp_bytes_total)) : "0"} />
+          <DetailRow label="Cache hit ratio" value={d.cache_hit_pct != null ? `${d.cache_hit_pct}%` : "\u2014"} tip="Percentage of reads served from shared_buffers instead of disk. Should be >99%." />
+          <DetailRow label="Index hit ratio" value={d.index_hit_pct != null ? `${d.index_hit_pct}%` : "\u2014"} tip="Percentage of index lookups served from cache. Should be >99%." />
+          <DetailRow label="XID age" value={d.xid_age != null ? formatNumber(Number(d.xid_age)) : "\u2014"} tip="Transaction ID age — if approaching 2 billion, VACUUM FREEZE is needed to prevent wraparound shutdown." />
+          <DetailRow label="Waiting locks" value={String(d.waiting_locks ?? 0)} tip="Queries currently blocked waiting to acquire a lock." />
+          <DetailRow label="Deadlocks (total)" value={formatNumber(Number(d.deadlocks_total ?? 0))} tip="Total deadlocks detected since server start. Frequent deadlocks indicate contention." />
+          <DetailRow label="Temp bytes (total)" value={d.temp_bytes_total ? formatBytes(Number(d.temp_bytes_total)) : "0"} tip="Total bytes written to temporary files — high values indicate queries exceeding work_mem." />
         </DetailGrid>
 
         {/* Replication */}
@@ -241,10 +252,10 @@ function PostgreSQLCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: n
             <SectionTitle>Replication</SectionTitle>
             <Table>
               <TableHeader><TableRow>
-                <TableHead className="text-xs py-1">Client</TableHead>
-                <TableHead className="text-xs py-1">State</TableHead>
-                <TableHead className="text-xs py-1">Replay lag</TableHead>
-                <TableHead className="text-xs py-1">Lag bytes</TableHead>
+                <TableHead className="text-xs py-1"><Tip label="Client" tip="IP address of the replication client (standby server)." /></TableHead>
+                <TableHead className="text-xs py-1"><Tip label="State" tip="Replication state: streaming = actively replicating, catchup = replica is catching up." /></TableHead>
+                <TableHead className="text-xs py-1"><Tip label="Replay lag" tip="Time delay before changes on primary are applied on the replica." /></TableHead>
+                <TableHead className="text-xs py-1"><Tip label="Lag bytes" tip="Bytes of WAL data the replica has not yet applied." /></TableHead>
               </TableRow></TableHeader>
               <TableBody>
                 {replication.map((r, i) => (
@@ -263,13 +274,13 @@ function PostgreSQLCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: n
         {/* Vacuum stats */}
         {vacuumStats && vacuumStats.length > 0 && (
           <>
-            <SectionTitle>Vacuum (top dead tuples)</SectionTitle>
+            <SectionTitle><Tip label="Vacuum (top dead tuples)" tip="VACUUM reclaims storage from dead tuples. Tables with many dead tuples may need autovacuum tuning." /></SectionTitle>
             <Table>
               <TableHeader><TableRow>
                 <TableHead className="text-xs py-1">Table</TableHead>
-                <TableHead className="text-xs py-1">Dead</TableHead>
-                <TableHead className="text-xs py-1">Live</TableHead>
-                <TableHead className="text-xs py-1">Last vacuum</TableHead>
+                <TableHead className="text-xs py-1"><Tip label="Dead" tip="Rows marked for deletion but not yet reclaimed by VACUUM. High counts may indicate autovacuum is falling behind." /></TableHead>
+                <TableHead className="text-xs py-1"><Tip label="Live" tip="Active, visible rows in the table." /></TableHead>
+                <TableHead className="text-xs py-1"><Tip label="Last vacuum" tip="When PostgreSQL last automatically reclaimed dead tuples from this table." /></TableHead>
               </TableRow></TableHeader>
               <TableBody>
                 {vacuumStats.map((v, i) => (
@@ -348,7 +359,7 @@ function ClickHouseCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: n
           <DetailRow label="Version" value={String(d.version ?? "\u2014")} />
           {d.uptime_seconds != null && <DetailRow label="Uptime" value={formatUptime(Number(d.uptime_seconds))} />}
           <DetailRow label="Total size" value={`${formatBytes(Number(d.total_bytes ?? 0))} \u00b7 ${formatNumber(Number(d.total_rows ?? 0))} rows`} />
-          {d.pk_memory_bytes != null && <DetailRow label="PK memory" value={formatBytes(Number(d.pk_memory_bytes))} />}
+          {d.pk_memory_bytes != null && <DetailRow label="PK memory" value={formatBytes(Number(d.pk_memory_bytes))} tip="Memory used by primary key indexes. Kept in RAM for fast lookups." />}
         </DetailGrid>
 
         {/* Server resources */}
@@ -367,8 +378,8 @@ function ClickHouseCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: n
             <DetailGrid>
               <DetailRow label="Memory" value={`OS ${formatBytes(server.os_memory_total_bytes - server.os_memory_free_bytes)} / ${formatBytes(server.os_memory_total_bytes)} \u00b7 CH ${formatBytes(server.ch_memory_resident_bytes)}`} />
               <DetailRow label="CPU" value={`user ${server.cpu_user_pct}% \u00b7 sys ${server.cpu_system_pct}% \u00b7 io ${server.cpu_iowait_pct}% \u00b7 idle ${server.cpu_idle_pct}%`} />
-              <DetailRow label="Load" value={`${server.load_average[0]} / ${server.load_average[1]} / ${server.load_average[2]}`} />
-              <DetailRow label="Connections" value={String(server.tcp_connections)} />
+              <DetailRow label="Load" value={`${server.load_average[0]} / ${server.load_average[1]} / ${server.load_average[2]}`} tip="System load average (1 / 5 / 15 min). Values above CPU core count indicate saturation." />
+              <DetailRow label="Connections" value={String(server.tcp_connections)} tip="Active TCP connections to this ClickHouse node." />
             </DetailGrid>
             <p className="text-[10px] text-zinc-600 mt-0.5">Connected node only</p>
           </>
@@ -405,7 +416,7 @@ function ClickHouseCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: n
         {/* Keeper */}
         {keeper && (
           <DetailGrid>
-            <DetailRow label="Keeper" value={
+            <DetailRow label="Keeper" tip="ZooKeeper/ClickHouse Keeper connectivity — required for replicated tables and distributed DDL." value={
               <span className={keeper.reachable && !keeper.session_expired ? "text-emerald-400" : "text-red-400"}>
                 {keeper.reachable ? "Reachable" : "Unreachable"}
                 {keeper.session_expired && " \u00b7 Session expired"}
@@ -420,11 +431,11 @@ function ClickHouseCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: n
             <Table>
               <TableHeader><TableRow>
                 <TableHead className="text-xs py-1">Table</TableHead>
-                <TableHead className="text-xs py-1">Leader</TableHead>
-                <TableHead className="text-xs py-1">Queue</TableHead>
-                <TableHead className="text-xs py-1">Lag</TableHead>
+                <TableHead className="text-xs py-1"><Tip label="Leader" tip="Whether this node is the replication leader for this table." /></TableHead>
+                <TableHead className="text-xs py-1"><Tip label="Queue" tip="Replication queue — pending operations to sync between replicas. Should be 0 in steady state." /></TableHead>
+                <TableHead className="text-xs py-1"><Tip label="Delay" tip="Replication delay in seconds. 0 means replicas are fully synchronized." /></TableHead>
                 <TableHead className="text-xs py-1">Replicas</TableHead>
-                <TableHead className="text-xs py-1">R/O</TableHead>
+                <TableHead className="text-xs py-1"><Tip label="R/O" tip="Read-only mode — table cannot accept inserts. Usually indicates a ZooKeeper/Keeper issue." /></TableHead>
               </TableRow></TableHeader>
               <TableBody>
                 {replication.map((r) => (
@@ -445,16 +456,16 @@ function ClickHouseCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: n
         {/* Merges + Mutations */}
         <DetailGrid>
           {merges && (
-            <DetailRow label="Merges" value={`${merges.active_count ?? merges.active_merges ?? 0} active${(merges.longest_seconds ?? 0) > 0 ? ` (longest: ${merges.longest_seconds}s)` : ""}`} />
+            <DetailRow label="Merges" tip="Background merge operations combining data parts. Normal ClickHouse housekeeping." value={`${merges.active_count ?? merges.active_merges ?? 0} active${(merges.longest_seconds ?? 0) > 0 ? ` (longest: ${merges.longest_seconds}s)` : ""}`} />
           )}
           {mutations && (
-            <DetailRow label="Mutations" value={
+            <DetailRow label="Mutations" tip="ALTER TABLE operations (UPDATE/DELETE). Pending = in-progress, Failed = need attention." value={
               <span className={mutations.failed > 0 ? "text-red-400" : ""}>
                 {mutations.pending} pending{mutations.failed > 0 ? ` \u00b7 ${mutations.failed} failed` : ""}
               </span>
             } />
           )}
-          {server && <DetailRow label="Max parts/partition" value={String(server.max_parts_per_partition)} />}
+          {server && <DetailRow label="Max parts/partition" tip="Highest active part count across all partitions. ClickHouse warns at 300 parts." value={String(server.max_parts_per_partition)} />}
         </DetailGrid>
 
         {/* Data tables */}
@@ -466,8 +477,8 @@ function ClickHouseCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: n
                 <TableHead className="text-xs py-1">Table</TableHead>
                 <TableHead className="text-xs py-1 text-right">Rows</TableHead>
                 <TableHead className="text-xs py-1 text-right">Size</TableHead>
-                <TableHead className="text-xs py-1 text-right">Parts</TableHead>
-                <TableHead className="text-xs py-1">Fresh</TableHead>
+                <TableHead className="text-xs py-1 text-right"><Tip label="Parts" tip="Number of data parts — ClickHouse merges these in the background. High counts may slow queries." /></TableHead>
+                <TableHead className="text-xs py-1"><Tip label="Fresh" tip="Time since the last data row was received. Green <2min, amber <10min, red >10min." /></TableHead>
               </TableRow></TableHeader>
               <TableBody>
                 {Object.entries(tables).map(([name, info]) => (
@@ -528,6 +539,9 @@ function ClickHouseCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: n
 function RedisCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: number | null; details: Record<string, unknown> } }) {
   const d = sub.details;
   const keyStats = d.key_stats as Record<string, number> | undefined;
+  const memory = d.memory as { used_memory_human?: string; used_memory_peak_human?: string; mem_fragmentation_ratio?: number } | undefined;
+  const replication = d.replication as { role?: string; connected_slaves?: number; replicas?: string[] } | undefined;
+  const sentinel = d.sentinel as { master_ip?: string; master_port?: string; num_slaves?: string; num_sentinels?: number; quorum?: string; flags?: string } | undefined;
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between pb-2">
@@ -540,26 +554,78 @@ function RedisCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: number
       <CardContent>
         <DetailGrid>
           <DetailRow label="Version" value={String(d.version ?? "\u2014")} />
-          <DetailRow label="Memory" value={d.used_memory_bytes ? `${formatBytes(Number(d.used_memory_bytes))} / ${formatBytes(Number(d.used_memory_peak_bytes ?? 0))} peak` : "\u2014"} />
-          <DetailRow label="RSS" value={d.used_memory_rss_bytes ? formatBytes(Number(d.used_memory_rss_bytes)) : "\u2014"} />
-          <DetailRow label="Keys" value={formatNumber(Number(d.db_size ?? 0))} />
-          <DetailRow label="Clients" value={String(d.connected_clients ?? "\u2014")} />
-          <DetailRow label="Leader" value={String(d.leader_instance ?? "\u2014")} />
-          {keyStats && (
-            <>
-              <SectionTitle>Key breakdown</SectionTitle>
+          <DetailRow label="Memory" value={d.used_memory_bytes ? `${formatBytes(Number(d.used_memory_bytes))} / ${formatBytes(Number(d.used_memory_peak_bytes ?? 0))} peak` : (memory?.used_memory_human ? `${memory.used_memory_human} / ${memory.used_memory_peak_human} peak` : "\u2014")} tip="Current Redis memory usage / peak usage since start." />
+          <DetailRow label="RSS" value={d.used_memory_rss_bytes ? formatBytes(Number(d.used_memory_rss_bytes)) : "\u2014"} tip="OS-level resident memory — includes fragmentation overhead." />
+          {memory?.mem_fragmentation_ratio != null && (
+            <DetailRow label="Fragmentation" value={`${memory.mem_fragmentation_ratio.toFixed(2)}x`} tip="RSS / used_memory ratio. Values >1.5 indicate memory fragmentation. <1.0 means swapping." />
+          )}
+          <DetailRow label="Keys" value={formatNumber(Number(d.db_size ?? 0))} tip="Total number of keys stored in Redis." />
+          <DetailRow label="Clients" value={String(d.connected_clients ?? "\u2014")} tip="Number of active client connections to Redis." />
+        </DetailGrid>
+
+        {/* Replication */}
+        {replication && (
+          <>
+            <SectionTitle><Tip label="Replication" tip="Redis replication status — primary replicates to one or more read replicas for HA." /></SectionTitle>
+            <DetailGrid>
+              <DetailRow label="Role" value={String(replication.role ?? "\u2014")} tip="master = primary (accepts writes), slave = replica (read-only)." />
+              <DetailRow label="Connected replicas" value={String(replication.connected_slaves ?? 0)} tip="Number of replicas actively connected and replicating." />
+            </DetailGrid>
+          </>
+        )}
+
+        {/* Sentinel */}
+        {sentinel && (
+          <>
+            <SectionTitle><Tip label="Sentinel" tip="Redis Sentinel monitors the primary and triggers automatic failover to a replica if it goes down." /></SectionTitle>
+            <DetailGrid>
+              <DetailRow label="Master" value={`${sentinel.master_ip}:${sentinel.master_port}`} tip="The Redis instance currently elected as primary by Sentinel." />
+              <DetailRow label="Replicas" value={String(sentinel.num_slaves ?? 0)} tip="Number of Redis replicas known to Sentinel." />
+              <DetailRow label="Sentinels" value={String(sentinel.num_sentinels ?? 0)} tip="Total Sentinel instances monitoring this master." />
+              <DetailRow label="Quorum" value={String(sentinel.quorum ?? "\u2014")} tip="Minimum sentinels that must agree before initiating a failover." />
+              {sentinel.flags && sentinel.flags !== "master" && (
+                <DetailRow label="Flags" value={sentinel.flags} tip="Sentinel flags — 'master' is normal. 's_down' or 'o_down' indicate problems." />
+              )}
+            </DetailGrid>
+          </>
+        )}
+
+        {keyStats && (
+          <>
+            <SectionTitle><Tip label="Key breakdown" tip="Sample of Redis key prefixes and their counts — shows what is using Redis storage." /></SectionTitle>
+            <DetailGrid>
               {Object.entries(keyStats).map(([prefix, count]) => (
                 <DetailRow key={prefix} label={prefix} value={formatNumber(count)} />
               ))}
-            </>
-          )}
-        </DetailGrid>
+            </DetailGrid>
+          </>
+        )}
       </CardContent>
     </Card>
   );
 }
 
 // ── Scheduler card ───────────────────────────────────────────────────────────
+
+const _TASK_TIPS: Record<string, string> = {
+  health_check: "Marks stale collectors as DOWN. Runs every 60s.",
+  evaluate_alerts: "Evaluates alert definitions against ClickHouse data. Runs every 30s.",
+  hourly_rollup: "Aggregates raw interface data into hourly summaries. Runs every hour.",
+  daily_rollup: "Aggregates hourly interface data into daily summaries. Runs daily.",
+  retention_cleanup: "Deletes expired data from ClickHouse based on retention settings.",
+  rebalance: "Rebalances job distribution across collectors in each group. Runs every 5 min.",
+  event_cleanup: "Clears resolved events older than the configured window.",
+};
+
+const _TASK_LABELS: Record<string, string> = {
+  health_check: "Health check",
+  evaluate_alerts: "Alert evaluation",
+  hourly_rollup: "Hourly rollup",
+  daily_rollup: "Daily rollup",
+  retention_cleanup: "Retention cleanup",
+  rebalance: "Rebalance",
+  event_cleanup: "Event cleanup",
+};
 
 function SchedulerCard({ sub }: { sub: { status: SubsystemStatus; details: Record<string, unknown> } }) {
   const d = sub.details;
@@ -572,14 +638,14 @@ function SchedulerCard({ sub }: { sub: { status: SubsystemStatus; details: Recor
       </CardHeader>
       <CardContent>
         <DetailGrid>
-          <DetailRow label="Leader" value={String(d.current_leader ?? "\u2014")} />
-          <DetailRow label="This instance" value={d.is_this_instance ? "Yes" : "No"} />
-          <DetailRow label="Leader TTL" value={`${d.leader_key_ttl ?? 0}s`} />
+          <DetailRow label="Leader" value={String(d.current_leader ?? "\u2014")} tip="The central node currently holding the scheduler leader lock. Only the leader runs background tasks." />
+          <DetailRow label="This instance" value={d.is_this_instance ? "Yes" : "No"} tip="Whether the central node serving this request is the current scheduler leader." />
+          <DetailRow label="Leader TTL" value={`${d.leader_key_ttl ?? 0}s`} tip="Seconds until the leader lock expires. The leader renews this periodically. If it expires, another node takes over." />
           {lastRuns && (
             <>
               <SectionTitle>Last runs</SectionTitle>
               {Object.entries(lastRuns).map(([name, ts]) => (
-                <DetailRow key={name} label={name.replace("last_", "")} value={ts ? timeAgo(ts) : "never"} />
+                <DetailRow key={name} label={_TASK_LABELS[name] ?? name} value={ts ? timeAgo(ts) : "never"} tip={_TASK_TIPS[name]} />
               ))}
             </>
           )}
@@ -940,9 +1006,9 @@ function PatroniCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: numb
       </CardHeader>
       <CardContent className="space-y-0">
         <DetailGrid>
-          <DetailRow label="Leader" value={String(d.leader ?? "none")} />
-          <DetailRow label="Timeline" value={String(d.timeline ?? "\u2014")} />
-          <DetailRow label="Members" value={`${d.member_count ?? 0} total · ${d.replica_count ?? 0} replicas`} />
+          <DetailRow label="Leader" value={String(d.leader ?? "none")} tip="The primary PostgreSQL node accepting writes. Other members replicate from this node." />
+          <DetailRow label="Timeline" value={String(d.timeline ?? "\u2014")} tip="Patroni cluster timeline — increments after each failover event." />
+          <DetailRow label="Members" value={`${d.member_count ?? 0} total · ${d.replica_count ?? 0} replicas`} tip="Total Patroni cluster members and how many are replicas." />
         </DetailGrid>
 
         {members && members.length > 0 && (
@@ -951,22 +1017,26 @@ function PatroniCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: numb
             <Table>
               <TableHeader><TableRow>
                 <TableHead className="text-xs py-1">Name</TableHead>
-                <TableHead className="text-xs py-1">Role</TableHead>
-                <TableHead className="text-xs py-1">State</TableHead>
-                <TableHead className="text-xs py-1">Lag</TableHead>
-                <TableHead className="text-xs py-1">Restart</TableHead>
+                <TableHead className="text-xs py-1">Host</TableHead>
+                <TableHead className="text-xs py-1"><Tip label="Role" tip="leader = primary (accepts writes), replica = read-only standby, sync_standby = synchronous replica." /></TableHead>
+                <TableHead className="text-xs py-1"><Tip label="State" tip="running = healthy, streaming = actively replicating, stopped = not running." /></TableHead>
+                <TableHead className="text-xs py-1"><Tip label="Lag" tip="Replication lag in bytes — how far behind the replica is from the leader." /></TableHead>
+                <TableHead className="text-xs py-1"><Tip label="TL" tip="Timeline — increments after failover. All members should share the same timeline." /></TableHead>
+                <TableHead className="text-xs py-1"><Tip label="Restart" tip="PostgreSQL parameter changes require a restart to take effect." /></TableHead>
               </TableRow></TableHeader>
               <TableBody>
                 {members.map((m) => (
                   <TableRow key={m.name}>
                     <TableCell className="text-xs py-1 font-mono">{m.name}</TableCell>
+                    <TableCell className="text-xs py-1 font-mono text-zinc-500">{m.host}</TableCell>
                     <TableCell className="text-xs py-1">
                       <Badge variant={m.role === "leader" ? "success" : "default"}>{m.role}</Badge>
                     </TableCell>
                     <TableCell className="text-xs py-1">
-                      <Badge variant={m.state === "running" ? "success" : "destructive"}>{m.state}</Badge>
+                      <Badge variant={m.state === "running" || m.state === "streaming" ? "success" : "destructive"}>{m.state}</Badge>
                     </TableCell>
                     <TableCell className="text-xs py-1 font-mono">{m.lag != null ? formatBytes(m.lag) : "\u2014"}</TableCell>
+                    <TableCell className="text-xs py-1 font-mono">{m.timeline ?? "\u2014"}</TableCell>
                     <TableCell className="text-xs py-1">{m.pending_restart ? <Badge variant="destructive">yes</Badge> : "no"}</TableCell>
                   </TableRow>
                 ))}
@@ -977,12 +1047,28 @@ function PatroniCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: numb
 
         {history && history.length > 0 && (
           <>
-            <SectionTitle>Failover history (last 5)</SectionTitle>
-            <div className="space-y-1">
-              {history.map((h, i) => (
-                <p key={i} className="text-xs text-zinc-500 font-mono">{JSON.stringify(h)}</p>
-              ))}
-            </div>
+            <SectionTitle><Tip label="Failover history (last 5)" tip="Recent automatic or manual failover events in the Patroni cluster." /></SectionTitle>
+            <Table>
+              <TableHeader><TableRow>
+                <TableHead className="text-xs py-1">Timeline</TableHead>
+                <TableHead className="text-xs py-1">LSN</TableHead>
+                <TableHead className="text-xs py-1">Reason / New leader</TableHead>
+                <TableHead className="text-xs py-1">Timestamp</TableHead>
+              </TableRow></TableHeader>
+              <TableBody>
+                {history.map((h: unknown, i: number) => {
+                  const arr = Array.isArray(h) ? h : [];
+                  return (
+                    <TableRow key={i}>
+                      <TableCell className="text-xs py-1 font-mono">{arr[0] ?? "\u2014"}</TableCell>
+                      <TableCell className="text-xs py-1 font-mono">{arr[1] ?? "\u2014"}</TableCell>
+                      <TableCell className="text-xs py-1 font-mono text-zinc-400">{arr[2] ?? "\u2014"}</TableCell>
+                      <TableCell className="text-xs py-1 text-zinc-500">{arr[3] ? timeAgo(String(arr[3])) : "\u2014"}</TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
           </>
         )}
 
@@ -1009,10 +1095,10 @@ function EtcdCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: number 
       </CardHeader>
       <CardContent className="space-y-0">
         <DetailGrid>
-          <DetailRow label="Healthy" value={`${d.healthy_count ?? 0} / ${d.total_nodes ?? 0}`} />
-          <DetailRow label="Members" value={String(d.member_count ?? "\u2014")} />
-          <DetailRow label="Leader ID" value={String(d.leader_id ?? "none")} />
-          {d.db_size_bytes != null && <DetailRow label="DB size" value={formatBytes(Number(d.db_size_bytes))} />}
+          <DetailRow label="Healthy" value={`${d.healthy_count ?? 0} / ${d.total_nodes ?? 0}`} tip="Number of etcd nodes responding to health checks." />
+          <DetailRow label="Members" value={String(d.member_count ?? "\u2014")} tip="Total etcd cluster members registered in the Raft consensus group." />
+          <DetailRow label="Leader" value={d.leader_name ? `${d.leader_name} (${d.leader_id})` : String(d.leader_id ?? "none")} tip="The etcd member currently elected as cluster leader. Manages the Raft consensus log." />
+          {d.db_size_bytes != null && <DetailRow label="DB size" value={formatBytes(Number(d.db_size_bytes))} tip="etcd database size on disk. Alert threshold: 2 GB (etcd default max: 8 GB)." />}
         </DetailGrid>
 
         {nodes && nodes.length > 0 && (
@@ -1062,11 +1148,17 @@ function OverviewMiniCard({ icon: Icon, title, status, lines, onClick }: {
   );
 }
 
-// ── Docker Infra tab (lazy import) ──────────────────────────────────────────
+// ── Docker Infrastructure tab ───────────────────────────────────────────────
+
+const dockerStatusMap = (s: string): SubsystemStatus =>
+  s === "ok" ? "healthy" : s === "degraded" ? "degraded" : s === "unreachable" || s === "stale" ? "critical" : "unknown";
+
+const dockerStatusOrder: Record<string, number> = { unreachable: 0, stale: 1, degraded: 2, unknown: 3, ok: 4 };
 
 function DockerInfraTab() {
   const { data: dockerResp } = useDockerOverview();
   const hosts = dockerResp?.data?.hosts ?? [];
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   if (!hosts.length) {
     return (
@@ -1077,34 +1169,283 @@ function DockerInfraTab() {
     );
   }
 
-  const statusMap = (s: string): SubsystemStatus =>
-    s === "ok" ? "healthy" : s === "degraded" ? "degraded" : s === "unreachable" || s === "stale" ? "critical" : "unknown";
+  // Sort: problems first, then alphabetical
+  const sorted = [...hosts].sort((a, b) => {
+    const sa = dockerStatusOrder[a.status] ?? 3;
+    const sb = dockerStatusOrder[b.status] ?? 3;
+    if (sa !== sb) return sa - sb;
+    return a.label.localeCompare(b.label);
+  });
+
+  // Aggregate stats
+  const totalContainers = hosts.reduce((s, h) => s + (h.container_count ?? 0), 0);
+  const totalUnhealthy = hosts.reduce((s, h) => s + (h.unhealthy_count ?? 0), 0);
+  const unreachableCount = hosts.filter((h) => h.status === "unreachable" || h.status === "stale").length;
+
+  function toggleExpand(label: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      next.has(label) ? next.delete(label) : next.add(label);
+      return next;
+    });
+  }
 
   return (
     <div className="space-y-3">
-      <p className="text-xs text-zinc-500">{hosts.length} Docker hosts reporting.</p>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {hosts.map((h) => {
-          const info = h.data;
-          const containers = info?.containers;
-          return (
-            <Card key={h.label}>
-              <CardContent className="py-3 px-4">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-sm font-mono text-zinc-200">{h.label}</span>
-                  <span className={`inline-block h-2 w-2 rounded-full ${statusDotColors[statusMap(h.status)]}`} />
-                </div>
-                <div className="text-[11px] text-zinc-500 font-mono space-y-0.5">
-                  {info?.docker && <p>Docker {info.docker.version}</p>}
-                  {containers && <p>{containers.running} running / {containers.total} total</p>}
-                  {info?.host?.load_avg && <p>Load: {info.host.load_avg["1m"]}</p>}
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })}
+      {/* Summary bar */}
+      <div className="flex items-center gap-3 text-xs text-zinc-400">
+        <span>{hosts.length} hosts</span>
+        <span className="text-zinc-600">&middot;</span>
+        <span>{totalContainers} containers</span>
+        {totalUnhealthy > 0 && (
+          <>
+            <span className="text-zinc-600">&middot;</span>
+            <span className="text-red-400 font-semibold">{totalUnhealthy} unhealthy</span>
+          </>
+        )}
+        {unreachableCount > 0 && (
+          <>
+            <span className="text-zinc-600">&middot;</span>
+            <span className="text-red-400 font-semibold">{unreachableCount} unreachable</span>
+          </>
+        )}
       </div>
+
+      {/* Host table */}
+      <Card>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-8 py-1" />
+              <TableHead className="text-xs py-1">Host</TableHead>
+              <TableHead className="text-xs py-1">Status</TableHead>
+              <TableHead className="text-xs py-1">Containers</TableHead>
+              <TableHead className="text-xs py-1">Load</TableHead>
+              <TableHead className="text-xs py-1 w-32">Memory</TableHead>
+              <TableHead className="text-xs py-1 w-8" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {sorted.map((h) => {
+              const isOpen = expanded.has(h.label);
+              const info = h.data;
+              const hostMem = info?.host;
+              const memPct = hostMem?.mem_total_bytes && hostMem.mem_available_bytes != null
+                ? Math.round(((hostMem.mem_total_bytes - hostMem.mem_available_bytes) / hostMem.mem_total_bytes) * 100)
+                : null;
+              const hasProblems = (h.unhealthy_count ?? 0) > 0 || h.error;
+              const mapped = dockerStatusMap(h.status);
+
+              return (
+                <DockerHostRows
+                  key={h.label}
+                  host={h}
+                  isOpen={isOpen}
+                  mapped={mapped}
+                  memPct={memPct}
+                  hasProblems={!!hasProblems}
+                  onToggle={() => toggleExpand(h.label)}
+                />
+              );
+            })}
+          </TableBody>
+        </Table>
+      </Card>
     </div>
+  );
+}
+
+function DockerHostRows({
+  host: h, isOpen, mapped, memPct, hasProblems, onToggle,
+}: {
+  host: DockerOverviewHost; isOpen: boolean; mapped: SubsystemStatus;
+  memPct: number | null; hasProblems: boolean; onToggle: () => void;
+}) {
+  const info = h.data;
+  const hostInfo = info?.host;
+  // Overview API returns containers as DockerContainerStats[] (not counts object)
+  const rawContainers = (info as Record<string, unknown> | null)?.containers;
+  const containers = Array.isArray(rawContainers) ? rawContainers as DockerContainerStats[] : undefined;
+
+  // Sort containers: unhealthy/restarting first
+  const sortedContainers = useMemo(() => {
+    if (!Array.isArray(containers)) return [];
+    return [...containers].sort((a, b) => {
+      const aBad = a.health === "unhealthy" || a.status === "restarting" ? 0 : 1;
+      const bBad = b.health === "unhealthy" || b.status === "restarting" ? 0 : 1;
+      if (aBad !== bBad) return aBad - bBad;
+      return a.name.localeCompare(b.name);
+    });
+  }, [containers]);
+
+  return (
+    <>
+      {/* Summary row */}
+      <TableRow className="cursor-pointer hover:bg-zinc-800/50" onClick={onToggle}>
+        <TableCell className="py-1.5 px-2">
+          {isOpen ? <ChevronDown className="h-3.5 w-3.5 text-zinc-500" /> : <ChevronRight className="h-3.5 w-3.5 text-zinc-500" />}
+        </TableCell>
+        <TableCell className="py-1.5 font-mono text-xs text-zinc-200">{h.label}</TableCell>
+        <TableCell className="py-1.5">
+          <StatusBadge status={mapped} />
+        </TableCell>
+        <TableCell className="py-1.5 text-xs font-mono text-zinc-300">
+          {h.container_count ?? "—"} / {h.total_containers ?? "—"}
+          {(h.unhealthy_count ?? 0) > 0 && (
+            <Badge variant="destructive" className="ml-1.5 text-[10px] px-1 py-0">{h.unhealthy_count}</Badge>
+          )}
+        </TableCell>
+        <TableCell className="py-1.5 text-xs font-mono text-zinc-400">
+          {hostInfo?.load_avg ? hostInfo.load_avg["1m"] : "—"}
+        </TableCell>
+        <TableCell className="py-1.5">
+          {memPct != null ? (
+            <div className="flex items-center gap-2">
+              <ProgressBar pct={memPct} className="w-16" />
+              <span className="text-xs font-mono text-zinc-400">{memPct}%</span>
+            </div>
+          ) : (
+            <span className="text-xs text-zinc-500">—</span>
+          )}
+        </TableCell>
+        <TableCell className="py-1.5">
+          {hasProblems && <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />}
+        </TableCell>
+      </TableRow>
+
+      {/* Expanded detail row */}
+      {isOpen && (
+        <TableRow>
+          <TableCell colSpan={7} className="bg-zinc-900/50 px-6 py-4">
+            {h.status === "unreachable" || h.status === "stale" ? (
+              <div className="space-y-2">
+                <p className="text-xs text-red-400">{h.error || `Host is ${h.status}`}</p>
+                <a
+                  href={`/docker-infrastructure?host=${encodeURIComponent(h.label)}`}
+                  className="text-xs text-blue-400 hover:text-blue-300"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  View logs, events & images →
+                </a>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {/* Host resources */}
+                <div>
+                  <SectionTitle>Host Resources</SectionTitle>
+                  <DetailGrid>
+                    {info?.docker && <DetailRow label="Docker" value={`${info.docker.version} (API ${info.docker.api_version})`} />}
+                    {info?.docker && <DetailRow label="OS" value={`${info.docker.os} · ${info.docker.architecture}`} />}
+                    {info?.docker && <DetailRow label="CPU" value={`${info.docker.cpus} cores`} />}
+                    {hostInfo?.mem_total_bytes != null && hostInfo.mem_available_bytes != null && (
+                      <DetailRow label="Memory" value={
+                        <div className="space-y-0.5">
+                          <span>{formatBytes(hostInfo.mem_total_bytes - hostInfo.mem_available_bytes)} / {formatBytes(hostInfo.mem_total_bytes)}</span>
+                          <ProgressBar pct={Math.round(((hostInfo.mem_total_bytes - hostInfo.mem_available_bytes) / hostInfo.mem_total_bytes) * 100)} />
+                        </div>
+                      } />
+                    )}
+                    {hostInfo?.disk_total_bytes != null && hostInfo.disk_used_bytes != null && (
+                      <DetailRow label="Disk" value={
+                        <div className="space-y-0.5">
+                          <span>{formatBytes(hostInfo.disk_used_bytes)} / {formatBytes(hostInfo.disk_total_bytes)}</span>
+                          <ProgressBar pct={Math.round((hostInfo.disk_used_bytes / hostInfo.disk_total_bytes) * 100)} />
+                        </div>
+                      } />
+                    )}
+                    {hostInfo?.load_avg && (
+                      <DetailRow label="Load Avg" value={`${hostInfo.load_avg["1m"]} / ${hostInfo.load_avg["5m"]} / ${hostInfo.load_avg["15m"]}`} />
+                    )}
+                    {hostInfo?.uptime_seconds != null && <DetailRow label="Uptime" value={formatUptime(hostInfo.uptime_seconds)} />}
+                    {hostInfo?.swap_total_bytes != null && hostInfo.swap_free_bytes != null && (
+                      <DetailRow label="Swap" value={`${formatBytes(hostInfo.swap_total_bytes - hostInfo.swap_free_bytes)} / ${formatBytes(hostInfo.swap_total_bytes)}`} />
+                    )}
+                  </DetailGrid>
+                </div>
+
+                {/* Containers */}
+                {sortedContainers.length > 0 && (
+                  <div>
+                    <SectionTitle>Containers ({sortedContainers.length})</SectionTitle>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="text-[11px] py-1">Name</TableHead>
+                          <TableHead className="text-[11px] py-1">Status</TableHead>
+                          <TableHead className="text-[11px] py-1">CPU</TableHead>
+                          <TableHead className="text-[11px] py-1">Memory</TableHead>
+                          <TableHead className="text-[11px] py-1">Net I/O</TableHead>
+                          <TableHead className="text-[11px] py-1">Restarts</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {sortedContainers.map((c) => {
+                          const isUnhealthy = c.health === "unhealthy" || c.status !== "running";
+                          return (
+                            <TableRow key={c.name}>
+                              <TableCell className="py-1 text-xs font-mono text-zinc-200">
+                                <div className="flex items-center gap-1.5">
+                                  <span className={`inline-block h-1.5 w-1.5 rounded-full ${
+                                    c.health === "unhealthy" ? "bg-red-400"
+                                    : c.status === "running" ? "bg-emerald-400"
+                                    : "bg-zinc-500"
+                                  }`} />
+                                  {c.name}
+                                </div>
+                              </TableCell>
+                              <TableCell className="py-1 text-xs">
+                                <span className={isUnhealthy ? "text-red-400" : "text-zinc-400"}>
+                                  {c.status}
+                                  {c.health && c.health !== "none" && ` · ${c.health}`}
+                                </span>
+                              </TableCell>
+                              <TableCell className="py-1 text-xs font-mono text-zinc-400">
+                                {c.cpu_pct != null ? `${c.cpu_pct.toFixed(1)}%` : "—"}
+                              </TableCell>
+                              <TableCell className="py-1 text-xs font-mono text-zinc-400">
+                                {c.mem_usage_bytes != null && c.mem_limit_bytes
+                                  ? `${formatBytes(c.mem_usage_bytes)} / ${formatBytes(c.mem_limit_bytes)}`
+                                  : c.mem_pct != null ? `${c.mem_pct.toFixed(1)}%` : "—"}
+                              </TableCell>
+                              <TableCell className="py-1 text-xs font-mono text-zinc-400">
+                                {c.net_rx_bytes != null && c.net_tx_bytes != null
+                                  ? `↓${formatBytes(c.net_rx_bytes)} ↑${formatBytes(c.net_tx_bytes)}`
+                                  : "—"}
+                              </TableCell>
+                              <TableCell className={`py-1 text-xs font-mono ${c.restart_count > 0 ? "text-amber-400" : "text-zinc-500"}`}>
+                                {c.restart_count}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+
+                {/* Error details */}
+                {h.error && (
+                  <div className="text-xs text-red-400 mt-2">
+                    <span className="font-semibold">Error:</span> {h.error}
+                  </div>
+                )}
+
+                {/* Link to full Docker Infrastructure page */}
+                <div className="pt-2 border-t border-zinc-800 mt-3">
+                  <a
+                    href={`/docker-infrastructure?host=${encodeURIComponent(h.label)}`}
+                    className="text-xs text-blue-400 hover:text-blue-300"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    View logs, events & images →
+                  </a>
+                </div>
+              </div>
+            )}
+          </TableCell>
+        </TableRow>
+      )}
+    </>
   );
 }
 
@@ -1118,7 +1459,7 @@ const TABS = [
   { key: "clickhouse", label: "ClickHouse", icon: HardDrive },
   { key: "redis", label: "Redis & Scheduler", icon: Zap },
   { key: "collectors", label: "Collectors", icon: Radio },
-  { key: "docker", label: "Docker Infra", icon: Server },
+  { key: "docker", label: "Docker Infrastructure", icon: Server },
 ] as const;
 
 type TabKey = typeof TABS[number]["key"];
@@ -1256,7 +1597,16 @@ export function SystemHealthPage() {
               ]}
               onClick={() => setTab("collectors")} />
             <OverviewMiniCard icon={Server} title="Docker" status={(subs.docker?.status as SubsystemStatus) ?? "unknown"}
-              lines={[`${(subs.docker?.details as Record<string, unknown>)?.host_count ?? 0} hosts`]}
+              lines={(() => {
+                const dd = subs.docker?.details as Record<string, unknown> | undefined;
+                const hc = Number(dd?.total_hosts ?? dd?.host_count ?? 0);
+                const dhosts = (dd?.hosts ?? []) as { data?: { containers?: { health?: string }[] } }[];
+                const uc = dhosts.reduce((s, dh) => s + (Array.isArray(dh.data?.containers) ? dh.data!.containers.filter(c => c.health === "unhealthy").length : 0), 0);
+                return [
+                  `${hc} hosts`,
+                  uc > 0 ? `${uc} unhealthy` : "All healthy",
+                ];
+              })()}
               onClick={() => setTab("docker")} />
           </div>
 

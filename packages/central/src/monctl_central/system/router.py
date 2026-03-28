@@ -181,6 +181,7 @@ async def _check_postgresql(db: AsyncSession) -> dict:
             " left(query, 200) AS query_preview"
             " FROM pg_stat_activity"
             " WHERE state = 'active' AND query NOT LIKE '%pg_stat_activity%'"
+            " AND backend_type NOT IN ('walsender', 'walreceiver')"
             " AND (now() - query_start) > interval '5 minutes'"
             " ORDER BY query_start ASC LIMIT 10"
         ))).all()
@@ -357,7 +358,7 @@ async def _check_patroni() -> dict:
         if len(replicas) == 0:
             status = "degraded"
         for m in members:
-            if m["state"] != "running":
+            if m["state"] not in ("running", "streaming"):
                 status = "degraded"
             if m.get("lag") and m["lag"] > 10_000_000:  # >10MB lag
                 status = "degraded"
@@ -390,6 +391,7 @@ async def _check_etcd() -> dict:
     t0 = time.monotonic()
     node_health = []
     leader_id = None
+    leader_name = None
     member_count = 0
     db_size = None
     status = "healthy"
@@ -436,7 +438,14 @@ async def _check_etcd() -> dict:
                     )
                     if resp.status_code == 200:
                         data = resp.json()
-                        member_count = len(data.get("members", []))
+                        members = data.get("members", [])
+                        member_count = len(members)
+                        # Resolve leader_id to a human-readable name
+                        if leader_id:
+                            for m in members:
+                                if str(m.get("ID")) == str(leader_id):
+                                    leader_name = m.get("name", "")
+                                    break
                         break
                 except Exception:
                     continue
@@ -459,6 +468,8 @@ async def _check_etcd() -> dict:
         status = "degraded"
 
     # etcd db size warning (>2GB)
+    if db_size is not None:
+        db_size = int(db_size)
     if db_size and db_size > 2_000_000_000:
         status = "degraded" if status == "healthy" else status
 
@@ -470,6 +481,7 @@ async def _check_etcd() -> dict:
             "healthy_count": healthy_count,
             "total_nodes": len(etcd_nodes),
             "leader_id": str(leader_id) if leader_id else None,
+            "leader_name": leader_name,
             "member_count": member_count,
             "db_size_bytes": db_size,
         },
