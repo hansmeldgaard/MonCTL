@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route } from "react-router-dom";
 import { AppLayout } from "@/layouts/AppLayout.tsx";
 import { LoginPage } from "@/pages/LoginPage.tsx";
 import { DashboardPage } from "@/pages/DashboardPage.tsx";
@@ -18,7 +18,7 @@ import { ConnectorDetailPage } from "@/pages/ConnectorDetailPage.tsx";
 import { SettingsPage } from "@/pages/SettingsPage.tsx";
 import { SystemHealthPage } from "@/pages/SystemHealthPage.tsx";
 // DockerInfraPage now lives as a tab in SystemHealthPage
-// import { DockerInfraPage } from "@/pages/DockerInfraPage.tsx";
+import { DockerInfraPage } from "@/pages/DockerInfraPage.tsx";
 import { UpgradesPage } from "@/pages/UpgradesPage.tsx";
 import { SQLExplorerPage } from "@/pages/SQLExplorerPage.tsx";
 import { CustomDashboardsPage } from "@/pages/CustomDashboardsPage.tsx";
@@ -33,7 +33,7 @@ export function App() {
       <Route element={<AppLayout />}>
         <Route index element={<DashboardPage />} />
         <Route path="system-health" element={<SystemHealthPage />} />
-        <Route path="docker-infrastructure" element={<Navigate to="/system-health?tab=docker" replace />} />
+        <Route path="docker-infrastructure" element={<DockerInfraPage />} />
         <Route path="devices" element={<DevicesPage />} />
         <Route path="devices/:id" element={<DeviceDetailPage />} />
         <Route path="apps" element={<AppsPage />} />

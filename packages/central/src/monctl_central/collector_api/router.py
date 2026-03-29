@@ -431,18 +431,31 @@ async def get_jobs(
         cred_overrides = overrides_map.get(assignment.id, {})
 
         bindings = []
+        # Build assignment-level binding overrides keyed by alias
+        assign_binding_map: dict[str, "AssignmentConnectorBinding"] = {}
+        for b in (assignment.connector_bindings or []):
+            assign_binding_map[b.alias] = b
+
         if app_cbs:
             # New path: read from app connector bindings
             for acb in app_cbs:
+                # Check if assignment has an override for this alias
+                assign_override = assign_binding_map.get(acb.alias)
+
                 # Resolve connector version
                 version_id = acb.connector_version_id
+                if assign_override:
+                    version_id = assign_override.connector_version_id
                 if acb.use_latest:
-                    version_id = latest_connector_versions.get(acb.connector_id, version_id)
+                    cid = assign_override.connector_id if assign_override else acb.connector_id
+                    version_id = latest_connector_versions.get(cid, version_id)
 
-                # Resolve credential: override > assignment > device per-protocol > device default
+                # Resolve credential: override > assignment binding > assignment > device > default
                 cred_id: uuid.UUID | None = None
                 if acb.alias in cred_overrides:
                     cred_id = cred_overrides[acb.alias]
+                elif assign_override and assign_override.credential_id:
+                    cred_id = assign_override.credential_id
                 elif assignment.credential_id:
                     cred_id = assignment.credential_id
                 elif device and device.credentials and acb.alias in device.credentials:
@@ -454,13 +467,18 @@ async def get_jobs(
                 elif device and device.default_credential_id:
                     cred_id = device.default_credential_id
 
+                # Merge settings: app-level defaults + assignment-level overrides
+                merged_settings = dict(acb.settings or {})
+                if assign_override and assign_override.settings:
+                    merged_settings.update(assign_override.settings)
+
                 bindings.append({
                     "alias": acb.alias,
-                    "connector_id": str(acb.connector_id),
+                    "connector_id": str(assign_override.connector_id if assign_override else acb.connector_id),
                     "connector_version_id": str(version_id) if version_id else None,
                     "credential_name": cred_name_map.get(cred_id) if cred_id else None,
                     "use_latest": acb.use_latest,
-                    "settings": acb.settings or {},
+                    "settings": merged_settings,
                     "connector_checksum": cv_checksum_map.get(version_id, "") if version_id else "",
                 })
         else:
@@ -535,21 +553,29 @@ async def get_jobs(
                 )
                 disc_app_cbs = list((await db.execute(disc_acb_stmt)).scalars().all())
 
+            flagged_count = 0
             for dev_id_str in discovery_device_ids:
                 if not await get_and_clear_discovery_flag(dev_id_str):
                     continue
+                flagged_count += 1
+                logger.warning("DISCOVERY_FLAG_FOUND", device_id=dev_id_str)
 
                 device = await db.get(Device, uuid.UUID(dev_id_str))
                 if not device:
+                    logger.warning("discovery_device_not_found_for_flag", device_id=dev_id_str)
                     continue
 
                 # Resolve SNMP credential for discovery
                 disc_cred_id: uuid.UUID | None = None
                 if device.credentials:
-                    for ctype, cid in device.credentials.items():
+                    for ctype, cval in device.credentials.items():
                         if "snmp" in ctype.lower():
                             try:
-                                disc_cred_id = uuid.UUID(str(cid))
+                                # credentials JSONB: {type: uuid_str} or {type: {id: uuid_str, ...}}
+                                if isinstance(cval, dict):
+                                    disc_cred_id = uuid.UUID(str(cval.get("id", "")))
+                                else:
+                                    disc_cred_id = uuid.UUID(str(cval))
                             except ValueError:
                                 pass
                             break
@@ -580,6 +606,57 @@ async def get_jobs(
                         "connector_checksum": cv_checksum_map.get(version_id, "") if version_id else "",
                     })
 
+                # Collect eligibility OIDs for candidate auto-assign packs
+                eligibility_oids_to_probe: list[str] = []
+                seen_oids: set[str] = set()
+
+                # Source 1: per-device Redis key from test-eligibility probe mode
+                from monctl_central.cache import get_eligibility_oids_for_device
+                redis_oids = await get_eligibility_oids_for_device(dev_id_str)
+                if redis_oids:
+                    for oid_str in redis_oids:
+                        if oid_str and oid_str not in seen_oids:
+                            seen_oids.add(oid_str)
+                            eligibility_oids_to_probe.append(oid_str)
+
+                # Source 2: auto_assign_packs on the device type
+                if device.device_type_id:
+                    from monctl_central.storage.models import DeviceType as DT, Pack as PackModel
+                    dt = await db.get(DT, device.device_type_id)
+                    if dt and dt.auto_assign_packs:
+                        device_sys_oid = (device.metadata_ or {}).get("sys_object_id")
+                        for pack_uid in dt.auto_assign_packs:
+                            pack = (await db.execute(
+                                select(PackModel).where(PackModel.pack_uid == pack_uid)
+                            )).scalar_one_or_none()
+                            if not pack:
+                                continue
+                            pack_apps = (await db.execute(
+                                select(App).where(App.pack_id == pack.id)
+                            )).scalars().all()
+                            for papp in pack_apps:
+                                # Vendor scope pre-filter
+                                if papp.vendor_oid_prefix and device_sys_oid:
+                                    pfx = papp.vendor_oid_prefix
+                                    if not (device_sys_oid == pfx or device_sys_oid.startswith(pfx + ".")):
+                                        continue
+                                latest_v = (await db.execute(
+                                    select(AppVersion).where(
+                                        AppVersion.app_id == papp.id,
+                                        AppVersion.is_latest == True,  # noqa: E712
+                                    )
+                                )).scalar_one_or_none()
+                                if latest_v and latest_v.eligibility_oids:
+                                    for ec in latest_v.eligibility_oids:
+                                        oid_str = ec.get("oid", "")
+                                        if oid_str and oid_str not in seen_oids:
+                                            seen_oids.add(oid_str)
+                                            eligibility_oids_to_probe.append(oid_str)
+
+                disc_params: dict = {"_one_shot": True}
+                if eligibility_oids_to_probe:
+                    disc_params["_eligibility_oids"] = eligibility_oids_to_probe
+
                 jobs.append({
                     "job_id": f"discovery-{dev_id_str}",
                     "device_id": dev_id_str,
@@ -589,14 +666,17 @@ async def get_jobs(
                     "app_checksum": discovery_version.checksum_sha256 or "",
                     "credential_names": [disc_cred_name] if disc_cred_name else [],
                     "interval": 0,  # One-shot: interval=0 signals no reschedule
-                    "parameters": {"_one_shot": True},
+                    "parameters": disc_params,
                     "role": "discovery",
                     "max_execution_time": 30,
                     "enabled": True,
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                     "connector_bindings": disc_bindings,
                 })
-                logger.info("discovery_job_injected", device_id=dev_id_str)
+                logger.warning("DISCOVERY_JOB_INJECTED", device_id=dev_id_str)
+
+            if flagged_count > 0:
+                logger.warning("DISCOVERY_FLAGS_DONE", count=flagged_count)
 
     return {
         "jobs": jobs,

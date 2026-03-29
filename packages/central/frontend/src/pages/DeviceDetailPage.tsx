@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
 import { validateName, validateAddress } from "@/lib/validation.ts";
 import {
   Activity,
+  AlertTriangle,
   ArrowDown,
   ArrowLeft,
   ArrowUp,
@@ -112,6 +113,7 @@ import {
   useResolveTemplates,
   useAutoApplyTemplates,
 } from "@/api/hooks.ts";
+import { apiGet } from "@/api/client.ts";
 import { useAuth } from "@/hooks/useAuth.tsx";
 import type { Device as DeviceModel, DeviceAssignment, DeviceThresholdRow, ConfigDiffEntry, AlertLogEntry, MonitoringEvent, ResolvedTemplateResult } from "@/types/api.ts";
 import { useListState } from "@/hooks/useListState.ts";
@@ -175,6 +177,14 @@ function AddAssignmentDialog({
   const [parsedConfig, setParsedConfig] = useState<Record<string, unknown>>({});
   const [configError, setConfigError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+
+  // Vendor compatibility check
+  const { data: vendorCheck } = useQuery({
+    queryKey: ["vendor-check", selectedAppId, deviceId],
+    queryFn: () => apiGet<{ match: boolean | null; warning: string | null }>(`/apps/${selectedAppId}/vendor-check/${deviceId}`),
+    enabled: !!selectedAppId && !!deviceId,
+  });
+  const vc = vendorCheck?.data;
 
   useEffect(() => {
     if (apps?.length && !selectedAppId) setSelectedAppId(apps[0].id);
@@ -293,6 +303,12 @@ function AddAssignmentDialog({
               <option key={a.id} value={a.id}>{a.name}</option>
             ))}
           </Select>
+          {vc?.match === false && vc.warning && (
+            <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-2.5 mt-1.5">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+              <p className="text-xs text-amber-200">{vc.warning}</p>
+            </div>
+          )}
           {appDetail && appDetail.versions.length > 0 && (
             <div className="space-y-2 mt-2">
               <Label>Version</Label>

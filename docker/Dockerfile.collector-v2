@@ -26,9 +26,11 @@ FROM python:3.12-slim AS runtime
 
 # poll-worker needs python3-venv to create app virtualenvs
 # iputils-ping is needed for the built-in ping_check app
+# curl is needed by the entrypoint for health checks and registration
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-venv \
     iputils-ping \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed packages from builder
@@ -36,10 +38,15 @@ COPY --from=builder /usr/local/lib/python3.12/site-packages/ /usr/local/lib/pyth
 COPY --from=builder /usr/local/bin/ /usr/local/bin/
 
 # Data directories (override via volume mounts)
-RUN mkdir -p /data/apps /data/venvs /data/pip-cache
+RUN mkdir -p /data/apps /data/venvs /data/pip-cache /var/lib/monctl
+
+# Entrypoint handles registration with central before starting the service
+COPY docker/collector-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 # Default config path (override via MONCTL_CONFIG or volume)
 ENV MONCTL_CONFIG=/etc/monctl/config.yaml
 
+ENTRYPOINT ["/entrypoint.sh"]
 # Default: cache-node (override in docker-compose with `command:`)
 CMD ["monctl-cache-node"]

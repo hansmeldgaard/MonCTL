@@ -1005,6 +1005,95 @@ SETTINGS index_granularity = 8192
 """
 
 
+_ELIGIBILITY_RUNS_DDL = """
+CREATE TABLE IF NOT EXISTS eligibility_runs ON CLUSTER '{cluster}'
+(
+    run_id             UUID,
+    app_id             UUID,
+    app_name           String        DEFAULT '',
+    status             String        DEFAULT 'running',
+    started_at         DateTime64(3, 'UTC'),
+    finished_at        DateTime64(3, 'UTC') DEFAULT toDateTime64(0, 3),
+    duration_ms        UInt32        DEFAULT 0,
+    total_devices      UInt32        DEFAULT 0,
+    tested             UInt32        DEFAULT 0,
+    eligible           UInt32        DEFAULT 0,
+    ineligible         UInt32        DEFAULT 0,
+    unreachable        UInt32        DEFAULT 0,
+    triggered_by       String        DEFAULT ''
+)
+ENGINE = ReplicatedReplacingMergeTree(
+    '/clickhouse/tables/{{shard}}/eligibility_runs', '{{replica}}', finished_at
+)
+PARTITION BY toYYYYMM(started_at)
+ORDER BY (run_id)
+SETTINGS index_granularity = 8192
+"""
+
+_ELIGIBILITY_RUNS_DDL_LOCAL = """
+CREATE TABLE IF NOT EXISTS eligibility_runs
+(
+    run_id             UUID,
+    app_id             UUID,
+    app_name           String        DEFAULT '',
+    status             String        DEFAULT 'running',
+    started_at         DateTime64(3, 'UTC'),
+    finished_at        DateTime64(3, 'UTC') DEFAULT toDateTime64(0, 3),
+    duration_ms        UInt32        DEFAULT 0,
+    total_devices      UInt32        DEFAULT 0,
+    tested             UInt32        DEFAULT 0,
+    eligible           UInt32        DEFAULT 0,
+    ineligible         UInt32        DEFAULT 0,
+    unreachable        UInt32        DEFAULT 0,
+    triggered_by       String        DEFAULT ''
+)
+ENGINE = ReplacingMergeTree(finished_at)
+PARTITION BY toYYYYMM(started_at)
+ORDER BY (run_id)
+SETTINGS index_granularity = 8192
+"""
+
+_ELIGIBILITY_RESULTS_DDL = """
+CREATE TABLE IF NOT EXISTS eligibility_results ON CLUSTER '{cluster}'
+(
+    run_id             UUID,
+    device_id          UUID,
+    device_name        String        DEFAULT '',
+    device_address     String        DEFAULT '',
+    eligible           UInt8         DEFAULT 2,
+    already_assigned   UInt8         DEFAULT 0,
+    oid_results        String        DEFAULT '{}',
+    reason             String        DEFAULT '',
+    probed_at          DateTime64(3, 'UTC')
+)
+ENGINE = ReplicatedMergeTree(
+    '/clickhouse/tables/{{shard}}/eligibility_results', '{{replica}}'
+)
+PARTITION BY toYYYYMM(probed_at)
+ORDER BY (run_id, device_id)
+SETTINGS index_granularity = 8192
+"""
+
+_ELIGIBILITY_RESULTS_DDL_LOCAL = """
+CREATE TABLE IF NOT EXISTS eligibility_results
+(
+    run_id             UUID,
+    device_id          UUID,
+    device_name        String        DEFAULT '',
+    device_address     String        DEFAULT '',
+    eligible           UInt8         DEFAULT 2,
+    already_assigned   UInt8         DEFAULT 0,
+    oid_results        String        DEFAULT '{}',
+    reason             String        DEFAULT '',
+    probed_at          DateTime64(3, 'UTC')
+)
+ENGINE = MergeTree()
+PARTITION BY toYYYYMM(probed_at)
+ORDER BY (run_id, device_id)
+SETTINGS index_granularity = 8192
+"""
+
+
 class ClickHouseClient:
     """Thin wrapper around clickhouse-connect for MonCTL operations."""
 
@@ -1157,6 +1246,8 @@ class ClickHouseClient:
                 _AVAIL_DAILY_DDL,
                 _LOGS_DDL,
                 _RBA_RUNS_DDL,
+                _ELIGIBILITY_RUNS_DDL,
+                _ELIGIBILITY_RESULTS_DDL,
             ]:
                 client.command(ddl.format(cluster=self._cluster_name))
             for mv_ddl in [
@@ -1183,6 +1274,8 @@ class ClickHouseClient:
                 _AVAIL_DAILY_DDL_LOCAL,
                 _LOGS_DDL_LOCAL,
                 _RBA_RUNS_DDL_LOCAL,
+                _ELIGIBILITY_RUNS_DDL_LOCAL,
+                _ELIGIBILITY_RESULTS_DDL_LOCAL,
             ]:
                 client.command(ddl)
             for mv_ddl in [
@@ -2167,6 +2260,110 @@ class ClickHouseClient:
         rows = []
         for row in result.result_rows:
             rows.append(dict(zip(result.column_names, row)))
+        return rows, total
+
+    # ── Eligibility runs ──────────────────────────────────────────────────
+
+    _ELIGIBILITY_RUNS_COLS = [
+        "run_id", "app_id", "app_name", "status", "started_at", "finished_at",
+        "duration_ms", "total_devices", "tested", "eligible", "ineligible",
+        "unreachable", "triggered_by",
+    ]
+
+    _ELIGIBILITY_RESULTS_COLS = [
+        "run_id", "device_id", "device_name", "device_address",
+        "eligible", "already_assigned", "oid_results", "reason", "probed_at",
+    ]
+
+    _ELIGIBILITY_RUNS_INT_COLS = {"duration_ms", "total_devices", "tested", "eligible", "ineligible", "unreachable"}
+
+    def insert_eligibility_run(self, run: dict) -> None:
+        client = self._get_client()
+        row = [run.get(col, 0 if col in self._ELIGIBILITY_RUNS_INT_COLS else "") for col in self._ELIGIBILITY_RUNS_COLS]
+        client.insert("eligibility_runs", [row], column_names=self._ELIGIBILITY_RUNS_COLS)
+
+    def update_eligibility_run(self, run: dict) -> None:
+        """ReplacingMergeTree — insert new row with same run_id, newer finished_at wins."""
+        self.insert_eligibility_run(run)
+
+    def insert_eligibility_results(self, results: list[dict]) -> None:
+        if not results:
+            return
+        client = self._get_client()
+        rows = [[r.get(col, "") for col in self._ELIGIBILITY_RESULTS_COLS] for r in results]
+        client.insert("eligibility_results", rows, column_names=self._ELIGIBILITY_RESULTS_COLS)
+
+    def query_eligibility_runs(
+        self, app_id: str, limit: int = 20, offset: int = 0,
+    ) -> tuple[list[dict], int]:
+        client = self._get_client()
+        count_sql = "SELECT count() FROM eligibility_runs FINAL WHERE app_id = {app_id:UUID}"
+        total = client.query(count_sql, parameters={"app_id": app_id}).result_rows[0][0]
+
+        sql = """
+            SELECT * FROM eligibility_runs FINAL
+            WHERE app_id = {app_id:UUID}
+            ORDER BY started_at DESC
+            LIMIT {limit:UInt32} OFFSET {offset:UInt32}
+        """
+        result = client.query(sql, parameters={"app_id": app_id, "limit": limit, "offset": offset})
+        rows = [dict(zip(result.column_names, row)) for row in result.result_rows]
+        return rows, total
+
+    def query_eligibility_runs_by_run_id(self, run_id: str) -> tuple[list[dict], int]:
+        client = self._get_client()
+        sql = "SELECT * FROM eligibility_runs FINAL WHERE run_id = {run_id:UUID}"
+        result = client.query(sql, parameters={"run_id": run_id})
+        rows = [dict(zip(result.column_names, row)) for row in result.result_rows]
+        return rows, len(rows)
+
+    def query_eligibility_results(
+        self, run_id: str, eligible_filter: int | None = None,
+        limit: int = 25, offset: int = 0,
+    ) -> tuple[list[dict], int]:
+        """Query per-device eligibility results, deduplicated by device_id."""
+        client = self._get_client()
+        # Deduplicate: forwarder may deliver results to multiple central nodes,
+        # each inserting into ClickHouse. Use GROUP BY device_id + argMax to pick
+        # the latest row per device.
+        elig_filter_clause = ""
+        params: dict = {"run_id": run_id}
+        if eligible_filter is not None:
+            elig_filter_clause = "HAVING eligible = {eligible_filter:UInt8}"
+            params["eligible_filter"] = eligible_filter
+
+        count_sql = f"""
+            SELECT count() FROM (
+                SELECT device_id, argMax(eligible, probed_at) as eligible
+                FROM eligibility_results
+                WHERE run_id = {{run_id:UUID}}
+                GROUP BY device_id
+                {elig_filter_clause}
+            )
+        """
+        total = client.query(count_sql, parameters=params).result_rows[0][0]
+
+        sql = f"""
+            SELECT
+                device_id,
+                argMax(device_name, probed_at) as device_name,
+                argMax(device_address, probed_at) as device_address,
+                argMax(eligible, probed_at) as eligible,
+                argMax(already_assigned, probed_at) as already_assigned,
+                argMax(oid_results, probed_at) as oid_results,
+                argMax(reason, probed_at) as reason,
+                max(probed_at) as last_probed_at
+            FROM eligibility_results
+            WHERE run_id = {{run_id:UUID}}
+            GROUP BY device_id
+            {elig_filter_clause}
+            ORDER BY eligible ASC, device_name ASC
+            LIMIT {{limit:UInt32}} OFFSET {{offset:UInt32}}
+        """
+        params["limit"] = limit
+        params["offset"] = offset
+        result = client.query(sql, parameters=params)
+        rows = [dict(zip(result.column_names, row)) for row in result.result_rows]
         return rows, total
 
     def get_last_rba_run_time(

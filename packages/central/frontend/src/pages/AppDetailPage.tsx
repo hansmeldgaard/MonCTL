@@ -1,8 +1,8 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, Fragment } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
 import { validateName, validateSemver, validateAlertWindow } from "@/lib/validation.ts";
-import { ArrowLeft, AppWindow, Bell, Check, Code2, Copy, Layout, Loader2, Pencil, Plug, Plus, RefreshCw, SlidersHorizontal, Star, Trash2 } from "lucide-react";
+import { ArrowLeft, AppWindow, Bell, Check, ChevronDown, ChevronRight, Code2, Copy, Layout, Loader2, Pencil, Plug, Plus, RefreshCw, SlidersHorizontal, Star, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
@@ -44,9 +44,15 @@ import {
   useUpdateThresholdVariable,
   useCreateThresholdVariable,
   useDeleteThresholdVariable,
+  useStartEligibilityTest,
+  useEligibilityRuns,
+  useEligibilityRunDetail,
+  useAutoAssignEligible,
 } from "@/api/hooks.ts";
 import { apiGet } from "@/api/client.ts";
-import type { AppAlertDefinition, DisplayTemplate } from "@/types/api.ts";
+import type { AppAlertDefinition, DisplayTemplate, EligibilityOidCheck } from "@/types/api.ts";
+import { X } from "lucide-react";
+import { Select } from "@/components/ui/select.tsx";
 
 interface VersionDetail {
   id: string;
@@ -58,6 +64,7 @@ interface VersionDetail {
   published_at: string | null;
   display_template: DisplayTemplate | null;
   volatile_keys?: string[];
+  eligibility_oids?: EligibilityOidCheck[];
 }
 
 export function AppDetailPage() {
@@ -78,6 +85,7 @@ export function AppDetailPage() {
   const editNameField = useField("", validateName);
   const [editDesc, setEditDesc] = useState("");
   const [editConfigSchema, setEditConfigSchema] = useState("");
+  const [editVendorPrefix, setEditVendorPrefix] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
 
   // New version state
@@ -90,6 +98,7 @@ export function AppDetailPage() {
   const [newVersionTab, setNewVersionTab] = useState("code");
   const [newVersionTemplate, setNewVersionTemplate] = useState<DisplayTemplate | null>(null);
   const [versionVolatileKeys, setVersionVolatileKeys] = useState<string[]>([]);
+  const [versionEligibilityOids, setVersionEligibilityOids] = useState<EligibilityOidCheck[]>([]);
 
   // Version detail viewer
   const [viewVersion, setViewVersion] = useState<VersionDetail | null>(null);
@@ -102,6 +111,7 @@ export function AppDetailPage() {
   const [editVersionEntry, setEditVersionEntry] = useState("");
   const [editVersionError, setEditVersionError] = useState<string | null>(null);
   const [editVersionVolatileKeys, setEditVersionVolatileKeys] = useState<string[]>([]);
+  const [editVersionEligibilityOids, setEditVersionEligibilityOids] = useState<EligibilityOidCheck[]>([]);
 
   // Version dialog tab (for config apps)
   const [viewDialogTab, setViewDialogTab] = useState("code");
@@ -121,6 +131,15 @@ export function AppDetailPage() {
   const [connBindConnectorId, setConnBindConnectorId] = useState("");
   const [connBindError, setConnBindError] = useState<string | null>(null);
 
+  // Eligibility tab state
+  const startEligTest = useStartEligibilityTest();
+  const eligRunsQuery = useEligibilityRuns(id);
+  const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
+  const [eligFilter, setEligFilter] = useState<number | undefined>(undefined);
+  const [eligPage, setEligPage] = useState(1);
+  const eligDetailQuery = useEligibilityRunDetail(id, expandedRunId ?? undefined, eligFilter, eligPage);
+  const autoAssign = useAutoAssignEligible();
+
   async function handleEditApp(e: React.FormEvent) {
     e.preventDefault();
     if (!id) return;
@@ -135,7 +154,7 @@ export function AppDetailPage() {
       }
     }
     try {
-      await updateApp.mutateAsync({ id, data: { name: editNameField.value.trim(), description: editDesc.trim(), config_schema: parsedSchema ?? {} } });
+      await updateApp.mutateAsync({ id, data: { name: editNameField.value.trim(), description: editDesc.trim(), config_schema: parsedSchema ?? {}, vendor_oid_prefix: editVendorPrefix.trim() || null } });
       setEditOpen(false);
     } catch (err) {
       setEditError(err instanceof Error ? err.message : "Failed to update");
@@ -158,6 +177,7 @@ export function AppDetailPage() {
           entry_class: versionEntry.trim() || undefined,
           display_template: newVersionTemplate ?? undefined,
           volatile_keys: isConfigApp ? versionVolatileKeys : undefined,
+          eligibility_oids: versionEligibilityOids.length > 0 ? versionEligibilityOids : undefined,
         },
       });
       versionField.reset(); setVersionCode(""); setVersionReqs(""); setVersionEntry(""); setNewVersionTemplate(null); setVersionVolatileKeys([]); setNewVersionTab("code"); setVersionOpen(false);
@@ -179,6 +199,7 @@ export function AppDetailPage() {
           requirements: editVersionReqs.trim() ? editVersionReqs.trim().split("\n").map((r) => r.trim()).filter(Boolean) : [],
           entry_class: editVersionEntry.trim() || undefined,
           volatile_keys: isConfigApp ? editVersionVolatileKeys : undefined,
+          eligibility_oids: editVersionEligibilityOids.length > 0 ? editVersionEligibilityOids : [],
         },
       });
       setEditVersionTarget(null);
@@ -217,6 +238,7 @@ export function AppDetailPage() {
       setEditVersionEntry(v.entry_class ?? "");
       setEditVersionError(null);
       setEditVersionVolatileKeys(v.volatile_keys ?? []);
+      setEditVersionEligibilityOids(v.eligibility_oids ?? []);
       setEditVersionTarget(v);
     } catch {
       // silent
@@ -291,7 +313,7 @@ export function AppDetailPage() {
           <h2 className="text-xl font-semibold text-zinc-100">{app.name}</h2>
           <Badge variant="info">{app.app_type}</Badge>
           <button
-            onClick={() => { editNameField.reset(app.name); setEditDesc(app.description ?? ""); setEditConfigSchema(app.config_schema ? JSON.stringify(app.config_schema, null, 2) : ""); setEditError(null); setEditOpen(true); }}
+            onClick={() => { editNameField.reset(app.name); setEditDesc(app.description ?? ""); setEditConfigSchema(app.config_schema ? JSON.stringify(app.config_schema, null, 2) : ""); setEditVendorPrefix(app.vendor_oid_prefix ?? ""); setEditError(null); setEditOpen(true); }}
             className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer"
             title="Edit"
           >
@@ -309,6 +331,7 @@ export function AppDetailPage() {
           <TabTrigger value="versions">Versions ({app.versions.length})</TabTrigger>
           <TabTrigger value="alerts">Alerts</TabTrigger>
           <TabTrigger value="thresholds">Thresholds</TabTrigger>
+          <TabTrigger value="eligibility">Eligibility</TabTrigger>
         </TabsList>
 
         <TabsContent value="overview">
@@ -501,6 +524,22 @@ export function AppDetailPage() {
         <TabsContent value="thresholds">
           <ThresholdsTab appId={id!} />
         </TabsContent>
+        <TabsContent value="eligibility">
+          <EligibilityTab
+            appId={id!}
+            startTest={startEligTest}
+            runsQuery={eligRunsQuery}
+            expandedRunId={expandedRunId}
+            setExpandedRunId={(rid) => { setExpandedRunId(rid); setEligFilter(undefined); setEligPage(1); }}
+            detailQuery={eligDetailQuery}
+            eligFilter={eligFilter}
+            setEligFilter={(f) => { setEligFilter(f); setEligPage(1); }}
+            eligPage={eligPage}
+            setEligPage={setEligPage}
+            autoAssign={autoAssign}
+            appId2={id!}
+          />
+        </TabsContent>
       </Tabs>
 
       {/* Edit App Dialog */}
@@ -525,6 +564,11 @@ export function AppDetailPage() {
               rows={6}
               className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 font-mono focus:outline-none focus:ring-2 focus:ring-brand-500 placeholder:text-zinc-600"
             />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="app-edit-vendor">Vendor OID Prefix</Label>
+            <p className="text-[11px] text-zinc-500">If set, auto-assign only to devices matching this sysObjectID prefix. Common: 1.3.6.1.4.1.9 (Cisco), 1.3.6.1.4.1.2636 (Juniper)</p>
+            <Input id="app-edit-vendor" placeholder="1.3.6.1.4.1.9" value={editVendorPrefix} onChange={(e) => setEditVendorPrefix(e.target.value)} />
           </div>
           {editError && <p className="text-sm text-red-400">{editError}</p>}
           <DialogFooter>
@@ -559,6 +603,7 @@ export function AppDetailPage() {
                 onCancel={() => setVersionOpen(false)}
                 isPending={createVersion.isPending}
                 volatileKeys={versionVolatileKeys} setVolatileKeys={setVersionVolatileKeys}
+                eligibilityOids={versionEligibilityOids} setEligibilityOids={setVersionEligibilityOids}
                 isConfigApp={true}
                 appId={id!}
               />
@@ -581,6 +626,7 @@ export function AppDetailPage() {
             onSubmit={handleCreateVersion}
             onCancel={() => setVersionOpen(false)}
             isPending={createVersion.isPending}
+            eligibilityOids={versionEligibilityOids} setEligibilityOids={setVersionEligibilityOids}
           />
         )}
       </Dialog>
@@ -658,6 +704,7 @@ export function AppDetailPage() {
                 onCancel={() => setEditVersionTarget(null)}
                 isPending={updateVersion.isPending}
                 volatileKeys={editVersionVolatileKeys} setVolatileKeys={setEditVersionVolatileKeys}
+                eligibilityOids={editVersionEligibilityOids} setEligibilityOids={setEditVersionEligibilityOids}
                 isConfigApp={true}
                 appId={id!}
               />
@@ -685,6 +732,7 @@ export function AppDetailPage() {
             onSubmit={handleEditVersion}
             onCancel={() => setEditVersionTarget(null)}
             isPending={updateVersion.isPending}
+            eligibilityOids={editVersionEligibilityOids} setEligibilityOids={setEditVersionEligibilityOids}
           />
         )}
       </Dialog>
@@ -703,6 +751,7 @@ export function AppDetailPage() {
           </Button>
         </DialogFooter>
       </Dialog>
+
     </div>
   );
 }
@@ -832,6 +881,7 @@ function EditVersionCodeForm({
   onCancel,
   isPending,
   volatileKeys, setVolatileKeys,
+  eligibilityOids, setEligibilityOids,
   isConfigApp,
   appId,
 }: {
@@ -846,6 +896,7 @@ function EditVersionCodeForm({
   onCancel: () => void;
   isPending: boolean;
   volatileKeys?: string[]; setVolatileKeys?: (v: string[]) => void;
+  eligibilityOids?: EligibilityOidCheck[]; setEligibilityOids?: (v: EligibilityOidCheck[]) => void;
   isConfigApp?: boolean;
   appId?: string;
 }) {
@@ -878,6 +929,9 @@ function EditVersionCodeForm({
           setKeys={setVolatileKeys}
         />
       )}
+      {eligibilityOids && setEligibilityOids && (
+        <EligibilityOidsEditor value={eligibilityOids} onChange={setEligibilityOids} />
+      )}
       {editVersionError && <p className="text-sm text-red-400">{editVersionError}</p>}
       <DialogFooter>
         <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
@@ -899,6 +953,7 @@ function NewVersionCodeForm({
   onCancel,
   isPending,
   volatileKeys, setVolatileKeys,
+  eligibilityOids, setEligibilityOids,
   isConfigApp,
   appId,
 }: {
@@ -911,6 +966,7 @@ function NewVersionCodeForm({
   onCancel: () => void;
   isPending: boolean;
   volatileKeys?: string[]; setVolatileKeys?: (v: string[]) => void;
+  eligibilityOids?: EligibilityOidCheck[]; setEligibilityOids?: (v: EligibilityOidCheck[]) => void;
   isConfigApp?: boolean;
   appId?: string;
 }) {
@@ -950,6 +1006,9 @@ function NewVersionCodeForm({
           setKeys={setVolatileKeys}
         />
       )}
+      {eligibilityOids && setEligibilityOids && (
+        <EligibilityOidsEditor value={eligibilityOids} onChange={setEligibilityOids} />
+      )}
       {versionError && <p className="text-sm text-red-400">{versionError}</p>}
       <DialogFooter>
         <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
@@ -958,6 +1017,357 @@ function NewVersionCodeForm({
         </Button>
       </DialogFooter>
     </form>
+  );
+}
+
+
+// ── Eligibility Tab ─────────────────────────────────────
+
+function EligibilityTab({
+  appId, startTest, runsQuery, expandedRunId, setExpandedRunId,
+  detailQuery, eligFilter, setEligFilter, eligPage, setEligPage,
+  autoAssign, appId2,
+}: {
+  appId: string;
+  startTest: ReturnType<typeof useStartEligibilityTest>;
+  runsQuery: ReturnType<typeof useEligibilityRuns>;
+  expandedRunId: string | null;
+  setExpandedRunId: (id: string | null) => void;
+  detailQuery: ReturnType<typeof useEligibilityRunDetail>;
+  eligFilter: number | undefined;
+  setEligFilter: (f: number | undefined) => void;
+  eligPage: number;
+  setEligPage: (p: number) => void;
+  autoAssign: ReturnType<typeof useAutoAssignEligible>;
+  appId2: string;
+}) {
+  const runs = runsQuery.data?.data ?? [];
+  const detail = detailQuery.data?.data;
+  const hasRunning = runs.some((r) => r.status === "running");
+
+  // Bulk selection state
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deviceSearch, setDeviceSearch] = useState("");
+
+  // Filter displayed devices by search
+  const visibleDevices = useMemo(() => {
+    const devices = detail?.devices ?? [];
+    if (!deviceSearch) return devices;
+    const q = deviceSearch.toLowerCase();
+    return devices.filter(
+      (d) => d.device_name.toLowerCase().includes(q) || d.device_address.toLowerCase().includes(q),
+    );
+  }, [detail?.devices, deviceSearch]);
+
+  // Eligible (non-already-assigned) device IDs on current page for select-all
+  const selectableIds = useMemo(
+    () => visibleDevices.filter((d) => d.eligible === 1 && !d.already_assigned).map((d) => d.device_id),
+    [visibleDevices],
+  );
+  const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selectedIds.has(id));
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        selectableIds.forEach((id) => next.delete(id));
+        return next;
+      });
+    } else {
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        selectableIds.forEach((id) => next.add(id));
+        return next;
+      });
+    }
+  };
+
+  // Reset selection when expanding a different run
+  const handleExpand = (runId: string | null) => {
+    setSelectedIds(new Set());
+    setDeviceSearch("");
+    setExpandedRunId(runId);
+  };
+
+  const statusBadge = (run: { status: string; tested: number; total_devices: number }) => {
+    if (run.status === "running") {
+      const pct = run.total_devices > 0 ? Math.round((run.tested / run.total_devices) * 100) : 0;
+      return (
+        <div className="flex items-center gap-2">
+          <Badge className="bg-blue-500/15 text-blue-400 border-blue-500/30">
+            <Loader2 className="h-3 w-3 animate-spin mr-1" />
+            {run.tested}/{run.total_devices}
+          </Badge>
+          <div className="w-16 h-1.5 rounded-full bg-zinc-800">
+            <div className="h-1.5 rounded-full bg-blue-500 transition-all" style={{ width: `${pct}%` }} />
+          </div>
+          <span className="text-[10px] text-zinc-500">{pct}%</span>
+        </div>
+      );
+    }
+    if (run.status === "completed") return <Badge className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30">completed</Badge>;
+    return <Badge className="bg-red-500/15 text-red-400 border-red-500/30">failed</Badge>;
+  };
+
+  const eligLabel = (e: number) => {
+    if (e === 1) return <span className="text-emerald-400">Eligible</span>;
+    if (e === 0) return <span className="text-red-400">Ineligible</span>;
+    return <span className="text-zinc-500">Error</span>;
+  };
+
+  const selectedCount = selectedIds.size;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-zinc-500">Find eligible devices via vendor match (instant) or live SNMP OID probing.</p>
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={startTest.isPending || hasRunning}
+            onClick={() => startTest.mutate({ appId, mode: "probe" })}
+          >
+            {startTest.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <RefreshCw className="h-3.5 w-3.5 mr-1.5" />}
+            Probe OIDs
+          </Button>
+          <Button
+            size="sm"
+            disabled={startTest.isPending || hasRunning}
+            onClick={() => startTest.mutate({ appId, mode: "instant" })}
+          >
+            {startTest.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <SlidersHorizontal className="h-3.5 w-3.5 mr-1.5" />}
+            Find Eligible
+          </Button>
+        </div>
+      </div>
+
+      {runs.length === 0 ? (
+        <div className="flex h-32 flex-col items-center justify-center gap-2 text-zinc-500">
+          <SlidersHorizontal className="h-6 w-6" />
+          <p className="text-sm">No eligibility tests have been run yet.</p>
+        </div>
+      ) : (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="text-xs py-1 w-8" />
+              <TableHead className="text-xs py-1">Time</TableHead>
+              <TableHead className="text-xs py-1">Status</TableHead>
+              <TableHead className="text-xs py-1">Eligible</TableHead>
+              <TableHead className="text-xs py-1">Ineligible</TableHead>
+              <TableHead className="text-xs py-1">Error</TableHead>
+              <TableHead className="text-xs py-1">Duration</TableHead>
+              <TableHead className="text-xs py-1">By</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {runs.map((run) => {
+              const isExpanded = expandedRunId === run.run_id;
+              return (
+                <Fragment key={run.run_id}>
+                  <TableRow className="cursor-pointer hover:bg-zinc-800/50" onClick={() => handleExpand(isExpanded ? null : run.run_id)}>
+                    <TableCell className="py-1.5 px-2">
+                      {isExpanded ? <ChevronDown className="h-3.5 w-3.5 text-zinc-500" /> : <ChevronRight className="h-3.5 w-3.5 text-zinc-500" />}
+                    </TableCell>
+                    <TableCell className="py-1.5 text-xs text-zinc-400">{run.started_at ? new Date(run.started_at).toLocaleString() : "—"}</TableCell>
+                    <TableCell className="py-1.5">{statusBadge(run)}</TableCell>
+                    <TableCell className="py-1.5 text-xs font-mono text-emerald-400">{run.eligible}</TableCell>
+                    <TableCell className="py-1.5 text-xs font-mono text-red-400">{run.ineligible}</TableCell>
+                    <TableCell className="py-1.5 text-xs font-mono text-zinc-500">{run.unreachable}</TableCell>
+                    <TableCell className="py-1.5 text-xs text-zinc-500">{run.duration_ms ? `${(run.duration_ms / 1000).toFixed(1)}s` : "—"}</TableCell>
+                    <TableCell className="py-1.5 text-xs text-zinc-500">{run.triggered_by}</TableCell>
+                  </TableRow>
+                  {isExpanded && (
+                    <TableRow>
+                      <TableCell colSpan={8} className="bg-zinc-900/50 px-4 py-3">
+                        {/* Filter + search + assign bar */}
+                        <div className="flex flex-wrap gap-2 mb-3 items-center">
+                          {[
+                            { label: "All", value: undefined },
+                            { label: "Eligible", value: 1 },
+                            { label: "Ineligible", value: 0 },
+                            { label: "Error", value: 2 },
+                          ].map((f) => (
+                            <Button
+                              key={f.label}
+                              size="sm"
+                              variant={eligFilter === f.value ? "default" : "outline"}
+                              onClick={() => { setEligFilter(f.value); setEligPage(1); }}
+                              className="h-6 text-xs"
+                            >
+                              {f.label}
+                            </Button>
+                          ))}
+                          <span className="text-xs text-zinc-500 self-center ml-1">
+                            {detail?.meta.total ?? 0} devices
+                          </span>
+                          <Input
+                            placeholder="Search devices..."
+                            value={deviceSearch}
+                            onChange={(e) => setDeviceSearch(e.target.value)}
+                            className="h-6 text-xs w-44 ml-2"
+                          />
+                          {run.status === "completed" && run.eligible > 0 && (
+                            <Button
+                              size="sm"
+                              className="ml-auto h-6 text-xs"
+                              disabled={autoAssign.isPending}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                autoAssign.mutate({
+                                  appId: appId2,
+                                  runId: run.run_id,
+                                  deviceIds: selectedCount > 0 ? [...selectedIds] : undefined,
+                                });
+                              }}
+                            >
+                              {autoAssign.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Plus className="h-3 w-3 mr-1" />}
+                              {selectedCount > 0
+                                ? `Assign ${selectedCount} selected`
+                                : `Auto-assign ${run.eligible} eligible`}
+                            </Button>
+                          )}
+                          {autoAssign.isSuccess && autoAssign.variables?.runId === run.run_id && (
+                            <span className="text-xs text-emerald-400 ml-2">
+                              {autoAssign.data?.data?.created ?? 0} assigned
+                            </span>
+                          )}
+                        </div>
+                        {/* Device results table with checkboxes */}
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead className="text-[11px] py-1 w-8 px-2">
+                                <input
+                                  type="checkbox"
+                                  checked={allSelected}
+                                  onChange={toggleSelectAll}
+                                  className="accent-emerald-500 h-3 w-3 cursor-pointer"
+                                  title="Select all eligible on this page"
+                                />
+                              </TableHead>
+                              <TableHead className="text-[11px] py-1">Device</TableHead>
+                              <TableHead className="text-[11px] py-1">Address</TableHead>
+                              <TableHead className="text-[11px] py-1">Result</TableHead>
+                              <TableHead className="text-[11px] py-1">Details</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {visibleDevices.map((d) => {
+                              const selectable = d.eligible === 1 && !d.already_assigned;
+                              return (
+                                <TableRow key={d.device_id} className={selectedIds.has(d.device_id) ? "bg-emerald-500/5" : ""}>
+                                  <TableCell className="py-1 px-2">
+                                    <input
+                                      type="checkbox"
+                                      checked={selectedIds.has(d.device_id)}
+                                      onChange={() => toggleSelect(d.device_id)}
+                                      disabled={!selectable}
+                                      className="accent-emerald-500 h-3 w-3 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                                    />
+                                  </TableCell>
+                                  <TableCell className="py-1 text-xs font-mono text-zinc-200">{d.device_name}</TableCell>
+                                  <TableCell className="py-1 text-xs font-mono text-zinc-400">{d.device_address}</TableCell>
+                                  <TableCell className="py-1 text-xs">
+                                    {d.already_assigned
+                                      ? <span className="text-zinc-500">Assigned</span>
+                                      : eligLabel(d.eligible)}
+                                  </TableCell>
+                                  <TableCell className="py-1 text-xs text-zinc-500">{d.reason || (d.eligible === 1 ? "All checks passed" : "")}</TableCell>
+                                </TableRow>
+                              );
+                            })}
+                            {visibleDevices.length === 0 && (
+                              <TableRow>
+                                <TableCell colSpan={5} className="py-3 text-center text-xs text-zinc-500">
+                                  {detailQuery.isLoading ? "Loading..." : deviceSearch ? "No matches" : "No results"}
+                                </TableCell>
+                              </TableRow>
+                            )}
+                          </TableBody>
+                        </Table>
+                        {/* Selection summary + pagination */}
+                        <div className="flex items-center justify-between mt-2 text-xs text-zinc-500">
+                          <span>
+                            {selectedCount > 0 && (
+                              <span className="text-emerald-400 mr-3">{selectedCount} selected</span>
+                            )}
+                            Page {eligPage} of {Math.max(1, Math.ceil((detail?.meta.total ?? 0) / 25))}
+                          </span>
+                          {(detail?.meta.total ?? 0) > 25 && (
+                            <div className="flex gap-1">
+                              <Button size="sm" variant="outline" className="h-6" disabled={eligPage <= 1} onClick={() => setEligPage(eligPage - 1)}>Prev</Button>
+                              <Button size="sm" variant="outline" className="h-6" disabled={eligPage >= Math.ceil((detail?.meta.total ?? 0) / 25)} onClick={() => setEligPage(eligPage + 1)}>Next</Button>
+                            </div>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </Fragment>
+              );
+            })}
+          </TableBody>
+        </Table>
+      )}
+    </div>
+  );
+}
+
+
+// ── Eligibility OIDs Editor ─────────────────────────────
+
+function EligibilityOidsEditor({ value, onChange }: { value: EligibilityOidCheck[]; onChange: (v: EligibilityOidCheck[]) => void }) {
+  return (
+    <div className="space-y-2">
+      <Label>Eligibility OIDs</Label>
+      <p className="text-[11px] text-zinc-500">OID checks that must pass before auto-assigning via discovery. Leave empty for no requirements.</p>
+      {value.map((entry, i) => (
+        <div key={i} className="flex items-center gap-2">
+          <Input
+            placeholder="1.3.6.1.4.1.9.9.168.1.1.1.0"
+            value={entry.oid}
+            onChange={(e) => { const u = [...value]; u[i] = { ...u[i], oid: e.target.value }; onChange(u); }}
+            className="flex-1"
+          />
+          <Select
+            value={entry.check}
+            onChange={(e) => {
+              const u = [...value];
+              const check = e.target.value as "exists" | "equals";
+              u[i] = check === "exists" ? { oid: u[i].oid, check } : { ...u[i], check };
+              onChange(u);
+            }}
+            className="w-28"
+          >
+            <option value="exists">Exists</option>
+            <option value="equals">Equals</option>
+          </Select>
+          {entry.check === "equals" && (
+            <Input
+              placeholder="Expected value"
+              value={entry.value || ""}
+              onChange={(e) => { const u = [...value]; u[i] = { ...u[i], value: e.target.value }; onChange(u); }}
+              className="w-48"
+            />
+          )}
+          <Button type="button" variant="ghost" size="icon" onClick={() => onChange(value.filter((_, j) => j !== i))}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      ))}
+      <Button type="button" variant="outline" size="sm" onClick={() => onChange([...value, { oid: "", check: "exists" }])}>
+        <Plus className="mr-1.5 h-3 w-3" /> Add OID Check
+      </Button>
+    </div>
   );
 }
 

@@ -101,6 +101,27 @@ class Poller(BasePoller):
                         val_str = val_str[1:]
                     config_data[key] = val_str
 
+            # Probe eligibility OIDs if passed via parameters
+            eligibility_oid_list = context.parameters.get("_eligibility_oids", [])
+            if eligibility_oid_list:
+                try:
+                    elig_raw = await snmp.get(eligibility_oid_list)
+                    elig_results = {}
+                    for oid in eligibility_oid_list:
+                        value = elig_raw.get(oid)
+                        if value is not None:
+                            val_str = _decode_snmp_value(value)
+                            val_lower = val_str.lower()
+                            if "nosuchobject" in val_lower or "nosuchinstance" in val_lower or "no such object" in val_lower or "no such instance" in val_lower:
+                                elig_results[oid] = None
+                            else:
+                                elig_results[oid] = val_str
+                        else:
+                            elig_results[oid] = None
+                    config_data["_eligibility_results"] = elig_results
+                except Exception as elig_exc:
+                    config_data["_eligibility_error"] = str(elig_exc)
+
             return PollResult(
                 job_id=context.job.job_id,
                 device_id=context.job.device_id,

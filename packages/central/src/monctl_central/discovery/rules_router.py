@@ -29,6 +29,7 @@ class CreateDeviceTypeRequest(BaseModel):
     os_family: str | None = Field(default=None, max_length=128)
     description: str | None = Field(default=None, max_length=1000)
     priority: int = Field(default=0, ge=0, le=1000)
+    auto_assign_packs: list[str] | None = None
 
     @field_validator("sys_object_id_pattern")
     @classmethod
@@ -53,6 +54,7 @@ class UpdateDeviceTypeRequest(BaseModel):
     os_family: str | None = None
     description: str | None = None
     priority: int | None = Field(default=None, ge=0, le=1000)
+    auto_assign_packs: list[str] | None = None
 
     @field_validator("sys_object_id_pattern")
     @classmethod
@@ -80,6 +82,7 @@ def _fmt(rule: DeviceType) -> dict:
         "os_family": rule.os_family,
         "description": rule.description,
         "priority": rule.priority,
+        "auto_assign_packs": rule.auto_assign_packs or [],
         "pack_id": str(rule.pack_id) if rule.pack_id else None,
         "created_at": rule.created_at.isoformat() if rule.created_at else None,
     }
@@ -177,6 +180,7 @@ async def create_device_type(
         os_family=request.os_family,
         description=request.description,
         priority=request.priority,
+        auto_assign_packs=request.auto_assign_packs,
     )
     db.add(rule)
     await db.flush()
@@ -241,6 +245,8 @@ async def update_device_type(
         rule.description = request.description
     if request.priority is not None:
         rule.priority = request.priority
+    if request.auto_assign_packs is not None:
+        rule.auto_assign_packs = request.auto_assign_packs or None
 
     await db.flush()
     await db.refresh(rule, ["device_category"])

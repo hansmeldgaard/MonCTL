@@ -7,7 +7,6 @@ updates the device with category, metadata, and icon.
 
 from __future__ import annotations
 
-import logging
 import re
 import uuid as _uuid
 from dataclasses import dataclass
@@ -17,13 +16,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from monctl_central.storage.models import (
+    App,
+    AppAssignment,
+    AppVersion,
     Device,
     DeviceCategory,
     DeviceType,
+    Pack,
     SystemSetting,
 )
 
-logger = logging.getLogger(__name__)
+import structlog
+logger = structlog.get_logger(__name__)
 
 
 @dataclass
@@ -54,6 +58,12 @@ async def process_discovery_result(
     if not device:
         logger.warning("discovery_device_not_found", device_id=device_id)
         return {}
+
+    # Extract eligibility results before processing (internal metadata, not config)
+    eligibility_results = config_data.pop("_eligibility_results", None)
+    eligibility_error = config_data.pop("_eligibility_error", None)
+    if eligibility_error:
+        logger.warning("eligibility_probe_error", device_id=device_id, error=eligibility_error)
 
     sys_object_id = config_data.get("sys_object_id")
 
@@ -130,6 +140,103 @@ async def process_discovery_result(
                                 templates=[t["template_name"] for t in resolved["source_templates"]])
             except Exception:
                 logger.exception("discovery_auto_apply_failed", device_id=device_id)
+
+    # 7. Auto-assign packs if device type has auto_assign_packs
+    if match_result and match_result.device_type and match_result.device_type.auto_assign_packs:
+        needs_elig = await _has_apps_with_eligibility_oids(match_result.device_type, db)
+        if needs_elig and eligibility_results is None:
+            # Phase 1 complete — queue Phase 2 for eligibility probing
+            from monctl_central.cache import set_discovery_flag, set_discovery_phase2_flag
+            queued = await set_discovery_phase2_flag(device_id)
+            if queued:
+                await set_discovery_flag(device_id, ttl=300)
+                changes["eligibility_check"] = "deferred_to_second_pass"
+                logger.info("discovery_phase2_queued", device_id=device_id)
+        else:
+            assigned = await _auto_assign_packs(
+                device, match_result.device_type, db,
+                eligibility_results=eligibility_results,
+            )
+            if assigned:
+                changes["packs_assigned"] = ", ".join(assigned)
+            await db.flush()
+
+    # 8. Update eligibility run tracking if this device is part of an active run
+    try:
+        from monctl_central.cache import get_eligibility_run_for_device
+        run_info = await get_eligibility_run_for_device(device_id)
+        if run_info:
+            from monctl_central.dependencies import get_clickhouse
+            ch = get_clickhouse()
+            if ch:
+                import json as _json
+                from datetime import datetime as _dt, timezone as _tz
+                now = _dt.now(_tz.utc)
+
+                if eligibility_results is not None:
+                    # We have probe results — evaluate eligibility
+                    elig_oids_for_app = None
+                    app_obj = (await db.execute(
+                        select(App).where(App.id == _uuid.UUID(run_info["app_id"]))
+                    )).scalar_one_or_none()
+                    if app_obj:
+                        latest_v = (await db.execute(
+                            select(AppVersion).where(
+                                AppVersion.app_id == app_obj.id,
+                                AppVersion.is_latest == True,  # noqa: E712
+                            )
+                        )).scalar_one_or_none()
+                        if latest_v:
+                            elig_oids_for_app = latest_v.eligibility_oids
+
+                    if elig_oids_for_app:
+                        is_eligible = _check_eligibility(
+                            app_obj.name if app_obj else "?",
+                            elig_oids_for_app, eligibility_results, device_id,
+                        )
+                        reason = ""
+                        if not is_eligible:
+                            for check in elig_oids_for_app:
+                                val = eligibility_results.get(check["oid"])
+                                if check["check"] == "exists" and val is None:
+                                    reason = f"OID {check['oid']} not found"
+                                    break
+                                elif check["check"] == "equals":
+                                    reason = f"OID {check['oid']}: got {val}"
+                                    break
+
+                        ch.insert_eligibility_results([{
+                            "run_id": run_info["run_id"],
+                            "device_id": device_id,
+                            "device_name": device.name,
+                            "device_address": device.address,
+                            "eligible": 1 if is_eligible else 0,
+                            "already_assigned": 0,
+                            "oid_results": _json.dumps(eligibility_results),
+                            "reason": reason,
+                            "probed_at": now,
+                        }])
+                        changes["eligibility_result"] = "eligible" if is_eligible else "ineligible"
+                elif eligibility_error:
+                    # Device was unreachable or probe failed
+                    ch.insert_eligibility_results([{
+                        "run_id": run_info["run_id"],
+                        "device_id": device_id,
+                        "device_name": device.name,
+                        "device_address": device.address,
+                        "eligible": 2,  # error
+                        "already_assigned": 0,
+                        "oid_results": "{}",
+                        "reason": str(eligibility_error)[:200],
+                        "probed_at": now,
+                    }])
+                    changes["eligibility_result"] = "error"
+
+                # Update run progress counters if we inserted a result
+                if "eligibility_result" in changes:
+                    _update_eligibility_run_progress(ch, run_info["run_id"])
+    except Exception:
+        logger.exception("eligibility_tracking_failed", device_id=device_id)
 
     logger.info("discovery_applied",
                 device_id=device_id,
@@ -259,3 +366,212 @@ def _parse_sys_descr(sys_descr: str) -> dict[str, str]:
         result["vendor"] = "Ubiquiti"
 
     return result
+
+
+# ── Auto-assign packs with eligibility checking ─────────────────────────────
+
+
+async def _auto_assign_packs(
+    device: Device,
+    device_type: DeviceType,
+    db: AsyncSession,
+    eligibility_results: dict[str, str | None] | None = None,
+) -> list[str]:
+    """Auto-assign apps from packs linked to the device type.
+
+    Three-layer filtering per app:
+      Layer 1: Vendor scope (dot-boundary prefix match — no SNMP)
+      Layer 2: Eligibility OIDs (SNMP probe results)
+      Layer 3: Existing assignment check
+    """
+    if not device_type.auto_assign_packs:
+        return []
+
+    device_sys_oid = (device.metadata_ or {}).get("sys_object_id")
+    assigned_packs: list[str] = []
+
+    for pack_uid in device_type.auto_assign_packs:
+        pack = (await db.execute(
+            select(Pack).where(Pack.pack_uid == pack_uid)
+        )).scalar_one_or_none()
+        if not pack:
+            continue
+
+        apps = (await db.execute(select(App).where(App.pack_id == pack.id))).scalars().all()
+        pack_had_assignment = False
+
+        for app in apps:
+            # Layer 1: Vendor scope check
+            if app.vendor_oid_prefix and device_sys_oid:
+                pfx = app.vendor_oid_prefix
+                if not (device_sys_oid == pfx or device_sys_oid.startswith(pfx + ".")):
+                    logger.info("vendor_scope_mismatch", app=app.name, device=str(device.id))
+                    continue
+
+            # Layer 3: Already assigned?
+            existing = (await db.execute(
+                select(AppAssignment.id).where(
+                    AppAssignment.app_id == app.id,
+                    AppAssignment.device_id == device.id,
+                )
+            )).scalar_one_or_none()
+            if existing:
+                continue
+
+            # Get latest version
+            latest = (await db.execute(
+                select(AppVersion).where(
+                    AppVersion.app_id == app.id,
+                    AppVersion.is_latest == True,  # noqa: E712
+                )
+            )).scalar_one_or_none()
+            if not latest:
+                continue
+
+            # Layer 2: Eligibility OID check
+            if latest.eligibility_oids:
+                if eligibility_results is None:
+                    logger.info("eligibility_deferred", app=app.name, device=str(device.id))
+                    continue
+                if not _check_eligibility(app.name, latest.eligibility_oids,
+                                          eligibility_results, str(device.id)):
+                    continue
+
+            # All checks passed — create assignment
+            assignment = AppAssignment(
+                app_id=app.id,
+                app_version_id=latest.id,
+                device_id=device.id,
+                config={},
+                schedule_type="interval",
+                schedule_value="60",
+                use_latest=True,
+                enabled=True,
+            )
+            db.add(assignment)
+            pack_had_assignment = True
+            logger.info("auto_assigned_app", app=app.name, device=str(device.id), pack=pack_uid)
+
+        if pack_had_assignment:
+            assigned_packs.append(pack_uid)
+
+    return assigned_packs
+
+
+def _update_eligibility_run_progress(ch, run_id: str) -> None:
+    """Recount eligibility results and update the run row.
+
+    Uses ReplacingMergeTree — inserting a new row with the same run_id
+    and a newer finished_at supersedes the previous one.
+    """
+    try:
+        from datetime import datetime as _dt, timezone as _tz
+        client = ch._get_client()
+        # Count DISTINCT devices (forwarder may deliver results to multiple centrals)
+        sql = """
+            SELECT eligible, count(DISTINCT device_id) as cnt
+            FROM eligibility_results
+            WHERE run_id = {run_id:UUID}
+            GROUP BY eligible
+        """
+        rows = client.query(sql, parameters={"run_id": run_id}).result_rows
+        eligible_count = 0
+        ineligible_count = 0
+        error_count = 0
+        for elig_val, cnt in rows:
+            if elig_val == 1:
+                eligible_count += cnt
+            elif elig_val == 0:
+                ineligible_count += cnt
+            else:
+                error_count += cnt
+
+        tested = eligible_count + ineligible_count + error_count
+
+        # Get original run info
+        runs, _ = ch.query_eligibility_runs_by_run_id(run_id)
+        if not runs:
+            return
+        run = runs[0]
+
+        now = _dt.now(_tz.utc)
+        is_complete = tested >= run["total_devices"]
+
+        # ClickHouse returns naive datetimes — make timezone-aware for subtraction
+        started = run["started_at"]
+        if started and not getattr(started, 'tzinfo', None):
+            started = started.replace(tzinfo=_tz.utc)
+        duration = int((now - started).total_seconds() * 1000) if is_complete and started else 0
+
+        ch.update_eligibility_run({
+            "run_id": run_id,
+            "app_id": str(run["app_id"]),
+            "app_name": run["app_name"],
+            "status": "completed" if is_complete else "running",
+            "started_at": run["started_at"],
+            "finished_at": now if is_complete else run["finished_at"],
+            "duration_ms": duration,
+            "total_devices": run["total_devices"],
+            "tested": tested,
+            "eligible": eligible_count,
+            "ineligible": ineligible_count,
+            "unreachable": error_count,
+            "triggered_by": run["triggered_by"],
+        })
+    except Exception:
+        logger.exception("eligibility_run_progress_update_failed", run_id=run_id)
+
+
+def _check_eligibility(
+    app_name: str,
+    eligibility_oids: list[dict],
+    probe_results: dict[str, str | None],
+    device_id: str,
+) -> bool:
+    """Evaluate eligibility OID checks. All must pass (AND logic)."""
+    for check in eligibility_oids:
+        oid = check["oid"]
+        check_type = check["check"]
+        probe_value = probe_results.get(oid)
+
+        if check_type == "exists":
+            if probe_value is None:
+                logger.info("eligibility_failed", app=app_name, device=device_id,
+                            oid=oid, check="exists", reason="not_found")
+                return False
+        elif check_type == "equals":
+            expected = check.get("value", "")
+            if probe_value is None:
+                logger.info("eligibility_failed", app=app_name, device=device_id,
+                            oid=oid, check="equals", reason="not_found")
+                return False
+            if probe_value.lstrip(".") != expected.lstrip("."):
+                logger.info("eligibility_failed", app=app_name, device=device_id,
+                            oid=oid, check="equals", expected=expected, actual=probe_value)
+                return False
+
+    logger.info("eligibility_passed", app=app_name, device=device_id)
+    return True
+
+
+async def _has_apps_with_eligibility_oids(device_type: DeviceType, db: AsyncSession) -> bool:
+    """Check if any app in auto_assign_packs has eligibility_oids defined."""
+    if not device_type.auto_assign_packs:
+        return False
+    for pack_uid in device_type.auto_assign_packs:
+        pack = (await db.execute(
+            select(Pack).where(Pack.pack_uid == pack_uid)
+        )).scalar_one_or_none()
+        if not pack:
+            continue
+        apps = (await db.execute(select(App).where(App.pack_id == pack.id))).scalars().all()
+        for app in apps:
+            latest = (await db.execute(
+                select(AppVersion).where(
+                    AppVersion.app_id == app.id,
+                    AppVersion.is_latest == True,  # noqa: E712
+                )
+            )).scalar_one_or_none()
+            if latest and latest.eligibility_oids:
+                return True
+    return False

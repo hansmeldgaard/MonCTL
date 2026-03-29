@@ -34,6 +34,7 @@ class SchedulerRunner:
         self._last_hourly_rollup: datetime | None = None
         self._last_daily_rollup: datetime | None = None
         self._last_os_check: datetime | None = None
+        self._last_eligibility_scan: datetime | None = None
 
     async def start(self) -> asyncio.Task:
         self._task = asyncio.create_task(self._run())
@@ -58,6 +59,7 @@ class SchedulerRunner:
                 # Health monitor runs every 60s (every 2nd cycle)
                 if cycle % 2 == 0:
                     await self._health_check()
+                    await self._evaluate_system_health()
                 # Alert evaluation runs every 30s
                 await self._evaluate_alerts()
                 # Event policy evaluation (runs after alerts)
@@ -74,6 +76,10 @@ class SchedulerRunner:
                     await self._rebalance_collector_groups()
                 # OS update check (daily)
                 await self._check_os_updates()
+                # Nightly eligibility scan (daily, configurable time)
+                await self._run_eligibility_scan()
+                # Finalize completed eligibility runs (every cycle)
+                await self._finalize_eligibility_runs()
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -131,6 +137,273 @@ class SchedulerRunner:
             await _redis.set(
                 "monctl:scheduler:last_health_check", utc_now().isoformat()
             )
+
+    async def _evaluate_system_health(self) -> None:
+        """Evaluate system health thresholds and write alerts to alert_log."""
+        if self._ch is None:
+            return
+
+        import json
+        import uuid
+        from monctl_central.cache import _redis
+        from monctl_common.utils import utc_now
+        from sqlalchemy import text
+
+        SYSTEM_APP_ID = "00000000-0000-0000-0000-000000000001"
+        SYSTEM_DEVICE_ID = "00000000-0000-0000-0000-000000000000"
+        ZERO_UUID = "00000000-0000-0000-0000-000000000000"
+
+        def _check_def(name: str, entity: str, current_val, threshold, severity="warning",
+                       comparison="gt", message_tpl="{name}: {current} (threshold: {threshold})"):
+            """Evaluate a single threshold and return fire/clear action or None."""
+            if current_val is None:
+                return None
+            if comparison == "gt":
+                breached = current_val > threshold
+            elif comparison == "lt":
+                breached = current_val < threshold
+            else:
+                breached = False
+            return {
+                "name": name,
+                "entity_key": entity,
+                "breached": breached,
+                "severity": severity,
+                "current_value": float(current_val),
+                "threshold_value": float(threshold),
+                "message": message_tpl.format(name=name, current=current_val, threshold=threshold),
+            }
+
+        checks = []
+
+        try:
+            async with self._session_factory() as db:
+                # ── PostgreSQL checks ──
+                try:
+                    # Replication lag
+                    rows = (await db.execute(text(
+                        "SELECT (EXTRACT(EPOCH FROM replay_lag))::float AS lag_s"
+                        " FROM pg_stat_replication"
+                    ))).all()
+                    for r in rows:
+                        if r[0] is not None:
+                            checks.append(_check_def(
+                                "PostgreSQL Replication Lag", "postgresql|replication_lag",
+                                r[0], 30.0, severity="critical",
+                                message_tpl="{name}: {current:.1f}s (threshold: {threshold}s)",
+                            ))
+                            checks.append(_check_def(
+                                "PostgreSQL Replication Lag Warning", "postgresql|replication_lag_warn",
+                                r[0], 5.0, severity="warning",
+                                message_tpl="{name}: {current:.1f}s (threshold: {threshold}s)",
+                            ))
+                except Exception:
+                    pass
+
+                try:
+                    # Cache hit ratio
+                    row = (await db.execute(text(
+                        "SELECT CASE WHEN (blks_hit + blks_read) > 0"
+                        "   THEN 100.0 * blks_hit / (blks_hit + blks_read)"
+                        "   ELSE 100 END FROM pg_stat_database"
+                        " WHERE datname = current_database()"
+                    ))).scalar()
+                    if row is not None:
+                        checks.append(_check_def(
+                            "PostgreSQL Cache Hit Ratio", "postgresql|cache_hit",
+                            float(row), 95.0, severity="critical", comparison="lt",
+                            message_tpl="{name}: {current:.1f}% (threshold: >{threshold}%)",
+                        ))
+                except Exception:
+                    pass
+
+                try:
+                    # XID wraparound
+                    xid = (await db.execute(text(
+                        "SELECT age(datfrozenxid) FROM pg_database"
+                        " WHERE datname = current_database()"
+                    ))).scalar()
+                    if xid is not None:
+                        checks.append(_check_def(
+                            "PostgreSQL XID Wraparound", "postgresql|xid_age",
+                            xid, 1_000_000_000, severity="critical",
+                            message_tpl="{name}: {current:,.0f} (threshold: {threshold:,.0f})",
+                        ))
+                        checks.append(_check_def(
+                            "PostgreSQL XID Wraparound Warning", "postgresql|xid_age_warn",
+                            xid, 500_000_000, severity="warning",
+                            message_tpl="{name}: {current:,.0f} (threshold: {threshold:,.0f})",
+                        ))
+                except Exception:
+                    pass
+
+                try:
+                    # Waiting locks
+                    locks = (await db.execute(text(
+                        "SELECT count(*) FROM pg_locks WHERE NOT granted"
+                    ))).scalar() or 0
+                    checks.append(_check_def(
+                        "PostgreSQL Waiting Locks", "postgresql|waiting_locks",
+                        locks, 10, severity="warning",
+                    ))
+                except Exception:
+                    pass
+
+                try:
+                    # Connection usage
+                    total = (await db.execute(text("SELECT count(*) FROM pg_stat_activity"))).scalar() or 0
+                    max_c = (await db.execute(text(
+                        "SELECT setting::int FROM pg_settings WHERE name = 'max_connections'"
+                    ))).scalar() or 100
+                    pct = (total / max_c * 100) if max_c > 0 else 0
+                    checks.append(_check_def(
+                        "PostgreSQL Connection Usage", "postgresql|connection_pct",
+                        pct, 80, severity="warning",
+                        message_tpl="{name}: {current:.0f}% ({threshold}% threshold)",
+                    ))
+                except Exception:
+                    pass
+
+        except Exception:
+            logger.exception("system_health_pg_checks_failed")
+
+        # ── Patroni checks ──
+        try:
+            import httpx
+
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                cluster = None
+                for ip in ["10.145.210.41", "10.145.210.42"]:
+                    try:
+                        resp = await client.get(f"http://{ip}:8008/cluster")
+                        if resp.status_code == 200:
+                            cluster = resp.json()
+                            break
+                    except Exception:
+                        continue
+
+                if cluster:
+                    members = cluster.get("members", [])
+                    leader = [m for m in members if m.get("role") == "leader"]
+                    checks.append(_check_def(
+                        "Patroni No Leader", "patroni|no_leader",
+                        0 if leader else 1, 0.5, severity="critical",
+                        message_tpl="Patroni cluster has no leader!" if not leader else "Patroni leader OK",
+                    ))
+                    running = [m for m in members if m.get("state") == "running"]
+                    checks.append(_check_def(
+                        "Patroni Members Down", "patroni|members_down",
+                        len(members) - len(running), 0.5, severity="warning",
+                        message_tpl="{name}: {current:.0f} members not running",
+                    ))
+                else:
+                    checks.append({
+                        "name": "Patroni Unreachable", "entity_key": "patroni|unreachable",
+                        "breached": True, "severity": "critical",
+                        "current_value": 1.0, "threshold_value": 0.0,
+                        "message": "No Patroni node reachable",
+                    })
+        except Exception:
+            logger.exception("system_health_patroni_checks_failed")
+
+        # ── etcd checks ──
+        try:
+            import httpx
+
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                healthy = 0
+                for ip in ["10.145.210.41", "10.145.210.42", "10.145.210.43"]:
+                    try:
+                        resp = await client.get(f"http://{ip}:2379/health")
+                        if resp.status_code == 200 and resp.json().get("health") == "true":
+                            healthy += 1
+                    except Exception:
+                        continue
+                checks.append(_check_def(
+                    "etcd Unhealthy Nodes", "etcd|unhealthy",
+                    3 - healthy, 0.5, severity="critical" if healthy == 0 else "warning",
+                    message_tpl="{name}: {current:.0f} of 3 nodes unhealthy",
+                ))
+        except Exception:
+            logger.exception("system_health_etcd_checks_failed")
+
+        # ── Process results: fire/clear via Redis state ──
+        if not _redis:
+            return
+
+        alert_records = []
+        now = utc_now()
+        for check in checks:
+            if check is None:
+                continue
+            key = f"monctl:system_health:alerts:{check['entity_key']}"
+            prev_state = await _redis.get(key)
+            prev_state = prev_state.decode() if prev_state else "ok"
+
+            if check["breached"] and prev_state == "ok":
+                # Transition ok → firing
+                await _redis.set(key, "firing")
+                alert_records.append({
+                    "definition_id": str(uuid.uuid5(uuid.NAMESPACE_DNS, check["name"])),
+                    "definition_name": check["name"],
+                    "entity_key": check["entity_key"],
+                    "action": "fire",
+                    "severity": check["severity"],
+                    "current_value": check["current_value"],
+                    "threshold_value": check["threshold_value"],
+                    "expression": "",
+                    "device_id": SYSTEM_DEVICE_ID,
+                    "device_name": "monctl-cluster",
+                    "assignment_id": ZERO_UUID,
+                    "app_id": SYSTEM_APP_ID,
+                    "app_name": "System Health",
+                    "tenant_id": ZERO_UUID,
+                    "entity_labels": json.dumps({"component": check["entity_key"].split("|")[0]}),
+                    "fire_count": 1,
+                    "message": check["message"],
+                    "metric_values": json.dumps({"value": check["current_value"]}),
+                    "threshold_values": json.dumps({"threshold": check["threshold_value"]}),
+                    "occurred_at": now,
+                })
+                logger.warning("system_health_alert_fired check=%s value=%s",
+                               check["name"], check["current_value"])
+
+            elif not check["breached"] and prev_state == "firing":
+                # Transition firing → ok
+                await _redis.set(key, "ok")
+                alert_records.append({
+                    "definition_id": str(uuid.uuid5(uuid.NAMESPACE_DNS, check["name"])),
+                    "definition_name": check["name"],
+                    "entity_key": check["entity_key"],
+                    "action": "clear",
+                    "severity": check["severity"],
+                    "current_value": check["current_value"],
+                    "threshold_value": check["threshold_value"],
+                    "expression": "",
+                    "device_id": SYSTEM_DEVICE_ID,
+                    "device_name": "monctl-cluster",
+                    "assignment_id": ZERO_UUID,
+                    "app_id": SYSTEM_APP_ID,
+                    "app_name": "System Health",
+                    "tenant_id": ZERO_UUID,
+                    "entity_labels": json.dumps({"component": check["entity_key"].split("|")[0]}),
+                    "fire_count": 0,
+                    "message": f"Resolved: {check['name']}",
+                    "metric_values": json.dumps({"value": check["current_value"]}),
+                    "threshold_values": json.dumps({"threshold": check["threshold_value"]}),
+                    "occurred_at": now,
+                })
+                logger.info("system_health_alert_cleared check=%s", check["name"])
+
+        if alert_records:
+            try:
+                import asyncio as _aio
+                await _aio.to_thread(self._ch.insert_alert_log, alert_records)
+                logger.info("system_health_alerts_written count=%d", len(alert_records))
+            except Exception:
+                logger.exception("system_health_alert_write_failed")
+
+        await _redis.set("monctl:scheduler:last_system_health", now.isoformat())
 
     async def _evaluate_alerts(self) -> None:
         """Run alert engine evaluation if ClickHouse is available."""
@@ -919,3 +1192,145 @@ class SchedulerRunner:
         if idx >= len(ring_hashes):
             idx = 0
         return ring_nodes[idx]
+
+    # ── Nightly eligibility scan ─────────────────────────────────────────
+
+    async def _finalize_eligibility_runs(self) -> None:
+        """Check running eligibility runs and finalize if all devices have reported."""
+        if not self._ch:
+            return
+        try:
+            # Find running runs
+            from monctl_central.storage.clickhouse import ClickHouseClient
+            client = self._ch._get_client()
+            sql = "SELECT run_id, app_id, app_name, total_devices, started_at, triggered_by FROM eligibility_runs FINAL WHERE status = 'running'"
+            result = client.query(sql)
+            for row in result.result_rows:
+                run_id, app_id, app_name, total_devices, started_at, triggered_by = row
+                if total_devices == 0:
+                    continue
+
+                # Count non-pending results (eligible != 2 means probed)
+                count_sql = "SELECT countIf(eligible != 2) as done, countIf(eligible = 1) as elig, countIf(eligible = 0) as inelig, countIf(eligible = 2) as pending FROM eligibility_results WHERE run_id = {run_id:UUID}"
+                cr = client.query(count_sql, parameters={"run_id": str(run_id)})
+                if not cr.result_rows:
+                    continue
+                done, elig, inelig, pending = cr.result_rows[0]
+
+                # Update progress
+                from datetime import datetime, timezone
+                now = datetime.now(timezone.utc)
+                is_complete = done >= total_devices or (
+                    # Also complete if run is older than 10 min (timeout)
+                    hasattr(started_at, 'timestamp') and (now.timestamp() - started_at.timestamp()) > 600
+                )
+                self._ch.update_eligibility_run({
+                    "run_id": str(run_id),
+                    "app_id": str(app_id),
+                    "app_name": app_name,
+                    "status": "completed" if is_complete else "running",
+                    "started_at": started_at,
+                    "finished_at": now if is_complete else started_at,
+                    "duration_ms": int((now.timestamp() - started_at.timestamp()) * 1000) if is_complete and hasattr(started_at, 'timestamp') else 0,
+                    "total_devices": total_devices,
+                    "tested": done,
+                    "eligible": elig,
+                    "ineligible": inelig,
+                    "unreachable": pending if is_complete else 0,
+                    "triggered_by": triggered_by,
+                })
+        except Exception:
+            logger.exception("finalize_eligibility_runs_error")
+
+    async def _run_eligibility_scan(self) -> None:
+        """Run once daily at configurable time (system setting eligibility_scan_time)."""
+        now = datetime.now(timezone.utc)
+
+        # Read scan time from system settings (default 02:00 UTC)
+        scan_hour, scan_minute = 2, 0
+        try:
+            async with self._session_factory() as session:
+                from monctl_central.storage.models import SystemSetting
+                setting = (await session.execute(
+                    select(SystemSetting).where(SystemSetting.key == "eligibility_scan_time")
+                )).scalar_one_or_none()
+                if setting and setting.value:
+                    parts = setting.value.strip().split(":")
+                    if len(parts) == 2:
+                        scan_hour, scan_minute = int(parts[0]), int(parts[1])
+        except Exception:
+            pass
+
+        # Check if we should run now
+        today_scan = now.replace(hour=scan_hour, minute=scan_minute, second=0, microsecond=0)
+        if self._last_eligibility_scan and self._last_eligibility_scan.date() == now.date():
+            return  # Already ran today
+        if now < today_scan:
+            return  # Not yet time
+
+        self._last_eligibility_scan = now
+        logger.info("nightly_eligibility_scan_starting")
+
+        try:
+            async with self._session_factory() as session:
+                from monctl_central.storage.models import (
+                    App, AppAssignment, AppVersion, Device, DeviceType, Pack,
+                )
+                from monctl_central.cache import set_discovery_flag, clear_discovery_phase2_flag
+
+                devices = (await session.execute(
+                    select(Device).where(
+                        Device.is_enabled == True,  # noqa: E712
+                        Device.collector_group_id.isnot(None),
+                    )
+                )).scalars().all()
+
+                queued = 0
+                for device in devices:
+                    sys_oid = (device.metadata_ or {}).get("sys_object_id")
+                    if not sys_oid or not device.device_type:
+                        continue
+
+                    dt = (await session.execute(
+                        select(DeviceType).where(DeviceType.name == device.device_type)
+                    )).scalar_one_or_none()
+                    if not dt or not dt.auto_assign_packs:
+                        continue
+
+                    # Check for any unassigned candidate app
+                    has_unassigned = False
+                    for pack_uid in dt.auto_assign_packs:
+                        pack = (await session.execute(
+                            select(Pack).where(Pack.pack_uid == pack_uid)
+                        )).scalar_one_or_none()
+                        if not pack:
+                            continue
+                        apps = (await session.execute(
+                            select(App).where(App.pack_id == pack.id)
+                        )).scalars().all()
+                        for app in apps:
+                            if app.vendor_oid_prefix:
+                                pfx = app.vendor_oid_prefix
+                                if not (sys_oid == pfx or sys_oid.startswith(pfx + ".")):
+                                    continue
+                            existing = (await session.execute(
+                                select(AppAssignment.id).where(
+                                    AppAssignment.app_id == app.id,
+                                    AppAssignment.device_id == device.id,
+                                )
+                            )).scalar_one_or_none()
+                            if not existing:
+                                has_unassigned = True
+                                break
+                        if has_unassigned:
+                            break
+
+                    if has_unassigned:
+                        await clear_discovery_phase2_flag(str(device.id))
+                        await set_discovery_flag(str(device.id), ttl=3600)
+                        queued += 1
+
+                logger.info("nightly_eligibility_scan_complete",
+                            devices_scanned=len(devices), devices_queued=queued)
+        except Exception:
+            logger.exception("nightly_eligibility_scan_error")

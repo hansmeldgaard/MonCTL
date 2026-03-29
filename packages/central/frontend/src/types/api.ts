@@ -348,12 +348,45 @@ export interface DeviceAssignment {
 
 // ── Apps ──────────────────────────────────────────────────
 
+export interface EligibilityRun {
+  run_id: string;
+  app_id: string;
+  app_name: string;
+  status: "running" | "completed" | "failed";
+  started_at: string;
+  finished_at: string | null;
+  duration_ms: number;
+  total_devices: number;
+  tested: number;
+  eligible: number;
+  ineligible: number;
+  unreachable: number;
+  triggered_by: string;
+}
+
+export interface EligibilityDeviceResult {
+  device_id: string;
+  device_name: string;
+  device_address: string;
+  eligible: 0 | 1 | 2;
+  already_assigned: number;
+  oid_results?: string;
+  reason?: string;
+}
+
+export interface EligibilityOidCheck {
+  oid: string;
+  check: "exists" | "equals";
+  value?: string;
+}
+
 export interface AppSummary {
   id: string;
   name: string;
   description: string | null;
   app_type: string;
   target_table: string;
+  vendor_oid_prefix?: string | null;
   connector_bindings?: { alias: string; connector_id: string; connector_name: string }[];
 }
 
@@ -361,6 +394,7 @@ export interface AppVersion {
   id: string;
   version: string;
   is_latest: boolean;
+  eligibility_oids?: EligibilityOidCheck[];
 }
 
 export interface AppConnectorBindingInfo {

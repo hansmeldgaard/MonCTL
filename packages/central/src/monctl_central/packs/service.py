@@ -220,6 +220,7 @@ def _export_app(
         "app_type": a.app_type,
         "config_schema": a.config_schema,
         "target_table": a.target_table,
+        "vendor_oid_prefix": a.vendor_oid_prefix,
         "versions": [],
     }
     for v in a.versions:
@@ -230,6 +231,7 @@ def _export_app(
             "entry_class": v.entry_class,
             "is_latest": v.is_latest,
             "display_template": v.display_template,
+            "eligibility_oids": v.eligibility_oids,
         }
         d["versions"].append(ver_data)
     # Export threshold variables at the app level
@@ -315,7 +317,7 @@ def _export_device_category(dc: DeviceCategory) -> dict:
 
 
 def _export_device_type(dt: DeviceType) -> dict:
-    return {
+    d = {
         "name": dt.name,
         "sys_object_id_pattern": dt.sys_object_id_pattern,
         "device_category_name": dt.device_category.name if dt.device_category else "",
@@ -325,6 +327,9 @@ def _export_device_type(dt: DeviceType) -> dict:
         "description": dt.description,
         "priority": dt.priority,
     }
+    if dt.auto_assign_packs:
+        d["auto_assign_packs"] = dt.auto_assign_packs
+    return d
 
 
 def _export_label_key(lk: LabelKey) -> dict:
@@ -767,6 +772,7 @@ def _create_entity(item: dict, section: str, pack_id: uuid.UUID):
             app_type=item.get("app_type", "script"),
             config_schema=item.get("config_schema"),
             target_table=item.get("target_table", "availability_latency"),
+            vendor_oid_prefix=item.get("vendor_oid_prefix"),
             pack_id=pack_id,
         )
     elif section == "credential_templates":
@@ -809,6 +815,7 @@ def _create_entity(item: dict, section: str, pack_id: uuid.UUID):
             os_family=item.get("os_family"),
             description=item.get("description"),
             priority=item.get("priority", 0),
+            auto_assign_packs=item.get("auto_assign_packs"),
             pack_id=pack_id,
         )
     elif section == "label_keys":
@@ -837,6 +844,8 @@ def _update_entity(existing, item: dict, section: str, pack_id: uuid.UUID) -> No
         existing.app_type = item.get("app_type", existing.app_type)
         existing.config_schema = item.get("config_schema", existing.config_schema)
         existing.target_table = item.get("target_table", existing.target_table)
+        if "vendor_oid_prefix" in item:
+            existing.vendor_oid_prefix = item["vendor_oid_prefix"]
     elif section == "credential_templates":
         existing.description = item.get("description")
         existing.fields = item.get("fields", existing.fields)
@@ -858,6 +867,8 @@ def _update_entity(existing, item: dict, section: str, pack_id: uuid.UUID) -> No
         existing.vendor = item.get("vendor")
         existing.model = item.get("model")
         existing.os_family = item.get("os_family")
+        if "auto_assign_packs" in item:
+            existing.auto_assign_packs = item["auto_assign_packs"]
         existing.description = item.get("description")
         existing.priority = item.get("priority", existing.priority)
     elif section == "label_keys":
@@ -891,6 +902,7 @@ async def _create_app_versions(
             checksum_sha256=checksum,
             is_latest=vdata.get("is_latest", False),
             display_template=vdata.get("display_template"),
+            eligibility_oids=vdata.get("eligibility_oids"),
         )
         db.add(v)
         await db.flush()
@@ -931,6 +943,8 @@ async def _sync_app_versions(
                 ev.entry_class = vdata.get("entry_class", ev.entry_class)
                 if vdata.get("display_template") is not None:
                     ev.display_template = vdata["display_template"]
+                if "eligibility_oids" in vdata:
+                    ev.eligibility_oids = vdata["eligibility_oids"]
         else:
             checksum = hashlib.sha256(
                 (vdata.get("source_code") or "").encode()
@@ -944,6 +958,7 @@ async def _sync_app_versions(
                 checksum_sha256=checksum,
                 is_latest=False,
                 display_template=vdata.get("display_template"),
+                eligibility_oids=vdata.get("eligibility_oids"),
             )
             db.add(new_ver)
             await db.flush()

@@ -115,18 +115,6 @@ async def apply_config_to_device(
     # Apply monitoring configuration (availability / latency / interface)
     monitoring_config = config.get("monitoring", {})
     if monitoring_config:
-        roles_to_apply = [
-            r for r in ["availability", "latency", "interface"]
-            if monitoring_config.get(r)
-        ]
-        if roles_to_apply:
-            await db.execute(
-                sa_delete(AppAssignment).where(
-                    AppAssignment.device_id == device.id,
-                    AppAssignment.role.in_(roles_to_apply),
-                )
-            )
-
         for role_name in ["availability", "latency", "interface"]:
             check_config = monitoring_config.get(role_name)
             if not check_config or not check_config.get("app_name"):
@@ -152,18 +140,39 @@ async def apply_config_to_device(
                 continue
 
             interval = check_config.get("interval_seconds", 60)
-            assignment = AppAssignment(
-                app_id=app.id,
-                app_version_id=app_version.id,
-                device_id=device.id,
-                config=check_config.get("config", {}),
-                schedule_type="interval",
-                schedule_value=str(interval),
-                role=role_name,
-                credential_id=_resolve_credential_id(check_config.get("credential_id"), device),
-                enabled=True,
-            )
-            db.add(assignment)
+
+            # Upsert: check for existing assignment with same (app_id, device_id)
+            existing = (await db.execute(
+                select(AppAssignment).where(
+                    AppAssignment.app_id == app.id,
+                    AppAssignment.device_id == device.id,
+                )
+            )).scalar_one_or_none()
+
+            if existing:
+                existing.app_version_id = app_version.id
+                existing.config = check_config.get("config", {})
+                existing.schedule_type = "interval"
+                existing.schedule_value = str(interval)
+                existing.role = role_name
+                existing.credential_id = _resolve_credential_id(check_config.get("credential_id"), device)
+                existing.enabled = True
+                existing.use_latest = True
+                existing.updated_at = utc_now()
+            else:
+                assignment = AppAssignment(
+                    app_id=app.id,
+                    app_version_id=app_version.id,
+                    device_id=device.id,
+                    config=check_config.get("config", {}),
+                    schedule_type="interval",
+                    schedule_value=str(interval),
+                    role=role_name,
+                    credential_id=_resolve_credential_id(check_config.get("credential_id"), device),
+                    enabled=True,
+                    use_latest=True,
+                )
+                db.add(assignment)
 
     # Apply app assignments (generic — non-monitoring)
     for app_config in config.get("apps", []):
@@ -188,18 +197,37 @@ async def apply_config_to_device(
         if app_version is None:
             continue
 
-        assignment = AppAssignment(
-            app_id=app.id,
-            app_version_id=app_version.id,
-            device_id=device.id,
-            config=app_config.get("config", {}),
-            schedule_type=app_config.get("schedule_type", "interval"),
-            schedule_value=app_config.get("schedule_value", "60"),
-            role=app_config.get("role"),
-            credential_id=_resolve_credential_id(app_config.get("credential_id"), device),
-            enabled=True,
-        )
-        db.add(assignment)
+        # Upsert: update existing assignment if same app already assigned to this device
+        existing = (await db.execute(
+            select(AppAssignment).where(
+                AppAssignment.app_id == app.id,
+                AppAssignment.device_id == device.id,
+            )
+        )).scalar_one_or_none()
+
+        if existing:
+            existing.app_version_id = app_version.id
+            existing.config = app_config.get("config", {})
+            existing.schedule_type = app_config.get("schedule_type", "interval")
+            existing.schedule_value = app_config.get("schedule_value", "60")
+            existing.credential_id = _resolve_credential_id(app_config.get("credential_id"), device)
+            existing.enabled = True
+            existing.use_latest = True
+            existing.updated_at = utc_now()
+        else:
+            assignment = AppAssignment(
+                app_id=app.id,
+                app_version_id=app_version.id,
+                device_id=device.id,
+                config=app_config.get("config", {}),
+                schedule_type=app_config.get("schedule_type", "interval"),
+                schedule_value=app_config.get("schedule_value", "60"),
+                role=app_config.get("role"),
+                credential_id=_resolve_credential_id(app_config.get("credential_id"), device),
+                enabled=True,
+                use_latest=True,
+            )
+            db.add(assignment)
 
     device.updated_at = utc_now()
 

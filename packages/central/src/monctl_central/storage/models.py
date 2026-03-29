@@ -127,6 +127,7 @@ class App(Base):
     pack_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("packs.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    vendor_oid_prefix: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     versions: Mapped[list["AppVersion"]] = relationship(back_populates="app", cascade="all, delete-orphan")
     connector_bindings: Mapped[list["AppConnectorBinding"]] = relationship(
@@ -156,6 +157,7 @@ class AppVersion(Base):
     is_latest: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     display_template: Mapped[dict | None] = mapped_column(JSONB)
     volatile_keys: Mapped[list | None] = mapped_column(JSONB, server_default="[]")
+    eligibility_oids: Mapped[list | None] = mapped_column(JSONB)
 
     app: Mapped[App] = relationship(back_populates="versions")
 
@@ -210,6 +212,7 @@ class DeviceType(Base):
     pack_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("packs.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    auto_assign_packs: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )

@@ -5,13 +5,16 @@ from __future__ import annotations
 import re
 import uuid
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+
+logger = structlog.get_logger()
 from pydantic import BaseModel, Field, field_validator
 import sqlalchemy as sa
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from monctl_central.dependencies import apply_tenant_filter, get_db, require_auth
+from monctl_central.dependencies import apply_tenant_filter, get_clickhouse, get_db, require_auth
 from monctl_common.validators import validate_semver, validate_uuid
 from monctl_central.storage.models import (
     AlertDefinition,
@@ -22,6 +25,7 @@ from monctl_central.storage.models import (
     AssignmentConnectorBinding,
     Connector,
     ConnectorVersion,
+    Device,
     ThresholdVariable,
 )
 
@@ -82,6 +86,7 @@ class CreateAppRequest(BaseModel):
     app_type: str = Field(min_length=1, max_length=32, description="'script' or 'sdk'")
     config_schema: dict | None = None
     target_table: str = Field(default="availability_latency", max_length=64, description="ClickHouse target table")
+    vendor_oid_prefix: str | None = None
 
     @field_validator("app_type")
     @classmethod
@@ -288,6 +293,7 @@ async def list_apps(
             "description": a.description,
             "app_type": a.app_type,
             "target_table": a.target_table,
+            "vendor_oid_prefix": a.vendor_oid_prefix,
             "connector_bindings": [
                 {
                     "alias": b.alias,
@@ -319,12 +325,16 @@ async def create_app(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid target_table. Must be one of: {', '.join(sorted(VALID_TARGET_TABLES))}",
         )
+    vendor_prefix = (request.vendor_oid_prefix or "").strip() or None
+    if vendor_prefix and not all(p.isdigit() for p in vendor_prefix.split(".")):
+        raise HTTPException(400, detail="vendor_oid_prefix must be dotted-decimal (e.g. '1.3.6.1.4.1.9')")
     app = App(
         name=request.name,
         description=request.description,
         app_type=request.app_type,
         config_schema=request.config_schema,
         target_table=request.target_table,
+        vendor_oid_prefix=vendor_prefix,
     )
     db.add(app)
     await db.flush()
@@ -340,6 +350,7 @@ class UpdateAppRequest(BaseModel):
     app_type: str | None = Field(default=None, min_length=1, max_length=32)
     config_schema: dict | None = None
     target_table: str | None = Field(default=None, max_length=64)
+    vendor_oid_prefix: str | None = None
 
     @field_validator("app_type")
     @classmethod
@@ -364,6 +375,7 @@ class CreateVersionRequest(BaseModel):
     set_latest: bool = False
     display_template: dict | None = None
     volatile_keys: list[str] | None = None
+    eligibility_oids: list[dict] | None = None
 
     @field_validator("version")
     @classmethod
@@ -848,9 +860,10 @@ async def get_app(
             "description": app.description,
             "app_type": app.app_type,
             "target_table": app.target_table,
+            "vendor_oid_prefix": app.vendor_oid_prefix,
             "config_schema": app.config_schema,
             "versions": [
-                {"id": str(v.id), "version": v.version, "is_latest": v.is_latest, "volatile_keys": v.volatile_keys or []}
+                {"id": str(v.id), "version": v.version, "is_latest": v.is_latest, "volatile_keys": v.volatile_keys or [], "eligibility_oids": v.eligibility_oids or []}
                 for v in sorted(app.versions, key=lambda v: v.published_at, reverse=True)
             ],
             "connector_bindings": [
@@ -1032,6 +1045,21 @@ async def create_assignment(
         dev = await db.get(Device, uuid.UUID(request.device_id))
         if dev and dev.collector_group_id and pinned.group_id != dev.collector_group_id:
             raise HTTPException(status_code=400, detail="Pinned collector must be a member of the device's collector group")
+
+    # Check for duplicate: same app already assigned to this device
+    if request.device_id and not request.collector_id:
+        existing = (await db.execute(
+            select(AppAssignment).where(
+                AppAssignment.app_id == uuid.UUID(request.app_id),
+                AppAssignment.device_id == uuid.UUID(request.device_id),
+            )
+        )).scalar_one_or_none()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"App is already assigned to this device (assignment {existing.id}). "
+                       f"Use PUT /assignments/{{id}} to update it.",
+            )
 
     assignment = AppAssignment(
         app_id=uuid.UUID(request.app_id),
@@ -1317,6 +1345,11 @@ async def update_app(
                 detail=f"Invalid target_table. Must be one of: {', '.join(sorted(VALID_TARGET_TABLES))}",
             )
         app.target_table = request.target_table
+    if request.vendor_oid_prefix is not None:
+        prefix = request.vendor_oid_prefix.strip() or None
+        if prefix and not all(p.isdigit() for p in prefix.split(".")):
+            raise HTTPException(400, detail="vendor_oid_prefix must be dotted-decimal (e.g. '1.3.6.1.4.1.9')")
+        app.vendor_oid_prefix = prefix
     await db.flush()
     return {
         "status": "success",
@@ -1432,6 +1465,7 @@ async def get_app_version(
             "published_at": version.published_at.isoformat() if version.published_at else None,
             "display_template": version.display_template,
             "volatile_keys": version.volatile_keys or [],
+            "eligibility_oids": version.eligibility_oids or [],
         },
     }
 
@@ -1442,6 +1476,7 @@ class UpdateVersionRequest(BaseModel):
     entry_class: str | None = None
     display_template: dict | None = None
     volatile_keys: list[str] | None = None
+    eligibility_oids: list[dict] | None = None
 
 
 @router.put("/{app_id}/versions/{version_id}")
@@ -1475,6 +1510,9 @@ async def update_app_version(
         version.display_template = request.display_template
     if request.volatile_keys is not None:
         version.volatile_keys = request.volatile_keys
+    if request.eligibility_oids is not None:
+        _validate_eligibility_oids(request.eligibility_oids)
+        version.eligibility_oids = request.eligibility_oids
 
     await db.flush()
     return {
@@ -1542,6 +1580,9 @@ async def create_app_version(
     is_first = len(app.versions) == 0
     should_be_latest = request.set_latest or is_first
 
+    if request.eligibility_oids is not None:
+        _validate_eligibility_oids(request.eligibility_oids)
+
     checksum = hashlib.sha256(request.source_code.encode()).hexdigest()
     version = AppVersion(
         app_id=app.id,
@@ -1553,6 +1594,7 @@ async def create_app_version(
         is_latest=should_be_latest,
         display_template=request.display_template,
         volatile_keys=request.volatile_keys or [],
+        eligibility_oids=request.eligibility_oids,
     )
     db.add(version)
 
@@ -1988,3 +2030,397 @@ async def update_app_threshold(
     variable.updated_at = utc_now()
     await db.flush()
     return {"status": "success", "data": _fmt_threshold_variable(variable)}
+
+
+# ── Eligibility OID helpers ──────────────────────────────────────────────────
+
+
+def _validate_eligibility_oids(oids: list[dict]) -> None:
+    """Validate eligibility_oids structure. Raises HTTPException(400) on invalid."""
+    if not isinstance(oids, list):
+        raise HTTPException(400, detail="eligibility_oids must be a list")
+    for i, entry in enumerate(oids):
+        if not isinstance(entry, dict):
+            raise HTTPException(400, detail=f"eligibility_oids[{i}] must be an object")
+        oid = entry.get("oid")
+        if not oid or not isinstance(oid, str):
+            raise HTTPException(400, detail=f"eligibility_oids[{i}].oid is required (string)")
+        if not all(part.isdigit() for part in oid.split(".")):
+            raise HTTPException(400, detail=f"eligibility_oids[{i}].oid must be dotted-decimal")
+        check = entry.get("check")
+        if check not in ("exists", "equals"):
+            raise HTTPException(400, detail=f"eligibility_oids[{i}].check must be 'exists' or 'equals'")
+        if check == "equals" and "value" not in entry:
+            raise HTTPException(400, detail=f"eligibility_oids[{i}]: check='equals' requires a 'value' field")
+
+
+@router.get("/{app_id}/vendor-check/{device_id}")
+async def check_vendor_match(
+    app_id: str,
+    device_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Check if an app's vendor scope matches a device's sysObjectID."""
+    app = await db.get(App, uuid.UUID(app_id))
+    if not app:
+        raise HTTPException(404, detail="App not found")
+    device = await db.get(Device, uuid.UUID(device_id))
+    if not device:
+        raise HTTPException(404, detail="Device not found")
+    if not app.vendor_oid_prefix:
+        return {"status": "success", "data": {"match": True, "reason": "no_vendor_restriction"}}
+    device_sys_oid = (device.metadata_ or {}).get("sys_object_id")
+    if not device_sys_oid:
+        return {"status": "success", "data": {
+            "match": None,
+            "reason": "no_device_sys_object_id",
+            "warning": "Device has not been discovered. Vendor compatibility cannot be verified.",
+        }}
+    prefix = app.vendor_oid_prefix
+    is_match = device_sys_oid == prefix or device_sys_oid.startswith(prefix + ".")
+    return {"status": "success", "data": {
+        "match": is_match,
+        "reason": "vendor_match" if is_match else "vendor_mismatch",
+        "app_vendor_prefix": prefix,
+        "device_sys_object_id": device_sys_oid,
+        "warning": None if is_match else (
+            f"This app is designed for devices with sysObjectID prefix {prefix}, "
+            f"but this device has sysObjectID {device_sys_oid}."
+        ),
+    }}
+
+
+class TestEligibilityRequest(BaseModel):
+    device_ids: list[str] | None = None
+    collector_group_id: str | None = None
+    limit: int = Field(default=10000, ge=1, le=50000)
+    mode: str = Field(default="instant", pattern="^(instant|probe)$")
+
+
+@router.post("/{app_id}/test-eligibility", status_code=status.HTTP_200_OK)
+async def test_eligibility(
+    app_id: str,
+    request: TestEligibilityRequest,
+    db: AsyncSession = Depends(get_db),
+    ch=Depends(get_clickhouse),
+    auth: dict = Depends(require_auth),
+):
+    """Find devices that match this app's vendor scope.
+
+    mode=instant: Database lookup only (vendor prefix match). Instant results.
+    mode=probe: Sets discovery flags for real SNMP OID probing. Async — results
+    arrive as collectors execute discovery jobs (typically within 60s).
+    """
+    app = await db.get(App, uuid.UUID(app_id))
+    if not app:
+        raise HTTPException(404, detail="App not found")
+
+    # Find candidate devices — enabled, with collector group
+    stmt = select(Device).where(
+        Device.is_enabled == True,  # noqa: E712
+        Device.collector_group_id.isnot(None),
+    )
+    if request.device_ids:
+        stmt = stmt.where(Device.id.in_([uuid.UUID(d) for d in request.device_ids]))
+    if request.collector_group_id:
+        stmt = stmt.where(Device.collector_group_id == uuid.UUID(request.collector_group_id))
+
+    # Vendor prefix filter — only devices with confirmed matching sysObjectID
+    if app.vendor_oid_prefix:
+        pfx = app.vendor_oid_prefix
+        stmt = stmt.where(
+            sa.or_(
+                Device.metadata_["sys_object_id"].astext == pfx,
+                Device.metadata_["sys_object_id"].astext.startswith(pfx + "."),
+            )
+        )
+    devices = (await db.execute(stmt)).scalars().all()
+    devices = devices[:request.limit]
+
+    # Check which are already assigned
+    assigned_ids: set = set()
+    if devices:
+        rows = (await db.execute(
+            select(AppAssignment.device_id).where(
+                AppAssignment.app_id == app.id,
+                AppAssignment.device_id.in_([d.id for d in devices]),
+            )
+        )).scalars().all()
+        assigned_ids = set(rows)
+
+    from datetime import datetime, timezone
+    run_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    triggered_by = auth.get("username", "")
+
+    not_assigned = [d for d in devices if d.id not in assigned_ids]
+    already = [d for d in devices if d.id in assigned_ids]
+
+    if request.mode == "probe":
+        return await _test_eligibility_probe(
+            app, not_assigned, already, run_id, now, triggered_by, db, ch,
+        )
+
+    # --- Instant mode (default) ---
+    device_records = []
+    for d in not_assigned:
+        device_records.append({
+            "run_id": run_id, "device_id": str(d.id), "device_name": d.name,
+            "device_address": d.address, "eligible": 1, "already_assigned": 0,
+            "oid_results": "{}", "reason": "Vendor match — ready to assign", "probed_at": now,
+        })
+    for d in already:
+        device_records.append({
+            "run_id": run_id, "device_id": str(d.id), "device_name": d.name,
+            "device_address": d.address, "eligible": 1, "already_assigned": 1,
+            "oid_results": "{}", "reason": "Already assigned", "probed_at": now,
+        })
+
+    ch.insert_eligibility_run({
+        "run_id": run_id, "app_id": str(app.id), "app_name": app.name,
+        "status": "completed", "started_at": now, "finished_at": now,
+        "duration_ms": 0, "total_devices": len(devices), "tested": len(devices),
+        "eligible": len(not_assigned), "ineligible": 0, "unreachable": 0,
+        "triggered_by": triggered_by,
+    })
+    if device_records:
+        ch.insert_eligibility_results(device_records)
+
+    return {"status": "success", "data": {
+        "run_id": run_id, "total_devices": len(devices),
+        "eligible": len(not_assigned), "already_assigned": len(already),
+        "mode": "instant",
+    }}
+
+
+async def _test_eligibility_probe(
+    app: App,
+    not_assigned: list,
+    already: list,
+    run_id: str,
+    now,
+    triggered_by: str,
+    db: AsyncSession,
+    ch,
+):
+    """Probe mode: set discovery flags + Redis OID keys for real SNMP probing."""
+    from monctl_central.cache import (
+        set_discovery_flag,
+        set_eligibility_oids_for_device,
+        set_eligibility_run_for_device,
+    )
+
+    # Get eligibility OIDs from the latest version
+    latest_v = (await db.execute(
+        select(AppVersion).where(
+            AppVersion.app_id == app.id, AppVersion.is_latest == True,  # noqa: E712
+        )
+    )).scalar_one_or_none()
+
+    oid_list: list[str] = []
+    if latest_v and latest_v.eligibility_oids:
+        oid_list = [ec["oid"] for ec in latest_v.eligibility_oids if ec.get("oid")]
+
+    if not oid_list:
+        raise HTTPException(400, detail="No eligibility OIDs defined on latest app version")
+
+    total_devices = len(not_assigned) + len(already)
+
+    # Create run with status=running
+    ch.insert_eligibility_run({
+        "run_id": run_id, "app_id": str(app.id), "app_name": app.name,
+        "status": "running", "started_at": now, "finished_at": now,
+        "duration_ms": 0, "total_devices": total_devices, "tested": len(already),
+        "eligible": 0, "ineligible": 0, "unreachable": 0,
+        "triggered_by": triggered_by,
+    })
+
+    # Insert already-assigned devices immediately (they don't need probing)
+    already_records = []
+    for d in already:
+        already_records.append({
+            "run_id": run_id, "device_id": str(d.id), "device_name": d.name,
+            "device_address": d.address, "eligible": 1, "already_assigned": 1,
+            "oid_results": "{}", "reason": "Already assigned", "probed_at": now,
+        })
+    if already_records:
+        ch.insert_eligibility_results(already_records)
+
+    # Set discovery flags + OID keys for devices to probe
+    flagged = 0
+    for d in not_assigned:
+        dev_id = str(d.id)
+        await set_eligibility_oids_for_device(dev_id, oid_list)
+        await set_eligibility_run_for_device(dev_id, run_id, str(app.id))
+        await set_discovery_flag(dev_id, ttl=600)
+        flagged += 1
+
+    logger.info(
+        "eligibility_probe_started",
+        run_id=run_id, app_id=str(app.id), app_name=app.name,
+        flagged=flagged, already_assigned=len(already), oids=len(oid_list),
+    )
+
+    return {"status": "success", "data": {
+        "run_id": run_id, "total_devices": total_devices,
+        "flagged": flagged, "already_assigned": len(already),
+        "mode": "probe",
+    }}
+
+
+class AutoAssignRequest(BaseModel):
+    device_ids: list[str] | None = None
+
+
+@router.post("/{app_id}/auto-assign-eligible")
+async def auto_assign_eligible(
+    app_id: str,
+    run_id: str = Query(..., description="Eligibility run to assign from"),
+    body: AutoAssignRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+    ch=Depends(get_clickhouse),
+    auth: dict = Depends(require_auth),
+):
+    """Auto-assign this app to eligible devices from a completed eligibility run.
+
+    If device_ids is provided in the body, only those devices are assigned.
+    Otherwise all eligible devices from the run are assigned.
+    """
+    app = await db.get(App, uuid.UUID(app_id))
+    if not app:
+        raise HTTPException(404, detail="App not found")
+
+    latest = (await db.execute(
+        select(AppVersion).where(AppVersion.app_id == app.id, AppVersion.is_latest == True)  # noqa: E712
+    )).scalar_one_or_none()
+    if not latest:
+        raise HTTPException(400, detail="No latest version")
+
+    # Get eligible devices from the run
+    eligible_rows, _ = ch.query_eligibility_results(run_id, eligible_filter=1, limit=10000, offset=0)
+
+    # Filter to selected devices if specified
+    selected_ids = set(body.device_ids) if body and body.device_ids else None
+    if selected_ids:
+        eligible_rows = [r for r in eligible_rows if str(r["device_id"]) in selected_ids]
+
+    created = 0
+    skipped = 0
+    for row in eligible_rows:
+        dev_id = uuid.UUID(str(row["device_id"]))
+        # Check not already assigned
+        existing = (await db.execute(
+            select(AppAssignment.id).where(
+                AppAssignment.app_id == app.id, AppAssignment.device_id == dev_id,
+            )
+        )).scalar_one_or_none()
+        if existing:
+            skipped += 1
+            continue
+
+        device = await db.get(Device, dev_id)
+        if not device or not device.collector_group_id:
+            skipped += 1
+            continue
+
+        assignment = AppAssignment(
+            app_id=app.id,
+            app_version_id=latest.id,
+            device_id=dev_id,
+            config={},
+            schedule_type="interval",
+            schedule_value="60",
+            use_latest=True,
+            enabled=True,
+        )
+        db.add(assignment)
+        created += 1
+
+    await db.flush()
+    return {"status": "success", "data": {"created": created, "skipped": skipped}}
+
+
+@router.get("/{app_id}/eligibility-runs")
+async def list_eligibility_runs(
+    app_id: str,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    ch=Depends(get_clickhouse),
+    auth: dict = Depends(require_auth),
+):
+    rows, total = ch.query_eligibility_runs(app_id, limit=limit, offset=offset)
+    for r in rows:
+        for k in ("started_at", "finished_at"):
+            if r.get(k) and hasattr(r[k], "isoformat"):
+                r[k] = r[k].isoformat()
+        for k in ("run_id", "app_id"):
+            r[k] = str(r[k])
+    return {"status": "success", "data": rows, "meta": {"total": total, "limit": limit, "offset": offset}}
+
+
+@router.get("/{app_id}/eligibility-runs/{run_id}")
+async def get_eligibility_run_detail(
+    app_id: str,
+    run_id: str,
+    eligible_filter: int | None = Query(default=None, ge=0, le=2),
+    limit: int = Query(default=25, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    ch=Depends(get_clickhouse),
+    auth: dict = Depends(require_auth),
+):
+    # Get run summary
+    runs, _ = ch.query_eligibility_runs(app_id, limit=1, offset=0)
+    run = None
+    for r in runs:
+        if str(r.get("run_id")) == run_id:
+            run = r
+            break
+    if not run:
+        # Direct lookup
+        all_runs, _ = ch.query_eligibility_runs(app_id, limit=100, offset=0)
+        for r in all_runs:
+            if str(r.get("run_id")) == run_id:
+                run = r
+                break
+    if not run:
+        raise HTTPException(404, detail="Run not found")
+
+    for k in ("started_at", "finished_at"):
+        if run.get(k) and hasattr(run[k], "isoformat"):
+            run[k] = run[k].isoformat()
+    for k in ("run_id", "app_id"):
+        run[k] = str(run[k])
+
+    # Get per-device results
+    device_rows, device_total = ch.query_eligibility_results(
+        run_id, eligible_filter=eligible_filter, limit=limit, offset=offset,
+    )
+    for dr in device_rows:
+        dr["device_id"] = str(dr["device_id"])
+        # Deduplicated query uses last_probed_at alias
+        if "last_probed_at" in dr:
+            dr["probed_at"] = dr.pop("last_probed_at")
+        if dr.get("probed_at") and hasattr(dr["probed_at"], "isoformat"):
+            dr["probed_at"] = dr["probed_at"].isoformat()
+
+    return {"status": "success", "data": {
+        "run": run,
+        "devices": device_rows,
+        "meta": {"total": device_total, "limit": limit, "offset": offset},
+    }}
+
+
+def _resolve_snmp_cred(device: Device) -> uuid.UUID | None:
+    """Resolve SNMP credential ID for a device."""
+    if device.credentials:
+        for ctype, cval in device.credentials.items():
+            if "snmp" in ctype.lower():
+                try:
+                    # credentials JSONB can be {type: uuid_str} or {type: {id: uuid_str, ...}}
+                    if isinstance(cval, dict):
+                        return uuid.UUID(str(cval.get("id", "")))
+                    return uuid.UUID(str(cval))
+                except ValueError:
+                    pass
+    return device.default_credential_id

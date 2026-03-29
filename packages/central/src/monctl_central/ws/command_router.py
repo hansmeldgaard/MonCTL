@@ -9,7 +9,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from monctl_central.dependencies import require_auth
+from monctl_central.dependencies import require_collector_auth
 from monctl_central.ws.router import manager
 
 logger = structlog.get_logger()
@@ -24,7 +24,7 @@ class CommandRequest(BaseModel):
 @router.get("/collectors/{collector_id}/ws-status")
 async def get_ws_status(
     collector_id: str,
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_collector_auth),
 ):
     """Check if a collector is connected via WebSocket."""
     cid = uuid.UUID(collector_id)
@@ -40,7 +40,7 @@ async def get_ws_status(
 
 @router.get("/collectors/ws-connections")
 async def list_ws_connections(
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_collector_auth),
 ):
     """List all active WebSocket connections."""
     return {"status": "success", "data": {"connections": await manager.get_status()}}
@@ -51,12 +51,13 @@ async def send_command(
     collector_id: str,
     command_type: str,
     request: CommandRequest,
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_collector_auth),
 ):
     """Send an ad-hoc command to a collector via WebSocket."""
     allowed_types = {
         "poll_device", "config_reload", "health_check",
         "module_update", "docker_health", "docker_logs",
+        "probe_oids",
     }
     if command_type not in allowed_types:
         raise HTTPException(

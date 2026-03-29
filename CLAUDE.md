@@ -189,25 +189,33 @@ stmt = apply_tenant_filter(stmt, auth, Device.tenant_id)
 
 ## Building & Deploying
 
-### Central
+### Deploy Script (preferred)
+
+Use `./deploy.sh` for all deployments — it builds, saves the image once, and deploys to all nodes in parallel:
+
 ```bash
-docker build --platform linux/amd64 --no-cache -t monctl-central:latest -f docker/Dockerfile.central .
-docker save monctl-central:latest | ssh monctl@10.145.210.41 'docker load'
-ssh monctl@10.145.210.41 'cd /opt/monctl/central && docker compose down && docker compose up -d'
+./deploy.sh central              # Build + deploy to all 4 central nodes
+./deploy.sh collector            # Build + deploy to all 4 worker nodes
+./deploy.sh central --no-build   # Deploy only (skip build, reuse existing image)
+./deploy.sh central 41 42        # Deploy to specific nodes (last IP octet)
 ```
 
-### Collector
+The script handles: parallel transfer, correct compose paths (central-ha vs central), service restart, and image pruning.
+
+### Manual Build (only if needed)
+
 ```bash
-docker build --platform linux/amd64 --no-cache -t monctl-collector:latest -f docker/Dockerfile.collector-v2 .
-docker save monctl-collector:latest | ssh monctl@10.145.210.31 'docker load'
-ssh monctl@10.145.210.31 'cd /opt/monctl/collector && docker compose down && docker compose up -d'
+# Central
+docker build --platform linux/amd64 -t monctl-central:latest -f docker/Dockerfile.central .
+# Collector
+docker build --platform linux/amd64 -t monctl-collector:latest -f docker/Dockerfile.collector-v2 .
 ```
 
 **Important**:
 - Use `Dockerfile.collector-v2` (not `Dockerfile.collector`)
 - No npm/node on servers — Dockerfile handles frontend build
 - No package-lock.json — uses `npm install` (not `npm ci`)
-- Always use `--no-cache` when rebuilding after source changes
+- Default build uses Docker layer caching (fast for source-only changes). Only add `--no-cache` when dependencies change (package.json, pyproject.toml)
 - Use `docker compose up -d` (not `restart`) to pick up new images
 - Deploy to ALL 4 central nodes and ALL 4 worker nodes
 - **Alpine healthchecks**: Use `pg_isready` for Patroni (not wget/curl), `redis-cli ping` for Redis
@@ -269,3 +277,5 @@ SSH user: `monctl` for all servers.
 3. Save state after login
 
 **Notes**: Self-signed cert (Chromium ignores by default). Always headless. Screenshots to `.playwright/screenshots/`.
+
+**Testing policy**: After implementing or deploying a new feature/fix, proactively verify it works in the real UI using the Playwright MCP browser — navigate to the relevant page, interact, and take a screenshot. Don't just check the API.

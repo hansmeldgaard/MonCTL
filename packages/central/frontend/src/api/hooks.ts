@@ -102,6 +102,9 @@ import type {
   AutomationRun,
   TemplateBinding,
   ResolvedTemplateResult,
+  EligibilityOidCheck,
+  EligibilityRun,
+  EligibilityDeviceResult,
 } from "@/types/api.ts";
 
 function buildListQs(params: ListParams): string {
@@ -1788,7 +1791,7 @@ export function useUpdateApp() {
   return useMutation({
     mutationFn: ({ id, data }: {
       id: string;
-      data: { name?: string; description?: string; app_type?: string; config_schema?: Record<string, unknown> };
+      data: { name?: string; description?: string; app_type?: string; config_schema?: Record<string, unknown>; vendor_oid_prefix?: string | null };
     }) => apiPut<AppSummary>(`/apps/${id}`, data),
     onSuccess: (_res, { id }) => {
       qc.invalidateQueries({ queryKey: ["apps"] });
@@ -1838,7 +1841,7 @@ export function useCreateAppVersion() {
   return useMutation({
     mutationFn: ({ appId, data }: {
       appId: string;
-      data: { version: string; source_code: string; requirements?: string[]; entry_class?: string; display_template?: DisplayTemplate; volatile_keys?: string[] };
+      data: { version: string; source_code: string; requirements?: string[]; entry_class?: string; display_template?: DisplayTemplate; volatile_keys?: string[]; eligibility_oids?: EligibilityOidCheck[] };
     }) => apiPost<{ id: string }>(`/apps/${appId}/versions`, data),
     onSuccess: (_res, { appId }) => {
       qc.invalidateQueries({ queryKey: ["app-detail", appId] });
@@ -1864,7 +1867,7 @@ export function useUpdateAppVersion() {
     mutationFn: ({ appId, versionId, data }: {
       appId: string;
       versionId: string;
-      data: { source_code?: string; requirements?: string[]; entry_class?: string; display_template?: DisplayTemplate | null; volatile_keys?: string[] };
+      data: { source_code?: string; requirements?: string[]; entry_class?: string; display_template?: DisplayTemplate | null; volatile_keys?: string[]; eligibility_oids?: EligibilityOidCheck[] };
     }) => apiPut<{ id: string }>(`/apps/${appId}/versions/${versionId}`, data),
     onSuccess: (_res, { appId }) => {
       qc.invalidateQueries({ queryKey: ["app-detail", appId] });
@@ -1911,6 +1914,59 @@ export function useAppConfigKeys(appId: string | undefined, versionId?: string) 
     },
     select: (res) => res.data,
     enabled: !!appId,
+  });
+}
+
+export function useStartEligibilityTest() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ appId, mode = "instant" }: { appId: string; mode?: "instant" | "probe" }) =>
+      apiPost<{ run_id: string; total_devices: number; mode: string }>(`/apps/${appId}/test-eligibility`, { mode }),
+    onSuccess: (_d, { appId }) => {
+      qc.invalidateQueries({ queryKey: ["eligibility-runs", appId] });
+    },
+  });
+}
+
+export function useEligibilityRuns(appId: string | undefined) {
+  return useQuery({
+    queryKey: ["eligibility-runs", appId],
+    queryFn: () => apiGet<EligibilityRun[]>(`/apps/${appId}/eligibility-runs?limit=20`),
+    select: (res) => res,
+    enabled: !!appId,
+    refetchInterval: 5000,
+  });
+}
+
+export function useEligibilityRunDetail(appId: string | undefined, runId: string | undefined, eligibleFilter?: number, page = 1) {
+  return useQuery({
+    queryKey: ["eligibility-run-detail", appId, runId, eligibleFilter, page],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      params.set("limit", "25");
+      params.set("offset", String((page - 1) * 25));
+      if (eligibleFilter !== undefined) params.set("eligible_filter", String(eligibleFilter));
+      return apiGet<{ run: EligibilityRun; devices: EligibilityDeviceResult[]; meta: { total: number; limit: number; offset: number } }>(
+        `/apps/${appId}/eligibility-runs/${runId}?${params}`,
+      );
+    },
+    enabled: !!appId && !!runId,
+    refetchInterval: 5000,
+  });
+}
+
+export function useAutoAssignEligible() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ appId, runId, deviceIds }: { appId: string; runId: string; deviceIds?: string[] }) =>
+      apiPost<{ created: number; skipped: number }>(
+        `/apps/${appId}/auto-assign-eligible?run_id=${runId}`,
+        deviceIds ? { device_ids: deviceIds } : {},
+      ),
+    onSuccess: (_d, { appId }) => {
+      qc.invalidateQueries({ queryKey: ["eligibility-runs", appId] });
+      qc.invalidateQueries({ queryKey: ["device-assignments"] });
+    },
   });
 }
 

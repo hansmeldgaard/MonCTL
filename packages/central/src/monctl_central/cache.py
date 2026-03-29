@@ -525,9 +525,93 @@ async def get_and_clear_discovery_flag(device_id: str) -> bool:
     Uses GETDEL for atomic check-and-clear — only one collector picks it up.
     """
     if _redis:
-        result = await _redis.getdel(f"{_DISCOVERY_PREFIX}{device_id}")
+        key = f"{_DISCOVERY_PREFIX}{device_id}"
+        try:
+            result = await _redis.get(key)
+        except Exception as exc:
+            logger.warning("discovery_flag_get_error", device_id=device_id, error=str(exc))
+            return False
+        if result is not None:
+            await _redis.delete(key)
+            logger.debug("discovery_flag_consumed", device_id=device_id)
+            return True
+    else:
+        logger.warning("discovery_flag_no_redis")
+    return False
+
+
+_DISCOVERY_PHASE2_PREFIX = "discovery:phase2:"
+_ELIGIBILITY_RUN_PREFIX = "eligibility:run:"
+
+
+async def set_discovery_phase2_flag(device_id: str) -> bool:
+    """Set phase-2 discovery flag (NX — only if not already set).
+
+    Prevents infinite discovery loops by ensuring phase 2 runs at most once.
+    Returns True if the flag was newly set, False if already present.
+    """
+    if _redis:
+        result = await _redis.set(
+            f"{_DISCOVERY_PHASE2_PREFIX}{device_id}", "1", ex=600, nx=True,
+        )
         return result is not None
     return False
+
+
+async def clear_discovery_phase2_flag(device_id: str) -> None:
+    """Clear the phase-2 flag after successful processing or for re-evaluation."""
+    if _redis:
+        await _redis.delete(f"{_DISCOVERY_PHASE2_PREFIX}{device_id}")
+
+
+async def set_eligibility_run_for_device(device_id: str, run_id: str, app_id: str) -> None:
+    """Link a device to an active eligibility run (TTL 10 min)."""
+    if _redis:
+        import json
+        await _redis.set(
+            f"{_ELIGIBILITY_RUN_PREFIX}{device_id}",
+            json.dumps({"run_id": run_id, "app_id": app_id}),
+            ex=600,
+        )
+
+
+async def get_eligibility_run_for_device(device_id: str) -> dict | None:
+    """Get active eligibility run info for a device, if any."""
+    if _redis:
+        import json
+        val = await _redis.get(f"{_ELIGIBILITY_RUN_PREFIX}{device_id}")
+        if val:
+            return json.loads(val)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Eligibility OIDs per-device (for test-eligibility probe mode)
+# ---------------------------------------------------------------------------
+
+_ELIGIBILITY_OIDS_PREFIX = "eligibility:oids:"
+
+
+async def set_eligibility_oids_for_device(device_id: str, oids: list[str]) -> None:
+    """Store eligibility OIDs to probe for a device (TTL 10 min)."""
+    if _redis:
+        import json
+        await _redis.set(
+            f"{_ELIGIBILITY_OIDS_PREFIX}{device_id}",
+            json.dumps(oids),
+            ex=600,
+        )
+
+
+async def get_eligibility_oids_for_device(device_id: str) -> list[str] | None:
+    """Get eligibility OIDs to probe for a device, consuming the key."""
+    if _redis:
+        import json
+        val = await _redis.get(f"{_ELIGIBILITY_OIDS_PREFIX}{device_id}")
+        if val:
+            await _redis.delete(f"{_ELIGIBILITY_OIDS_PREFIX}{device_id}")
+            return json.loads(val)
+    return None
 
 
 # ---------------------------------------------------------------------------
