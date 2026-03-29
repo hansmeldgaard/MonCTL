@@ -107,17 +107,33 @@ class Poller(BasePoller):
                 try:
                     elig_raw = await snmp.get(eligibility_oid_list)
                     elig_results = {}
+                    # OIDs that need GETNEXT fallback (table OIDs return NoSuchObject on GET)
+                    needs_walk = []
                     for oid in eligibility_oid_list:
                         value = elig_raw.get(oid)
                         if value is not None:
                             val_str = _decode_snmp_value(value)
                             val_lower = val_str.lower()
                             if "nosuchobject" in val_lower or "nosuchinstance" in val_lower or "no such object" in val_lower or "no such instance" in val_lower:
-                                elig_results[oid] = None
+                                needs_walk.append(oid)
                             else:
                                 elig_results[oid] = val_str
                         else:
+                            needs_walk.append(oid)
+
+                    # Fallback: walk(oid) for table OIDs that returned NoSuchObject
+                    # If walk returns any children, the subtree exists
+                    for oid in needs_walk:
+                        try:
+                            rows = await snmp.walk(oid)
+                            if rows:
+                                # Subtree exists — return first child's value as proof
+                                elig_results[oid] = _decode_snmp_value(rows[0][1])
+                            else:
+                                elig_results[oid] = None
+                        except Exception:
                             elig_results[oid] = None
+
                     config_data["_eligibility_results"] = elig_results
                 except Exception as elig_exc:
                     config_data["_eligibility_error"] = str(elig_exc)
