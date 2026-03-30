@@ -11,7 +11,7 @@ import structlog
 logger = structlog.get_logger()
 
 SIDECAR_PORT = 9100
-SIDECAR_TIMEOUT = 120.0
+SIDECAR_TIMEOUT = 15.0
 
 
 async def check_node_updates(node_ip: str) -> list[dict]:

@@ -944,6 +944,9 @@ class SchedulerRunner:
         if self._last_os_check is not None and (now - self._last_os_check).total_seconds() < 86400:
             return
 
+        # Mark as checked immediately to prevent blocking scheduler on retries
+        self._last_os_check = now
+
         from sqlalchemy import delete, func, select
         from monctl_central.storage.models import OsAvailableUpdate, SystemSetting, SystemVersion
 
@@ -1006,7 +1009,6 @@ class SchedulerRunner:
                     count = count_result.scalar() or 0
                     await _redis.set("monctl:os_updates:count", str(count))
 
-                self._last_os_check = now
                 logger.info("os_update_check_complete node_count=%d", len(nodes))
 
         except Exception:
