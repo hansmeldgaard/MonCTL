@@ -398,6 +398,7 @@ function MonitoringRoleRow({
   onClear: () => void;
   disabled?: boolean;
 }) {
+  const { data: credentials } = useCredentials();
   const enabled = !!check;
   const appId = apps.find((a) => a.name === check?.app_name)?.id;
   const { data: appDetail } = useAppDetail(appId);
@@ -452,6 +453,22 @@ function MonitoringRoleRow({
               {intervals.map((i) => (
                 <option key={i.value} value={i.value}>
                   {i.label}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div>
+            <Label className="text-xs text-zinc-400">Credential</Label>
+            <Select
+              value={check.credential_id ?? ""}
+              onChange={(e) => onChange({ ...check, credential_id: e.target.value || undefined })}
+              disabled={disabled}
+            >
+              <option value="">-- Device default --</option>
+              <option value="device_default">Device default (explicit)</option>
+              {(credentials ?? []).map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} ({c.credential_type})
                 </option>
               ))}
             </Select>
@@ -531,6 +548,7 @@ function TemplateAppCard({
   onRemove: () => void;
   disabled?: boolean;
 }) {
+  const { data: credentials } = useCredentials();
   const { data: appsResp } = useApps();
   const allApps = appsResp?.data ?? [];
   const appId = allApps.find((a) => a.name === entry.app_name)?.id;
@@ -626,19 +644,37 @@ function TemplateAppCard({
             </div>
           </div>
 
-          <div>
-            <Label className="text-xs text-zinc-400">
-              Role <span className="text-zinc-600">(optional)</span>
-            </Label>
-            <Select
-              value={entry.role || ""}
-              onChange={(e) => onChange({ ...entry, role: e.target.value || undefined })}
-              disabled={disabled}
-            >
-              <option value="">-- None --</option>
-              <option value="performance">performance</option>
-              <option value="config">config</option>
-            </Select>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs text-zinc-400">
+                Role <span className="text-zinc-600">(optional)</span>
+              </Label>
+              <Select
+                value={entry.role || ""}
+                onChange={(e) => onChange({ ...entry, role: e.target.value || undefined })}
+                disabled={disabled}
+              >
+                <option value="">-- None --</option>
+                <option value="performance">performance</option>
+                <option value="config">config</option>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs text-zinc-400">Credential</Label>
+              <Select
+                value={entry.credential_id ?? ""}
+                onChange={(e) => onChange({ ...entry, credential_id: e.target.value || undefined })}
+                disabled={disabled}
+              >
+                <option value="">-- Device default --</option>
+                <option value="device_default">Device default (explicit)</option>
+                {(credentials ?? []).map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} ({c.credential_type})
+                  </option>
+                ))}
+              </Select>
+            </div>
           </div>
 
           {/* Schema-driven config fields */}
