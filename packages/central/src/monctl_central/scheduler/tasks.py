@@ -338,7 +338,7 @@ class SchedulerRunner:
                 continue
             key = f"monctl:system_health:alerts:{check['entity_key']}"
             prev_state = await _redis.get(key)
-            prev_state = prev_state.decode() if prev_state else "ok"
+            prev_state = (prev_state if isinstance(prev_state, str) else prev_state.decode()) if prev_state else "ok"
 
             if check["breached"] and prev_state == "ok":
                 # Transition ok → firing
