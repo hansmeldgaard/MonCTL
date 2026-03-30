@@ -112,10 +112,13 @@ import {
   useDeviceTypes,
   useResolveTemplates,
   useAutoApplyTemplates,
+  useDeviceInterfaceRules,
+  useSetDeviceInterfaceRules,
+  useEvaluateInterfaceRules,
 } from "@/api/hooks.ts";
 import { apiGet } from "@/api/client.ts";
 import { useAuth } from "@/hooks/useAuth.tsx";
-import type { Device as DeviceModel, DeviceAssignment, DeviceThresholdRow, ConfigDiffEntry, AlertLogEntry, MonitoringEvent, ResolvedTemplateResult } from "@/types/api.ts";
+import type { Device as DeviceModel, DeviceAssignment, DeviceThresholdRow, ConfigDiffEntry, AlertLogEntry, MonitoringEvent, ResolvedTemplateResult, InterfaceRule } from "@/types/api.ts";
 import { useListState } from "@/hooks/useListState.ts";
 import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
 import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
@@ -2046,9 +2049,9 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
 
   // Build metadata lookup
   const metaMap = useMemo(() => {
-    const m = new Map<string, { polling_enabled: boolean; alerting_enabled: boolean; poll_metrics: string }>();
+    const m = new Map<string, { polling_enabled: boolean; alerting_enabled: boolean; poll_metrics: string; rules_managed: boolean }>();
     for (const meta of metadata ?? []) {
-      m.set(meta.id, { polling_enabled: meta.polling_enabled, alerting_enabled: meta.alerting_enabled, poll_metrics: meta.poll_metrics ?? "all" });
+      m.set(meta.id, { polling_enabled: meta.polling_enabled, alerting_enabled: meta.alerting_enabled, poll_metrics: meta.poll_metrics ?? "all", rules_managed: meta.rules_managed });
     }
     return m;
   }, [metadata]);
@@ -2301,6 +2304,9 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
         </div>
       </div>
 
+      {/* Interface rules */}
+      <InterfaceRulesCard deviceId={deviceId} />
+
       {/* Multi-interface chart */}
       {showMultiChart && multiHistory ? (
         <Card>
@@ -2460,19 +2466,24 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
                   </TableCell>
                   <TableCell className="text-zinc-500 text-xs">{timeAgo(iface.executed_at)}</TableCell>
                   <TableCell className="text-center" onClick={e => e.stopPropagation()}>
-                    <InterfaceToggleCell
-                      state={{
-                        polling_enabled: pollingOn,
-                        alerting_enabled: alertingOn,
-                        traffic: metrics.has("traffic"),
-                        errors: metrics.has("errors"),
-                        discards: metrics.has("discards"),
-                        status: metrics.has("status"),
-                      }}
-                      onTogglePolling={() => updateSettings.mutate({ deviceId, interfaceId: iface.interface_id, data: { polling_enabled: !pollingOn } })}
-                      onToggleAlerting={() => updateSettings.mutate({ deviceId, interfaceId: iface.interface_id, data: { alerting_enabled: !alertingOn } })}
-                      onToggleMetric={toggleMetric}
-                    />
+                    <div className="flex items-center gap-1 justify-center">
+                      <InterfaceToggleCell
+                        state={{
+                          polling_enabled: pollingOn,
+                          alerting_enabled: alertingOn,
+                          traffic: metrics.has("traffic"),
+                          errors: metrics.has("errors"),
+                          discards: metrics.has("discards"),
+                          status: metrics.has("status"),
+                        }}
+                        onTogglePolling={() => updateSettings.mutate({ deviceId, interfaceId: iface.interface_id, data: { polling_enabled: !pollingOn } })}
+                        onToggleAlerting={() => updateSettings.mutate({ deviceId, interfaceId: iface.interface_id, data: { alerting_enabled: !alertingOn } })}
+                        onToggleMetric={toggleMetric}
+                      />
+                      {meta?.rules_managed && (
+                        <span className="text-[9px] font-bold text-brand-400 leading-none" title="Managed by interface rule">R</span>
+                      )}
+                    </div>
                   </TableCell>
                 </TableRow>
                 );
@@ -2494,6 +2505,278 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
           </Table>
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+// ── Interface Rules Card ──────────────────────────────────
+
+const MATCH_TYPE_OPTIONS = [
+  { value: "glob", label: "Glob" },
+  { value: "regex", label: "Regex" },
+  { value: "exact", label: "Exact" },
+];
+const NUMERIC_OP_OPTIONS = [
+  { value: "eq", label: "=" },
+  { value: "gt", label: ">" },
+  { value: "lt", label: "<" },
+  { value: "gte", label: "≥" },
+  { value: "lte", label: "≤" },
+];
+const METRICS_OPTIONS = [
+  { value: "all", label: "All metrics" },
+  { value: "traffic,status", label: "Traffic + Status" },
+  { value: "traffic", label: "Traffic only" },
+  { value: "traffic,errors", label: "Traffic + Errors" },
+  { value: "traffic,errors,discards,status", label: "All (explicit)" },
+];
+
+function emptyRule(): InterfaceRule {
+  return { name: "", match: { if_alias: { pattern: "*", type: "glob" } }, settings: { polling_enabled: true }, priority: 10 };
+}
+
+function InterfaceRulesCard({ deviceId }: { deviceId: string }) {
+  const { data: rules } = useDeviceInterfaceRules(deviceId);
+  const setRules = useSetDeviceInterfaceRules();
+  const evaluate = useEvaluateInterfaceRules();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<InterfaceRule[]>([]);
+  const [evalResult, setEvalResult] = useState<{ matched: number; changed: number; total: number } | null>(null);
+
+  const startEdit = () => { setDraft(rules && rules.length > 0 ? JSON.parse(JSON.stringify(rules)) : [emptyRule()]); setEditing(true); setEvalResult(null); };
+  const cancel = () => { setEditing(false); setEvalResult(null); };
+
+  const save = () => {
+    setRules.mutate({ deviceId, data: { interface_rules: draft, apply_now: false } }, {
+      onSuccess: () => setEditing(false),
+    });
+  };
+
+  const runEvaluate = (force: boolean) => {
+    evaluate.mutate({ deviceId, force }, {
+      onSuccess: (res) => {
+        const d = (res as { data: { matched: number; changed: number; total: number } }).data;
+        setEvalResult(d);
+      },
+    });
+  };
+
+  const addRule = () => setDraft([...draft, emptyRule()]);
+  const removeRule = (i: number) => setDraft(draft.filter((_, idx) => idx !== i));
+  const updateRule = (i: number, rule: InterfaceRule) => { const next = [...draft]; next[i] = rule; setDraft(next); };
+
+  const hasRules = (rules?.length ?? 0) > 0;
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm text-zinc-400 flex items-center justify-between">
+          <span className="flex items-center gap-2">
+            <Settings2 className="h-4 w-4" />
+            Interface Rules
+            {hasRules && !editing && <Badge variant="info">{rules!.length} rule{rules!.length !== 1 ? "s" : ""}</Badge>}
+          </span>
+          <div className="flex items-center gap-2">
+            {!editing && hasRules && (
+              <>
+                <Button variant="outline" size="sm" className="h-7 text-xs gap-1" disabled={evaluate.isPending}
+                  onClick={() => runEvaluate(false)}>
+                  {evaluate.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Zap className="h-3 w-3" />}
+                  Evaluate
+                </Button>
+                <Button variant="outline" size="sm" className="h-7 text-xs gap-1" disabled={evaluate.isPending}
+                  onClick={() => runEvaluate(true)}>
+                  Force
+                </Button>
+              </>
+            )}
+            <Button variant={editing ? "secondary" : "outline"} size="sm" className="h-7 text-xs gap-1"
+              onClick={editing ? cancel : startEdit}>
+              {editing ? <><X className="h-3 w-3" /> Cancel</> : <><Pencil className="h-3 w-3" /> {hasRules ? "Edit" : "Add Rules"}</>}
+            </Button>
+          </div>
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {evalResult && (
+          <div className="mb-3 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300">
+            Evaluated {evalResult.total} interfaces — {evalResult.matched} matched, {evalResult.changed} changed.
+          </div>
+        )}
+
+        {!editing && !hasRules && (
+          <p className="text-sm text-zinc-500">No interface rules configured. Rules auto-configure interface monitoring based on name, alias, or speed.</p>
+        )}
+
+        {!editing && hasRules && (
+          <div className="space-y-1.5">
+            {rules!.map((rule, i) => (
+              <div key={i} className="flex items-center gap-3 rounded-md border border-zinc-800 px-3 py-2">
+                <span className="text-xs font-medium text-zinc-200 min-w-0 truncate">{rule.name}</span>
+                <span className="ml-auto text-[10px] text-zinc-500 shrink-0">prio {rule.priority}</span>
+                <div className="flex items-center gap-1.5">
+                  {Object.entries(rule.match).map(([field, spec]) => (
+                    <Badge key={field} variant="default" className="text-[10px]">
+                      {field}: {(spec as { pattern?: string; op?: string; value?: number }).pattern ?? `${(spec as { op: string }).op} ${(spec as { value: number }).value}`}
+                    </Badge>
+                  ))}
+                </div>
+                <div className="flex items-center gap-1">
+                  {rule.settings.polling_enabled != null && (
+                    <span className={`h-2 w-2 rounded-full ${rule.settings.polling_enabled ? "bg-brand-500" : "bg-zinc-700"}`} title={`Poll: ${rule.settings.polling_enabled ? "on" : "off"}`} />
+                  )}
+                  {rule.settings.alerting_enabled != null && (
+                    <span className={`h-2 w-2 rounded-full ${rule.settings.alerting_enabled ? "bg-amber-500" : "bg-zinc-700"}`} title={`Alert: ${rule.settings.alerting_enabled ? "on" : "off"}`} />
+                  )}
+                  {rule.settings.poll_metrics && (
+                    <span className="text-[10px] text-zinc-500">{rule.settings.poll_metrics}</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {editing && (
+          <div className="space-y-3">
+            {draft.map((rule, i) => (
+              <InterfaceRuleEditor key={i} rule={rule} onChange={(r) => updateRule(i, r)} onRemove={() => removeRule(i)} />
+            ))}
+            <div className="flex items-center gap-2">
+              <Button type="button" variant="secondary" size="sm" className="gap-1" onClick={addRule}>
+                <Plus className="h-3.5 w-3.5" /> Add Rule
+              </Button>
+              <Button type="button" size="sm" className="gap-1" onClick={save} disabled={setRules.isPending}>
+                {setRules.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                Save Rules
+              </Button>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function InterfaceRuleEditor({
+  rule,
+  onChange,
+  onRemove,
+}: {
+  rule: InterfaceRule;
+  onChange: (r: InterfaceRule) => void;
+  onRemove: () => void;
+}) {
+  const matchFields = Object.keys(rule.match);
+  const hasSpeed = "if_speed_mbps" in rule.match;
+
+  const updateMatch = (field: string, spec: Record<string, unknown>) => {
+    onChange({ ...rule, match: { ...rule.match, [field]: spec } });
+  };
+
+  const removeMatchField = (field: string) => {
+    const next = { ...rule.match };
+    delete (next as Record<string, unknown>)[field];
+    onChange({ ...rule, match: next });
+  };
+
+  const addMatchField = (field: string) => {
+    if (field === "if_speed_mbps") {
+      onChange({ ...rule, match: { ...rule.match, if_speed_mbps: { op: "gte", value: 1000 } } });
+    } else {
+      onChange({ ...rule, match: { ...rule.match, [field]: { pattern: "*", type: "glob" } } });
+    }
+  };
+
+  return (
+    <div className="rounded-md border border-zinc-700 p-3 space-y-2">
+      <div className="flex items-center gap-2">
+        <Input value={rule.name} onChange={e => onChange({ ...rule, name: e.target.value })}
+          placeholder="Rule name" className="h-7 text-xs flex-1" />
+        <div className="flex items-center gap-1">
+          <label className="text-[10px] text-zinc-500">Priority</label>
+          <Input type="number" value={rule.priority} onChange={e => onChange({ ...rule, priority: parseInt(e.target.value, 10) || 0 })}
+            className="h-7 text-xs w-16" min={0} />
+        </div>
+        <button type="button" onClick={onRemove} className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer">
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      {/* Match conditions */}
+      <div className="space-y-1.5">
+        <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Match (all must match)</span>
+        {matchFields.map((field) => {
+          const spec = (rule.match as Record<string, Record<string, unknown>>)[field];
+          if (field === "if_speed_mbps") {
+            return (
+              <div key={field} className="flex items-center gap-1.5">
+                <span className="text-xs text-zinc-400 w-24 shrink-0">{field}</span>
+                <Select value={String(spec.op ?? "gte")} onChange={e => updateMatch(field, { ...spec, op: e.target.value })} className="h-7 text-xs w-16">
+                  {NUMERIC_OP_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </Select>
+                <Input type="number" value={spec.value as number ?? 0} onChange={e => updateMatch(field, { ...spec, value: parseInt(e.target.value, 10) || 0 })}
+                  className="h-7 text-xs w-24" />
+                <span className="text-[10px] text-zinc-600">Mbps</span>
+                <button type="button" onClick={() => removeMatchField(field)} className="text-zinc-600 hover:text-red-400 cursor-pointer"><X className="h-3 w-3" /></button>
+              </div>
+            );
+          }
+          return (
+            <div key={field} className="flex items-center gap-1.5">
+              <span className="text-xs text-zinc-400 w-24 shrink-0">{field}</span>
+              <Select value={String(spec.type ?? "glob")} onChange={e => updateMatch(field, { ...spec, type: e.target.value })} className="h-7 text-xs w-20">
+                {MATCH_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </Select>
+              <Input value={String(spec.pattern ?? "")} onChange={e => updateMatch(field, { ...spec, pattern: e.target.value })}
+                placeholder="Pattern..." className="h-7 text-xs flex-1" />
+              <button type="button" onClick={() => removeMatchField(field)} className="text-zinc-600 hover:text-red-400 cursor-pointer"><X className="h-3 w-3" /></button>
+            </div>
+          );
+        })}
+        {/* Add match field */}
+        <div className="flex items-center gap-1">
+          {["if_alias", "if_name", "if_descr"].filter(f => !(f in rule.match)).map(f => (
+            <button key={f} type="button" onClick={() => addMatchField(f)}
+              className="text-[10px] text-zinc-600 hover:text-brand-400 border border-zinc-800 hover:border-brand-500/30 rounded px-1.5 py-0.5 cursor-pointer transition-colors">
+              + {f}
+            </button>
+          ))}
+          {!hasSpeed && (
+            <button type="button" onClick={() => addMatchField("if_speed_mbps")}
+              className="text-[10px] text-zinc-600 hover:text-brand-400 border border-zinc-800 hover:border-brand-500/30 rounded px-1.5 py-0.5 cursor-pointer transition-colors">
+              + if_speed_mbps
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Settings */}
+      <div className="space-y-1.5">
+        <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Settings</span>
+        <div className="flex items-center gap-4 flex-wrap">
+          <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+            <input type="checkbox" checked={rule.settings.polling_enabled ?? true}
+              onChange={e => onChange({ ...rule, settings: { ...rule.settings, polling_enabled: e.target.checked } })}
+              className="accent-brand-500" />
+            <span className="text-zinc-300">Polling</span>
+          </label>
+          <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+            <input type="checkbox" checked={rule.settings.alerting_enabled ?? true}
+              onChange={e => onChange({ ...rule, settings: { ...rule.settings, alerting_enabled: e.target.checked } })}
+              className="accent-amber-500" />
+            <span className="text-zinc-300">Alerting</span>
+          </label>
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-zinc-400">Metrics:</span>
+            <Select value={rule.settings.poll_metrics ?? "all"}
+              onChange={e => onChange({ ...rule, settings: { ...rule.settings, poll_metrics: e.target.value } })}
+              className="h-7 text-xs w-44">
+              {METRICS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </Select>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

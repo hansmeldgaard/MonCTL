@@ -1002,6 +1002,7 @@ export interface TemplateConfig {
   default_credential_id?: string;
   default_collector_group_id?: string;
   labels?: Record<string, string>;
+  interface_rules?: InterfaceRule[];
 }
 
 export interface Template {
