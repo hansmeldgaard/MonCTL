@@ -112,7 +112,7 @@ packages/
 ### Credential Resolution Chain (precedence order)
 1. `AssignmentCredentialOverride` — per-assignment, per-connector-alias
 2. `AppAssignment.credential_id` — assignment-level
-3. `Device.default_credential_id` — device-level fallback
+3. `Device.credentials` JSONB — per-type mapping (`{credential_type: credential_id}`)
 
 ### Connector System
 - **SNMP Connector** accepts both `snmp_version` and `version` credential keys (backward compat). Credential API returns `version` from template key names.
