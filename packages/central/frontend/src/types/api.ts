@@ -235,6 +235,8 @@ export interface CheckResult {
   execution_time_ms: number | null;
   started_at: string | null;
   collector_name: string | null;
+  metric_names?: string[];
+  metric_values?: number[];
 }
 
 export interface DeviceResults {
