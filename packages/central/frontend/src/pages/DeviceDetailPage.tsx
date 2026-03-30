@@ -1998,6 +1998,8 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
   const refreshMeta = useRefreshInterfaceMetadata();
   const [refreshQueuedAt, setRefreshQueuedAt] = useState<number | null>(null);
   const [refreshDone, setRefreshDone] = useState(false);
+  const [showRulesPanel, setShowRulesPanel] = useState(false);
+  const { data: rules } = useDeviceInterfaceRules(deviceId);
 
   // Detect metadata update after refresh was queued
   useEffect(() => {
@@ -2285,6 +2287,11 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
           {refreshMeta.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
           Refresh Metadata
         </Button>
+        <Button variant={showRulesPanel ? "default" : "outline"} size="sm" className="h-7 text-xs gap-1" onClick={() => setShowRulesPanel(p => !p)}>
+          <Settings2 className="h-3 w-3" />
+          Interface Rules
+          {(rules?.length ?? 0) > 0 && <Badge variant="info" className="ml-0.5 text-[10px] px-1 py-0">{rules!.length}</Badge>}
+        </Button>
         {refreshQueuedAt && !refreshDone && <span className="text-xs text-emerald-400">Queued</span>}
         {refreshDone && <span className="text-xs text-emerald-400">Metadata refreshed</span>}
         <div className="ml-auto flex items-center gap-2">
@@ -2304,8 +2311,8 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
         </div>
       </div>
 
-      {/* Interface rules */}
-      <InterfaceRulesCard deviceId={deviceId} />
+      {/* Interface rules (collapsible panel) */}
+      {showRulesPanel && <InterfaceRulesCard deviceId={deviceId} />}
 
       {/* Multi-interface chart */}
       {showMultiChart && multiHistory ? (
