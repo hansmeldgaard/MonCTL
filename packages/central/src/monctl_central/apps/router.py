@@ -522,8 +522,6 @@ async def list_assignments(
             all_cred_ids.add(a.credential_id)
         if a.device_id and a.device_id in devices:
             dev = devices[a.device_id]
-            if dev.default_credential_id:
-                all_cred_ids.add(dev.default_credential_id)
             # Per-protocol credentials from device.credentials JSONB
             if dev.credentials:
                 for cred_val in dev.credentials.values():
@@ -578,17 +576,11 @@ async def list_assignments(
     ) -> str | None:
         """Resolve effective device-level credential name for display.
 
-        Priority: device.default_credential_id → device.credentials[connector_alias]
+        Uses device.credentials JSONB matching connector alias.
         """
         if not assignment.device_id or assignment.device_id not in devs:
             return None
         dev = devs[assignment.device_id]
-        # 1. Explicit default credential
-        if dev.default_credential_id:
-            name = cred_names.get(dev.default_credential_id)
-            if name:
-                return name
-        # 2. Per-protocol credential matching connector alias
         if dev.credentials and app.connector_bindings:
             for cb in app.connector_bindings:
                 alias = cb.alias
@@ -2423,4 +2415,4 @@ def _resolve_snmp_cred(device: Device) -> uuid.UUID | None:
                     return uuid.UUID(str(cval))
                 except ValueError:
                     pass
-    return device.default_credential_id
+    return None

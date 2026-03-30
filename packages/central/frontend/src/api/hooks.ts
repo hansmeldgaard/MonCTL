@@ -920,7 +920,6 @@ export function useCreateDevice() {
       device_category?: string;
       tenant_id?: string;
       collector_group_id?: string;
-      default_credential_id?: string;
       device_type_id?: string;
       credentials?: Record<string, string>;
       labels?: Record<string, string>;

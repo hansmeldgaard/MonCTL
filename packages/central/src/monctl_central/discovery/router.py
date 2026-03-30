@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from monctl_central.dependencies import get_db, require_auth
-from monctl_central.storage.models import Collector, Credential, Device
+from monctl_central.storage.models import Collector, Device
 from monctl_central.cache import set_discovery_flag
 from monctl_central.ws.router import manager as ws_manager
 
@@ -54,10 +54,6 @@ async def trigger_discovery(
     has_snmp = False
     if device.credentials:
         has_snmp = any("snmp" in k.lower() for k in device.credentials)
-    if not has_snmp and device.default_credential_id:
-        cred = await db.get(Credential, device.default_credential_id)
-        if cred and "snmp" in (cred.credential_type or "").lower():
-            has_snmp = True
 
     if not has_snmp:
         raise HTTPException(

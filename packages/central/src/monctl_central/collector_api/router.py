@@ -357,11 +357,9 @@ async def get_jobs(
         for b in (row.AppAssignment.connector_bindings or []):
             if b.credential_id:
                 all_cred_ids.add(b.credential_id)
-        # New: assignment credential_id, device default_credential_id
+        # Assignment credential_id
         if row.AppAssignment.credential_id:
             all_cred_ids.add(row.AppAssignment.credential_id)
-        if row.Device and row.Device.default_credential_id:
-            all_cred_ids.add(row.Device.default_credential_id)
         # Per-protocol credentials from device.credentials JSONB
         if row.Device and row.Device.credentials:
             for cred_val in row.Device.credentials.values():
@@ -464,8 +462,6 @@ async def get_jobs(
                         cred_id = uuid.UUID(str(device.credentials[acb.alias]))
                     except (ValueError, TypeError):
                         pass
-                elif device and device.default_credential_id:
-                    cred_id = device.default_credential_id
 
                 # Merge settings: app-level defaults + assignment-level overrides
                 merged_settings = dict(acb.settings or {})
@@ -579,9 +575,6 @@ async def get_jobs(
                             except ValueError:
                                 pass
                             break
-                if not disc_cred_id and device.default_credential_id:
-                    disc_cred_id = device.default_credential_id
-
                 disc_cred_name = cred_name_map.get(disc_cred_id) if disc_cred_id else None
                 # If credential not in our pre-loaded map, look it up
                 if disc_cred_id and not disc_cred_name:
@@ -1723,13 +1716,20 @@ async def _enrich_assignment(db: AsyncSession, assignment_id: str) -> dict:
             if row is None:
                 return {}
             assignment, app, device, tenant = row.AppAssignment, row.App, row.Device, row.Tenant
-            # Resolve volatile_keys from the assigned app version
+            # Resolve volatile_keys from the assigned app version (or latest)
             version_volatile_keys: list[str] = []
+            from monctl_central.storage.models import AppVersion
             if assignment.app_version_id:
-                from monctl_central.storage.models import AppVersion
                 ver = await db.get(AppVersion, assignment.app_version_id)
                 if ver and ver.volatile_keys:
                     version_volatile_keys = ver.volatile_keys
+            else:
+                latest_ver = (await db.execute(
+                    select(AppVersion)
+                    .where(AppVersion.app_id == app.id, AppVersion.is_latest == True)
+                )).scalar_one_or_none()
+                if latest_ver and latest_ver.volatile_keys:
+                    version_volatile_keys = latest_ver.volatile_keys
 
             return {
                 "app_id": str(app.id),

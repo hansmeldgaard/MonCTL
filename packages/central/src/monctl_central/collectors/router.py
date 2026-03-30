@@ -551,15 +551,6 @@ async def get_collector_config(
             if not (isinstance(value, str) and value.startswith("$credential:")):
                 continue
             cred_name = value.removeprefix("$credential:")
-            # __device_default__ resolves to the device's default credential
-            if cred_name == "__device_default__" and assignment.device_id:
-                _dev = await db.get(Device, assignment.device_id)
-                if _dev and _dev.default_credential_id:
-                    _def_cred = (await db.execute(
-                        select(Credential).where(Credential.id == _dev.default_credential_id)
-                    )).scalar_one_or_none()
-                    if _def_cred:
-                        cred_name = _def_cred.name
             if cred_name not in cred_cache:
                 cred_row = (
                     await db.execute(

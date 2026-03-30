@@ -18,7 +18,6 @@ import {
   Settings,
   Shield,
   ShieldCheck,
-  Tag,
   Trash2,
   User,
   Users,
@@ -51,20 +50,16 @@ import { useTimezone } from "@/hooks/useTimezone.ts";
 
 // Lazy-import existing page components to render inside tabs
 import { CollectorsPage } from "@/pages/CollectorsPage.tsx";
-import { CredentialsPage } from "@/pages/CredentialsPage.tsx";
 import { SnmpOidsPage } from "@/pages/SnmpOidsPage.tsx";
 import { UsersPage } from "@/pages/UsersPage.tsx";
 import { TenantsPage } from "@/pages/TenantsPage.tsx";
-import { LabelKeysPage } from "@/pages/LabelKeysPage.tsx";
 import { RolesPage } from "@/pages/RolesPage.tsx";
 
 const TABS = [
   { key: "profile", label: "Profile", icon: User },
   { key: "api-keys", label: "API Keys", icon: KeyRound },
   { key: "system", label: "System", icon: Settings },
-  { key: "labels", label: "Labels", icon: Tag },
   { key: "collectors", label: "Collectors", icon: Cpu },
-  { key: "credentials", label: "Credentials", icon: KeyRound },
   { key: "snmp-oids", label: "SNMP OIDs", icon: Network },
   { key: "data-retention", label: "Data Retention", icon: Database },
   { key: "network", label: "Network", icon: Globe },
@@ -1111,9 +1106,7 @@ export function SettingsPage() {
       case "profile": return <ProfileTab />;
       case "api-keys": return <ApiKeysTab />;
       case "system": return <SystemTab />;
-      case "labels": return <LabelKeysPage />;
       case "collectors": return <CollectorsPage />;
-      case "credentials": return <CredentialsPage />;
       case "snmp-oids": return <SnmpOidsPage />;
       case "data-retention": return <DataRetentionTab />;
       case "network": return <NetworkTab />;

@@ -25,6 +25,8 @@ import { CustomDashboardsPage } from "@/pages/CustomDashboardsPage.tsx";
 import { DashboardEditorPage } from "@/pages/DashboardEditorPage.tsx";
 import { DeviceTypesPage } from "@/pages/DiscoveryRulesPage.tsx";
 import { AutomationsPage } from "@/pages/AutomationsPage.tsx";
+import { CredentialsPage } from "@/pages/CredentialsPage.tsx";
+import { LabelKeysPage } from "@/pages/LabelKeysPage.tsx";
 
 export function App() {
   return (
@@ -43,6 +45,8 @@ export function App() {
         <Route path="python-modules" element={<PythonModulesPage />} />
         <Route path="assignments" element={<AssignmentsPage />} />
         <Route path="templates" element={<TemplatesPage />} />
+        <Route path="credentials" element={<CredentialsPage />} />
+        <Route path="labels" element={<LabelKeysPage />} />
         <Route path="packs" element={<PacksPage />} />
         <Route path="packs/:id" element={<PackDetailPage />} />
         <Route path="alerts" element={<AlertsPage />} />

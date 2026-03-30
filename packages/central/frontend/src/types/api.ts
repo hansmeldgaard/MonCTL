@@ -149,8 +149,6 @@ export interface Device {
   collector_group_id: string | null;
   collector_group_name: string | null;
   labels: Record<string, string>;
-  default_credential_id: string | null;
-  default_credential_name: string | null;
   is_enabled: boolean;
   credentials: Record<string, { id: string; name: string; credential_type: string }>;
   metadata: Record<string, unknown> | null;
@@ -1001,7 +999,7 @@ export interface TemplateAppEntry {
 export interface TemplateConfig {
   monitoring?: TemplateMonitoringConfig;
   apps?: TemplateAppEntry[];
-  default_credential_id?: string;
+  credentials?: Record<string, string>;
   default_collector_group_id?: string;
   labels?: Record<string, string>;
   interface_rules?: InterfaceRule[];

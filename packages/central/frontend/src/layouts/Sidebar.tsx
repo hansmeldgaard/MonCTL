@@ -9,6 +9,7 @@ import {
   ChevronRight,
   FileText,
   HeartPulse,
+  KeyRound,
   LayoutDashboard,
   ListChecks,
   Monitor,
@@ -18,6 +19,7 @@ import {
   Play,
   Search,
   Settings,
+  Tags,
   Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils.ts";
@@ -62,6 +64,8 @@ const navGroups: NavGroup[] = [
       { to: "/connectors", icon: Plug, label: "Connectors" },
       { to: "/python-modules", icon: Package, label: "Modules" },
       { to: "/templates", icon: FileText, label: "Templates" },
+      { to: "/credentials", icon: KeyRound, label: "Credentials" },
+      { to: "/labels", icon: Tags, label: "Labels" },
       { to: "/packs", icon: Boxes, label: "Packs" },
     ],
   },

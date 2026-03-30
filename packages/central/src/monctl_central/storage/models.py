@@ -240,9 +240,6 @@ class Device(Base):
     collector_group_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("collector_groups.id", ondelete="SET NULL"), nullable=True
     )
-    default_credential_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("credentials.id", ondelete="SET NULL"), nullable=True
-    )
     device_type_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("device_types.id", ondelete="SET NULL"), nullable=True, index=True
     )
@@ -263,7 +260,6 @@ class Device(Base):
 
     tenant: Mapped["Tenant | None"] = relationship(foreign_keys=[tenant_id])
     collector_group: Mapped["CollectorGroup | None"] = relationship(back_populates="devices", foreign_keys=[collector_group_id])
-    default_credential: Mapped["Credential | None"] = relationship(foreign_keys=[default_credential_id])
     device_type: Mapped["DeviceType | None"] = relationship(foreign_keys=[device_type_id])
     assignments: Mapped[list["AppAssignment"]] = relationship(back_populates="device")
 

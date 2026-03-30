@@ -57,7 +57,6 @@ class CreateDeviceRequest(BaseModel):
     collector_id: str | None = Field(default=None, description="UUID of the owning collector")
     tenant_id: str | None = Field(default=None, description="UUID of the owning tenant")
     collector_group_id: str | None = Field(default=None, description="UUID of the collector group")
-    default_credential_id: str | None = Field(default=None, description="UUID of the default credential")
     device_type_id: str | None = Field(default=None, description="UUID of the device type (optional, auto-detected via SNMP if not set)")
     credentials: dict[str, str] = Field(default_factory=dict, description="Per-protocol credential mapping: {credential_type: credential_id}")
     labels: dict[str, str] = Field(default_factory=dict, description="Key-value labels")
@@ -78,7 +77,7 @@ class CreateDeviceRequest(BaseModel):
     def check_metadata(cls, v: dict) -> dict:
         return validate_metadata(v)
 
-    @field_validator("collector_id", "tenant_id", "collector_group_id", "default_credential_id", "device_type_id")
+    @field_validator("collector_id", "tenant_id", "collector_group_id", "device_type_id")
     @classmethod
     def check_uuids(cls, v: str | None, info) -> str | None:
         if v is not None:
@@ -93,7 +92,6 @@ class UpdateDeviceRequest(BaseModel):
     collector_id: str | None = None
     tenant_id: str | None = None
     collector_group_id: str | None = None
-    default_credential_id: str | None = None
     device_type_id: str | None = None
     credentials: dict[str, str] | None = None
     labels: dict[str, str] | None = None
@@ -121,7 +119,7 @@ class UpdateDeviceRequest(BaseModel):
             return validate_metadata(v)
         return v
 
-    @field_validator("collector_id", "tenant_id", "collector_group_id", "default_credential_id", "device_type_id")
+    @field_validator("collector_id", "tenant_id", "collector_group_id", "device_type_id")
     @classmethod
     def check_uuids(cls, v: str | None, info) -> str | None:
         if v is not None and v != "":
@@ -146,8 +144,6 @@ def _format_device(d: Device, resolved_credentials: dict | None = None) -> dict:
         "tenant_name": d.tenant.name if d.tenant else None,
         "collector_group_id": str(d.collector_group_id) if d.collector_group_id else None,
         "collector_group_name": d.collector_group.name if d.collector_group else None,
-        "default_credential_id": str(d.default_credential_id) if d.default_credential_id else None,
-        "default_credential_name": d.default_credential.name if d.default_credential else None,
         "is_enabled": d.is_enabled,
         "credentials": resolved_credentials if resolved_credentials is not None else {},
         "labels": d.labels,
@@ -209,7 +205,6 @@ async def list_devices(
     stmt = select(Device).options(
         selectinload(Device.tenant),
         selectinload(Device.collector_group),
-        selectinload(Device.default_credential),
         selectinload(Device.device_type),
     )
 
@@ -300,7 +295,6 @@ async def create_device(
         collector_id=uuid.UUID(request.collector_id) if request.collector_id else None,
         tenant_id=uuid.UUID(request.tenant_id) if request.tenant_id else None,
         collector_group_id=uuid.UUID(request.collector_group_id) if request.collector_group_id else None,
-        default_credential_id=uuid.UUID(request.default_credential_id) if request.default_credential_id else None,
         device_type_id=uuid.UUID(request.device_type_id) if request.device_type_id else None,
         credentials=request.credentials,
         labels=request.labels,
@@ -309,17 +303,13 @@ async def create_device(
     db.add(device)
     await _auto_register_label_keys(request.labels, db)
     await db.flush()
-    await db.refresh(device, ["tenant", "collector_group", "default_credential", "device_type"])
+    await db.refresh(device, ["tenant", "collector_group", "device_type"])
 
     # Auto-discover if device has an SNMP credential and a collector group
     discovery_queued = False
     has_snmp = False
     if device.credentials:
         has_snmp = any("snmp" in k.lower() for k in device.credentials)
-    if not has_snmp and device.default_credential_id:
-        cred = await db.get(Credential, device.default_credential_id)
-        if cred and "snmp" in (cred.credential_type or "").lower():
-            has_snmp = True
     if has_snmp and device.collector_group_id:
         try:
             from monctl_central.cache import set_discovery_flag
@@ -423,7 +413,7 @@ async def get_device(
     """Get a device by ID."""
     stmt = (
         select(Device)
-        .options(selectinload(Device.tenant), selectinload(Device.collector_group), selectinload(Device.default_credential), selectinload(Device.device_type))
+        .options(selectinload(Device.tenant), selectinload(Device.collector_group), selectinload(Device.device_type))
         .where(Device.id == uuid.UUID(device_id))
     )
     device = (await db.execute(stmt)).scalar_one_or_none()
@@ -445,7 +435,7 @@ async def update_device(
     """Update a device."""
     stmt = (
         select(Device)
-        .options(selectinload(Device.tenant), selectinload(Device.collector_group), selectinload(Device.default_credential), selectinload(Device.device_type))
+        .options(selectinload(Device.tenant), selectinload(Device.collector_group), selectinload(Device.device_type))
         .where(Device.id == uuid.UUID(device_id))
     )
     device = (await db.execute(stmt)).scalar_one_or_none()
@@ -474,8 +464,6 @@ async def update_device(
             group_changed = True
         device.collector_group_id = new_group_id
 
-    if request.default_credential_id is not None:
-        device.default_credential_id = uuid.UUID(request.default_credential_id) if request.default_credential_id != "" else None
     if request.device_type_id is not None:
         device.device_type_id = uuid.UUID(request.device_type_id) if request.device_type_id != "" else None
     if request.credentials is not None:
@@ -530,7 +518,7 @@ async def update_device(
             .values(config_version=Collector.config_version + 1, updated_at=_utc_now())
         )
 
-    await db.refresh(device, ["tenant", "collector_group", "default_credential", "device_type"])
+    await db.refresh(device, ["tenant", "collector_group", "device_type"])
     resolved_creds = await _resolve_device_credentials(device, db)
     return {"status": "success", "data": _format_device(device, resolved_creds)}
 

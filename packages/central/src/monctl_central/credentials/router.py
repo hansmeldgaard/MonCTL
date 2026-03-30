@@ -22,10 +22,23 @@ from typing import Optional
 
 from monctl_central.credentials.crypto import encrypt_dict
 from monctl_central.dependencies import get_db, require_auth
-from monctl_central.storage.models import Credential
+from monctl_central.storage.models import Credential, CredentialType
 from monctl_common.utils import utc_now
 
 router = APIRouter()
+
+
+async def _validate_credential_type(credential_type: str, db: AsyncSession) -> None:
+    """Ensure the credential_type exists in the credential_types table."""
+    exists = (await db.execute(
+        select(CredentialType).where(CredentialType.name == credential_type)
+    )).scalar_one_or_none()
+    if not exists:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown credential type: '{credential_type}'. "
+                   "Create it first via /v1/credentials/types.",
+        )
 
 
 class CreateCredentialRequest(BaseModel):
@@ -247,6 +260,10 @@ async def create_credential(
     credential_type = request.credential_type or "custom"
     secret_to_store = request.secret
 
+    if not request.template_id:
+        # Custom mode: validate credential_type against credential_types table
+        await _validate_credential_type(credential_type, db)
+
     if request.template_id:
         from monctl_central.storage.models import CredentialTemplate, CredentialKey
 
@@ -255,7 +272,7 @@ async def create_credential(
             raise HTTPException(status_code=400, detail="Credential template not found")
 
         template_id = template.id
-        credential_type = template.name
+        credential_type = template.credential_type
 
         # Load credential key definitions for enum validation
         key_names = {f["key_name"] for f in template.fields}
@@ -370,6 +387,7 @@ async def update_credential(
     if request.description is not None:
         cred.description = request.description
     if request.credential_type is not None:
+        await _validate_credential_type(request.credential_type, db)
         cred.credential_type = request.credential_type
     if request.secret is not None:
         # Merge with existing secret data so unchanged fields are preserved

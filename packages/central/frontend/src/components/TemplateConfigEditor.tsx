@@ -3,6 +3,7 @@ import { Plus, Trash2, ChevronDown, ChevronRight, AlertTriangle, X } from "lucid
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { Select } from "@/components/ui/select.tsx";
+import { SearchableSelect } from "@/components/ui/searchable-select.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { SchemaConfigFields } from "@/components/SchemaConfigFields.tsx";
@@ -11,6 +12,7 @@ import {
   useApps,
   useAppDetail,
   useCredentials,
+  useCredentialTypes,
   useCollectorGroups,
 } from "@/api/hooks.ts";
 import type {
@@ -36,7 +38,7 @@ export function TemplateConfigEditor({ value, onChange, disabled }: TemplateConf
   // Section enable state — auto-enabled if data exists
   const [monEnabled, setMonEnabled] = useState(!!value.monitoring);
   const [appsEnabled, setAppsEnabled] = useState(!!(value.apps && value.apps.length > 0));
-  const [credEnabled, setCredEnabled] = useState(!!value.default_credential_id);
+  const [credEnabled, setCredEnabled] = useState(!!(value.credentials && Object.keys(value.credentials).length > 0));
   const [cgEnabled, setCgEnabled] = useState(!!value.default_collector_group_id);
   const [labelsEnabled, setLabelsEnabled] = useState(
     !!(value.labels && Object.keys(value.labels).length > 0),
@@ -60,7 +62,7 @@ export function TemplateConfigEditor({ value, onChange, disabled }: TemplateConf
       // Sync enable states
       setMonEnabled(!!parsed.monitoring);
       setAppsEnabled(!!(parsed.apps && parsed.apps.length > 0));
-      setCredEnabled(!!parsed.default_credential_id);
+      setCredEnabled(!!(parsed.credentials && Object.keys(parsed.credentials).length > 0));
       setCgEnabled(!!parsed.default_collector_group_id);
       setLabelsEnabled(!!(parsed.labels && Object.keys(parsed.labels).length > 0));
       setIfRulesEnabled(!!(parsed.interface_rules && parsed.interface_rules.length > 0));
@@ -170,17 +172,17 @@ export function TemplateConfigEditor({ value, onChange, disabled }: TemplateConf
             </div>
           )}
 
-          {/* Section: Default Credential */}
+          {/* Section: Default Credentials */}
           <SectionHeader
-            label="Default Credential"
+            label="Default Credentials"
             enabled={credEnabled}
-            onToggle={() => toggleSection("default_credential_id", credEnabled, setCredEnabled)}
+            onToggle={() => toggleSection("credentials", credEnabled, setCredEnabled)}
           />
           {credEnabled && (
             <div className="ml-6">
-              <CredentialSection
-                credentialId={value.default_credential_id}
-                onChange={(id) => update({ default_credential_id: id })}
+              <CredentialsSection
+                credentials={value.credentials ?? {}}
+                onChange={(creds) => update({ credentials: creds })}
                 disabled={disabled}
               />
             </div>
@@ -433,18 +435,16 @@ function MonitoringRoleRow({
       {enabled && check && (
         <div className="mt-2 space-y-2">
           <div className="grid grid-cols-[1fr_130px] gap-2">
-            <Select
+            <SearchableSelect
               value={check.app_name}
-              onChange={(e) => onChange({ ...check, app_name: e.target.value, config: {} })}
+              onChange={(val) => onChange({ ...check, app_name: val, config: {} })}
+              options={[
+                { value: "", label: "-- Select app --" },
+                ...apps.map((a) => ({ value: a.name, label: a.description || a.name })),
+              ]}
+              placeholder="-- Select app --"
               disabled={disabled}
-            >
-              <option value="">-- Select app --</option>
-              {apps.map((a) => (
-                <option key={a.id} value={a.name}>
-                  {a.description || a.name}
-                </option>
-              ))}
-            </Select>
+            />
             <Select
               value={String(check.interval_seconds)}
               onChange={(e) => onChange({ ...check, interval_seconds: parseInt(e.target.value, 10) })}
@@ -605,18 +605,19 @@ function TemplateAppCard({
         <div className="space-y-3 pt-1">
           <div>
             <Label className="text-xs text-zinc-400">App</Label>
-            <Select
+            <SearchableSelect
               value={entry.app_name}
-              onChange={(e) => onChange({ ...entry, app_name: e.target.value, config: {} })}
+              onChange={(val) => onChange({ ...entry, app_name: val, config: {} })}
+              options={[
+                { value: "", label: "-- Select app --" },
+                ...allApps.map((a) => ({
+                  value: a.name,
+                  label: a.description ? `${a.name} - ${a.description}` : a.name,
+                })),
+              ]}
+              placeholder="-- Select app --"
               disabled={disabled}
-            >
-              <option value="">-- Select app --</option>
-              {allApps.map((a) => (
-                <option key={a.id} value={a.name}>
-                  {a.name} {a.description ? `- ${a.description}` : ""}
-                </option>
-              ))}
-            </Select>
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -714,35 +715,86 @@ function TemplateAppCard({
   );
 }
 
-/* ── Section 2: Credential ── */
+/* ── Section 2: Credentials (per-type) ── */
 
-function CredentialSection({
-  credentialId,
+function CredentialsSection({
+  credentials: creds,
   onChange,
   disabled,
 }: {
-  credentialId: string | undefined;
-  onChange: (id: string | undefined) => void;
+  credentials: Record<string, string>;
+  onChange: (creds: Record<string, string>) => void;
   disabled?: boolean;
 }) {
-  const { data: credentials } = useCredentials();
+  const { data: allCredentials } = useCredentials();
+  const { data: credentialTypes } = useCredentialTypes();
+
+  const credsByType = useMemo(() => {
+    const map: Record<string, typeof allCredentials> = {};
+    for (const c of allCredentials ?? []) {
+      (map[c.credential_type] ??= []).push(c);
+    }
+    return map;
+  }, [allCredentials]);
+
+  const assignedTypes = Object.keys(creds);
+  const availableTypes = (credentialTypes ?? [])
+    .map((ct) => ct.name)
+    .filter((t) => !assignedTypes.includes(t));
 
   return (
-    <div className="space-y-1.5">
-      <Select
-        value={credentialId || ""}
-        onChange={(e) => onChange(e.target.value || undefined)}
-        disabled={disabled}
-      >
-        <option value="">-- None --</option>
-        {(credentials ?? []).map((c) => (
-          <option key={c.id} value={c.id}>
-            {c.name} ({c.credential_type})
-          </option>
-        ))}
-      </Select>
+    <div className="space-y-2">
+      {Object.entries(creds).map(([ctype, credId]) => (
+        <div key={ctype} className="flex items-center gap-2">
+          <Badge variant="default" className="text-xs min-w-[100px] justify-center">
+            {ctype}
+          </Badge>
+          <Select
+            className="flex-1"
+            value={credId}
+            onChange={(e) => onChange({ ...creds, [ctype]: e.target.value })}
+            disabled={disabled}
+          >
+            <option value="">-- Select --</option>
+            {(credsByType[ctype] ?? allCredentials ?? [])
+              .filter((c) => c.credential_type === ctype)
+              .map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+          </Select>
+          <button
+            type="button"
+            className="rounded p-1 text-zinc-600 hover:text-red-400 cursor-pointer"
+            onClick={() => {
+              const next = { ...creds };
+              delete next[ctype];
+              onChange(next);
+            }}
+            disabled={disabled}
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      ))}
+      {availableTypes.length > 0 && (
+        <Select
+          className="max-w-xs text-zinc-500"
+          value=""
+          onChange={(e) => {
+            if (e.target.value) {
+              onChange({ ...creds, [e.target.value]: "" });
+            }
+          }}
+          disabled={disabled}
+        >
+          <option value="">+ Add credential type...</option>
+          {availableTypes.map((t) => (
+            <option key={t} value={t}>{t}</option>
+          ))}
+        </Select>
+      )}
       <p className="text-xs text-zinc-500">
-        Applied as the device's default credential when the template is applied.
+        Per-type default credentials applied to the device when the template is applied.
       </p>
     </div>
   );

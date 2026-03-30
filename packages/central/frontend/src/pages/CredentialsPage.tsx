@@ -842,6 +842,7 @@ function CredentialTemplatesCard() {
   const tz = useTimezone();
   const { data: templates, isLoading } = useCredentialTemplates();
   const { data: credentialKeys } = useCredentialKeys();
+  const { data: credentialTypes } = useCredentialTypes();
   const createTemplate = useCreateCredentialTemplate();
   const updateTemplate = useUpdateCredentialTemplate();
   const deleteTemplate = useDeleteCredentialTemplate();
@@ -870,11 +871,12 @@ function CredentialTemplatesCard() {
     e.preventDefault();
     setAddError(null);
     if (!addName.trim()) { setAddError("Name is required."); return; }
+    if (!addCredType) { setAddError("Credential type is required."); return; }
     if (addFields.length === 0) { setAddError("At least one field is required."); return; }
     try {
       await createTemplate.mutateAsync({
         name: addName.trim(),
-        credential_type: addCredType.trim() || undefined,
+        credential_type: addCredType,
         description: addDesc.trim() || undefined,
         fields: addFields.map((f, i) => ({
           key_name: f.key_name,
@@ -907,13 +909,14 @@ function CredentialTemplatesCard() {
     if (!editTarget) return;
     setEditError(null);
     if (!editName.trim()) { setEditError("Name is required."); return; }
+    if (!editCredType) { setEditError("Credential type is required."); return; }
     if (editFields.length === 0) { setEditError("At least one field is required."); return; }
     try {
       await updateTemplate.mutateAsync({
         id: editTarget.id,
         data: {
           name: editName.trim(),
-          credential_type: editCredType.trim() || undefined,
+          credential_type: editCredType,
           description: editDesc.trim() || undefined,
           fields: editFields.map((f, i) => ({
             key_name: f.key_name,
@@ -1026,7 +1029,12 @@ function CredentialTemplatesCard() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="ct-cred-type">Credential Type</Label>
-              <Input id="ct-cred-type" placeholder="e.g. snmp, ssh" value={addCredType} onChange={(e) => setAddCredType(e.target.value)} />
+              <Select id="ct-cred-type" value={addCredType} onChange={(e) => setAddCredType(e.target.value)}>
+                <option value="">Select type...</option>
+                {(credentialTypes ?? []).map((ct) => (
+                  <option key={ct.id} value={ct.name}>{ct.name}</option>
+                ))}
+              </Select>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="ct-desc">Description</Label>
@@ -1111,7 +1119,12 @@ function CredentialTemplatesCard() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="ct-edit-cred-type">Credential Type</Label>
-              <Input id="ct-edit-cred-type" value={editCredType} onChange={(e) => setEditCredType(e.target.value)} />
+              <Select id="ct-edit-cred-type" value={editCredType} onChange={(e) => setEditCredType(e.target.value)}>
+                <option value="">Select type...</option>
+                {(credentialTypes ?? []).map((ct) => (
+                  <option key={ct.id} value={ct.name}>{ct.name}</option>
+                ))}
+              </Select>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="ct-edit-desc">Description</Label>

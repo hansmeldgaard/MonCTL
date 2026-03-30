@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { Select } from "@/components/ui/select.tsx";
+import { SearchableSelect } from "@/components/ui/searchable-select.tsx";
 import { useCreateDevice, useCollectorGroups, useCredentials, useDeviceTypes, useTenants } from "@/api/hooks.ts";
 import { LabelEditor } from "@/components/LabelEditor.tsx";
 
@@ -85,17 +86,12 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
       return;
     }
 
-    // Use first credential as default_credential_id for backward compat
-    const credValues = Object.values(deviceCreds).filter(Boolean);
-    const defaultCredId = credValues.length > 0 ? credValues[0] : undefined;
-
     try {
       await createDevice.mutateAsync({
         name: nameField.value.trim(),
         address: addressField.value.trim(),
         tenant_id: tenantId || undefined,
         collector_group_id: collectorGroupId || undefined,
-        default_credential_id: defaultCredId,
         device_type_id: deviceTypeId || undefined,
         credentials: deviceCreds,
         labels: Object.keys(labels).length > 0 ? labels : undefined,
@@ -176,18 +172,19 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
           <Label htmlFor="device-type">
             Device Type <span className="text-zinc-500 font-normal">(optional)</span>
           </Label>
-          <Select
+          <SearchableSelect
             id="device-type"
             value={deviceTypeId}
-            onChange={(e) => setDeviceTypeId(e.target.value)}
-          >
-            <option value="">Auto-detect via SNMP</option>
-            {deviceTypes.map((dt) => (
-              <option key={dt.id} value={dt.id}>
-                {dt.name}{dt.vendor ? ` (${dt.vendor}${dt.model ? ` ${dt.model}` : ""})` : ""}
-              </option>
-            ))}
-          </Select>
+            onChange={setDeviceTypeId}
+            options={[
+              { value: "", label: "Auto-detect via SNMP" },
+              ...deviceTypes.map((dt) => ({
+                value: dt.id,
+                label: dt.name + (dt.vendor ? ` (${dt.vendor}${dt.model ? ` ${dt.model}` : ""})` : ""),
+              })),
+            ]}
+            placeholder="Auto-detect via SNMP"
+          />
         </div>
 
         {/* Default Credentials */}

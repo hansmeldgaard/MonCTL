@@ -53,9 +53,12 @@ def merge_configs(base: dict, overlay: dict) -> dict:
         result.setdefault("labels", {})
         result["labels"].update(overlay["labels"])
 
+    # Credentials: dict merge
+    if overlay.get("credentials"):
+        result.setdefault("credentials", {})
+        result["credentials"].update(overlay["credentials"])
+
     # Scalar overrides
-    if overlay.get("default_credential_id"):
-        result["default_credential_id"] = overlay["default_credential_id"]
     if overlay.get("default_collector_group_id"):
         result["default_collector_group_id"] = overlay["default_collector_group_id"]
 

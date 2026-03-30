@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from monctl_central.dependencies import get_db, require_auth
-from monctl_central.storage.models import CredentialTemplate, CredentialKey
+from monctl_central.storage.models import CredentialTemplate, CredentialKey, CredentialType
 from monctl_common.utils import utc_now
 
 router = APIRouter()
@@ -25,7 +25,7 @@ class TemplateField(BaseModel):
 
 class CreateCredentialTemplateRequest(BaseModel):
     name: str = Field(max_length=64)
-    credential_type: str = Field(max_length=64, default="")
+    credential_type: str = Field(min_length=1, max_length=64)
     description: str | None = Field(default=None, max_length=2000)
     fields: list[TemplateField] = Field(min_length=1, max_length=50)
 
@@ -47,6 +47,19 @@ def _fmt(t: CredentialTemplate) -> dict:
         "created_at": t.created_at.isoformat() if t.created_at else None,
         "updated_at": t.updated_at.isoformat() if t.updated_at else None,
     }
+
+
+async def _validate_credential_type(credential_type: str, db: AsyncSession) -> None:
+    """Ensure the credential_type exists in the credential_types table."""
+    exists = (await db.execute(
+        select(CredentialType).where(CredentialType.name == credential_type)
+    )).scalar_one_or_none()
+    if not exists:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown credential type: '{credential_type}'. "
+                   "Create it first via /v1/credentials/types.",
+        )
 
 
 async def _validate_fields(fields: list[TemplateField], db: AsyncSession) -> None:
@@ -112,11 +125,12 @@ async def create_credential_template(
     if existing:
         raise HTTPException(status_code=409, detail=f"Template '{request.name}' already exists")
 
+    await _validate_credential_type(request.credential_type, db)
     await _validate_fields(request.fields, db)
 
     t = CredentialTemplate(
         name=request.name,
-        credential_type=request.credential_type or request.name,
+        credential_type=request.credential_type,
         description=request.description,
         fields=[f.model_dump() for f in request.fields],
     )
@@ -139,6 +153,7 @@ async def update_credential_template(
     if request.name is not None:
         t.name = request.name
     if request.credential_type is not None:
+        await _validate_credential_type(request.credential_type, db)
         t.credential_type = request.credential_type
     if request.description is not None:
         t.description = request.description
