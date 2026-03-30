@@ -132,7 +132,7 @@ import type { TrafficUnit, ChartMetric, ChartMode } from "@/components/Interface
 import { CredentialCell } from "@/components/CredentialCell.tsx";
 import { DeviceIcon, categoryIconUrl } from "@/components/DeviceIcon.tsx";
 import { RuleFormDialog } from "@/pages/DiscoveryRulesPage.tsx";
-import { timeAgo, formatDate } from "@/lib/utils.ts";
+import { timeAgo, formatDate, formatUptime } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 
 // ── Default time range ────────────────────────────────────
@@ -4643,6 +4643,19 @@ export function DeviceDetailPage() {
   const deviceId = id!;
   const upStatus = deviceResults?.up;
 
+  // Extract uptime from performance checks (snmp_uptime app)
+  const uptimeSeconds = useMemo(() => {
+    if (!deviceResults?.checks) return null;
+    for (const c of deviceResults.checks) {
+      const names: string[] | undefined = c.metric_names;
+      const values: number[] | undefined = c.metric_values;
+      if (!names || !values) continue;
+      const idx = names.indexOf("uptime_seconds");
+      if (idx >= 0 && values[idx] != null) return values[idx];
+    }
+    return null;
+  }, [deviceResults]);
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -4668,6 +4681,12 @@ export function DeviceDetailPage() {
           >
             {upStatus === true ? "UP" : upStatus === false ? "DOWN" : "UNKNOWN"}
           </Badge>
+          {uptimeSeconds != null && (
+            <span className="inline-flex items-center gap-1 text-sm text-zinc-400">
+              <Clock className="h-3.5 w-3.5" />
+              {formatUptime(uptimeSeconds)}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-3 text-sm text-zinc-500">
           <span className="font-mono">{deviceAddress}</span>

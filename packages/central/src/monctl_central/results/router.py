@@ -487,6 +487,9 @@ async def device_status(
             "status_code": formatted["status_code"],
             "executed_at": formatted["executed_at"],
             "execution_time_ms": formatted["execution_time_ms"],
+            **({"metric_names": formatted["metric_names"],
+                "metric_values": formatted["metric_values"]}
+               if "metric_names" in formatted else {}),
         })
 
     availability_checks = [c for c in checks if c.get("role") == "availability"]
