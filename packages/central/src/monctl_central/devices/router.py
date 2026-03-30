@@ -153,6 +153,7 @@ def _format_device(d: Device, resolved_credentials: dict | None = None) -> dict:
         "labels": d.labels,
         "metadata": d.metadata_,
         "retention_overrides": d.retention_overrides or {},
+        "interface_rules": d.interface_rules,
         "created_at": d.created_at.isoformat() if d.created_at else None,
         "updated_at": d.updated_at.isoformat() if d.updated_at else None,
     }
@@ -726,6 +727,7 @@ def _fmt_iface_meta(m: InterfaceMetadata) -> dict:
         "polling_enabled": m.polling_enabled,
         "alerting_enabled": m.alerting_enabled,
         "poll_metrics": m.poll_metrics,
+        "rules_managed": m.rules_managed,
         "updated_at": m.updated_at.isoformat() if m.updated_at else None,
     }
 
@@ -791,6 +793,8 @@ async def update_interface_settings(
         if not _validate_poll_metrics(req.poll_metrics):
             raise HTTPException(status_code=400, detail=f"Invalid poll_metrics: must be 'all' or comma-separated list of {_VALID_POLL_METRICS_PARTS - {'all'}}")
         meta.poll_metrics = req.poll_metrics
+    # Manual change → opt out of automatic rule management
+    meta.rules_managed = False
     meta.updated_at = utc_now()
     await db.flush()
 
@@ -839,6 +843,8 @@ async def bulk_update_interface_settings(
                 meta.poll_metrics = req.poll_metrics
                 if meta.if_name not in invalidate_names:
                     invalidate_names.append(meta.if_name)
+            # Manual change → opt out of automatic rule management
+            meta.rules_managed = False
             meta.updated_at = utc_now()
             updated.append(_fmt_iface_meta(meta))
     await db.flush()
@@ -892,6 +898,104 @@ async def refresh_interface_metadata(
         pass
 
     return {"status": "success", "data": {"message": "Interface metadata refresh queued.", "ws_notified": ws_notified}}
+
+
+# ── Interface Rules ─────────────────────────────────────────
+
+
+@router.get("/{device_id}/interface-rules")
+async def get_interface_rules(
+    device_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Get interface rules for a device."""
+    device = await db.get(Device, uuid.UUID(device_id))
+    if device is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+    if not check_tenant_access(auth, device.tenant_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    return {"status": "success", "data": device.interface_rules or []}
+
+
+class SetInterfaceRulesRequest(BaseModel):
+    interface_rules: list[dict]
+    apply_now: bool = Field(default=True, description="Immediately evaluate rules against existing interfaces")
+
+
+@router.put("/{device_id}/interface-rules")
+async def set_interface_rules(
+    device_id: str,
+    req: SetInterfaceRulesRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Set interface rules on a device (directly, not via template)."""
+    device = await db.get(Device, uuid.UUID(device_id))
+    if device is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+    if not check_tenant_access(auth, device.tenant_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    from monctl_central.templates.interface_rules import validate_interface_rules
+    errors = validate_interface_rules(req.interface_rules)
+    if errors:
+        raise HTTPException(status_code=400, detail={"validation_errors": errors})
+
+    device.interface_rules = req.interface_rules
+    device.updated_at = utc_now()
+
+    summary = None
+    if req.apply_now and req.interface_rules:
+        from monctl_central.templates.interface_rules import apply_rules_to_all_interfaces
+        summary = await apply_rules_to_all_interfaces(device.id, req.interface_rules, db, force=False)
+
+    return {"status": "success", "data": {"rules": device.interface_rules, "applied": summary}}
+
+
+class EvaluateRulesRequest(BaseModel):
+    force: bool = Field(default=False, description="Re-evaluate even manually-overridden interfaces")
+
+
+@router.post("/{device_id}/interface-rules/evaluate")
+async def evaluate_interface_rules(
+    device_id: str,
+    req: EvaluateRulesRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Re-evaluate interface rules against all interfaces on a device."""
+    device = await db.get(Device, uuid.UUID(device_id))
+    if device is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+    if not check_tenant_access(auth, device.tenant_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    if not device.interface_rules:
+        return {"status": "success", "data": {"total": 0, "matched": 0, "changed": 0, "skipped_manual": 0, "unmatched": 0}}
+
+    from monctl_central.templates.interface_rules import apply_rules_to_all_interfaces
+    summary = await apply_rules_to_all_interfaces(device.id, device.interface_rules, db, force=req.force)
+    return {"status": "success", "data": summary}
+
+
+@router.post("/{device_id}/interface-rules/preview")
+async def preview_interface_rules(
+    device_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Dry-run: show what rules would match without applying."""
+    device = await db.get(Device, uuid.UUID(device_id))
+    if device is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+    if not check_tenant_access(auth, device.tenant_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    if not device.interface_rules:
+        return {"status": "success", "data": []}
+
+    from monctl_central.templates.interface_rules import preview_rules
+    results = await preview_rules(device.id, device.interface_rules, db)
+    return {"status": "success", "data": results}
 
 
 @router.delete("/{device_id}", status_code=status.HTTP_204_NO_CONTENT)

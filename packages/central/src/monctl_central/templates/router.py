@@ -229,6 +229,13 @@ async def apply_config_to_device(
             )
             db.add(assignment)
 
+    # Apply interface rules
+    interface_rules = config.get("interface_rules")
+    if interface_rules:
+        from monctl_central.templates.interface_rules import apply_rules_to_all_interfaces
+        device.interface_rules = interface_rules
+        await apply_rules_to_all_interfaces(device.id, interface_rules, db, force=False)
+
     device.updated_at = utc_now()
 
 

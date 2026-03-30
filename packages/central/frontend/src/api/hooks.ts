@@ -105,6 +105,9 @@ import type {
   EligibilityOidCheck,
   EligibilityRun,
   EligibilityDeviceResult,
+  InterfaceRule,
+  InterfaceRuleEvaluationSummary,
+  InterfaceRulePreviewItem,
 } from "@/types/api.ts";
 
 function buildListQs(params: ListParams): string {
@@ -1133,6 +1136,53 @@ export function useRefreshInterfaceMetadata() {
     onSuccess: (_res, deviceId) => {
       qc.invalidateQueries({ queryKey: ["interface-metadata", deviceId] });
     },
+  });
+}
+
+// ── Interface Rules ──────────────────────────────────────
+
+export function useDeviceInterfaceRules(deviceId: string | undefined) {
+  return useQuery({
+    queryKey: ["interface-rules", deviceId],
+    queryFn: () => apiGet<InterfaceRule[]>(`/devices/${deviceId}/interface-rules`),
+    select: (res) => res.data,
+    enabled: !!deviceId,
+  });
+}
+
+export function useSetDeviceInterfaceRules() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ deviceId, data }: {
+      deviceId: string;
+      data: { interface_rules: InterfaceRule[]; apply_now?: boolean };
+    }) => apiPut(`/devices/${deviceId}/interface-rules`, data),
+    onSuccess: (_res, vars) => {
+      qc.invalidateQueries({ queryKey: ["interface-rules", vars.deviceId] });
+      qc.invalidateQueries({ queryKey: ["interface-metadata", vars.deviceId] });
+    },
+  });
+}
+
+export function useEvaluateInterfaceRules() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ deviceId, force = false }: {
+      deviceId: string;
+      force?: boolean;
+    }) => apiPost<InterfaceRuleEvaluationSummary>(`/devices/${deviceId}/interface-rules/evaluate`, { force }),
+    onSuccess: (_res, vars) => {
+      qc.invalidateQueries({ queryKey: ["interface-metadata", vars.deviceId] });
+    },
+  });
+}
+
+export function usePreviewInterfaceRules(deviceId: string | undefined) {
+  return useQuery({
+    queryKey: ["interface-rules-preview", deviceId],
+    queryFn: () => apiPost<InterfaceRulePreviewItem[]>(`/devices/${deviceId}/interface-rules/preview`),
+    select: (res) => res.data,
+    enabled: false, // manual trigger only
   });
 }
 

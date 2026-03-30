@@ -253,6 +253,7 @@ class Device(Base):
     labels: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, server_default="{}")
     retention_overrides: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    interface_rules: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default="now()"
     )
@@ -759,6 +760,7 @@ class InterfaceMetadata(Base):
     polling_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     alerting_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     poll_metrics: Mapped[str] = mapped_column(String(50), nullable=False, server_default="all")
+    rules_managed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default="now()"
     )

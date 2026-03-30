@@ -1116,16 +1116,32 @@ async def _resolve_interface_id(
         try:
             meta = await db.get(InterfaceMetadata, uuid.UUID(cached_id))
             if meta:
+                metadata_changed = False
                 meta.current_if_index = if_index
-                if if_descr:
+                if if_descr and if_descr != meta.if_descr:
                     meta.if_descr = if_descr
-                if if_alias:
+                    metadata_changed = True
+                if if_alias and if_alias != meta.if_alias:
                     meta.if_alias = if_alias
-                if if_speed_mbps:
+                    metadata_changed = True
+                if if_speed_mbps and if_speed_mbps != meta.if_speed_mbps:
                     meta.if_speed_mbps = if_speed_mbps
+                    metadata_changed = True
                 from monctl_common.utils import utc_now
                 meta.updated_at = utc_now()
                 await db.flush()
+
+                # Re-evaluate interface rules if metadata changed and rules_managed
+                if metadata_changed and meta.rules_managed:
+                    try:
+                        device = await db.get(Device, uuid.UUID(device_id))
+                        if device and device.interface_rules:
+                            from monctl_central.templates.interface_rules import apply_rules_to_interface
+                            if apply_rules_to_interface(meta, device.interface_rules, force=True):
+                                await db.flush()
+                    except Exception:
+                        logger.debug("Failed to re-evaluate interface rules", exc_info=True)
+
                 polling_enabled = meta.polling_enabled
                 logger.info(
                     "if_index_changed",
@@ -1180,14 +1196,27 @@ async def _resolve_interface_id(
     )
     db.add(new_meta)
     await db.flush()
+
+    # Apply interface rules from device (if any)
+    polling_enabled = new_meta.polling_enabled
+    try:
+        device = await db.get(Device, uuid.UUID(device_id))
+        if device and device.interface_rules:
+            from monctl_central.templates.interface_rules import apply_rules_to_interface
+            if apply_rules_to_interface(new_meta, device.interface_rules, force=True):
+                await db.flush()
+                polling_enabled = new_meta.polling_enabled
+    except Exception:
+        logger.debug("Failed to apply interface rules on new interface", exc_info=True)
+
     interface_id = str(new_meta.id)
     cache_data = {
         "interface_id": interface_id,
         "current_if_index": if_index,
-        "polling_enabled": True,
+        "polling_enabled": polling_enabled,
     }
     await set_cached_interface_id(device_id, if_name, cache_data)
-    return interface_id, True
+    return interface_id, polling_enabled
 
 
 @router.post("/results", status_code=status.HTTP_202_ACCEPTED, tags=["collector-api"])

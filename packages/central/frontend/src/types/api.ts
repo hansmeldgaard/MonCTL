@@ -155,6 +155,7 @@ export interface Device {
   credentials: Record<string, { id: string; name: string; credential_type: string }>;
   metadata: Record<string, unknown> | null;
   retention_overrides: Record<string, string>;
+  interface_rules: InterfaceRule[] | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -883,7 +884,61 @@ export interface InterfaceMetadataRecord {
   polling_enabled: boolean;
   alerting_enabled: boolean;
   poll_metrics: string;
+  rules_managed: boolean;
   updated_at: string | null;
+}
+
+// ── Interface Rules ──────────────────────────────────────
+
+export interface InterfaceRuleStringMatch {
+  pattern: string;
+  type: "glob" | "regex" | "exact";
+}
+
+export interface InterfaceRuleNumericMatch {
+  op: "eq" | "gt" | "lt" | "gte" | "lte";
+  value: number;
+}
+
+export interface InterfaceRuleMatch {
+  if_alias?: InterfaceRuleStringMatch;
+  if_name?: InterfaceRuleStringMatch;
+  if_descr?: InterfaceRuleStringMatch;
+  if_speed_mbps?: InterfaceRuleNumericMatch;
+}
+
+export interface InterfaceRuleSettings {
+  polling_enabled?: boolean;
+  alerting_enabled?: boolean;
+  poll_metrics?: string;
+}
+
+export interface InterfaceRule {
+  name: string;
+  match: InterfaceRuleMatch;
+  settings: InterfaceRuleSettings;
+  priority: number;
+}
+
+export interface InterfaceRuleEvaluationSummary {
+  total: number;
+  matched: number;
+  changed: number;
+  skipped_manual: number;
+  unmatched: number;
+}
+
+export interface InterfaceRulePreviewItem {
+  interface_id: string;
+  if_name: string;
+  if_alias: string;
+  if_descr: string;
+  if_speed_mbps: number;
+  rules_managed: boolean;
+  matched_rule: string | null;
+  current_settings: InterfaceRuleSettings;
+  proposed_settings: InterfaceRuleSettings;
+  would_change: boolean;
 }
 
 // ── Label Keys ───────────────────────────────────────────

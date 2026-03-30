@@ -59,6 +59,11 @@ def merge_configs(base: dict, overlay: dict) -> dict:
     if overlay.get("default_collector_group_id"):
         result["default_collector_group_id"] = overlay["default_collector_group_id"]
 
+    # Interface rules: concatenate (both levels retained, priority resolves conflicts)
+    if overlay.get("interface_rules"):
+        result.setdefault("interface_rules", [])
+        result["interface_rules"].extend(copy.deepcopy(overlay["interface_rules"]))
+
     return result
 
 
