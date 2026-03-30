@@ -762,6 +762,7 @@ const IF_NUM_OPS = [
 ];
 const IF_METRICS = [
   { value: "all", label: "All" },
+  { value: "none", label: "None" },
   { value: "traffic,status", label: "Traffic + Status" },
   { value: "traffic", label: "Traffic" },
   { value: "traffic,errors", label: "Traffic + Errors" },

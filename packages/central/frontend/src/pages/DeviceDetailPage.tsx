@@ -2525,6 +2525,7 @@ const NUMERIC_OP_OPTIONS = [
 ];
 const METRICS_OPTIONS = [
   { value: "all", label: "All metrics" },
+  { value: "none", label: "None" },
   { value: "traffic,status", label: "Traffic + Status" },
   { value: "traffic", label: "Traffic only" },
   { value: "traffic,errors", label: "Traffic + Errors" },

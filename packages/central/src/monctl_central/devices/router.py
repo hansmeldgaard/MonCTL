@@ -751,7 +751,7 @@ async def get_interface_metadata(
     return {"status": "success", "data": [_fmt_iface_meta(m) for m in rows]}
 
 
-_VALID_POLL_METRICS_PARTS = {"all", "traffic", "errors", "discards", "status"}
+_VALID_POLL_METRICS_PARTS = {"all", "none", "traffic", "errors", "discards", "status"}
 
 
 def _validate_poll_metrics(value: str) -> bool:

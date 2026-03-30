@@ -27,7 +27,7 @@ _VALID_MATCH_FIELDS_NUM = {"if_speed_mbps"}
 _VALID_STRING_TYPES = {"glob", "regex", "exact"}
 _VALID_NUMERIC_OPS = {"eq", "gt", "lt", "gte", "lte"}
 _VALID_SETTINGS_KEYS = {"polling_enabled", "alerting_enabled", "poll_metrics"}
-_VALID_POLL_METRICS_PARTS = {"all", "traffic", "errors", "discards", "status"}
+_VALID_POLL_METRICS_PARTS = {"all", "none", "traffic", "errors", "discards", "status"}
 
 
 # ---------------------------------------------------------------------------
@@ -211,8 +211,10 @@ def apply_settings_to_meta(
     if "poll_metrics" in settings and meta.poll_metrics != settings["poll_metrics"]:
         meta.poll_metrics = settings["poll_metrics"]
         changed = True
-    if changed:
+    # Always mark as rules_managed when a rule matches (even if no settings changed)
+    if not meta.rules_managed:
         meta.rules_managed = True
+        changed = True
     return changed
 
 
@@ -221,25 +223,21 @@ def apply_rules_to_interface(
 ) -> bool:
     """Evaluate rules against one interface and apply settings.
 
-    Skips interfaces where rules_managed=False (manual override) unless force=True.
-    Returns True if settings were changed.
+    Skips interfaces where rules_managed=False and manually changed unless force=True.
     """
-    if not force and not meta.rules_managed and _has_been_manually_set(meta):
-        return False
     settings = evaluate_rules(rules, _iface_dict(meta))
     if settings is None:
+        return False
+    # Skip manually overridden interfaces unless force
+    if not force and not meta.rules_managed and _has_non_default_settings(meta):
         return False
     return apply_settings_to_meta(meta, settings)
 
 
-def _has_been_manually_set(meta: "InterfaceMetadata") -> bool:
-    """Check if the interface has been manually configured (not at defaults and not rules_managed)."""
-    # If rules_managed is False and settings differ from defaults, assume manual override
-    if meta.rules_managed:
-        return False
-    defaults = (meta.polling_enabled is True and meta.alerting_enabled is True
+def _has_non_default_settings(meta: "InterfaceMetadata") -> bool:
+    """Check if the interface has non-default settings (likely manually configured)."""
+    return not (meta.polling_enabled is True and meta.alerting_enabled is True
                 and meta.poll_metrics == "all")
-    return not defaults
 
 
 async def apply_rules_to_all_interfaces(
@@ -260,12 +258,13 @@ async def apply_rules_to_all_interfaces(
     invalidate_names: list[str] = []
 
     for meta in rows:
-        if not force and not meta.rules_managed and _has_been_manually_set(meta):
-            summary["skipped_manual"] += 1
-            continue
         settings = evaluate_rules(rules, _iface_dict(meta))
         if settings is None:
             summary["unmatched"] += 1
+            continue
+        # Skip manually overridden interfaces unless force
+        if not force and not meta.rules_managed and _has_non_default_settings(meta):
+            summary["skipped_manual"] += 1
             continue
         summary["matched"] += 1
         if apply_settings_to_meta(meta, settings):
