@@ -4608,6 +4608,19 @@ export function DeviceDetailPage() {
   const autoApplyTemplates = useAutoApplyTemplates();
   const [autoAssignPreview, setAutoAssignPreview] = useState<ResolvedTemplateResult | null>(null);
 
+  // Extract uptime from performance checks (snmp_uptime app)
+  const uptimeSeconds = useMemo(() => {
+    if (!deviceResults?.checks) return null;
+    for (const c of deviceResults.checks) {
+      const names: string[] | undefined = c.metric_names;
+      const values: number[] | undefined = c.metric_values;
+      if (!names || !values) continue;
+      const idx = names.indexOf("uptime_seconds");
+      if (idx >= 0 && values[idx] != null) return values[idx];
+    }
+    return null;
+  }, [deviceResults]);
+
   const isLoading = deviceLoading || (resultsLoading && !device);
 
   if (isLoading) {
@@ -4642,19 +4655,6 @@ export function DeviceDetailPage() {
   const dc = (allCategories ?? []).find((c) => c.name === deviceCategory);
   const deviceId = id!;
   const upStatus = deviceResults?.up;
-
-  // Extract uptime from performance checks (snmp_uptime app)
-  const uptimeSeconds = useMemo(() => {
-    if (!deviceResults?.checks) return null;
-    for (const c of deviceResults.checks) {
-      const names: string[] | undefined = c.metric_names;
-      const values: number[] | undefined = c.metric_values;
-      if (!names || !values) continue;
-      const idx = names.indexOf("uptime_seconds");
-      if (idx >= 0 && values[idx] != null) return values[idx];
-    }
-    return null;
-  }, [deviceResults]);
 
   return (
     <div className="space-y-4">
