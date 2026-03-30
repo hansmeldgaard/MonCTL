@@ -74,8 +74,8 @@ class SchedulerRunner:
                 # Cost-aware job rebalancing every 5 min (every 10th cycle)
                 if cycle % 10 == 5:
                     await self._rebalance_collector_groups()
-                # OS update check (daily)
-                await self._check_os_updates()
+                # OS update check (daily) — fire-and-forget to avoid blocking alerts
+                asyncio.create_task(self._check_os_updates())
                 # Nightly eligibility scan (daily, configurable time)
                 await self._run_eligibility_scan()
                 # Finalize completed eligibility runs (every cycle)
