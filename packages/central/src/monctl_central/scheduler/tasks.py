@@ -68,8 +68,11 @@ class SchedulerRunner:
                 await self._evaluate_cron_automations()
                 # Rollup + cleanup (checked every cycle, runs based on time)
                 await self._run_rollups()
-                # App cache TTL cleanup every 5 min (every 10th cycle)
+                # Alert instance sync every 5 min (every 10th cycle)
                 if cycle % 10 == 0:
+                    await self._sync_alert_instances()
+                # App cache TTL cleanup every 5 min (every 10th cycle, offset)
+                if cycle % 10 == 2:
                     await self._cleanup_app_cache()
                 # Cost-aware job rebalancing every 5 min (every 10th cycle)
                 if cycle % 10 == 5:
@@ -404,6 +407,59 @@ class SchedulerRunner:
                 logger.exception("system_health_alert_write_failed")
 
         await _redis.set("monctl:scheduler:last_system_health", now.isoformat())
+
+    async def _sync_alert_instances(self) -> None:
+        """Ensure AlertEntities exist for all (definition, assignment) pairs.
+
+        Catches cases where definitions were created after assignments,
+        or assignments were created via template auto-apply without triggering sync.
+        """
+        from sqlalchemy import select
+        from monctl_central.storage.models import AlertDefinition, AlertEntity, AppAssignment
+
+        try:
+            async with self._session_factory() as session:
+                definitions = (
+                    await session.execute(
+                        select(AlertDefinition).where(AlertDefinition.enabled == True)  # noqa: E712
+                    )
+                ).scalars().all()
+
+                created = 0
+                for defn in definitions:
+                    assignments = (
+                        await session.execute(
+                            select(AppAssignment).where(
+                                AppAssignment.app_id == defn.app_id,
+                                AppAssignment.enabled == True,  # noqa: E712
+                                AppAssignment.device_id.isnot(None),
+                            )
+                        )
+                    ).scalars().all()
+
+                    existing_keys = set(
+                        (await session.execute(
+                            select(AlertEntity.assignment_id)
+                            .where(AlertEntity.definition_id == defn.id)
+                        )).scalars().all()
+                    )
+
+                    for assignment in assignments:
+                        if assignment.id not in existing_keys:
+                            session.add(AlertEntity(
+                                definition_id=defn.id,
+                                assignment_id=assignment.id,
+                                device_id=assignment.device_id,
+                                enabled=True,
+                                state="ok",
+                            ))
+                            created += 1
+
+                if created:
+                    await session.commit()
+                    logger.info("alert_instance_sync created=%d", created)
+        except Exception:
+            logger.exception("alert_instance_sync_error")
 
     async def _evaluate_alerts(self) -> None:
         """Run alert engine evaluation if ClickHouse is available."""
