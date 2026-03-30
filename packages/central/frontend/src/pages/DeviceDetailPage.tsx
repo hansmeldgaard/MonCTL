@@ -1458,7 +1458,7 @@ function ConfigurationTab({ deviceId }: { deviceId: string }) {
                     ? {
                         html: configTemplates[selectedConfigApp].display_template!.html,
                         css: configTemplates[selectedConfigApp].display_template!.css ?? undefined,
-                        key_mappings: [],
+                        key_mappings: configTemplates[selectedConfigApp].display_template!.key_mappings ?? [],
                       }
                     : null
                 }

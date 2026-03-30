@@ -182,7 +182,7 @@ export function useDeviceConfigTemplates(deviceId: string | undefined) {
       apiGet<Record<string, {
         app_name: string;
         version: string;
-        display_template: { html: string; css: string | null } | null;
+        display_template: { html: string; css: string | null; key_mappings: string[] } | null;
       }>>(`/apps/config-templates?device_id=${deviceId}`),
     select: (res) => res.data,
     enabled: !!deviceId,

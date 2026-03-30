@@ -201,7 +201,7 @@ export function DisplayTemplateEditor({
           <div className="rounded-md border border-zinc-700 overflow-hidden" style={{ height: "calc(100vh - 400px)" }}>
             <iframe
               ref={iframeRef}
-              sandbox="allow-same-origin"
+              sandbox="allow-scripts allow-same-origin"
               title="Template Preview"
               className="w-full h-full border-0 bg-zinc-900"
             />
