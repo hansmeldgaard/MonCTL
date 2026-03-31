@@ -1030,14 +1030,11 @@ export function useAvailabilityHistory(
     queryKey: ["availability-history", deviceId, fromTs, toTs, limit],
     queryFn: () => {
       const params = new URLSearchParams({
-        device_id: deviceId!,
-        table: "availability_latency",
-        role: "availability,latency",
         limit: String(limit),
         ...(fromTs ? { from_ts: fromTs } : {}),
         ...(toTs ? { to_ts: toTs } : {}),
       });
-      return apiGet<ResultRecord[]>(`/results?${params}`);
+      return apiGet<ResultRecord[]>(`/results/availability/${deviceId}?${params}`);
     },
     select: (res) => res.data,
     enabled: !!deviceId,

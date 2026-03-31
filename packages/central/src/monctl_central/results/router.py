@@ -602,6 +602,9 @@ async def device_performance_summary(
 _PERF_TIER_TABLE = {"raw": "performance", "hourly": "performance_hourly", "daily": "performance_daily"}
 _PERF_TIER_TIME_COL = {"raw": "executed_at", "hourly": "hour", "daily": "day"}
 
+_AVAIL_TIER_TABLE = {"raw": "availability_latency", "hourly": "availability_latency_hourly", "daily": "availability_latency_daily"}
+_AVAIL_TIER_TIME_COL = {"raw": "executed_at", "hourly": "hour", "daily": "day"}
+
 
 async def _auto_select_perf_tier(
     from_ts_str: str | None, db: AsyncSession, device_id: str | None = None,
@@ -789,6 +792,116 @@ async def device_performance(
             entry["sample_count"] = max(entry["sample_count"], row.get("sample_count", 0))
 
         data = list(grouped.values())
+
+    return {
+        "status": "success",
+        "data": data,
+        "tier": selected_tier,
+        "meta": {"limit": limit, "count": len(data)},
+    }
+
+
+# ---------------------------------------------------------------------------
+# Availability / Latency history with auto-tier
+# ---------------------------------------------------------------------------
+
+async def _auto_select_avail_tier(
+    from_ts_str: str | None, db: AsyncSession, device_id: str | None = None,
+) -> str:
+    """Auto-select availability data tier based on age of query.
+
+    Display thresholds (independent of retention settings):
+      <= 2 days  → raw   (high-resolution, ~2880 pts max)
+      <= 90 days → hourly (~2160 pts max)
+      > 90 days  → daily
+    """
+    if not from_ts_str:
+        return "raw"
+    from_dt = datetime.fromisoformat(from_ts_str.replace("Z", "+00:00"))
+    age = datetime.now(tz=from_dt.tzinfo or None) - from_dt
+
+    if age.days <= 2:
+        return "raw"
+    elif age.days <= 90:
+        return "hourly"
+    return "daily"
+
+
+@router.get("/availability/{device_id}")
+async def device_availability(
+    device_id: str,
+    from_ts: Optional[str] = Query(default=None),
+    to_ts: Optional[str] = Query(default=None),
+    tier: Optional[str] = Query(default=None, description="Data tier: raw, hourly, daily (omit for auto)"),
+    limit: int = Query(default=20000, le=50000),
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_permission("result", "view")),
+):
+    """Return availability/latency history for a device with auto-tier selection."""
+    device = await db.get(Device, uuid.UUID(device_id))
+    if device is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+    if not check_tenant_access(auth, device.tenant_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    if tier and tier in _AVAIL_TIER_TABLE:
+        selected_tier = tier
+    else:
+        selected_tier = await _auto_select_avail_tier(from_ts, db, device_id=device_id)
+
+    ch = get_clickhouse()
+    table = _AVAIL_TIER_TABLE[selected_tier]
+    time_col = _AVAIL_TIER_TIME_COL[selected_tier]
+
+    sql = f"SELECT * FROM {table} WHERE device_id = {{device_id:UUID}}"
+    params: dict = {"device_id": device_id}
+
+    if from_ts:
+        sql += f" AND {time_col} >= {{from_ts:DateTime64}}"
+        params["from_ts"] = from_ts.replace("Z", "").replace("+00:00", "").split("+")[0]
+    if to_ts:
+        sql += f" AND {time_col} <= {{to_ts:DateTime64}}"
+        params["to_ts"] = to_ts.replace("Z", "").replace("+00:00", "").split("+")[0]
+
+    if selected_tier == "raw":
+        # Only include availability/latency roles for raw tier
+        sql += " AND role IN ('availability', 'latency')"
+
+    sql += f" ORDER BY {time_col} DESC LIMIT {{limit:UInt32}}"
+    params["limit"] = limit
+
+    try:
+        client = ch._get_client()
+        result = client.query(sql, parameters=params)
+        rows = list(result.named_results())
+    except Exception as exc:
+        if ch._is_table_missing_error(exc):
+            rows = []
+        else:
+            raise
+
+    if selected_tier == "raw":
+        data = [_format_ch_row(r) for r in rows]
+    else:
+        # Rollup tier: map columns to match raw format for frontend compatibility
+        data = []
+        for r in rows:
+            data.append({
+                "assignment_id": str(r.get("assignment_id", "")),
+                "app_id": str(r.get("app_id", "")),
+                "device_id": str(r.get("device_id", "")),
+                "device_name": r.get("device_name", ""),
+                "app_name": r.get("app_name", ""),
+                "executed_at": str(r.get(time_col, "")),
+                "rtt_ms": r.get("rtt_avg", 0),
+                "response_time_ms": r.get("response_time_avg", 0),
+                "reachable": 1 if r.get("availability_pct", 0) >= 50 else 0,
+                "role": "availability",  # rollup includes both, frontend treats as availability
+                "state": 0,
+                "tenant_id": str(r.get("tenant_id", "")),
+                "sample_count": r.get("sample_count", 0),
+                "availability_pct": r.get("availability_pct", 0),
+            })
 
     return {
         "status": "success",
