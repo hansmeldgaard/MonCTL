@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from monctl_central.dependencies import get_db, require_auth
+from monctl_central.dependencies import get_db, require_permission
 from monctl_central.storage.models import SystemSetting
 from monctl_common.utils import utc_now
 
@@ -41,7 +41,7 @@ _DEFAULTS = {
 @router.get("")
 async def get_settings(
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("settings", "view")),
 ):
     """Get all system settings as a dict."""
     result = await db.execute(select(SystemSetting))
@@ -60,7 +60,7 @@ class UpdateSettingsRequest(BaseModel):
 async def update_settings(
     request: UpdateSettingsRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("settings", "manage")),
 ):
     """Partial update system settings."""
     for key, value in request.settings.items():

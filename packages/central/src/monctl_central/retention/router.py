@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from monctl_central.dependencies import get_db, require_auth
+from monctl_central.dependencies import get_db, require_permission
 from monctl_central.storage.models import (
     App, AppAssignment, DataRetentionOverride, SystemSetting,
 )
@@ -57,7 +57,7 @@ async def _get_effective_default(db: AsyncSession, data_type: str) -> int:
 @router.get("/retention/defaults")
 async def get_retention_defaults(
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("settings", "view")),
 ):
     """Return global retention defaults for all data types."""
     defaults = {}
@@ -76,7 +76,7 @@ class UpdateRetentionDefaultRequest(BaseModel):
 async def set_retention_default(
     req: UpdateRetentionDefaultRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("settings", "manage")),
 ):
     """Set the global retention default for a specific data type."""
     if req.data_type not in VALID_DATA_TYPES:
@@ -99,7 +99,7 @@ async def set_retention_default(
 async def get_device_retention(
     device_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("settings", "view")),
 ):
     """Return effective retention for all apps assigned to a device."""
     defaults = {}
@@ -152,7 +152,7 @@ async def set_device_retention(
     device_id: str,
     req: SetDeviceRetentionRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("settings", "manage")),
 ):
     """Create or update a per-device retention override."""
     if req.data_type not in VALID_DATA_TYPES:
@@ -197,7 +197,7 @@ async def delete_device_retention(
     device_id: str,
     override_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("settings", "manage")),
 ):
     """Delete a per-device retention override (reverts to global default)."""
     override = await db.get(DataRetentionOverride, uuid.UUID(override_id))

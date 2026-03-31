@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from monctl_central.dependencies import get_db, get_clickhouse, require_auth
+from monctl_central.dependencies import get_db, get_clickhouse, require_permission
 from monctl_central.storage.models import (
     Device, Collector, AlertDefinition, AlertEntity,
 )
@@ -23,7 +23,7 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 @router.get("/summary")
 async def dashboard_summary(
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("result", "view")),
 ):
     """Aggregated dashboard data — one call powers all widgets."""
     tenant_ids = auth.get("tenant_ids")

@@ -14,7 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from monctl_central.dependencies import get_db, require_auth
+from monctl_central.dependencies import get_db, require_permission
 from monctl_central.storage.models import (
     AssignmentConnectorBinding,
     Connector,
@@ -129,7 +129,7 @@ SORT_MAP = {
 @router.get("")
 async def list_connectors(
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "view")),
     name: str | None = Query(default=None),
     connector_type: str | None = Query(default=None),
     description: str | None = Query(default=None),
@@ -179,7 +179,7 @@ async def list_connectors(
 async def create_connector(
     request: CreateConnectorRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "create")),
 ):
     """Create a new connector."""
     connector = Connector(
@@ -200,7 +200,7 @@ async def create_connector(
 async def get_connector(
     connector_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "view")),
 ):
     """Get connector details including all versions (sorted newest first)."""
     stmt = (
@@ -228,7 +228,7 @@ async def update_connector(
     connector_id: str,
     request: UpdateConnectorRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "edit")),
 ):
     """Update connector name, description, or type."""
     connector = await db.get(Connector, uuid.UUID(connector_id))
@@ -251,7 +251,7 @@ async def update_connector(
 async def delete_connector(
     connector_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "delete")),
 ):
     """Delete a connector. Rejected if any assignment bindings reference it."""
     connector = await db.get(Connector, uuid.UUID(connector_id))
@@ -282,7 +282,7 @@ async def create_connector_version(
     connector_id: str,
     request: CreateVersionRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "create")),
 ):
     """Upload a new version of a connector."""
     stmt = (
@@ -326,7 +326,7 @@ async def get_connector_version(
     connector_id: str,
     version_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "view")),
 ):
     """Get version details including source code."""
     stmt = select(ConnectorVersion).where(
@@ -346,7 +346,7 @@ async def update_connector_version(
     version_id: str,
     request: UpdateVersionRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "edit")),
 ):
     """Update a connector version's source code, requirements, or entry class."""
     stmt = select(ConnectorVersion).where(
@@ -375,7 +375,7 @@ async def delete_connector_version(
     connector_id: str,
     version_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "delete")),
 ):
     """Delete a connector version. Rejected if any bindings reference it."""
     stmt = select(ConnectorVersion).where(
@@ -407,7 +407,7 @@ async def set_latest_version(
     connector_id: str,
     version_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "edit")),
 ):
     """Mark a version as the latest. Clears is_latest on all other versions."""
     stmt = (
@@ -442,7 +442,7 @@ async def clone_connector_version(
     connector_id: str,
     version_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "create")),
 ):
     """Clone an existing connector version into a new draft version.
 

@@ -22,6 +22,7 @@ import { timeAgo, formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 import { useListState } from "@/hooks/useListState.ts";
 import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
+import { usePermissions } from "@/hooks/usePermissions.ts";
 import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
 import type { AlertEntity, AlertDefinition, AlertLogEntry } from "@/types/api.ts";
@@ -314,6 +315,7 @@ function DefinitionsTab({
   meta: { limit: number; offset: number; count: number; total: number };
   isFetching: boolean;
 }) {
+  const { canCreate } = usePermissions();
   const invertDef = useInvertAlertDefinition();
   const createDef = useCreateAlertDefinition();
   const [invertingId, setInvertingId] = useState<string | null>(null);
@@ -396,7 +398,7 @@ function DefinitionsTab({
                     )}
                   </TableCell>
                   <TableCell>
-                    {!hasChanged(defn.expression) && (
+                    {canCreate("alert") && !hasChanged(defn.expression) && (
                       <Button
                         size="sm"
                         variant="ghost"

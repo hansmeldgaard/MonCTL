@@ -15,7 +15,7 @@ from sqlalchemy.orm import selectinload
 from monctl_central.alerting.dsl import invert_expression, validate_expression
 from monctl_central.alerting.instance_sync import sync_instances_for_definition
 from monctl_central.alerting.threshold_sync import sync_threshold_variables
-from monctl_central.dependencies import get_clickhouse, get_db, require_auth
+from monctl_central.dependencies import get_clickhouse, get_db, require_permission
 from monctl_central.storage.models import (
     AlertEntity,
     App,
@@ -173,7 +173,7 @@ async def list_alert_definitions(
     limit: int = Query(default=50, le=500),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "view")),
 ):
     """List all alert definitions, optionally filtered by app_id."""
     # Build filters
@@ -233,7 +233,7 @@ async def list_alert_definitions(
 async def create_alert_definition(
     request: CreateAlertDefinitionRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "create")),
 ):
     """Create a new alert definition on an app version."""
     app = await db.get(App, uuid.UUID(request.app_id))
@@ -272,7 +272,7 @@ async def create_alert_definition(
 async def get_alert_definition(
     definition_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "view")),
 ):
     """Get a single alert definition with its instances."""
     defn = await db.get(
@@ -293,7 +293,7 @@ async def update_alert_definition(
     definition_id: str,
     request: UpdateAlertDefinitionRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "edit")),
 ):
     """Update an alert definition."""
     defn = await db.get(AlertDefinition, uuid.UUID(definition_id))
@@ -331,7 +331,7 @@ async def update_alert_definition(
 async def delete_alert_definition(
     definition_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "delete")),
 ):
     """Delete an alert definition (CASCADE deletes instances)."""
     defn = await db.get(AlertDefinition, uuid.UUID(definition_id))
@@ -344,7 +344,7 @@ async def delete_alert_definition(
 async def invert_alert_definition(
     definition_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "edit")),
 ):
     """Generate inverted expression for a recovery alert."""
     defn = await db.get(AlertDefinition, uuid.UUID(definition_id))
@@ -383,7 +383,7 @@ async def list_alert_instances(
     app_name: str | None = Query(default=None),
     entity_key: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "view")),
 ):
     """List alert instances with optional filters, sort, and pagination."""
     stmt = (
@@ -451,7 +451,7 @@ async def list_alert_instances(
 @router.get("/instances/active")
 async def list_active_instances(
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "view")),
 ):
     """List all currently firing alert instances."""
     stmt = select(AlertEntity).where(AlertEntity.state == "firing")
@@ -481,7 +481,7 @@ async def list_resolved_instances(
     limit: int = Query(200, le=500),
     device_id: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "view")),
 ):
     """List recently resolved alert instances within retention window."""
     from datetime import datetime, timedelta, timezone
@@ -536,7 +536,7 @@ async def update_alert_instance(
     instance_id: str,
     request: UpdateAlertEntityRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "edit")),
 ):
     """Enable or disable an alert instance."""
     instance = await db.get(AlertEntity, uuid.UUID(instance_id))
@@ -551,7 +551,7 @@ async def update_alert_instance(
 @router.post("/validate-expression")
 async def validate_expression_endpoint(
     request: ValidateExpressionRequest,
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "view")),
 ):
     """Validate a DSL expression for live UI feedback."""
     result = validate_expression(request.expression, request.target_table)
@@ -585,7 +585,7 @@ async def list_threshold_overrides(
     device_id: str | None = Query(None),
     variable_id: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "view")),
 ):
     """List threshold overrides."""
     stmt = select(ThresholdOverride)
@@ -602,7 +602,7 @@ async def list_threshold_overrides(
 async def create_threshold_override(
     request: CreateThresholdOverrideRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "edit")),
 ):
     """Create a threshold override for a device."""
     # Verify the variable exists
@@ -626,7 +626,7 @@ async def update_threshold_override(
     override_id: str,
     request: UpdateThresholdOverrideRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "edit")),
 ):
     """Update a threshold override."""
     override = await db.get(ThresholdOverride, uuid.UUID(override_id))
@@ -641,7 +641,7 @@ async def update_threshold_override(
 async def delete_threshold_override(
     override_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "edit")),
 ):
     """Delete a threshold override."""
     override = await db.get(ThresholdOverride, uuid.UUID(override_id))
@@ -666,7 +666,7 @@ async def query_alert_log(
     sort_dir: str = Query(default="DESC"),
     limit: int = Query(default=100, le=1000),
     offset: int = Query(default=0, ge=0),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "view")),
     ch=Depends(get_clickhouse),
 ):
     """Query the alert fire/clear log from ClickHouse."""
@@ -714,7 +714,7 @@ async def query_alert_log(
 @router.post("/cleanup-orphan-thresholds")
 async def cleanup_orphan_threshold_variables(
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "edit")),
 ):
     """Remove threshold variables not referenced by any alert definition and with no overrides."""
     all_vars = (await db.execute(select(ThresholdVariable))).scalars().all()

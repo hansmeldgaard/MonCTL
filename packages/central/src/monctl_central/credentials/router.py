@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 
 from monctl_central.credentials.crypto import encrypt_dict
-from monctl_central.dependencies import get_db, require_auth
+from monctl_central.dependencies import get_db, require_permission
 from monctl_central.storage.models import Credential, CredentialType
 from monctl_common.utils import utc_now
 
@@ -140,7 +140,7 @@ async def list_credentials(
     limit: int = Query(default=50, le=500),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("credential", "view")),
 ):
     """List credentials (metadata only, no secret values)."""
     stmt = select(Credential)
@@ -158,7 +158,7 @@ async def list_credentials(
 @router.get("/types")
 async def list_credential_types(
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("credential", "view")),
 ):
     """Return all managed credential types."""
     from monctl_central.storage.models import CredentialType
@@ -183,7 +183,7 @@ class CredentialTypeRequest(BaseModel):
 async def create_credential_type(
     request: CredentialTypeRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("credential", "create")),
 ):
     """Create a new credential type."""
     from monctl_central.storage.models import CredentialType
@@ -201,7 +201,7 @@ async def update_credential_type(
     type_id: str,
     request: CredentialTypeRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("credential", "edit")),
 ):
     """Update a credential type."""
     from monctl_central.storage.models import CredentialType
@@ -229,7 +229,7 @@ async def update_credential_type(
 async def delete_credential_type(
     type_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("credential", "delete")),
 ):
     """Delete a credential type."""
     from monctl_central.storage.models import CredentialType
@@ -243,7 +243,7 @@ async def delete_credential_type(
 async def create_credential(
     request: CreateCredentialRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("credential", "create")),
 ):
     """Create a new credential. The secret is encrypted before storage."""
     # Check for duplicate name
@@ -334,7 +334,7 @@ async def create_credential(
 async def get_credential(
     credential_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("credential", "view")),
 ):
     """Get credential metadata by ID including its key composition (no secret values)."""
     from monctl_central.credentials.crypto import decrypt_dict
@@ -377,7 +377,7 @@ async def update_credential(
     credential_id: str,
     request: UpdateCredentialRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("credential", "edit")),
 ):
     """Update a credential. If secret is provided, it replaces the existing secret."""
     cred = await db.get(Credential, uuid.UUID(credential_id))
@@ -409,7 +409,7 @@ async def update_credential(
 async def delete_credential(
     credential_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("credential", "delete")),
 ):
     """Delete a credential."""
     cred = await db.get(Credential, uuid.UUID(credential_id))

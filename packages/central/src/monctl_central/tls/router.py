@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from monctl_central.dependencies import get_db, require_auth
+from monctl_central.dependencies import get_db, require_permission
 from monctl_central.storage.models import TlsCertificate
 from monctl_central.credentials.crypto import encrypt_dict, decrypt_dict
 
@@ -36,7 +36,7 @@ def _cert_info(cert: TlsCertificate) -> dict:
 @router.get("")
 async def get_tls_cert(
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("settings", "view")),
 ):
     """Get the active TLS certificate info (without private key)."""
     stmt = select(TlsCertificate).where(TlsCertificate.is_active == True)
@@ -52,7 +52,7 @@ class GenerateCertRequest(BaseModel):
 async def generate_self_signed(
     request: GenerateCertRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("settings", "manage")),
 ):
     """Generate a self-signed TLS certificate."""
     try:
@@ -122,7 +122,7 @@ class UploadCertRequest(BaseModel):
 async def upload_cert(
     request: UploadCertRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("settings", "manage")),
 ):
     """Upload a TLS certificate and private key."""
     try:
@@ -160,7 +160,7 @@ async def upload_cert(
 @router.post("/deploy")
 async def deploy_cert(
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("settings", "manage")),
 ):
     """Deploy the active certificate to HAProxy."""
     stmt = select(TlsCertificate).where(TlsCertificate.is_active == True)

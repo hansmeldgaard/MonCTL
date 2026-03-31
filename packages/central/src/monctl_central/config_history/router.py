@@ -14,7 +14,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from monctl_central.dependencies import check_tenant_access, get_clickhouse, get_db, require_auth
+from monctl_central.dependencies import check_tenant_access, get_clickhouse, get_db, require_permission
 from monctl_central.storage.models import Device
 
 logger = logging.getLogger(__name__)
@@ -68,7 +68,7 @@ async def config_changelog(
     limit: int = Query(default=50, le=5000),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "view")),
 ):
     """Return config change history for a device, newest first."""
     await _get_device_with_access(device_id, db, auth)
@@ -107,7 +107,7 @@ async def config_snapshot(
     device_id: str,
     app_id: Optional[str] = Query(default=None),
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "view")),
 ):
     """Return the current config snapshot (latest value per key)."""
     await _get_device_with_access(device_id, db, auth)
@@ -129,7 +129,7 @@ async def config_diff(
     app_id: Optional[str] = Query(default=None),
     limit: int = Query(default=20, le=200),
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "view")),
 ):
     """Return value history for a specific config key, for building diffs.
 
@@ -154,7 +154,7 @@ async def config_snapshot_at_time(
     at_time: str = Query(..., description="ISO timestamp to snapshot at"),
     app_id: Optional[str] = Query(default=None),
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "view")),
 ):
     """Return the config state at a specific point in time."""
     await _get_device_with_access(device_id, db, auth)
@@ -176,7 +176,7 @@ async def config_compare(
     time_b: str = Query(..., description="Later ISO timestamp"),
     app_id: Optional[str] = Query(default=None),
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "view")),
 ):
     """Compare config state between two points in time.
 
@@ -252,7 +252,7 @@ async def config_change_timestamps(
     from_ts: Optional[str] = Query(default=None),
     to_ts: Optional[str] = Query(default=None),
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "view")),
 ):
     """Return a timeline of config change events (minute-level buckets)."""
     await _get_device_with_access(device_id, db, auth)

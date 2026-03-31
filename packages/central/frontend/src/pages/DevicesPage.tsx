@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import { usePermissions } from "@/hooks/usePermissions.ts";
 import {
   ArrowDown,
   ArrowUp,
@@ -42,6 +43,7 @@ import { ApplyTemplateDialog } from "@/components/ApplyTemplateDialog.tsx";
 import { DeviceIcon, categoryIconUrl } from "@/components/DeviceIcon.tsx";
 
 export function DevicesPage() {
+  const { canCreate, canDelete } = usePermissions();
   // ── URL query params (for deep linking from device types page) ──
   const [searchParams] = useSearchParams();
 
@@ -388,14 +390,16 @@ export function DevicesPage() {
             >
               <FileText className="h-3.5 w-3.5" /> Apply Template
             </Button>
-            <Button
-              size="sm"
-              variant="destructive"
-              onClick={() => setConfirmDeleteOpen(true)}
-              className="gap-1.5"
-            >
-              <Trash2 className="h-3.5 w-3.5" /> Delete Selected
-            </Button>
+            {canDelete("device") && (
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={() => setConfirmDeleteOpen(true)}
+                className="gap-1.5"
+              >
+                <Trash2 className="h-3.5 w-3.5" /> Delete Selected
+              </Button>
+            )}
           </div>
         )}
 
@@ -414,10 +418,12 @@ export function DevicesPage() {
           {compact ? "Normal" : "Compact"}
         </Button>
 
-        <Button size="sm" onClick={() => setAddOpen(true)} className="gap-1.5">
-          <Plus className="h-4 w-4" />
-          Add Device
-        </Button>
+        {canCreate("device") && (
+          <Button size="sm" onClick={() => setAddOpen(true)} className="gap-1.5">
+            <Plus className="h-4 w-4" />
+            Add Device
+          </Button>
+        )}
       </div>
 
       {/* Table */}

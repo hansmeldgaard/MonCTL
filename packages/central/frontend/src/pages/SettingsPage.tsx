@@ -30,6 +30,7 @@ import { Label } from "@/components/ui/label.tsx";
 import { Select } from "@/components/ui/select.tsx";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import { useAuth } from "@/hooks/useAuth.tsx";
+import { usePermissions } from "@/hooks/usePermissions.ts";
 import { useTablePreferences, PAGE_SIZE_OPTIONS } from "@/hooks/useTablePreferences.ts";
 import {
   useHealth,
@@ -56,17 +57,17 @@ import { TenantsPage } from "@/pages/TenantsPage.tsx";
 import { RolesPage } from "@/pages/RolesPage.tsx";
 
 const TABS = [
-  { key: "profile", label: "Profile", icon: User },
-  { key: "api-keys", label: "API Keys", icon: KeyRound },
-  { key: "system", label: "System", icon: Settings },
-  { key: "collectors", label: "Collectors", icon: Cpu },
-  { key: "snmp-oids", label: "SNMP OIDs", icon: Network },
-  { key: "data-retention", label: "Data Retention", icon: Database },
-  { key: "network", label: "Network", icon: Globe },
-  { key: "tls", label: "TLS / HTTPS", icon: Shield },
-  { key: "roles", label: "Roles", icon: ShieldCheck },
-  { key: "users", label: "Users", icon: Users },
-  { key: "tenants", label: "Tenants", icon: Building2 },
+  { key: "profile", label: "Profile", icon: User, adminOnly: false },
+  { key: "api-keys", label: "API Keys", icon: KeyRound, adminOnly: false },
+  { key: "system", label: "System", icon: Settings, adminOnly: true },
+  { key: "collectors", label: "Collectors", icon: Cpu, adminOnly: true },
+  { key: "snmp-oids", label: "SNMP OIDs", icon: Network, adminOnly: true },
+  { key: "data-retention", label: "Data Retention", icon: Database, adminOnly: true },
+  { key: "network", label: "Network", icon: Globe, adminOnly: true },
+  { key: "tls", label: "TLS / HTTPS", icon: Shield, adminOnly: true },
+  { key: "roles", label: "Roles", icon: ShieldCheck, adminOnly: true },
+  { key: "users", label: "Users", icon: Users, adminOnly: true },
+  { key: "tenants", label: "Tenants", icon: Building2, adminOnly: true },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
@@ -1095,6 +1096,8 @@ function TlsTab() {
 export function SettingsPage() {
   const { tab } = useParams<{ tab?: string }>();
   const navigate = useNavigate();
+  const { isAdmin } = usePermissions();
+  const visibleTabs = TABS.filter((t) => !t.adminOnly || isAdmin);
   const activeTab = (tab ?? "profile") as TabKey;
 
   function handleTabChange(key: TabKey) {
@@ -1129,7 +1132,7 @@ export function SettingsPage() {
 
       {/* Tab navigation */}
       <div className="flex gap-1 border-b border-zinc-800 pb-0 overflow-x-auto">
-        {TABS.map((t) => {
+        {visibleTabs.map((t) => {
           const isActive = activeTab === t.key;
           return (
             <button

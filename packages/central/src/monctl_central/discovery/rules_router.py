@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from monctl_central.dependencies import get_db, require_auth
+from monctl_central.dependencies import get_db, require_permission
 from monctl_central.storage.models import Device, DeviceCategory, DeviceType
 
 router = APIRouter()
@@ -99,7 +99,7 @@ async def list_device_types(
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "view")),
 ):
     """List device types with search, filtering, sorting, and pagination."""
     stmt = select(DeviceType).options(selectinload(DeviceType.device_category))
@@ -170,7 +170,7 @@ async def list_device_types(
 async def create_device_type(
     request: CreateDeviceTypeRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "create")),
 ):
     """Create a new device type."""
     dt = await db.get(DeviceCategory, uuid.UUID(request.device_category_id))
@@ -209,7 +209,7 @@ async def create_device_type(
 async def get_device_type(
     rule_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "view")),
 ):
     """Get a single device type."""
     rule = (await db.execute(
@@ -227,7 +227,7 @@ async def update_device_type(
     rule_id: str,
     request: UpdateDeviceTypeRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "edit")),
 ):
     """Update a device type."""
     rule = await db.get(DeviceType, uuid.UUID(rule_id))
@@ -274,7 +274,7 @@ async def update_device_type(
 async def delete_device_type(
     rule_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "delete")),
 ):
     """Delete a device type."""
     rule = await db.get(DeviceType, uuid.UUID(rule_id))

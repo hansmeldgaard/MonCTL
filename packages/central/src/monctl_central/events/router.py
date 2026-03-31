@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from monctl_central.dependencies import get_clickhouse, get_db, require_auth
+from monctl_central.dependencies import get_clickhouse, get_db, require_permission
 from monctl_central.storage.clickhouse import ClickHouseClient
 from monctl_central.storage.models import AlertDefinition, EventPolicy
 from monctl_common.utils import utc_now
@@ -105,7 +105,7 @@ async def list_events(
     limit: int = Query(200, le=1000),
     offset: int = Query(0, ge=0),
     ch: ClickHouseClient = Depends(get_clickhouse),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "view")),
 ):
     total = await asyncio.to_thread(
         ch.count_events, state=state, severity=severity,
@@ -134,7 +134,7 @@ async def list_active_events(
     limit: int = Query(200, le=1000),
     offset: int = Query(0, ge=0),
     ch: ClickHouseClient = Depends(get_clickhouse),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "view")),
 ):
     total = await asyncio.to_thread(
         ch.count_events, state="active", severity=severity,
@@ -162,7 +162,7 @@ async def list_cleared_events(
     limit: int = Query(200, le=1000),
     offset: int = Query(0, ge=0),
     ch: ClickHouseClient = Depends(get_clickhouse),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "view")),
 ):
     total = await asyncio.to_thread(
         ch.count_events, state="cleared", device_id=device_id,
@@ -191,7 +191,7 @@ class BulkEventActionRequest(BaseModel):
 async def acknowledge_events(
     req: BulkEventActionRequest,
     ch: ClickHouseClient = Depends(get_clickhouse),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "edit")),
 ):
     actor = auth.get("username", "unknown")
     await asyncio.to_thread(ch.update_event_state, req.event_ids, "acknowledged", actor)
@@ -202,7 +202,7 @@ async def acknowledge_events(
 async def clear_events(
     req: BulkEventActionRequest,
     ch: ClickHouseClient = Depends(get_clickhouse),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "edit")),
 ):
     actor = auth.get("username", "unknown")
     await asyncio.to_thread(ch.update_event_state, req.event_ids, "cleared", actor)
@@ -283,7 +283,7 @@ async def list_event_policies(
     limit: int = Query(default=50, le=500),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "view")),
 ):
     stmt = select(EventPolicy).options(selectinload(EventPolicy.definition))
 
@@ -336,7 +336,7 @@ async def list_event_policies(
 async def create_event_policy(
     req: CreateEventPolicyRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "create")),
 ):
     defn = await db.get(AlertDefinition, uuid.UUID(req.definition_id))
     if not defn:
@@ -369,7 +369,7 @@ async def update_event_policy(
     policy_id: str,
     req: UpdateEventPolicyRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "edit")),
 ):
     policy = await db.get(EventPolicy, uuid.UUID(policy_id))
     if not policy:
@@ -405,7 +405,7 @@ async def update_event_policy(
 async def delete_event_policy(
     policy_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "delete")),
 ):
     policy = await db.get(EventPolicy, uuid.UUID(policy_id))
     if not policy:

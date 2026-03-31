@@ -40,6 +40,7 @@ import {
 import type { Credential, CredentialKey, CredentialTemplate, CredentialType } from "@/types/api.ts";
 import { formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
+import { usePermissions } from "@/hooks/usePermissions.ts";
 
 // ── Credential Keys Section ──────────────────────────────
 
@@ -339,6 +340,7 @@ function CredentialDetailRow({ credentialId }: { credentialId: string }) {
 
 function CredentialsCard() {
   const tz = useTimezone();
+  const { canCreate, canDelete } = usePermissions();
   const { data: credentials, isLoading } = useCredentials();
   const { data: credentialKeys } = useCredentialKeys();
   const { data: templates } = useCredentialTemplates();
@@ -531,9 +533,11 @@ function CredentialsCard() {
                           <button onClick={(e) => { e.stopPropagation(); openEdit(cred); }} className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer" title="Edit">
                             <Pencil className="h-4 w-4" />
                           </button>
+                          {canDelete("credential") && (
                           <button onClick={(e) => { e.stopPropagation(); setDeleteTarget(cred); }} className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer" title="Delete">
                             <Trash2 className="h-4 w-4" />
                           </button>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -549,11 +553,13 @@ function CredentialsCard() {
               </TableBody>
             </Table>
           )}
+          {canCreate("credential") && (
           <div className="mt-4 flex justify-end border-t border-zinc-800 pt-4">
             <Button size="sm" variant="secondary" onClick={() => { credNameField.reset(); setAddDesc(""); setAddType(credentialTypes?.[0]?.name ?? ""); setAddTemplateId(""); setAddValues({}); setAddError(null); setAddOpen(true); }} className="gap-1.5">
               <Plus className="h-4 w-4" /> New Credential
             </Button>
           </div>
+          )}
         </CardContent>
       </Card>
 

@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from monctl_central.dependencies import get_db, require_auth
+from monctl_central.dependencies import get_db, require_permission
 from monctl_central.storage.models import DeviceCategory, DeviceType
 
 router = APIRouter()
@@ -57,7 +57,7 @@ async def list_device_categories(
     limit: int = Query(default=50, le=500),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "view")),
 ):
     """List device categories with filtering, sorting, and pagination."""
     stmt = select(DeviceCategory)
@@ -138,7 +138,7 @@ async def list_device_categories(
 async def list_category_counts(
     search: str | None = Query(default=None, description="Search name or description"),
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "view")),
 ):
     """Get type counts per category, optionally filtered by search."""
     stmt = select(DeviceCategory)
@@ -170,7 +170,7 @@ async def list_category_counts(
 async def create_device_category(
     request: CreateDeviceCategoryRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "create")),
 ):
     """Create a new device category."""
     # Check for duplicate name
@@ -196,7 +196,7 @@ async def update_device_category(
     type_id: str,
     request: UpdateDeviceCategoryRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "edit")),
 ):
     """Update a device category name or description."""
     dt = await db.get(DeviceCategory, uuid.UUID(type_id))
@@ -217,7 +217,7 @@ async def update_device_category(
 async def delete_device_category(
     type_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "delete")),
 ):
     """Delete a device category."""
     dt = await db.get(DeviceCategory, uuid.UUID(type_id))
@@ -234,7 +234,7 @@ async def upload_device_category_icon(
     type_id: str,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "create")),
 ):
     """Upload a custom icon for a device category. Accepts PNG, JPEG, WebP, or SVG up to 256 KB."""
     dt = await db.get(DeviceCategory, uuid.UUID(type_id))
@@ -280,7 +280,7 @@ async def get_device_category_icon(
 async def delete_device_category_icon(
     type_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "delete")),
 ):
     """Remove the custom icon from a device category."""
     dt = await db.get(DeviceCategory, uuid.UUID(type_id))

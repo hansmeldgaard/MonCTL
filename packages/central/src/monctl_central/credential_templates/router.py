@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from monctl_central.dependencies import get_db, require_auth
+from monctl_central.dependencies import get_db, require_permission
 from monctl_central.storage.models import CredentialTemplate, CredentialKey, CredentialType
 from monctl_common.utils import utc_now
 
@@ -93,7 +93,7 @@ async def _validate_fields(fields: list[TemplateField], db: AsyncSession) -> Non
 @router.get("")
 async def list_credential_templates(
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("credential", "view")),
 ):
     rows = (await db.execute(
         select(CredentialTemplate).order_by(CredentialTemplate.name)
@@ -105,7 +105,7 @@ async def list_credential_templates(
 async def get_credential_template(
     template_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("credential", "view")),
 ):
     t = await db.get(CredentialTemplate, uuid.UUID(template_id))
     if t is None:
@@ -117,7 +117,7 @@ async def get_credential_template(
 async def create_credential_template(
     request: CreateCredentialTemplateRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("credential", "create")),
 ):
     existing = (await db.execute(
         select(CredentialTemplate).where(CredentialTemplate.name == request.name)
@@ -144,7 +144,7 @@ async def update_credential_template(
     template_id: str,
     request: UpdateCredentialTemplateRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("credential", "edit")),
 ):
     t = await db.get(CredentialTemplate, uuid.UUID(template_id))
     if t is None:
@@ -168,7 +168,7 @@ async def update_credential_template(
 async def delete_credential_template(
     template_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("credential", "delete")),
 ):
     t = await db.get(CredentialTemplate, uuid.UUID(template_id))
     if t is None:

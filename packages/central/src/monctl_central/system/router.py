@@ -577,13 +577,38 @@ def _query_node_resources(host: str, port: int, username: str, password: str, da
             "SELECT metric, value FROM system.asynchronous_metrics"
             " WHERE metric IN ("
             "'OSMemoryTotal', 'OSMemoryFreeWithoutCached',"
-            " 'LoadAverage1', 'LoadAverage5', 'LoadAverage15',"
-            " 'OSCPUUser', 'OSCPUSystem')"
+            " 'LoadAverage1', 'LoadAverage5', 'LoadAverage15')"
         )
         for row in r.named_results():
             async_metrics[row["metric"]] = row["value"]
     except Exception:
         pass
+
+    # CH 24.3 has per-core metrics (OSUserTimeCPU0..N, OSSystemTimeCPU0..N) as 0-1 ratios.
+    cpu_user_vals: list[float] = []
+    cpu_sys_vals: list[float] = []
+    cpu_iowait_vals: list[float] = []
+    try:
+        r = client.query(
+            "SELECT metric, value FROM system.asynchronous_metrics"
+            " WHERE metric LIKE 'OSUserTimeCPU%'"
+            " OR metric LIKE 'OSSystemTimeCPU%'"
+            " OR metric LIKE 'OSIOWaitTimeCPU%'"
+        )
+        for row in r.named_results():
+            m = row["metric"]
+            if m.startswith("OSUserTimeCPU"):
+                cpu_user_vals.append(row["value"])
+            elif m.startswith("OSSystemTimeCPU"):
+                cpu_sys_vals.append(row["value"])
+            elif m.startswith("OSIOWaitTimeCPU"):
+                cpu_iowait_vals.append(row["value"])
+    except Exception:
+        pass
+
+    avg_user = (sum(cpu_user_vals) / len(cpu_user_vals) * 100) if cpu_user_vals else 0
+    avg_sys = (sum(cpu_sys_vals) / len(cpu_sys_vals) * 100) if cpu_sys_vals else 0
+    avg_iowait = (sum(cpu_iowait_vals) / len(cpu_iowait_vals) * 100) if cpu_iowait_vals else 0
 
     os_mem_total = async_metrics.get("OSMemoryTotal", 0)
     os_mem_free = async_metrics.get("OSMemoryFreeWithoutCached", 0)
@@ -592,15 +617,10 @@ def _query_node_resources(host: str, port: int, username: str, password: str, da
         "os_memory_total_bytes": os_mem_total,
         "os_memory_free_bytes": os_mem_free,
         "ch_memory_resident_bytes": 0,
-        "cpu_user_pct": round(async_metrics.get("OSCPUUser", 0) * 100, 1),
-        "cpu_system_pct": round(async_metrics.get("OSCPUSystem", 0) * 100, 1),
-        "cpu_iowait_pct": 0,
-        "cpu_idle_pct": round(
-            100
-            - async_metrics.get("OSCPUUser", 0) * 100
-            - async_metrics.get("OSCPUSystem", 0) * 100,
-            1,
-        ),
+        "cpu_user_pct": round(avg_user, 1),
+        "cpu_system_pct": round(avg_sys, 1),
+        "cpu_iowait_pct": round(avg_iowait, 1),
+        "cpu_idle_pct": round(100 - avg_user - avg_sys - avg_iowait, 1),
         "load_average": [
             round(async_metrics.get("LoadAverage1", 0), 2),
             round(async_metrics.get("LoadAverage5", 0), 2),

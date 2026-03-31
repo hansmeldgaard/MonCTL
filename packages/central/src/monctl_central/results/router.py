@@ -15,7 +15,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from monctl_central.dependencies import check_tenant_access, get_clickhouse, get_db, require_auth
+from monctl_central.dependencies import check_tenant_access, get_clickhouse, get_db, require_permission
 from monctl_central.storage.models import Device, InterfaceMetadata
 
 logger = logging.getLogger(__name__)
@@ -105,7 +105,7 @@ async def list_results(
     to_ts: Optional[str] = Query(default=None, description="ISO datetime — return only results at or before this time"),
     limit: int = Query(default=50, le=20000),
     offset: int = Query(default=0, ge=0),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("result", "view")),
 ):
     """List recent check results, newest first. Reads from ClickHouse."""
     # Determine which tables to query
@@ -188,7 +188,7 @@ async def latest_results(
     table: Optional[str] = Query(default=None, description="ClickHouse table to query (omit to search all tables)"),
     collector_id: Optional[str] = Query(default=None, description="Filter by collector UUID"),
     device_id: Optional[str] = Query(default=None, description="Filter by device UUID"),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("result", "view")),
 ):
     """Return the most recent result per key (status dashboard).
 
@@ -340,7 +340,7 @@ async def device_interfaces(
     tier: Optional[str] = Query(default=None, description="Data tier: raw, hourly, daily (omit for auto)"),
     limit: int = Query(default=2000, le=10000),
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("result", "view")),
 ):
     """Return interface history for a device, optionally filtered by interface and time range."""
     device = await db.get(Device, uuid.UUID(device_id))
@@ -403,7 +403,7 @@ async def device_interfaces(
 async def device_interfaces_latest(
     device_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("result", "view")),
 ):
     """Return the latest interface data per interface for a device."""
     device = await db.get(Device, uuid.UUID(device_id))
@@ -445,7 +445,7 @@ async def device_interfaces_latest(
 async def device_status(
     device_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("result", "view")),
 ):
     """Return the latest result for every assignment linked to a device.
 
@@ -540,7 +540,7 @@ def _format_performance_row(r: dict) -> dict:
 async def device_performance_summary(
     device_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("result", "view")),
 ):
     """Return available apps, component_types, and components for a device."""
     device = await db.get(Device, uuid.UUID(device_id))
@@ -662,7 +662,7 @@ async def device_performance(
     tier: Optional[str] = Query(default=None, description="Data tier: raw, hourly, daily (omit for auto)"),
     limit: int = Query(default=5000, le=20000),
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("result", "view")),
 ):
     """Return performance metrics history for a device."""
     device = await db.get(Device, uuid.UUID(device_id))

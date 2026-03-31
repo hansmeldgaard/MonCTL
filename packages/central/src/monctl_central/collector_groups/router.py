@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from monctl_central.dependencies import get_db, require_auth
+from monctl_central.dependencies import get_db, require_permission
 from monctl_central.storage.models import Collector, CollectorGroup
 
 router = APIRouter()
@@ -40,7 +40,7 @@ def _fmt(g: CollectorGroup, collector_count: int = 0, health: dict | None = None
 @router.get("")
 async def list_collector_groups(
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("collector", "view")),
 ):
     """List all collector groups with collector count and health status."""
     # Load groups with their collectors for health calculation
@@ -107,7 +107,7 @@ def _compute_group_health(collectors: list, total: int) -> dict:
 async def create_collector_group(
     request: CreateCollectorGroupRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("collector", "manage")),
 ):
     """Create a new collector group."""
     existing = (
@@ -133,7 +133,7 @@ async def update_collector_group(
     group_id: str,
     request: UpdateCollectorGroupRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("collector", "manage")),
 ):
     """Update a collector group's name or description."""
     group = await db.get(CollectorGroup, uuid.UUID(group_id))
@@ -171,7 +171,7 @@ async def update_collector_group(
 async def delete_collector_group(
     group_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("collector", "manage")),
 ):
     """Delete a collector group. Collectors and devices are unlinked (SET NULL)."""
     group = await db.get(CollectorGroup, uuid.UUID(group_id))

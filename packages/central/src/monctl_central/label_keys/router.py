@@ -11,7 +11,7 @@ from monctl_common.validators import validate_hex_color
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from monctl_central.dependencies import apply_tenant_filter, get_db, require_auth
+from monctl_central.dependencies import apply_tenant_filter, get_db, require_permission
 from monctl_central.storage.models import Device, LabelKey
 
 router = APIRouter()
@@ -95,7 +95,7 @@ def _fmt(k: LabelKey) -> dict:
 @router.get("")
 async def list_label_keys(
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "view")),
 ):
     """List all registered label keys."""
     rows = (await db.execute(select(LabelKey).order_by(LabelKey.key))).scalars().all()
@@ -106,7 +106,7 @@ async def list_label_keys(
 async def create_label_key(
     request: CreateLabelKeyRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "create")),
 ):
     """Create a new label key."""
     existing = (
@@ -135,7 +135,7 @@ async def update_label_key(
     key_id: str,
     request: UpdateLabelKeyRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "edit")),
 ):
     """Update a label key."""
     lk = (
@@ -161,7 +161,7 @@ async def update_label_key(
 async def delete_label_key(
     key_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "delete")),
 ):
     """Delete a label key from the registry."""
     lk = (
@@ -176,7 +176,7 @@ async def delete_label_key(
 async def list_label_values(
     key_name: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "view")),
 ):
     """Get all unique values used for a given label key across all devices."""
     # Get predefined values from registry

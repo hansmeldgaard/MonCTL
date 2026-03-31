@@ -12,7 +12,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from monctl_central.dependencies import get_db, get_clickhouse, get_session_factory, require_auth
+from monctl_central.dependencies import get_db, get_clickhouse, get_session_factory, require_permission
 from monctl_central.storage.models import Action, Automation, AutomationStep
 
 logger = structlog.get_logger()
@@ -150,7 +150,7 @@ async def list_actions(
     sort_by: str = Query(default="name"),
     sort_dir: str = Query(default="asc"),
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "view")),
 ):
     stmt = select(Action)
     count_stmt = select(func.count(Action.id))
@@ -181,7 +181,7 @@ async def list_actions(
 async def get_action(
     action_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "view")),
 ):
     action = await db.get(Action, uuid.UUID(action_id))
     if not action:
@@ -193,7 +193,7 @@ async def get_action(
 async def create_action(
     request: CreateActionRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "create")),
 ):
     if request.target not in ("collector", "central"):
         raise HTTPException(400, detail="target must be 'collector' or 'central'")
@@ -219,7 +219,7 @@ async def update_action(
     action_id: str,
     request: UpdateActionRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "edit")),
 ):
     action = await db.get(Action, uuid.UUID(action_id))
     if not action:
@@ -255,7 +255,7 @@ async def update_action(
 async def delete_action(
     action_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "delete")),
 ):
     action = await db.get(Action, uuid.UUID(action_id))
     if not action:
@@ -288,7 +288,7 @@ async def list_automations(
     sort_by: str = Query(default="name"),
     sort_dir: str = Query(default="asc"),
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "view")),
 ):
     stmt = select(Automation).options(
         joinedload(Automation.steps).joinedload(AutomationStep.action)
@@ -321,7 +321,7 @@ async def list_automations(
 async def get_automation(
     automation_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "view")),
 ):
     automation = (
         await db.execute(
@@ -339,7 +339,7 @@ async def get_automation(
 async def create_automation(
     request: CreateAutomationRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "create")),
 ):
     if request.trigger_type not in ("event", "cron"):
         raise HTTPException(400, detail="trigger_type must be 'event' or 'cron'")
@@ -401,7 +401,7 @@ async def update_automation(
     automation_id: str,
     request: UpdateAutomationRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "edit")),
 ):
     automation = (
         await db.execute(
@@ -477,7 +477,7 @@ async def update_automation(
 async def delete_automation(
     automation_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "delete")),
 ):
     automation = await db.get(Automation, uuid.UUID(automation_id))
     if not automation:
@@ -493,7 +493,7 @@ async def trigger_automation(
     automation_id: str,
     request: ManualTriggerRequest,
     ch=Depends(get_clickhouse),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "edit")),
 ):
     """Manually trigger an automation for specific devices."""
     from monctl_central.automations.engine import AutomationEngine
@@ -525,7 +525,7 @@ async def list_runs(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=100),
     ch=Depends(get_clickhouse),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "view")),
 ):
     """List automation run history from ClickHouse."""
     import json
@@ -569,7 +569,7 @@ async def list_runs(
 async def get_run(
     run_id: str,
     ch=Depends(get_clickhouse),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("alert", "view")),
 ):
     """Get a single run's details including step results."""
     import json

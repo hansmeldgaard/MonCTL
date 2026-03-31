@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils.ts";
 import { useUpgradeBadge } from "@/api/hooks.ts";
+import { usePermissions } from "@/hooks/usePermissions.ts";
 
 interface SidebarProps {
   collapsed: boolean;
@@ -35,6 +36,8 @@ interface NavItem {
   icon: typeof LayoutDashboard;
   label: string;
   end?: boolean;
+  resource?: string;  // permission resource required to see this item
+  adminOnly?: boolean;
 }
 
 interface NavGroup {
@@ -52,43 +55,43 @@ const navGroups: NavGroup[] = [
   {
     label: "Monitoring",
     items: [
-      { to: "/devices", icon: Monitor, label: "Devices" },
-      { to: "/device-types", icon: Search, label: "Device Types" },
-      { to: "/assignments", icon: ListChecks, label: "Assignments" },
+      { to: "/devices", icon: Monitor, label: "Devices", resource: "device" },
+      { to: "/device-types", icon: Search, label: "Device Types", resource: "device" },
+      { to: "/assignments", icon: ListChecks, label: "Assignments", resource: "assignment" },
     ],
   },
   {
     label: "Configuration",
     items: [
-      { to: "/apps", icon: AppWindow, label: "Apps" },
-      { to: "/connectors", icon: Plug, label: "Connectors" },
-      { to: "/python-modules", icon: Package, label: "Modules" },
-      { to: "/templates", icon: FileText, label: "Templates" },
-      { to: "/credentials", icon: KeyRound, label: "Credentials" },
-      { to: "/labels", icon: Tags, label: "Labels" },
-      { to: "/packs", icon: Boxes, label: "Packs" },
+      { to: "/apps", icon: AppWindow, label: "Apps", resource: "app" },
+      { to: "/connectors", icon: Plug, label: "Connectors", resource: "app" },
+      { to: "/python-modules", icon: Package, label: "Modules", adminOnly: true },
+      { to: "/templates", icon: FileText, label: "Templates", resource: "template" },
+      { to: "/credentials", icon: KeyRound, label: "Credentials", resource: "credential" },
+      { to: "/labels", icon: Tags, label: "Labels", resource: "device" },
+      { to: "/packs", icon: Boxes, label: "Packs", resource: "app" },
     ],
   },
   {
     label: "Alerting",
     items: [
-      { to: "/alerts", icon: Bell, label: "Alerts" },
-      { to: "/events", icon: Zap, label: "Events" },
-      { to: "/automations", icon: Play, label: "Automations" },
+      { to: "/alerts", icon: Bell, label: "Alerts", resource: "alert" },
+      { to: "/events", icon: Zap, label: "Events", resource: "alert" },
+      { to: "/automations", icon: Play, label: "Automations", resource: "alert" },
     ],
   },
   {
     label: "Analytics",
     items: [
-      { to: "/analytics/explorer", icon: Terminal, label: "SQL Explorer", end: true },
-      { to: "/analytics/dashboards", icon: BarChart3, label: "Dashboards" },
+      { to: "/analytics/explorer", icon: Terminal, label: "SQL Explorer", end: true, resource: "result" },
+      { to: "/analytics/dashboards", icon: BarChart3, label: "Dashboards", resource: "result" },
     ],
   },
   {
     label: "System",
     items: [
-      { to: "/upgrades", icon: ArrowUpCircle, label: "Upgrades" },
-      { to: "/settings", icon: Settings, label: "Settings" },
+      { to: "/upgrades", icon: ArrowUpCircle, label: "Upgrades", adminOnly: true },
+      { to: "/settings", icon: Settings, label: "Settings", adminOnly: true },
     ],
   },
 ];
@@ -96,6 +99,18 @@ const navGroups: NavGroup[] = [
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const { data: badge } = useUpgradeBadge();
   const osUpdateCount = badge?.os_update_count ?? 0;
+  const { isAdmin, canView } = usePermissions();
+
+  const visibleGroups = navGroups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => {
+        if (item.adminOnly) return isAdmin;
+        if (item.resource) return canView(item.resource);
+        return true;
+      }),
+    }))
+    .filter((group) => group.items.length > 0);
 
   return (
     <aside
@@ -115,7 +130,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto px-2 py-3">
-        {navGroups.map((group, gi) => (
+        {visibleGroups.map((group, gi) => (
           <div key={gi}>
             {group.label && !collapsed && (
               <div className="px-3 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-600">

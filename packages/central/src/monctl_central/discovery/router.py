@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from monctl_central.dependencies import get_db, require_auth
+from monctl_central.dependencies import get_db, require_permission
 from monctl_central.storage.models import Collector, Device
 from monctl_central.cache import set_discovery_flag
 from monctl_central.ws.router import manager as ws_manager
@@ -23,7 +23,7 @@ router = APIRouter()
 async def trigger_discovery(
     device_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "edit")),
 ):
     """Queue SNMP discovery for a device.
 

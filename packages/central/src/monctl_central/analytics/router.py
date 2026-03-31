@@ -9,7 +9,7 @@ import re
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from monctl_central.dependencies import get_clickhouse, require_auth
+from monctl_central.dependencies import get_clickhouse, require_permission
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -74,7 +74,7 @@ class QueryRequest(BaseModel):
 @router.post("/query")
 async def run_query(
     body: QueryRequest,
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("result", "view")),
 ):
     """Execute a read-only SQL query against ClickHouse."""
     sql = _validate_sql(body.sql)
@@ -168,7 +168,7 @@ def _serialise(value):
 
 @router.get("/tables")
 async def list_tables(
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("result", "view")),
 ):
     """Browse ClickHouse schema — tables and columns for the monctl database."""
     ch = get_clickhouse()

@@ -83,6 +83,15 @@ async function request<T>(
     throw new ApiError(401, "Unauthorized");
   }
 
+  if (res.status === 403) {
+    let detail = "Permission denied";
+    try {
+      const body = await res.json();
+      detail = body.detail ?? detail;
+    } catch { /* ignore */ }
+    throw new ApiError(403, detail);
+  }
+
   if (!res.ok) {
     let message = "Unknown error";
     try {
@@ -174,6 +183,15 @@ export async function apiPostFormData<T>(
       window.location.href = "/login";
     }
     throw new ApiError(401, "Unauthorized");
+  }
+
+  if (res.status === 403) {
+    let detail = "Permission denied";
+    try {
+      const body = await res.json();
+      detail = body.detail ?? detail;
+    } catch { /* ignore */ }
+    throw new ApiError(403, detail);
   }
 
   if (!res.ok) {

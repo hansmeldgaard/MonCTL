@@ -10,7 +10,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from monctl_central.dependencies import get_db, require_auth
+from monctl_central.dependencies import get_db, require_permission
 from monctl_central.storage.models import AnalyticsDashboard, AnalyticsWidget, User
 from monctl_common.utils import utc_now
 
@@ -77,7 +77,7 @@ class UpdateDashboardRequest(BaseModel):
 @router.get("/dashboards")
 async def list_dashboards(
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("result", "view")),
 ):
     """List all analytics dashboards (summary view)."""
     stmt = (
@@ -126,7 +126,7 @@ async def list_dashboards(
 async def get_dashboard(
     dashboard_id: _uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("result", "view")),
 ):
     """Get a single dashboard with all its widgets."""
     stmt = (
@@ -145,7 +145,7 @@ async def get_dashboard(
 async def create_dashboard(
     body: CreateDashboardRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("result", "create")),
 ):
     """Create a new analytics dashboard."""
     dash = AnalyticsDashboard(
@@ -184,7 +184,7 @@ async def update_dashboard(
     dashboard_id: _uuid.UUID,
     body: UpdateDashboardRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("result", "edit")),
 ):
     """Update a dashboard (name, description, and/or full widget replacement)."""
     stmt = (
@@ -245,7 +245,7 @@ async def append_widget(
     dashboard_id: _uuid.UUID,
     body: AppendWidgetRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("result", "create")),
 ):
     """Append a single widget to an existing dashboard (does not replace)."""
     stmt = select(AnalyticsDashboard).where(AnalyticsDashboard.id == dashboard_id)
@@ -278,7 +278,7 @@ async def append_widget(
 async def delete_dashboard(
     dashboard_id: _uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("result", "delete")),
 ):
     """Delete a dashboard and all its widgets."""
     stmt = select(AnalyticsDashboard).where(AnalyticsDashboard.id == dashboard_id)

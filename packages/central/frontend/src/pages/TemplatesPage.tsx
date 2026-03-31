@@ -25,8 +25,10 @@ import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
 import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
 import { TemplateConfigEditor } from "@/components/TemplateConfigEditor.tsx";
+import { usePermissions } from "@/hooks/usePermissions.ts";
 
 export function TemplatesPage() {
+  const { canCreate, canDelete } = usePermissions();
   const tz = useTimezone();
   const { pageSize, scrollMode } = useTablePreferences();
   const listState = useListState({
@@ -125,9 +127,11 @@ export function TemplatesPage() {
           <h1 className="text-lg font-semibold text-zinc-100">Templates</h1>
           <p className="text-sm text-zinc-500">Reusable monitoring configurations for bulk device setup.</p>
         </div>
-        <Button size="sm" onClick={() => { addNameField.reset(); setAddDesc(""); setAddConfigObj({}); setAddError(null); setAddOpen(true); }} className="gap-1.5">
-          <Plus className="h-4 w-4" /> New Template
-        </Button>
+        {canCreate("template") && (
+          <Button size="sm" onClick={() => { addNameField.reset(); setAddDesc(""); setAddConfigObj({}); setAddError(null); setAddOpen(true); }} className="gap-1.5">
+            <Plus className="h-4 w-4" /> New Template
+          </Button>
+        )}
       </div>
 
       <Card>
@@ -168,9 +172,11 @@ export function TemplatesPage() {
                         <button onClick={() => openEdit(t)} className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer" title="Edit">
                           <Pencil className="h-4 w-4" />
                         </button>
-                        <button onClick={() => setDeleteTarget(t)} className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer" title="Delete">
-                          <Trash2 className="h-4 w-4" />
-                        </button>
+                        {canDelete("template") && (
+                          <button onClick={() => setDeleteTarget(t)} className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer" title="Delete">
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>

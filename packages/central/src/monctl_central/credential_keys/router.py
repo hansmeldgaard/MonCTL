@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from monctl_central.dependencies import get_db, require_auth
+from monctl_central.dependencies import get_db, require_permission
 from monctl_central.storage.models import CredentialKey
 
 router = APIRouter()
@@ -102,7 +102,7 @@ def _validate_key_type(key_type: str, enum_values: list[str] | None) -> None:
 @router.get("")
 async def list_credential_keys(
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("credential", "view")),
 ):
     """List all credential keys."""
     rows = (await db.execute(select(CredentialKey).order_by(CredentialKey.name))).scalars().all()
@@ -113,7 +113,7 @@ async def list_credential_keys(
 async def create_credential_key(
     request: CreateCredentialKeyRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("credential", "create")),
 ):
     """Create a new credential key definition."""
     existing = (
@@ -142,7 +142,7 @@ async def update_credential_key(
     key_id: str,
     request: UpdateCredentialKeyRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("credential", "edit")),
 ):
     """Update a credential key."""
     key = await db.get(CredentialKey, uuid.UUID(key_id))
@@ -175,7 +175,7 @@ async def update_credential_key(
 async def delete_credential_key(
     key_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("credential", "delete")),
 ):
     """Delete a credential key."""
     key = await db.get(CredentialKey, uuid.UUID(key_id))

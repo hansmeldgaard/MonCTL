@@ -14,7 +14,7 @@ import sqlalchemy as sa
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from monctl_central.dependencies import apply_tenant_filter, get_clickhouse, get_db, require_auth
+from monctl_central.dependencies import apply_tenant_filter, get_clickhouse, get_db, require_permission
 from monctl_common.validators import validate_semver, validate_uuid
 from monctl_central.storage.models import (
     AlertDefinition,
@@ -233,7 +233,7 @@ class CreateAssignmentRequest(BaseModel):
 @router.get("")
 async def list_apps(
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "view")),
     name: str | None = Query(default=None),
     app_type: str | None = Query(default=None),
     target_table: str | None = Query(default=None),
@@ -317,7 +317,7 @@ async def list_apps(
 async def create_app(
     request: CreateAppRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "create")),
 ):
     """Register a new monitoring app."""
     if request.target_table not in VALID_TARGET_TABLES:
@@ -390,7 +390,7 @@ class CreateVersionRequest(BaseModel):
 async def get_config_templates(
     device_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "view")),
 ):
     """Return display templates for all config apps assigned to a device."""
     stmt = (
@@ -442,7 +442,7 @@ async def get_config_templates(
 @router.get("/assignments")
 async def list_assignments(
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("assignment", "view")),
     collector_id: str | None = None,
     device_id: str | None = None,
     app_id_filter: str | None = None,
@@ -722,7 +722,7 @@ class BulkUpdateAssignmentsRequest(BaseModel):
 async def bulk_update_assignments(
     request: BulkUpdateAssignmentsRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("assignment", "edit")),
 ):
     """Bulk update schedule, credential, and/or enabled state for multiple assignments."""
     from monctl_central.storage.models import Collector, Device
@@ -799,7 +799,7 @@ class BulkDeleteAssignmentsRequest(BaseModel):
 async def bulk_delete_assignments(
     request: BulkDeleteAssignmentsRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("assignment", "delete")),
 ):
     """Bulk delete multiple assignments. Bumps collector config_version."""
     from monctl_central.storage.models import Collector, Device
@@ -852,7 +852,7 @@ async def bulk_delete_assignments(
 async def get_app(
     app_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "view")),
 ):
     """Get app details including all versions (sorted newest first)."""
     from sqlalchemy.orm import selectinload
@@ -920,7 +920,7 @@ class AppConnectorBindingInput(BaseModel):
 async def list_app_connectors(
     app_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "view")),
 ):
     """List connector bindings for an app."""
     stmt = select(AppConnectorBinding).where(AppConnectorBinding.app_id == uuid.UUID(app_id))
@@ -945,7 +945,7 @@ async def add_app_connector(
     app_id: str,
     request: AppConnectorBindingInput,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "create")),
 ):
     """Add a connector binding to an app."""
     app = await db.get(App, uuid.UUID(app_id))
@@ -995,7 +995,7 @@ async def update_app_connector(
     alias: str,
     request: AppConnectorBindingInput,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "edit")),
 ):
     """Update a connector binding on an app."""
     binding = (await db.execute(
@@ -1019,7 +1019,7 @@ async def delete_app_connector(
     app_id: str,
     alias: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "delete")),
 ):
     """Remove a connector binding from an app."""
     binding = (await db.execute(
@@ -1037,7 +1037,7 @@ async def delete_app_connector(
 async def create_assignment(
     request: CreateAssignmentRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("assignment", "create")),
 ):
     """Create an app assignment (assign an app to a collector, cluster, or collector group)."""
     from sqlalchemy import update
@@ -1160,7 +1160,7 @@ async def create_assignment(
 async def delete_assignment(
     assignment_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("assignment", "delete")),
 ):
     """Delete an app assignment. Bumps collector config_version so it re-fetches."""
     from sqlalchemy import update
@@ -1232,7 +1232,7 @@ async def update_assignment(
     assignment_id: str,
     request: UpdateAssignmentRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("assignment", "edit")),
 ):
     """Update an app assignment. Bumps collector config_version so it re-fetches."""
     from sqlalchemy import update
@@ -1348,7 +1348,7 @@ async def update_app(
     app_id: str,
     request: UpdateAppRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "edit")),
 ):
     """Update app metadata."""
     app = await db.get(App, uuid.UUID(app_id))
@@ -1385,7 +1385,7 @@ async def update_app(
 async def delete_app(
     app_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "delete")),
 ):
     """Delete an app. Rejected if any assignments reference it."""
     app = await db.get(App, uuid.UUID(app_id))
@@ -1412,7 +1412,7 @@ async def set_latest_version(
     app_id: str,
     version_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "edit")),
 ):
     """Mark a version as the latest. Clears is_latest on all other versions and bumps collector config."""
     from sqlalchemy import update
@@ -1465,7 +1465,7 @@ async def get_app_version(
     app_id: str,
     version_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "view")),
 ):
     """Get version details including source code."""
     stmt = select(AppVersion).where(
@@ -1509,7 +1509,7 @@ async def update_app_version(
     version_id: str,
     request: UpdateVersionRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "edit")),
 ):
     """Update an app version's source code, requirements, or entry class."""
     import hashlib
@@ -1555,7 +1555,7 @@ async def delete_app_version(
     app_id: str,
     version_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "delete")),
 ):
     """Delete an app version. Rejected if any assignments reference it."""
     from sqlalchemy import func
@@ -1588,7 +1588,7 @@ async def create_app_version(
     app_id: str,
     request: CreateVersionRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "create")),
 ):
     """Upload a new version of an app."""
     import hashlib
@@ -1639,7 +1639,7 @@ async def clone_app_version(
     app_id: str,
     version_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "create")),
 ):
     """Clone an existing app version into a new draft version.
 
@@ -1696,7 +1696,7 @@ async def get_app_config_keys(
     app_id: str,
     version_id: str | None = None,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "view")),
 ):
     """Return detected config_key values for a config app."""
     app = await db.get(App, uuid.UUID(app_id))
@@ -1782,7 +1782,7 @@ def _extract_config_keys_from_source(source_code: str) -> list[str]:
 async def get_alert_metrics(
     app_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "view")),
 ):
     """Discover available metrics for alert expressions based on app's target_table."""
     import asyncio
@@ -1922,7 +1922,7 @@ class UpdateThresholdVariableRequest(BaseModel):
 async def list_app_thresholds(
     app_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "view")),
 ):
     """List all threshold variables for an app."""
     app = await db.get(App, uuid.UUID(app_id))
@@ -1943,7 +1943,7 @@ async def create_app_threshold(
     app_id: str,
     request: CreateThresholdVariableRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "create")),
 ):
     """Create a new threshold variable for an app."""
     app = await db.get(App, uuid.UUID(app_id))
@@ -1981,7 +1981,7 @@ async def delete_app_threshold(
     app_id: str,
     var_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "delete")),
 ):
     """Delete a threshold variable. Fails if referenced by alert definitions."""
     app = await db.get(App, uuid.UUID(app_id))
@@ -2026,7 +2026,7 @@ async def update_app_threshold(
     var_id: str,
     request: UpdateThresholdVariableRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "edit")),
 ):
     """Update a threshold variable."""
     app = await db.get(App, uuid.UUID(app_id))
@@ -2083,7 +2083,7 @@ async def check_vendor_match(
     app_id: str,
     device_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "view")),
 ):
     """Check if an app's vendor scope matches a device's sysObjectID."""
     app = await db.get(App, uuid.UUID(app_id))
@@ -2128,7 +2128,7 @@ async def test_eligibility(
     request: TestEligibilityRequest,
     db: AsyncSession = Depends(get_db),
     ch=Depends(get_clickhouse),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "view")),
 ):
     """Find devices that match this app's vendor scope.
 
@@ -2304,7 +2304,7 @@ async def auto_assign_eligible(
     body: AutoAssignRequest | None = None,
     db: AsyncSession = Depends(get_db),
     ch=Depends(get_clickhouse),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("assignment", "create")),
 ):
     """Auto-assign this app to eligible devices from a completed eligibility run.
 
@@ -2371,7 +2371,7 @@ async def list_eligibility_runs(
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     ch=Depends(get_clickhouse),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "view")),
 ):
     rows, total = ch.query_eligibility_runs(app_id, limit=limit, offset=offset)
     for r in rows:
@@ -2391,7 +2391,7 @@ async def get_eligibility_run_detail(
     limit: int = Query(default=25, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     ch=Depends(get_clickhouse),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "view")),
 ):
     # Get run summary
     runs, _ = ch.query_eligibility_runs(app_id, limit=1, offset=0)

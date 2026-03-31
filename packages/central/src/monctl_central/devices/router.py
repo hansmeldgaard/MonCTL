@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 
 import sqlalchemy as sa
-from monctl_central.dependencies import apply_tenant_filter, check_tenant_access, get_db, require_auth
+from monctl_central.dependencies import apply_tenant_filter, check_tenant_access, get_db, require_permission
 from sqlalchemy.orm import selectinload
 from monctl_central.storage.models import Credential, CollectorGroup, Device, DeviceType, InterfaceMetadata, LabelKey, Tenant, Collector
 from monctl_common.utils import utc_now
@@ -198,7 +198,7 @@ async def list_devices(
     limit: int = Query(default=50, le=500),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "view")),
 ):
     """List devices with filtering, sorting, and pagination."""
     # Base query with eager loads
@@ -285,7 +285,7 @@ async def list_devices(
 async def create_device(
     request: CreateDeviceRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "create")),
 ):
     """Create a new device."""
     device = Device(
@@ -340,7 +340,7 @@ class DeviceBulkPatchRequest(BaseModel):
 @router.post("/bulk-patch")
 async def bulk_patch_devices(
     body: DeviceBulkPatchRequest,
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "edit")),
     db: AsyncSession = Depends(get_db),
 ):
     """Bulk patch devices: enable/disable, move to collector group, move to tenant."""
@@ -408,7 +408,7 @@ async def bulk_patch_devices(
 async def get_device(
     device_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "view")),
 ):
     """Get a device by ID."""
     stmt = (
@@ -430,7 +430,7 @@ async def update_device(
     device_id: str,
     request: UpdateDeviceRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "edit")),
 ):
     """Update a device."""
     stmt = (
@@ -549,7 +549,7 @@ def _monitoring_config_from_assignment(assignment, app_name: str) -> dict:
 async def get_device_monitoring(
     device_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "view")),
 ):
     """Get current availability and latency monitoring configuration for a device."""
     from sqlalchemy import select as sa_select
@@ -585,7 +585,7 @@ async def update_device_monitoring(
     device_id: str,
     request: UpdateMonitoringRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "edit")),
 ):
     """Set availability and latency monitoring apps for a device."""
     from sqlalchemy import delete as sa_delete, select as sa_select, update as sa_update, desc as sa_desc
@@ -724,7 +724,7 @@ def _fmt_iface_meta(m: InterfaceMetadata) -> dict:
 async def get_interface_metadata(
     device_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "view")),
 ):
     """Get cached interface metadata for a device."""
     device = await db.get(Device, uuid.UUID(device_id))
@@ -760,7 +760,7 @@ async def update_interface_settings(
     interface_id: str,
     req: UpdateInterfaceSettingsRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "edit")),
 ):
     """Toggle polling/alerting for a single interface."""
     device = await db.get(Device, uuid.UUID(device_id))
@@ -806,7 +806,7 @@ async def bulk_update_interface_settings(
     device_id: str,
     req: BulkInterfaceSettingsRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "edit")),
 ):
     """Bulk toggle polling/alerting for multiple interfaces."""
     device = await db.get(Device, uuid.UUID(device_id))
@@ -850,7 +850,7 @@ async def bulk_update_interface_settings(
 async def refresh_interface_metadata(
     device_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "edit")),
 ):
     """Queue a metadata refresh — the next interface poll will do a full SNMP walk
     instead of targeted GETs, rediscovering all interfaces and updating metadata.
@@ -895,7 +895,7 @@ async def refresh_interface_metadata(
 async def get_interface_rules(
     device_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "view")),
 ):
     """Get interface rules for a device."""
     device = await db.get(Device, uuid.UUID(device_id))
@@ -916,7 +916,7 @@ async def set_interface_rules(
     device_id: str,
     req: SetInterfaceRulesRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "edit")),
 ):
     """Set interface rules on a device (directly, not via template)."""
     device = await db.get(Device, uuid.UUID(device_id))
@@ -950,7 +950,7 @@ async def evaluate_interface_rules(
     device_id: str,
     req: EvaluateRulesRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "view")),
 ):
     """Re-evaluate interface rules against all interfaces on a device."""
     device = await db.get(Device, uuid.UUID(device_id))
@@ -970,7 +970,7 @@ async def evaluate_interface_rules(
 async def preview_interface_rules(
     device_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "view")),
 ):
     """Dry-run: show what rules would match without applying."""
     device = await db.get(Device, uuid.UUID(device_id))
@@ -990,7 +990,7 @@ async def preview_interface_rules(
 async def delete_device(
     device_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "delete")),
 ):
     """Delete a device."""
     device = await db.get(Device, uuid.UUID(device_id))
@@ -1009,7 +1009,7 @@ class BulkDeleteRequest(BaseModel):
 async def bulk_delete_devices(
     request: BulkDeleteRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "delete")),
 ):
     """Bulk delete devices."""
     deleted = 0
@@ -1027,7 +1027,7 @@ async def bulk_delete_devices(
 async def get_device_thresholds(
     device_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("device", "view")),
 ):
     """Get flat list of threshold variables for this device with override hierarchy."""
     from monctl_central.storage.models import (

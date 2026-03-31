@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from monctl_central.dependencies import get_db, require_auth
+from monctl_central.dependencies import get_db, require_permission
 from monctl_central.storage.models import (
     Pack, PackVersion, App, CredentialTemplate,
     SnmpOid, Template, DeviceCategory, DeviceType, LabelKey, Connector,
@@ -63,7 +63,7 @@ def _fmt_version(v: PackVersion) -> dict:
 @router.get("/available-entities")
 async def list_available_entities(
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "view")),
 ):
     """List all entities that can be added to a pack, grouped by type."""
     result = {}
@@ -110,7 +110,7 @@ SORT_MAP = {
 @router.get("")
 async def list_packs(
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "view")),
     name: str | None = Query(default=None),
     pack_uid: str | None = Query(default=None),
     description: str | None = Query(default=None),
@@ -156,7 +156,7 @@ async def list_packs(
 async def get_pack(
     pack_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "view")),
 ):
     pack = await db.get(Pack, uuid.UUID(pack_id))
     if not pack:
@@ -181,7 +181,7 @@ async def get_pack(
 async def export_pack_endpoint(
     pack_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "view")),
 ):
     try:
         result = await export_pack(uuid.UUID(pack_id), db)
@@ -201,7 +201,7 @@ class PreviewImportRequest(BaseModel):
 async def preview_import_endpoint(
     req: PreviewImportRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "view")),
 ):
     validate_pack_schema(req.pack_data)
     result = await preview_import(req.pack_data, db)
@@ -220,7 +220,7 @@ class ImportPackRequest(BaseModel):
 async def import_pack_endpoint(
     req: ImportPackRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "create")),
 ):
     validate_pack_schema(req.pack_data)
     result = await import_pack(req.pack_data, req.resolutions, db)
@@ -253,7 +253,7 @@ class CreatePackRequest(BaseModel):
 async def create_pack(
     req: CreatePackRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "create")),
 ):
     if not re.match(r"^[a-z0-9][a-z0-9-]*[a-z0-9]$", req.pack_uid):
         raise HTTPException(
@@ -311,7 +311,7 @@ async def create_pack(
 async def delete_pack(
     pack_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("app", "delete")),
 ):
     pack = await db.get(Pack, uuid.UUID(pack_id))
     if not pack:

@@ -12,7 +12,7 @@ from sqlalchemy import select, desc, delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from monctl_central.dependencies import get_db, require_auth
+from monctl_central.dependencies import get_db, require_permission
 from monctl_central.storage.models import (
     App,
     AppAssignment,
@@ -321,7 +321,7 @@ class ResolveRequest(BaseModel):
 @router.get("")
 async def list_templates(
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("template", "view")),
     name: str | None = Query(default=None),
     description: str | None = Query(default=None),
     sort_by: str = Query(default="name"),
@@ -359,7 +359,7 @@ async def list_templates(
 async def create_template(
     request: CreateTemplateRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("template", "create")),
 ):
     """Create a new template."""
     template = Template(
@@ -378,7 +378,7 @@ async def create_template(
 async def bind_category_template(
     request: BindCategoryRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("template", "edit")),
 ):
     """Link a template to a device category."""
     cat_id = uuid.UUID(request.device_category_id)
@@ -430,7 +430,7 @@ async def bind_category_template(
 async def unbind_category_template(
     binding_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("template", "delete")),
 ):
     """Unlink a template from a device category."""
     binding = await db.get(DeviceCategoryTemplateBinding, uuid.UUID(binding_id))
@@ -443,7 +443,7 @@ async def unbind_category_template(
 async def list_category_bindings(
     category_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("template", "view")),
 ):
     """List templates bound to a device category."""
     cat_id = uuid.UUID(category_id)
@@ -464,7 +464,7 @@ async def list_category_bindings(
 async def bind_device_type_template(
     request: BindDeviceTypeRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("template", "edit")),
 ):
     """Link a template to a device type."""
     dt_id = uuid.UUID(request.device_type_id)
@@ -516,7 +516,7 @@ async def bind_device_type_template(
 async def unbind_device_type_template(
     binding_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("template", "delete")),
 ):
     """Unlink a template from a device type."""
     binding = await db.get(DeviceTypeTemplateBinding, uuid.UUID(binding_id))
@@ -529,7 +529,7 @@ async def unbind_device_type_template(
 async def list_device_type_bindings(
     device_type_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("template", "view")),
 ):
     """List templates bound to a device type."""
     dt_id = uuid.UUID(device_type_id)
@@ -552,7 +552,7 @@ async def list_device_type_bindings(
 async def resolve_templates(
     request: ResolveRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("template", "view")),
 ):
     """Preview resolved template config for devices (no side effects)."""
     devices = []
@@ -569,7 +569,7 @@ async def resolve_templates(
 async def auto_apply_templates(
     request: ResolveRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("template", "edit")),
 ):
     """Resolve hierarchical templates and apply to devices."""
     devices = []
@@ -609,7 +609,7 @@ async def auto_apply_templates(
 async def get_template(
     template_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("template", "view")),
 ):
     """Get a template by ID."""
     template = await db.get(Template, uuid.UUID(template_id))
@@ -623,7 +623,7 @@ async def update_template(
     template_id: str,
     request: UpdateTemplateRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("template", "edit")),
 ):
     """Update a template."""
     template = await db.get(Template, uuid.UUID(template_id))
@@ -644,7 +644,7 @@ async def update_template(
 async def delete_template(
     template_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("template", "delete")),
 ):
     """Delete a template."""
     template = await db.get(Template, uuid.UUID(template_id))
@@ -658,7 +658,7 @@ async def apply_template(
     template_id: str,
     request: ApplyTemplateRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("template", "edit")),
 ):
     """Apply a template to devices."""
     template = await db.get(Template, uuid.UUID(template_id))

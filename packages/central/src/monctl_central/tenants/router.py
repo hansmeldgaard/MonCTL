@@ -10,7 +10,7 @@ from monctl_common.validators import validate_metadata
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from monctl_central.dependencies import get_db, require_auth
+from monctl_central.dependencies import get_db, require_permission
 from monctl_central.storage.models import Tenant
 
 router = APIRouter()
@@ -50,7 +50,7 @@ def _fmt(t: Tenant) -> dict:
 @router.get("")
 async def list_tenants(
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("tenant", "view")),
 ):
     """List all tenants."""
     rows = (await db.execute(select(Tenant).order_by(Tenant.name))).scalars().all()
@@ -61,7 +61,7 @@ async def list_tenants(
 async def create_tenant(
     request: CreateTenantRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("tenant", "manage")),
 ):
     """Create a new tenant."""
     existing = (
@@ -83,7 +83,7 @@ async def update_tenant(
     tenant_id: str,
     request: UpdateTenantRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("tenant", "manage")),
 ):
     """Rename a tenant."""
     tenant = await db.get(Tenant, uuid.UUID(tenant_id))
@@ -110,7 +110,7 @@ async def update_tenant(
 async def delete_tenant(
     tenant_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("tenant", "manage")),
 ):
     """Delete a tenant."""
     tenant = await db.get(Tenant, uuid.UUID(tenant_id))

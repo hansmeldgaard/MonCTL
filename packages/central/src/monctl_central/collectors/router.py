@@ -14,7 +14,7 @@ import os
 
 from starlette.requests import Request
 
-from monctl_central.dependencies import get_db, require_collector_key, require_auth, require_admin
+from monctl_central.dependencies import get_db, require_collector_key, require_permission, require_admin
 from monctl_central.storage.models import ApiKey, Collector, CollectorGroup, RegistrationToken, SystemSetting
 from monctl_central.ws.router import manager as ws_manager
 from monctl_common.utils import generate_api_key, hash_api_key, key_prefix_display, utc_now
@@ -628,7 +628,7 @@ async def get_collector_config(
 async def list_collectors(
     group_id: str | None = Query(default=None, description="Filter by collector group UUID"),
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("collector", "view")),
 ):
     """List all collectors with group and IP information."""
     from sqlalchemy.orm import selectinload
@@ -672,7 +672,7 @@ async def update_collector(
     collector_id: str,
     request: UpdateCollectorRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("collector", "manage")),
 ):
     """Update a collector's name and/or group assignment."""
     from sqlalchemy.orm import selectinload
@@ -741,7 +741,7 @@ async def update_collector(
 async def delete_collector(
     collector_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("collector", "manage")),
 ):
     """Delete a collector and its associated API keys."""
     c = await db.get(Collector, uuid.UUID(collector_id))

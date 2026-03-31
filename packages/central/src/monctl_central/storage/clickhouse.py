@@ -10,6 +10,7 @@ Handles 4 domain-specific tables:
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -1207,6 +1208,88 @@ class ClickHouseClient:
             except Exception:
                 logger.warning("Could not drop interface table %s", table)
 
+    def _drop_stale_replicas(self, client: Client) -> None:
+        """Remove stale replica metadata from Keeper for replicas that no longer exist.
+
+        When a ClickHouse node is wiped (volumes deleted), Keeper still holds the
+        old replica paths. This prevents CREATE TABLE ON CLUSTER from succeeding
+        (REPLICA_ALREADY_EXISTS). This method connects to each peer host, checks
+        which tables are missing there, and drops the stale Keeper entries so the
+        tables can be re-created cleanly on the next ON CLUSTER DDL.
+        """
+        try:
+            rows = client.query(
+                "SELECT table, zookeeper_path "
+                "FROM system.replicas "
+                f"WHERE database = '{self._database}'"
+            )
+        except Exception:
+            return
+        if not rows.result_rows:
+            return
+
+        # Build list of local tables and their ZK paths
+        local_tables = {row[0]: row[1] for row in rows.result_rows}
+
+        # Check each peer host (all hosts except the one we're connected to)
+        connected_host = self._hosts[0]
+        for peer_host in self._hosts[1:]:
+            try:
+                probe = clickhouse_connect.get_client(
+                    host=peer_host, port=self._port,
+                    username=self._username, password=self._password,
+                    database=self._database, connect_timeout=5,
+                    send_receive_timeout=5,
+                )
+            except Exception:
+                # Peer unreachable — might be down temporarily, skip
+                continue
+
+            try:
+                # Get tables that exist on the peer
+                peer_result = probe.query(
+                    "SELECT name FROM system.tables "
+                    f"WHERE database = '{self._database}' AND engine LIKE '%Replicated%'"
+                )
+                peer_tables = {r[0] for r in peer_result.result_rows} if peer_result.result_rows else set()
+
+                # Get the replica name used by the peer from its macros
+                replica_result = probe.query(
+                    "SELECT substitution FROM system.macros WHERE macro = 'replica'"
+                )
+                if not replica_result.result_rows:
+                    continue
+                peer_replica = replica_result.first_row[0]
+
+                # Find tables that exist locally but not on the peer
+                for table_name, zk_path in local_tables.items():
+                    if table_name in peer_tables:
+                        continue
+                    # Check if this peer's replica is registered in Keeper
+                    try:
+                        zk_check = client.query(
+                            "SELECT count() FROM system.zookeeper "
+                            f"WHERE path = '{zk_path}/replicas' AND name = '{peer_replica}'"
+                        )
+                        if not (zk_check.result_rows and zk_check.first_row[0] > 0):
+                            continue  # not registered, nothing to clean
+                    except Exception:
+                        continue
+
+                    logger.warning(
+                        "Dropping stale replica '%s' for %s.%s (table missing on %s)",
+                        peer_replica, self._database, table_name, peer_host,
+                    )
+                    try:
+                        client.command(
+                            f"SYSTEM DROP REPLICA '{peer_replica}' "
+                            f"FROM TABLE {self._database}.`{table_name}`"
+                        )
+                    except Exception as exc:
+                        logger.warning("Failed to drop stale replica: %s", exc)
+            finally:
+                probe.close()
+
     def ensure_tables(self) -> None:
         """Create tables if they don't exist. Safe to call on every startup."""
         client = self._get_client()
@@ -1231,6 +1314,11 @@ class ClickHouseClient:
         self._recreate_interface_tables(has_cluster)
 
         if has_cluster:
+            # Clean up stale replica metadata in Keeper before creating tables.
+            # This handles the case where a node was wiped but Keeper still holds
+            # its old replica paths, which would cause REPLICA_ALREADY_EXISTS errors.
+            self._drop_stale_replicas(client)
+
             for ddl in [
                 _AVAILABILITY_LATENCY_DDL,
                 _PERFORMANCE_DDL,

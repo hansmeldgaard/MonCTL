@@ -9,7 +9,7 @@ import structlog
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
-from monctl_central.dependencies import require_auth, require_collector_auth, get_clickhouse
+from monctl_central.dependencies import require_permission, require_collector_auth, get_clickhouse
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/logs", tags=["logs"])
@@ -92,7 +92,7 @@ async def query_logs(
     page_size: int = Query(100, ge=10, le=1000),
     sort_field: str = Query("timestamp"),
     sort_dir: str = Query("desc"),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("result", "view")),
 ):
     """Query log entries with filtering, search, and pagination."""
     ch = get_clickhouse()
@@ -182,7 +182,7 @@ async def query_logs(
 
 @router.get("/filters")
 async def get_log_filters(
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("result", "view")),
 ):
     """Return distinct values for filter dropdowns."""
     ch = get_clickhouse()

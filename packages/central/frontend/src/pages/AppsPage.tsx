@@ -18,12 +18,14 @@ import {
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import { useApps, useCreateApp, useDeleteApp } from "@/api/hooks.ts";
 import { useListState } from "@/hooks/useListState.ts";
+import { usePermissions } from "@/hooks/usePermissions.ts";
 import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
 import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
 import type { AppSummary } from "@/types/api.ts";
 
 export function AppsPage() {
+  const { canCreate, canDelete } = usePermissions();
   const { pageSize, scrollMode } = useTablePreferences();
   const listState = useListState({
     columns: [
@@ -108,10 +110,12 @@ export function AppsPage() {
             Manage monitoring apps and their versions.
           </p>
         </div>
-        <Button size="sm" onClick={() => { setAddName(""); setAddDesc(""); setAddType("script"); setAddTargetTable("availability_latency"); setAddConfigSchema(""); setAddError(null); setAddOpen(true); }} className="gap-1.5">
-          <Plus className="h-4 w-4" />
-          New App
-        </Button>
+        {canCreate("app") && (
+          <Button size="sm" onClick={() => { setAddName(""); setAddDesc(""); setAddType("script"); setAddTargetTable("availability_latency"); setAddConfigSchema(""); setAddError(null); setAddOpen(true); }} className="gap-1.5">
+            <Plus className="h-4 w-4" />
+            New App
+          </Button>
+        )}
       </div>
 
       <Card>
@@ -186,15 +190,17 @@ export function AppsPage() {
                         <TableCell className="text-zinc-400 text-sm max-w-[400px] truncate">
                           {app.description ?? <span className="text-zinc-600 italic">—</span>}
                         </TableCell>
-                        <TableCell>
-                          <button
-                            onClick={() => setDeleteTarget(app)}
-                            className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                            title="Delete"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </TableCell>
+                        {canDelete("app") && (
+                          <TableCell>
+                            <button
+                              onClick={() => setDeleteTarget(app)}
+                              className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                              title="Delete"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </TableCell>
+                        )}
                       </TableRow>
                     ))
                   )}
