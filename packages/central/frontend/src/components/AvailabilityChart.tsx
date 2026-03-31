@@ -126,7 +126,33 @@ function buildChartData(
   const maxTs = Math.max(dataMax, rangeMax);
   const spanMs = Math.max(maxTs - minTs, 60_000); // at least 1 min
 
-  const bucketMs = chooseBucketMs(spanMs);
+  // Auto-detect data granularity per assignment so we never use buckets
+  // smaller than the actual polling interval (e.g. hourly rollup data
+  // must not be bucketed at 15-minute granularity — most buckets would be empty).
+  const byAssignment = new Map<string, number[]>();
+  for (const r of results) {
+    const ts = new Date(r.executed_at).getTime();
+    if (!byAssignment.has(r.assignment_id)) byAssignment.set(r.assignment_id, []);
+    byAssignment.get(r.assignment_id)!.push(ts);
+  }
+  const perAssignmentMedians: number[] = [];
+  for (const ts of byAssignment.values()) {
+    if (ts.length < 2) continue;
+    ts.sort((a, b) => a - b);
+    const gaps: number[] = [];
+    for (let i = 1; i < ts.length; i++) {
+      const g = ts[i] - ts[i - 1];
+      if (g > 0) gaps.push(g);
+    }
+    if (!gaps.length) continue;
+    gaps.sort((a, b) => a - b);
+    perAssignmentMedians.push(gaps[Math.floor(gaps.length / 2)]);
+  }
+  const detectedGranularityMs = perAssignmentMedians.length
+    ? Math.min(...perAssignmentMedians)
+    : 60_000;
+
+  const bucketMs = Math.max(chooseBucketMs(spanMs), detectedGranularityMs);
 
   // ── Availability carry-forward ─────────────────────────────────────────────
   // The availability strip is driven exclusively by availability-role checks.
