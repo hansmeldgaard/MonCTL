@@ -64,7 +64,7 @@ const navGroups: NavGroup[] = [
     label: "Configuration",
     items: [
       { to: "/apps", icon: AppWindow, label: "Apps", resource: "app" },
-      { to: "/connectors", icon: Plug, label: "Connectors", resource: "app" },
+      { to: "/connectors", icon: Plug, label: "Connectors", resource: "connector" },
       { to: "/python-modules", icon: Package, label: "Modules", adminOnly: true },
       { to: "/templates", icon: FileText, label: "Templates", resource: "template" },
       { to: "/credentials", icon: KeyRound, label: "Credentials", resource: "credential" },
@@ -76,15 +76,15 @@ const navGroups: NavGroup[] = [
     label: "Alerting",
     items: [
       { to: "/alerts", icon: Bell, label: "Alerts", resource: "alert" },
-      { to: "/events", icon: Zap, label: "Events", resource: "alert" },
-      { to: "/automations", icon: Play, label: "Automations", resource: "alert" },
+      { to: "/events", icon: Zap, label: "Events", resource: "event" },
+      { to: "/automations", icon: Play, label: "Automations", resource: "automation" },
     ],
   },
   {
     label: "Analytics",
     items: [
       { to: "/analytics/explorer", icon: Terminal, label: "SQL Explorer", end: true, resource: "result" },
-      { to: "/analytics/dashboards", icon: BarChart3, label: "Dashboards", resource: "result" },
+      { to: "/analytics/dashboards", icon: BarChart3, label: "Dashboards", resource: "dashboard" },
     ],
   },
   {

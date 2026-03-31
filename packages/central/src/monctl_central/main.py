@@ -157,7 +157,8 @@ async def lifespan(app: FastAPI):
             viewer = Role(name="Viewer", description="Read-only access to all resources", is_system=True)
             session.add(viewer)
             await session.flush()
-            for res in ["device", "app", "assignment", "credential", "alert", "collector",
+            for res in ["device", "app", "assignment", "credential", "alert", "automation",
+                        "event", "connector", "dashboard", "collector",
                         "tenant", "user", "template", "settings", "result"]:
                 session.add(RolePermission(role_id=viewer.id, resource=res, action="view"))
 
@@ -174,6 +175,10 @@ async def lifespan(app: FastAPI):
                 ("assignment", "view"), ("assignment", "create"), ("assignment", "edit"),
                 ("credential", "view"),
                 ("alert", "view"), ("alert", "create"), ("alert", "edit"),
+                ("automation", "view"), ("automation", "create"), ("automation", "edit"),
+                ("event", "view"), ("event", "manage"),
+                ("connector", "view"),
+                ("dashboard", "view"), ("dashboard", "create"), ("dashboard", "edit"),
                 ("collector", "view"),
                 ("template", "view"), ("template", "create"), ("template", "edit"),
                 ("result", "view"),
@@ -182,6 +187,32 @@ async def lifespan(app: FastAPI):
 
             await session.commit()
             logger.info("default_roles_seeded")
+        else:
+            # Ensure new resources are added to existing system roles
+            _NEW_VIEWER_PERMS = [
+                ("automation", "view"), ("event", "view"),
+                ("connector", "view"), ("dashboard", "view"),
+            ]
+            _NEW_OPERATOR_PERMS = [
+                ("automation", "view"), ("automation", "create"), ("automation", "edit"),
+                ("event", "view"), ("event", "manage"),
+                ("connector", "view"),
+                ("dashboard", "view"), ("dashboard", "create"), ("dashboard", "edit"),
+            ]
+            for role_name, new_perms in [("Viewer", _NEW_VIEWER_PERMS), ("Operator", _NEW_OPERATOR_PERMS)]:
+                role = (await session.execute(
+                    select(Role).where(Role.name == role_name, Role.is_system.is_(True))
+                )).scalar_one_or_none()
+                if not role:
+                    continue
+                existing = {(p.resource, p.action) for p in (await session.execute(
+                    select(RolePermission).where(RolePermission.role_id == role.id)
+                )).scalars().all()}
+                for res, act in new_perms:
+                    if (res, act) not in existing:
+                        session.add(RolePermission(role_id=role.id, resource=res, action=act))
+                        logger.info("role_permission_added", role=role_name, resource=res, action=act)
+            await session.commit()
 
     # ── Seed built-in connectors ────────────────────────────────────────────
     import hashlib

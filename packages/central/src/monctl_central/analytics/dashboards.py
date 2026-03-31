@@ -77,7 +77,7 @@ class UpdateDashboardRequest(BaseModel):
 @router.get("/dashboards")
 async def list_dashboards(
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_permission("result", "view")),
+    auth: dict = Depends(require_permission("dashboard", "view")),
 ):
     """List all analytics dashboards (summary view)."""
     stmt = (
@@ -126,7 +126,7 @@ async def list_dashboards(
 async def get_dashboard(
     dashboard_id: _uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_permission("result", "view")),
+    auth: dict = Depends(require_permission("dashboard", "view")),
 ):
     """Get a single dashboard with all its widgets."""
     stmt = (
@@ -145,7 +145,7 @@ async def get_dashboard(
 async def create_dashboard(
     body: CreateDashboardRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_permission("result", "create")),
+    auth: dict = Depends(require_permission("dashboard", "create")),
 ):
     """Create a new analytics dashboard."""
     dash = AnalyticsDashboard(
@@ -184,7 +184,7 @@ async def update_dashboard(
     dashboard_id: _uuid.UUID,
     body: UpdateDashboardRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_permission("result", "edit")),
+    auth: dict = Depends(require_permission("dashboard", "edit")),
 ):
     """Update a dashboard (name, description, and/or full widget replacement)."""
     stmt = (
@@ -245,7 +245,7 @@ async def append_widget(
     dashboard_id: _uuid.UUID,
     body: AppendWidgetRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_permission("result", "create")),
+    auth: dict = Depends(require_permission("dashboard", "create")),
 ):
     """Append a single widget to an existing dashboard (does not replace)."""
     stmt = select(AnalyticsDashboard).where(AnalyticsDashboard.id == dashboard_id)
@@ -278,7 +278,7 @@ async def append_widget(
 async def delete_dashboard(
     dashboard_id: _uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_permission("result", "delete")),
+    auth: dict = Depends(require_permission("dashboard", "delete")),
 ):
     """Delete a dashboard and all its widgets."""
     stmt = select(AnalyticsDashboard).where(AnalyticsDashboard.id == dashboard_id)
