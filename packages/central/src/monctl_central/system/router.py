@@ -592,10 +592,15 @@ def _query_node_resources(host: str, port: int, username: str, password: str, da
         "os_memory_total_bytes": os_mem_total,
         "os_memory_free_bytes": os_mem_free,
         "ch_memory_resident_bytes": 0,
-        "cpu_user_pct": round(async_metrics.get("OSCPUUser", 0), 1),
-        "cpu_system_pct": round(async_metrics.get("OSCPUSystem", 0), 1),
+        "cpu_user_pct": round(async_metrics.get("OSCPUUser", 0) * 100, 1),
+        "cpu_system_pct": round(async_metrics.get("OSCPUSystem", 0) * 100, 1),
         "cpu_iowait_pct": 0,
-        "cpu_idle_pct": round(100 - async_metrics.get("OSCPUUser", 0) - async_metrics.get("OSCPUSystem", 0), 1),
+        "cpu_idle_pct": round(
+            100
+            - async_metrics.get("OSCPUUser", 0) * 100
+            - async_metrics.get("OSCPUSystem", 0) * 100,
+            1,
+        ),
         "load_average": [
             round(async_metrics.get("LoadAverage1", 0), 2),
             round(async_metrics.get("LoadAverage5", 0), 2),

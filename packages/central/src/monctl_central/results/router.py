@@ -558,7 +558,6 @@ async def device_performance_summary(
         FROM performance_latest FINAL
         WHERE device_id = {device_id:UUID}
           AND component_type != ''
-          AND component != ''
         ORDER BY app_name, component_type, component
     """
     params = {"device_id": device_id}

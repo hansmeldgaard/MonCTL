@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from monctl_central.dependencies import get_db, require_auth
-from monctl_central.storage.models import DeviceCategory, DeviceType
+from monctl_central.storage.models import Device, DeviceCategory, DeviceType
 
 router = APIRouter()
 
@@ -142,9 +142,26 @@ async def list_device_types(
     stmt = stmt.offset(offset).limit(limit)
     rows = (await db.execute(stmt)).scalars().all()
 
+    # Count devices per device type
+    type_ids = [r.id for r in rows]
+    dev_count_map: dict[uuid.UUID, int] = {}
+    if type_ids:
+        dev_count_stmt = (
+            select(Device.device_type_id, sa.func.count().label("cnt"))
+            .where(Device.device_type_id.in_(type_ids))
+            .group_by(Device.device_type_id)
+        )
+        dev_count_rows = (await db.execute(dev_count_stmt)).all()
+        dev_count_map = {row[0]: row[1] for row in dev_count_rows}
+
+    def _fmt_with_count(r: DeviceType) -> dict:
+        d = _fmt(r)
+        d["device_count"] = dev_count_map.get(r.id, 0)
+        return d
+
     return {
         "status": "success",
-        "data": [_fmt(r) for r in rows],
+        "data": [_fmt_with_count(r) for r in rows],
         "meta": {"total": total, "limit": limit, "offset": offset, "count": len(rows)},
     }
 

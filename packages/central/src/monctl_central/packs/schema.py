@@ -36,8 +36,11 @@ def _validate_threshold_defaults(alert_def: dict) -> None:
 VALID_SECTIONS = {
     "apps", "credential_templates", "snmp_oids",
     "device_templates", "device_categories", "label_keys", "connectors",
-    "device_types", "grafana_dashboards",
+    "device_types", "grafana_dashboards", "event_policies",
 }
+
+_VALID_EVENT_SEVERITIES = {"info", "warning", "critical", "emergency"}
+_VALID_EVENT_MODES = {"consecutive", "cumulative"}
 
 
 def validate_pack_schema(data: dict) -> None:
@@ -186,4 +189,29 @@ def validate_pack_schema(data: dict) -> None:
             raise HTTPException(
                 status_code=400,
                 detail=f"grafana_dashboards[{i}].dashboard_json must be an object",
+            )
+
+    for i, ep in enumerate(contents.get("event_policies", [])):
+        if not isinstance(ep, dict):
+            raise HTTPException(status_code=400, detail=f"event_policies[{i}] must be an object")
+        if not ep.get("name"):
+            raise HTTPException(status_code=400, detail=f"event_policies[{i}].name is required")
+        if not ep.get("app_name"):
+            raise HTTPException(
+                status_code=400, detail=f"event_policies[{i}].app_name is required",
+            )
+        if not ep.get("alert_name"):
+            raise HTTPException(
+                status_code=400, detail=f"event_policies[{i}].alert_name is required",
+            )
+        if ep.get("mode") and ep["mode"] not in _VALID_EVENT_MODES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"event_policies[{i}].mode must be consecutive or cumulative",
+            )
+        if ep.get("event_severity") and ep["event_severity"] not in _VALID_EVENT_SEVERITIES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"event_policies[{i}].event_severity must be one of: "
+                       f"{', '.join(sorted(_VALID_EVENT_SEVERITIES))}",
             )

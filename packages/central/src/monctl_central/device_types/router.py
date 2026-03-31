@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from monctl_central.dependencies import get_db, require_auth
-from monctl_central.storage.models import DeviceCategory
+from monctl_central.storage.models import DeviceCategory, DeviceType
 
 router = APIRouter()
 
@@ -103,9 +103,27 @@ async def list_device_categories(
 
     stmt = stmt.offset(offset).limit(limit)
     rows = (await db.execute(stmt)).scalars().all()
+
+    # Count device types per category
+    cat_ids = [dt.id for dt in rows]
+    dt_count_map: dict[uuid.UUID, int] = {}
+    if cat_ids:
+        dt_count_stmt = (
+            select(DeviceType.device_category_id, sa.func.count().label("cnt"))
+            .where(DeviceType.device_category_id.in_(cat_ids))
+            .group_by(DeviceType.device_category_id)
+        )
+        dt_count_rows = (await db.execute(dt_count_stmt)).all()
+        dt_count_map = {row[0]: row[1] for row in dt_count_rows}
+
+    def _fmt_with_count(dt: DeviceCategory) -> dict:
+        d = _fmt(dt)
+        d["device_type_count"] = dt_count_map.get(dt.id, 0)
+        return d
+
     return {
         "status": "success",
-        "data": [_fmt(dt) for dt in rows],
+        "data": [_fmt_with_count(dt) for dt in rows],
         "meta": {
             "limit": limit,
             "offset": offset,

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   ArrowDown,
   ArrowUp,
@@ -15,6 +15,7 @@ import {
   Plus,
   Power,
   PowerOff,
+  Tag,
   Trash2,
 } from "lucide-react";
 import { X } from "lucide-react";
@@ -32,7 +33,7 @@ import {
 } from "@/components/ui/table.tsx";
 import { Select } from "@/components/ui/select.tsx";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
-import { useDevices, useLatestResults, useBulkDeleteDevices, useBulkPatchDevices, useCollectorGroups, useTenants, useLabelKeys, useDeviceCategories, useAutoApplyTemplates } from "@/api/hooks.ts";
+import { useDevices, useLatestResults, useBulkDeleteDevices, useBulkPatchDevices, useCollectorGroups, useTenants, useLabelKeys, useLabelValues, useDeviceCategories, useAutoApplyTemplates } from "@/api/hooks.ts";
 import { ListChecks } from "lucide-react";
 import type { DeviceBulkPatchRequest } from "@/types/api.ts";
 import { useTablePreferences, PAGE_SIZE_OPTIONS } from "@/hooks/useTablePreferences.ts";
@@ -41,6 +42,9 @@ import { ApplyTemplateDialog } from "@/components/ApplyTemplateDialog.tsx";
 import { DeviceIcon, categoryIconUrl } from "@/components/DeviceIcon.tsx";
 
 export function DevicesPage() {
+  // ── URL query params (for deep linking from device types page) ──
+  const [searchParams] = useSearchParams();
+
   // ── Table preferences ──────────────────────────────────
   const { pageSize, scrollMode, updatePreferences } = useTablePreferences();
 
@@ -55,9 +59,13 @@ export function DevicesPage() {
   const [filterName, setFilterName] = useState("");
   const [filterAddress, setFilterAddress] = useState("");
   const [filterType, setFilterType] = useState("");
-  const [filterDeviceType, setFilterDeviceType] = useState("");
+  const [filterDeviceType, setFilterDeviceType] = useState(searchParams.get("device_type_name") ?? "");
   const [filterTenant, setFilterTenant] = useState("");
   const [filterGroup, setFilterGroup] = useState("");
+  const [filterLabelKey, setFilterLabelKey] = useState("");
+  const [filterLabelValue, setFilterLabelValue] = useState("");
+  const [labelFilterOpen, setLabelFilterOpen] = useState(false);
+  const labelFilterRef = useRef<HTMLDivElement>(null);
 
   // ── Debounced filter values ─────────────────────────────
   const [debouncedFilters, setDebouncedFilters] = useState({
@@ -67,6 +75,8 @@ export function DevicesPage() {
     device_type_name: "",
     tenant_name: "",
     collector_group_name: "",
+    label_key: "",
+    label_value: "",
   });
 
   useEffect(() => {
@@ -78,11 +88,13 @@ export function DevicesPage() {
         device_type_name: filterDeviceType,
         tenant_name: filterTenant,
         collector_group_name: filterGroup,
+        label_key: filterLabelKey,
+        label_value: filterLabelValue,
       });
       setPage(0);
     }, 300);
     return () => clearTimeout(timer);
-  }, [filterName, filterAddress, filterType, filterDeviceType, filterTenant, filterGroup]);
+  }, [filterName, filterAddress, filterType, filterDeviceType, filterTenant, filterGroup, filterLabelKey, filterLabelValue]);
 
   // ── Compact mode ────────────────────────────────────────
   const [compact, setCompact] = useState(false);
@@ -164,6 +176,19 @@ export function DevicesPage() {
   const { data: collectorGroups } = useCollectorGroups();
   const { data: tenants } = useTenants();
   const labelColorMap = new Map((labelKeys ?? []).map((lk) => [lk.key, lk.color]));
+  const { data: labelValues } = useLabelValues(filterLabelKey || null);
+
+  // Close label filter popover on outside click
+  useEffect(() => {
+    if (!labelFilterOpen) return;
+    function handleClick(e: MouseEvent) {
+      if (labelFilterRef.current && !labelFilterRef.current.contains(e.target as Node)) {
+        setLabelFilterOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [labelFilterOpen]);
 
   // Build status maps
   const availReachability = new Map<string, boolean>();
@@ -286,7 +311,8 @@ export function DevicesPage() {
     filterAddress !== "" ||
     filterType !== "" ||
     filterTenant !== "" ||
-    filterGroup !== "";
+    filterGroup !== "" ||
+    filterLabelKey !== "";
 
   const allVisibleSelected =
     devices.length > 0 && devices.every((d) => selected.has(d.id));
@@ -547,8 +573,61 @@ export function DevicesPage() {
 
                       {/* Labels */}
                       <TableHead>
-                        <div className="flex items-center justify-between">
-                          Labels
+                        <div className="flex items-center justify-between gap-1">
+                          <div className="relative" ref={labelFilterRef}>
+                            <button
+                              type="button"
+                              onClick={() => setLabelFilterOpen(!labelFilterOpen)}
+                              className={`inline-flex items-center gap-1 text-xs transition-colors cursor-pointer ${filterLabelKey ? "text-brand-400" : "text-zinc-400 hover:text-zinc-200"}`}
+                              title="Filter by label"
+                            >
+                              <Tag className="h-3 w-3" /> Labels
+                              {filterLabelKey && (
+                                <Badge variant="default" className="text-[9px] py-0 px-1">{filterLabelKey}{filterLabelValue ? `=${filterLabelValue}` : ""}</Badge>
+                              )}
+                            </button>
+                            {labelFilterOpen && (
+                              <div className="absolute right-0 top-6 z-20 w-52 rounded-md border border-zinc-700 bg-zinc-900 p-2.5 space-y-2 shadow-lg">
+                                <div>
+                                  <label className="text-[10px] text-zinc-500 block mb-0.5">Label Key</label>
+                                  <select
+                                    value={filterLabelKey}
+                                    onChange={(e) => { setFilterLabelKey(e.target.value); setFilterLabelValue(""); }}
+                                    className="w-full text-xs h-7 bg-zinc-800 border border-zinc-700 rounded px-2 text-zinc-300"
+                                  >
+                                    <option value="">All</option>
+                                    {(labelKeys ?? []).map((lk) => (
+                                      <option key={lk.key} value={lk.key}>{lk.key}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                                {filterLabelKey && (
+                                  <div>
+                                    <label className="text-[10px] text-zinc-500 block mb-0.5">Value</label>
+                                    <select
+                                      value={filterLabelValue}
+                                      onChange={(e) => setFilterLabelValue(e.target.value)}
+                                      className="w-full text-xs h-7 bg-zinc-800 border border-zinc-700 rounded px-2 text-zinc-300"
+                                    >
+                                      <option value="">Any value</option>
+                                      {(labelValues ?? []).map((v) => (
+                                        <option key={v} value={v}>{v}</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                )}
+                                {filterLabelKey && (
+                                  <button
+                                    type="button"
+                                    onClick={() => { setFilterLabelKey(""); setFilterLabelValue(""); }}
+                                    className="text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors"
+                                  >
+                                    Clear label filter
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
                           <button
                             type="button"
                             onClick={() => {
@@ -557,6 +636,8 @@ export function DevicesPage() {
                               setFilterType("");
                               setFilterTenant("");
                               setFilterGroup("");
+                              setFilterLabelKey("");
+                              setFilterLabelValue("");
                             }}
                             className={`inline-flex items-center gap-1 text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors ${hasActiveFilters ? "opacity-100" : "opacity-0 pointer-events-none"}`}
                           >
@@ -578,8 +659,6 @@ export function DevicesPage() {
                       const latencyInfo = deviceLatency.get(device.id);
                       const dc = categoryMap.get(device.device_category);
                       const labelEntries = Object.entries(device.labels ?? {});
-                      const shownLabels = labelEntries.slice(0, 2);
-                      const extraLabelCount = labelEntries.length - 2;
 
                       return (
                         <TableRow key={device.id} className={!device.is_enabled ? "opacity-50" : undefined}>
@@ -690,32 +769,26 @@ export function DevicesPage() {
 
                           {/* Labels */}
                           <TableCell>
-                            <div className="flex flex-wrap gap-1">
-                              {shownLabels.map(([k, v]) => {
-                                const lColor = labelColorMap.get(k);
-                                return (
-                                  <Badge
-                                    key={k}
-                                    variant="default"
-                                    className="text-xs"
-                                    style={lColor ? { backgroundColor: `${lColor}20`, color: lColor, borderColor: `${lColor}40` } : undefined}
-                                  >
-                                    {k}: {v}
-                                  </Badge>
-                                );
-                              })}
-                              {extraLabelCount > 0 && (
-                                <Badge
-                                  variant="default"
-                                  className="text-xs cursor-default"
-                                  title={labelEntries
-                                    .map(([k, v]) => `${k}: ${v}`)
-                                    .join(", ")}
-                                >
-                                  +{extraLabelCount} more
-                                </Badge>
-                              )}
-                            </div>
+                            {labelEntries.length > 0 ? (
+                              <div
+                                className="flex gap-1 cursor-default"
+                                title={labelEntries.map(([k, v]) => `${k}: ${v}`).join("\n")}
+                              >
+                                {labelEntries.map(([k]) => {
+                                  const lColor = labelColorMap.get(k) || "#71717a";
+                                  return (
+                                    <span
+                                      key={k}
+                                      className="inline-block h-2.5 w-2.5 rounded-full"
+                                      style={{ backgroundColor: lColor }}
+                                      title={`${k}: ${(device.labels ?? {})[k]}`}
+                                    />
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <span className="text-zinc-600">&mdash;</span>
+                            )}
                           </TableCell>
                         </TableRow>
                       );

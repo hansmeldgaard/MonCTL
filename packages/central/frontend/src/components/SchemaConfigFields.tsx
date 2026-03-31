@@ -152,7 +152,9 @@ export function SchemaConfigFields({
                     ? `Use Device Default (${deviceCred.name})`
                     : "Use Device Default Credential"}
                 </option>
-                {(credentials ?? []).map((c) => (
+                {(credentials ?? [])
+                  .filter((c) => !credType || c.credential_type.startsWith(credType))
+                  .map((c) => (
                   <option key={c.id} value={c.name}>{c.name}</option>
                 ))}
               </Select>

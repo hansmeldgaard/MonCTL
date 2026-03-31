@@ -1,0 +1,413 @@
+{
+  "monctl_pack": "1.0",
+  "pack_uid": "linux-server",
+  "name": "Linux Server Monitoring",
+  "version": "2.0.0",
+  "description": "Comprehensive Linux server monitoring via SSH. Collects performance metrics (CPU, memory, disk, load), system configuration/inventory, uptime tracking, and per-interface traffic/error counters.",
+  "author": "MonCTL",
+  "changelog": "v2.0.0 - Added linux_uptime and linux_interface apps. Enriched linux_config with hardware, security, and network details. Removed network metrics from linux_performance (now in linux_interface). Removed uptime from linux_config (now in linux_uptime).\nv1.0.0 - Initial release: linux_performance and linux_config apps with alerts and event policies",
+  "exported_at": null,
+  "contents": {
+    "apps": [
+      {
+        "name": "linux_performance",
+        "description": "Collects Linux performance metrics via SSH: CPU usage, memory, swap, load averages, and disk usage per mount. Uses a single compound SSH command reading from /proc and df. CPU percentage is delta-based using app cache.",
+        "app_type": "script",
+        "target_table": "performance",
+        "config_schema": {
+          "type": "object",
+          "properties": {
+            "ssh_credential": {
+              "type": "string",
+              "title": "SSH Credential",
+              "description": "SSH credential for authentication",
+              "x-widget": "credential"
+            }
+          }
+        },
+        "connector_bindings": [
+          {"alias": "ssh", "connector_name": "ssh"}
+        ],
+        "threshold_variables": [
+          {
+            "name": "cpu_usage_threshold",
+            "default_value": 90.0,
+            "display_name": "CPU Usage Threshold",
+            "unit": "percent",
+            "description": "Alert when CPU usage exceeds this percentage"
+          },
+          {
+            "name": "mem_usage_threshold",
+            "default_value": 90.0,
+            "display_name": "Memory Usage Threshold",
+            "unit": "percent",
+            "description": "Alert when memory usage exceeds this percentage"
+          },
+          {
+            "name": "disk_usage_threshold",
+            "default_value": 90.0,
+            "display_name": "Disk Usage Threshold",
+            "unit": "percent",
+            "description": "Alert when any disk usage exceeds this percentage"
+          },
+          {
+            "name": "swap_usage_threshold",
+            "default_value": 80.0,
+            "display_name": "Swap Usage Threshold",
+            "unit": "percent",
+            "description": "Alert when swap usage exceeds this percentage"
+          },
+          {
+            "name": "load_threshold",
+            "default_value": 10.0,
+            "display_name": "Load Average Threshold",
+            "unit": "count",
+            "description": "Alert when 5-minute load average exceeds this value"
+          }
+        ],
+        "alert_definitions": [
+          {
+            "name": "High CPU Usage",
+            "description": "Average CPU usage exceeds threshold. Investigate processes consuming CPU.",
+            "expression": "avg(cpu_usage_percent) > $cpu_usage_threshold",
+            "window": "5m",
+            "severity": "warning",
+            "enabled": true,
+            "message_template": "{device_name} CPU usage is {value}% (threshold: {threshold}%)"
+          },
+          {
+            "name": "High Memory Usage",
+            "description": "Memory usage exceeds threshold. Server may be running low on available memory.",
+            "expression": "avg(mem_used_percent) > $mem_usage_threshold",
+            "window": "5m",
+            "severity": "warning",
+            "enabled": true,
+            "message_template": "{device_name} memory usage is {value}% (threshold: {threshold}%)"
+          },
+          {
+            "name": "High Disk Usage",
+            "description": "One or more disk partitions exceed usage threshold.",
+            "expression": "max(disk_used_percent) > $disk_usage_threshold",
+            "window": "5m",
+            "severity": "warning",
+            "enabled": true,
+            "message_template": "{device_name} disk usage is {value}% (threshold: {threshold}%)"
+          },
+          {
+            "name": "High Swap Usage",
+            "description": "Swap usage exceeds threshold. System may be memory-constrained.",
+            "expression": "avg(swap_used_percent) > $swap_usage_threshold",
+            "window": "5m",
+            "severity": "warning",
+            "enabled": true,
+            "message_template": "{device_name} swap usage is {value}% (threshold: {threshold}%)"
+          },
+          {
+            "name": "High Load Average",
+            "description": "5-minute load average exceeds threshold. System may be overloaded.",
+            "expression": "avg(load_5m) > $load_threshold",
+            "window": "5m",
+            "severity": "warning",
+            "enabled": true,
+            "message_template": "{device_name} load average is {value} (threshold: {threshold})"
+          }
+        ],
+        "versions": [
+          {
+            "version": "2.0.0",
+            "source_code": "\"\"\"Linux performance poller \u2014 CPU, memory, disk, load via SSH.\n\nUses a single compound SSH command to read /proc/stat, /proc/meminfo,\n/proc/loadavg, and df output. Caches previous CPU jiffies for delta-based\npercentage calculation.\n\nNetwork interface monitoring has moved to the linux_interface app (v2.0.0).\n\nConnector binding required:\n    alias \"ssh\" -> SSH connector with credential\n\nWrites to: performance table\n    System metrics: cpu_*, mem_*, swap_*, load_*\n    Disk metrics: disk_* (per mount, component_type=\"disk\")\n\"\"\"\n\nfrom __future__ import annotations\n\nimport time\n\nfrom monctl_collector.jobs.models import PollContext, PollResult\nfrom monctl_collector.polling.base import BasePoller\n\n_CMD = (\n    \"echo '===CPUSTAT===' && head -1 /proc/stat \"\n    \"&& echo '===MEMINFO===' && cat /proc/meminfo \"\n    \"&& echo '===LOADAVG===' && cat /proc/loadavg \"\n    \"&& echo '===DISK===' && df -P -x tmpfs -x devtmpfs -x squashfs 2>/dev/null\"\n)\n\n_CPU_JIFFIES_TTL = 600\n_DISCOVERY_TTL = 300\n\n\ndef _parse_sections(output: str) -> dict[str, str]:\n    sections: dict[str, str] = {}\n    current_key: str | None = None\n    lines: list[str] = []\n    for line in output.split(\"\\n\"):\n        stripped = line.strip()\n        if stripped.startswith(\"===\") and stripped.endswith(\"===\"):\n            if current_key:\n                sections[current_key] = \"\\n\".join(lines)\n            current_key = stripped.strip(\"=\")\n            lines = []\n        else:\n            lines.append(line)\n    if current_key:\n        sections[current_key] = \"\\n\".join(lines)\n    return sections\n\n\ndef _parse_cpu(text: str) -> dict[str, int] | None:\n    for line in text.strip().split(\"\\n\"):\n        if line.startswith(\"cpu \"):\n            parts = line.split()\n            if len(parts) >= 9:\n                return {\n                    \"user\": int(parts[1]),\n                    \"nice\": int(parts[2]),\n                    \"system\": int(parts[3]),\n                    \"idle\": int(parts[4]),\n                    \"iowait\": int(parts[5]),\n                    \"irq\": int(parts[6]),\n                    \"softirq\": int(parts[7]),\n                    \"steal\": int(parts[8]),\n                }\n    return None\n\n\ndef _parse_meminfo(text: str) -> dict[str, int]:\n    result: dict[str, int] = {}\n    for line in text.strip().split(\"\\n\"):\n        if \":\" not in line:\n            continue\n        key, rest = line.split(\":\", 1)\n        parts = rest.strip().split()\n        if parts:\n            val = int(parts[0])\n            if len(parts) > 1 and parts[1] == \"kB\":\n                val *= 1024\n            result[key.strip()] = val\n    return result\n\n\ndef _parse_loadavg(text: str) -> tuple[float, float, float]:\n    parts = text.strip().split()\n    return float(parts[0]), float(parts[1]), float(parts[2])\n\n\ndef _parse_df(text: str) -> list[dict]:\n    mounts: list[dict] = []\n    for line in text.strip().split(\"\\n\"):\n        if line.startswith(\"Filesystem\"):\n            continue\n        parts = line.split()\n        if len(parts) >= 6:\n            mounts.append({\n                \"total_kb\": int(parts[1]),\n                \"used_kb\": int(parts[2]),\n                \"free_kb\": int(parts[3]),\n                \"used_pct\": int(parts[4].rstrip(\"%\")),\n                \"mount\": parts[5],\n            })\n    return mounts\n\n\nclass Poller(BasePoller):\n    async def poll(self, context: PollContext) -> PollResult:\n        host = context.device_host or context.parameters.get(\"host\", \"localhost\")\n        ssh = context.connectors.get(\"ssh\")\n        if ssh is None:\n            return PollResult(\n                job_id=context.job.job_id,\n                device_id=context.job.device_id,\n                collector_node=context.node_id,\n                timestamp=time.time(),\n                metrics=[], config_data=None,\n                status=\"error\", reachable=False,\n                error_message=\"No SSH connector bound (expected alias 'ssh')\",\n                execution_time_ms=0,\n            )\n\n        start = time.monotonic()\n        try:\n            result = await ssh.run(_CMD)\n            elapsed_ms = int((time.monotonic() - start) * 1000)\n\n            if result[\"exit_status\"] != 0:\n                return PollResult(\n                    job_id=context.job.job_id,\n                    device_id=context.job.device_id,\n                    collector_node=context.node_id,\n                    timestamp=time.time(),\n                    metrics=[], config_data=None,\n                    status=\"critical\", reachable=True,\n                    error_message=f\"SSH command failed (exit {result['exit_status']}): {result['stderr'][:500]}\",\n                    execution_time_ms=elapsed_ms,\n                )\n\n            sections = _parse_sections(result[\"stdout\"])\n            metrics: list[dict] = []\n\n            # --- CPU (delta-based) ---\n            cpu_now = _parse_cpu(sections.get(\"CPUSTAT\", \"\"))\n            if cpu_now:\n                prev = None\n                if context.cache:\n                    prev = await context.cache.get(\"prev_cpu_jiffies\")\n                    await context.cache.set(\"prev_cpu_jiffies\", cpu_now, ttl=_CPU_JIFFIES_TTL)\n\n                if prev:\n                    d_user = cpu_now[\"user\"] - prev.get(\"user\", 0) + cpu_now[\"nice\"] - prev.get(\"nice\", 0)\n                    d_sys = (\n                        cpu_now[\"system\"] - prev.get(\"system\", 0)\n                        + cpu_now[\"irq\"] - prev.get(\"irq\", 0)\n                        + cpu_now[\"softirq\"] - prev.get(\"softirq\", 0)\n                    )\n                    d_idle = cpu_now[\"idle\"] - prev.get(\"idle\", 0)\n                    d_iowait = cpu_now[\"iowait\"] - prev.get(\"iowait\", 0)\n                    d_steal = cpu_now[\"steal\"] - prev.get(\"steal\", 0)\n                    d_total = d_user + d_sys + d_idle + d_iowait + d_steal\n                    if d_total > 0:\n                        pct = lambda v: round(v / d_total * 100, 2)\n                        metrics.extend([\n                            {\"name\": \"cpu_usage_percent\", \"value\": pct(d_user + d_sys + d_iowait + d_steal),\n                             \"component\": \"\", \"component_type\": \"system\", \"unit\": \"percent\"},\n                            {\"name\": \"cpu_user_percent\", \"value\": pct(d_user),\n                             \"component\": \"\", \"component_type\": \"system\", \"unit\": \"percent\"},\n                            {\"name\": \"cpu_system_percent\", \"value\": pct(d_sys),\n                             \"component\": \"\", \"component_type\": \"system\", \"unit\": \"percent\"},\n                            {\"name\": \"cpu_iowait_percent\", \"value\": pct(d_iowait),\n                             \"component\": \"\", \"component_type\": \"system\", \"unit\": \"percent\"},\n                            {\"name\": \"cpu_steal_percent\", \"value\": pct(d_steal),\n                             \"component\": \"\", \"component_type\": \"system\", \"unit\": \"percent\"},\n                        ])\n\n            # --- Memory ---\n            mem = _parse_meminfo(sections.get(\"MEMINFO\", \"\"))\n            if mem:\n                total = mem.get(\"MemTotal\", 0)\n                available = mem.get(\"MemAvailable\", 0)\n                used = total - available\n                swap_total = mem.get(\"SwapTotal\", 0)\n                swap_free = mem.get(\"SwapFree\", 0)\n                swap_used = swap_total - swap_free\n                metrics.extend([\n                    {\"name\": \"mem_total_bytes\", \"value\": float(total),\n                     \"component\": \"\", \"component_type\": \"system\", \"unit\": \"bytes\"},\n                    {\"name\": \"mem_used_bytes\", \"value\": float(used),\n                     \"component\": \"\", \"component_type\": \"system\", \"unit\": \"bytes\"},\n                    {\"name\": \"mem_available_bytes\", \"value\": float(available),\n                     \"component\": \"\", \"component_type\": \"system\", \"unit\": \"bytes\"},\n                    {\"name\": \"mem_used_percent\", \"value\": round(used / total * 100, 2) if total else 0.0,\n                     \"component\": \"\", \"component_type\": \"system\", \"unit\": \"percent\"},\n                    {\"name\": \"swap_total_bytes\", \"value\": float(swap_total),\n                     \"component\": \"\", \"component_type\": \"system\", \"unit\": \"bytes\"},\n                    {\"name\": \"swap_used_bytes\", \"value\": float(swap_used),\n                     \"component\": \"\", \"component_type\": \"system\", \"unit\": \"bytes\"},\n                    {\"name\": \"swap_used_percent\", \"value\": round(swap_used / swap_total * 100, 2) if swap_total else 0.0,\n                     \"component\": \"\", \"component_type\": \"system\", \"unit\": \"percent\"},\n                ])\n\n            # --- Load ---\n            loadavg_text = sections.get(\"LOADAVG\", \"\")\n            if loadavg_text.strip():\n                l1, l5, l15 = _parse_loadavg(loadavg_text)\n                metrics.extend([\n                    {\"name\": \"load_1m\", \"value\": l1, \"component\": \"\", \"component_type\": \"system\", \"unit\": \"count\"},\n                    {\"name\": \"load_5m\", \"value\": l5, \"component\": \"\", \"component_type\": \"system\", \"unit\": \"count\"},\n                    {\"name\": \"load_15m\", \"value\": l15, \"component\": \"\", \"component_type\": \"system\", \"unit\": \"count\"},\n                ])\n\n            # --- Disk ---\n            mounts = _parse_df(sections.get(\"DISK\", \"\"))\n            if mounts and context.cache:\n                await context.cache.set(\n                    \"disk_mounts\", {\"mounts\": [m[\"mount\"] for m in mounts]}, ttl=_DISCOVERY_TTL)\n            for m in mounts:\n                mp = m[\"mount\"]\n                metrics.extend([\n                    {\"name\": \"disk_used_percent\", \"value\": float(m[\"used_pct\"]),\n                     \"component\": mp, \"component_type\": \"disk\", \"unit\": \"percent\"},\n                    {\"name\": \"disk_used_bytes\", \"value\": float(m[\"used_kb\"]) * 1024,\n                     \"component\": mp, \"component_type\": \"disk\", \"unit\": \"bytes\"},\n                    {\"name\": \"disk_total_bytes\", \"value\": float(m[\"total_kb\"]) * 1024,\n                     \"component\": mp, \"component_type\": \"disk\", \"unit\": \"bytes\"},\n                    {\"name\": \"disk_free_bytes\", \"value\": float(m[\"free_kb\"]) * 1024,\n                     \"component\": mp, \"component_type\": \"disk\", \"unit\": \"bytes\"},\n                ])\n\n            return PollResult(\n                job_id=context.job.job_id,\n                device_id=context.job.device_id,\n                collector_node=context.node_id,\n                timestamp=time.time(),\n                metrics=metrics,\n                config_data=None,\n                status=\"ok\",\n                reachable=True,\n                error_message=None,\n                execution_time_ms=elapsed_ms,\n            )\n\n        except Exception as exc:\n            elapsed_ms = int((time.monotonic() - start) * 1000)\n            return PollResult(\n                job_id=context.job.job_id,\n                device_id=context.job.device_id,\n                collector_node=context.node_id,\n                timestamp=time.time(),\n                metrics=[], config_data=None,\n                status=\"critical\", reachable=False,\n                error_message=f\"Linux performance check failed \u2014 {host}: {type(exc).__name__}: {exc}\",\n                execution_time_ms=elapsed_ms,\n            )\n",
+            "requirements": [],
+            "entry_class": "Poller",
+            "is_latest": true
+          }
+        ]
+      },
+      {
+        "name": "linux_config",
+        "description": "Collects Linux system configuration and inventory via SSH: hostname, kernel, OS release, CPU info, architecture, memory, timezone, systemd services, top processes, mounted filesystems, network interfaces, security status (SELinux/AppArmor), DNS resolvers, NTP sync, listening ports, and logged-in users.",
+        "app_type": "script",
+        "target_table": "config",
+        "config_schema": {
+          "type": "object",
+          "properties": {
+            "ssh_credential": {
+              "type": "string",
+              "title": "SSH Credential",
+              "description": "SSH credential for authentication",
+              "x-widget": "credential"
+            },
+            "monitored_services": {
+              "type": "string",
+              "title": "Monitored Services",
+              "default": "sshd,cron",
+              "description": "Comma-separated list of systemd service names to monitor (e.g. sshd,nginx,docker)"
+            }
+          }
+        },
+        "connector_bindings": [
+          {"alias": "ssh", "connector_name": "ssh"}
+        ],
+        "alert_definitions": [
+          {
+            "name": "Linux Service Down",
+            "description": "One or more monitored systemd services are not running.",
+            "expression": "service_status IN ('degraded')",
+            "window": "5m",
+            "severity": "critical",
+            "enabled": true,
+            "message_template": "{device_name} has one or more monitored services down"
+          },
+          {
+            "name": "Linux SSH Unreachable",
+            "description": "Device is not responding to SSH connection attempts.",
+            "expression": "last(reachable) == 0",
+            "window": "5m",
+            "severity": "critical",
+            "enabled": true,
+            "message_template": "{device_name} is unreachable via SSH"
+          }
+        ],
+        "versions": [
+          {
+            "version": "2.0.0",
+            "source_code": "\"\"\"Linux configuration & inventory poller via SSH.\n\nCollects system state: hostname, kernel, OS release, CPU info, architecture,\ntotal memory, timezone, systemd services, top processes, mounts, network\ninterfaces, security status, DNS, NTP, listening ports, logged-in users.\n\nUptime monitoring has moved to the linux_uptime app (v2.0.0).\n\nConnector binding required:\n    alias \"ssh\" -> SSH connector with credential\n\nConfig keys (set on the assignment):\n    monitored_services  str  Comma-separated service names (default: \"sshd,cron\")\n\nWrites to: config table\n\"\"\"\n\nfrom __future__ import annotations\n\nimport json\nimport time\n\nfrom monctl_collector.jobs.models import PollContext, PollResult\nfrom monctl_collector.polling.base import BasePoller\n\n_CMD = (\n    \"echo '===HOSTNAME===' && (hostname -f 2>/dev/null || hostname) \"\n    \"&& echo '===UNAME===' && uname -r \"\n    \"&& echo '===ARCH===' && uname -m \"\n    \"&& echo '===OSRELEASE===' && cat /etc/os-release 2>/dev/null \"\n    \"&& echo '===CPUINFO===' && grep -m1 'model name' /proc/cpuinfo 2>/dev/null && nproc 2>/dev/null \"\n    \"&& echo '===MEMTOTAL===' && grep MemTotal /proc/meminfo 2>/dev/null \"\n    \"&& echo '===TIMEZONE===' && (timedatectl show -p Timezone --value 2>/dev/null || cat /etc/timezone 2>/dev/null || echo 'unknown') \"\n    \"&& echo '===LASTBOOT===' && who -b 2>/dev/null \"\n    \"&& echo '===SERVICES===' && systemctl list-units --type=service --no-pager --no-legend --plain 2>/dev/null \"\n    \"&& echo '===TOPPROC===' && ps aux --sort=-%cpu --no-headers 2>/dev/null | head -10 \"\n    \"&& echo '===TOPMEM===' && ps aux --sort=-%mem --no-headers 2>/dev/null | head -10 \"\n    \"&& echo '===MOUNTS===' && df -Ph -x tmpfs -x devtmpfs -x squashfs 2>/dev/null \"\n    \"&& echo '===IPADDR===' && ip -o addr show 2>/dev/null \"\n    \"&& echo '===WHO===' && who 2>/dev/null \"\n    \"&& echo '===SELINUX===' && (getenforce 2>/dev/null || echo 'unknown') \"\n    \"&& echo '===APPARMOR===' && (aa-status --enabled 2>/dev/null && echo 'enabled' || echo 'unknown') \"\n    \"&& echo '===DNS===' && grep '^nameserver' /etc/resolv.conf 2>/dev/null \"\n    \"&& echo '===NTP===' && (timedatectl show -p NTPSynchronized --value 2>/dev/null || echo 'unknown') \"\n    \"&& echo '===LISTEN===' && (ss -tlnp 2>/dev/null | grep LISTEN || true) \"\n    \"&& echo '===PKGCOUNT===' && (dpkg -l 2>/dev/null | grep -c '^ii' || rpm -qa 2>/dev/null | wc -l || echo '0')\"\n)\n\n\ndef _parse_sections(output: str) -> dict[str, str]:\n    sections: dict[str, str] = {}\n    current_key: str | None = None\n    lines: list[str] = []\n    for line in output.split(\"\\n\"):\n        stripped = line.strip()\n        if stripped.startswith(\"===\") and stripped.endswith(\"===\"):\n            if current_key:\n                sections[current_key] = \"\\n\".join(lines)\n            current_key = stripped.strip(\"=\")\n            lines = []\n        else:\n            lines.append(line)\n    if current_key:\n        sections[current_key] = \"\\n\".join(lines)\n    return sections\n\n\ndef _parse_os_release(text: str) -> dict[str, str]:\n    result: dict[str, str] = {}\n    for line in text.strip().split(\"\\n\"):\n        if \"=\" in line:\n            key, val = line.split(\"=\", 1)\n            result[key.strip()] = val.strip().strip('\"')\n    return result\n\n\ndef _parse_services(text: str) -> tuple[list[dict], int, int]:\n    services: list[dict] = []\n    running = 0\n    failed = 0\n    for line in text.strip().split(\"\\n\"):\n        if not line.strip():\n            continue\n        parts = line.split()\n        if len(parts) >= 4:\n            name = parts[0].replace(\".service\", \"\")\n            active = parts[2]\n            sub = parts[3]\n            services.append({\"name\": name, \"active\": active, \"sub\": sub})\n            if sub == \"running\":\n                running += 1\n            if active == \"failed\":\n                failed += 1\n    return services, running, failed\n\n\ndef _parse_ps(text: str) -> list[dict]:\n    procs: list[dict] = []\n    for line in text.strip().split(\"\\n\"):\n        if not line.strip():\n            continue\n        parts = line.split(None, 10)\n        if len(parts) >= 11:\n            procs.append({\n                \"user\": parts[0],\n                \"pid\": parts[1],\n                \"cpu\": parts[2],\n                \"mem\": parts[3],\n                \"command\": parts[10][:120],\n            })\n    return procs\n\n\ndef _parse_df_human(text: str) -> list[dict]:\n    mounts: list[dict] = []\n    for line in text.strip().split(\"\\n\"):\n        if line.startswith(\"Filesystem\"):\n            continue\n        parts = line.split()\n        if len(parts) >= 6:\n            mounts.append({\n                \"filesystem\": parts[0],\n                \"size\": parts[1],\n                \"used\": parts[2],\n                \"avail\": parts[3],\n                \"use_pct\": parts[4],\n                \"mount\": parts[5],\n            })\n    return mounts\n\n\ndef _parse_ip_addr(text: str) -> list[dict]:\n    interfaces: dict[str, dict] = {}\n    for line in text.strip().split(\"\\n\"):\n        if not line.strip():\n            continue\n        parts = line.split()\n        if len(parts) >= 4:\n            iface = parts[1].rstrip(\":\")\n            family = parts[2]\n            addr = parts[3].split(\"/\")[0] if \"/\" in parts[3] else parts[3]\n            if iface == \"lo\":\n                continue\n            if iface not in interfaces:\n                interfaces[iface] = {\"name\": iface, \"addresses\": []}\n            interfaces[iface][\"addresses\"].append({\"family\": family, \"address\": addr})\n    return list(interfaces.values())\n\n\ndef _parse_who(text: str) -> list[dict]:\n    users: list[dict] = []\n    for line in text.strip().split(\"\\n\"):\n        if not line.strip():\n            continue\n        parts = line.split()\n        if len(parts) >= 3:\n            users.append({\n                \"user\": parts[0],\n                \"terminal\": parts[1],\n                \"login_time\": \" \".join(parts[2:4]) if len(parts) >= 4 else parts[2],\n            })\n    return users\n\n\ndef _human_bytes(n: int) -> str:\n    \"\"\"Convert bytes to human-readable string.\"\"\"\n    for unit in (\"B\", \"KB\", \"MB\", \"GB\", \"TB\"):\n        if abs(n) < 1024:\n            return f\"{n:.1f} {unit}\" if n != int(n) else f\"{n} {unit}\"\n        n /= 1024\n    return f\"{n:.1f} PB\"\n\n\ndef _parse_cpuinfo(text: str) -> tuple[str, str]:\n    \"\"\"Parse CPU model name and core count from combined cpuinfo+nproc output.\"\"\"\n    model = \"unknown\"\n    count = \"0\"\n    lines = text.strip().split(\"\\n\")\n    for line in lines:\n        if \"model name\" in line and \":\" in line:\n            model = line.split(\":\", 1)[1].strip()\n        elif line.strip().isdigit():\n            count = line.strip()\n    return model, count\n\n\ndef _parse_memtotal(text: str) -> str:\n    \"\"\"Parse MemTotal from /proc/meminfo and return human-readable string.\"\"\"\n    for line in text.strip().split(\"\\n\"):\n        if \"MemTotal\" in line and \":\" in line:\n            parts = line.split(\":\", 1)[1].strip().split()\n            if parts:\n                val = int(parts[0])\n                if len(parts) > 1 and parts[1] == \"kB\":\n                    val *= 1024\n                return _human_bytes(val)\n    return \"unknown\"\n\n\ndef _parse_dns(text: str) -> list[str]:\n    resolvers: list[str] = []\n    for line in text.strip().split(\"\\n\"):\n        if line.strip().startswith(\"nameserver\"):\n            parts = line.split()\n            if len(parts) >= 2:\n                resolvers.append(parts[1])\n    return resolvers\n\n\ndef _parse_listening(text: str) -> list[dict]:\n    ports: list[dict] = []\n    seen: set[str] = set()\n    for line in text.strip().split(\"\\n\"):\n        if not line.strip() or \"LISTEN\" not in line:\n            continue\n        parts = line.split()\n        if len(parts) >= 5:\n            local = parts[3]\n            # Extract port from addr:port or [::]:port\n            port = local.rsplit(\":\", 1)[-1] if \":\" in local else local\n            process = parts[-1] if len(parts) >= 6 else \"\"\n            # Clean process field: users:((\"sshd\",pid=123,...)) -> sshd\n            proc_name = \"\"\n            if '\"' in process:\n                try:\n                    proc_name = process.split('\"')[1]\n                except IndexError:\n                    proc_name = process\n            key = f\"{port}/{proc_name}\"\n            if key not in seen:\n                seen.add(key)\n                ports.append({\"port\": port, \"process\": proc_name})\n    return ports\n\n\ndef _parse_last_boot(text: str) -> str:\n    \"\"\"Parse 'who -b' output to extract boot time.\"\"\"\n    for line in text.strip().split(\"\\n\"):\n        if \"boot\" in line.lower():\n            parts = line.split()\n            # Format: 'system boot  2026-03-15 08:30'\n            date_parts = [p for p in parts if p not in (\"system\", \"boot\", \"\")]\n            return \" \".join(date_parts).strip()\n    return \"unknown\"\n\n\nclass Poller(BasePoller):\n    async def poll(self, context: PollContext) -> PollResult:\n        host = context.device_host or context.parameters.get(\"host\", \"localhost\")\n        ssh = context.connectors.get(\"ssh\")\n        if ssh is None:\n            return PollResult(\n                job_id=context.job.job_id,\n                device_id=context.job.device_id,\n                collector_node=context.node_id,\n                timestamp=time.time(),\n                metrics=[], config_data=None,\n                status=\"error\", reachable=False,\n                error_message=\"No SSH connector bound (expected alias 'ssh')\",\n                execution_time_ms=0,\n            )\n\n        start = time.monotonic()\n        try:\n            result = await ssh.run(_CMD)\n            elapsed_ms = int((time.monotonic() - start) * 1000)\n\n            if result[\"exit_status\"] != 0:\n                return PollResult(\n                    job_id=context.job.job_id,\n                    device_id=context.job.device_id,\n                    collector_node=context.node_id,\n                    timestamp=time.time(),\n                    metrics=[], config_data=None,\n                    status=\"critical\", reachable=True,\n                    error_message=f\"SSH command failed (exit {result['exit_status']}): {result['stderr'][:500]}\",\n                    execution_time_ms=elapsed_ms,\n                )\n\n            sections = _parse_sections(result[\"stdout\"])\n            config_data: dict[str, str] = {}\n\n            # Hostname\n            config_data[\"hostname\"] = sections.get(\"HOSTNAME\", \"\").strip()\n\n            # Kernel\n            config_data[\"kernel_version\"] = sections.get(\"UNAME\", \"\").strip()\n\n            # Architecture\n            config_data[\"architecture\"] = sections.get(\"ARCH\", \"\").strip() or \"unknown\"\n\n            # OS release\n            os_info = _parse_os_release(sections.get(\"OSRELEASE\", \"\"))\n            config_data[\"os_name\"] = os_info.get(\"PRETTY_NAME\", \"Unknown\")\n            config_data[\"os_id\"] = os_info.get(\"ID\", \"unknown\")\n\n            # CPU info\n            cpu_model, cpu_count = _parse_cpuinfo(sections.get(\"CPUINFO\", \"\"))\n            config_data[\"cpu_model\"] = cpu_model\n            config_data[\"cpu_count\"] = cpu_count\n\n            # Total memory\n            config_data[\"total_memory\"] = _parse_memtotal(sections.get(\"MEMTOTAL\", \"\"))\n\n            # Timezone\n            config_data[\"timezone\"] = sections.get(\"TIMEZONE\", \"\").strip() or \"unknown\"\n\n            # Last boot\n            config_data[\"last_boot_time\"] = _parse_last_boot(sections.get(\"LASTBOOT\", \"\"))\n\n            # Services\n            all_services, running_count, failed_count = _parse_services(\n                sections.get(\"SERVICES\", \"\"))\n            config_data[\"service_count_running\"] = str(running_count)\n            config_data[\"service_count_failed\"] = str(failed_count)\n\n            # Monitored services check\n            monitored_csv = context.parameters.get(\"monitored_services\", \"sshd,cron\")\n            monitored_names = [s.strip() for s in monitored_csv.split(\",\") if s.strip()]\n            svc_lookup = {s[\"name\"]: s for s in all_services}\n\n            monitored_detail: list[dict] = []\n            all_ok = True\n            for svc_name in monitored_names:\n                svc = svc_lookup.get(svc_name)\n                if svc and svc.get(\"sub\") == \"running\":\n                    monitored_detail.append({\"name\": svc_name, \"state\": \"running\"})\n                else:\n                    monitored_detail.append({\"name\": svc_name, \"state\": \"stopped\"})\n                    all_ok = False\n\n            config_data[\"service_status\"] = \"normal\" if all_ok else \"degraded\"\n            config_data[\"monitored_services_detail\"] = json.dumps(monitored_detail)\n\n            # Top processes\n            config_data[\"top_cpu_processes\"] = json.dumps(\n                _parse_ps(sections.get(\"TOPPROC\", \"\")))\n            config_data[\"top_mem_processes\"] = json.dumps(\n                _parse_ps(sections.get(\"TOPMEM\", \"\")))\n\n            # Mounts\n            config_data[\"mounted_filesystems\"] = json.dumps(\n                _parse_df_human(sections.get(\"MOUNTS\", \"\")))\n\n            # Network interfaces\n            config_data[\"network_interfaces\"] = json.dumps(\n                _parse_ip_addr(sections.get(\"IPADDR\", \"\")))\n\n            # Logged-in users\n            users = _parse_who(sections.get(\"WHO\", \"\"))\n            config_data[\"logged_in_users\"] = json.dumps(users)\n            config_data[\"logged_in_user_count\"] = str(len(users))\n\n            # Security\n            config_data[\"selinux_status\"] = sections.get(\"SELINUX\", \"\").strip() or \"unknown\"\n            apparmor_raw = sections.get(\"APPARMOR\", \"\").strip()\n            config_data[\"apparmor_status\"] = \"enabled\" if \"enabled\" in apparmor_raw else \"unknown\"\n\n            # DNS resolvers\n            config_data[\"dns_resolvers\"] = json.dumps(\n                _parse_dns(sections.get(\"DNS\", \"\")))\n\n            # NTP sync\n            config_data[\"ntp_synchronized\"] = sections.get(\"NTP\", \"\").strip() or \"unknown\"\n\n            # Listening ports\n            config_data[\"listening_ports\"] = json.dumps(\n                _parse_listening(sections.get(\"LISTEN\", \"\")))\n\n            # Package count\n            pkg_text = sections.get(\"PKGCOUNT\", \"\").strip()\n            config_data[\"installed_packages_count\"] = pkg_text if pkg_text.isdigit() else \"0\"\n\n            return PollResult(\n                job_id=context.job.job_id,\n                device_id=context.job.device_id,\n                collector_node=context.node_id,\n                timestamp=time.time(),\n                metrics=[],\n                config_data=config_data,\n                status=\"ok\",\n                reachable=True,\n                error_message=None,\n                execution_time_ms=elapsed_ms,\n            )\n\n        except Exception as exc:\n            elapsed_ms = int((time.monotonic() - start) * 1000)\n            return PollResult(\n                job_id=context.job.job_id,\n                device_id=context.job.device_id,\n                collector_node=context.node_id,\n                timestamp=time.time(),\n                metrics=[], config_data=None,\n                status=\"critical\", reachable=False,\n                error_message=f\"Linux config check failed \u2014 {host}: {type(exc).__name__}: {exc}\",\n                execution_time_ms=elapsed_ms,\n            )\n",
+            "requirements": [],
+            "entry_class": "Poller",
+            "is_latest": true,
+            "display_template": {
+              "html": "<div id=\"linux-dashboard\"></div>\n<script>\n(function() {\n  var d = window.__configData || {};\n  var el = document.getElementById('linux-dashboard');\n\n  function badge(status) {\n    var colors = {'normal':'#22c55e','running':'#22c55e','degraded':'#f97316','stopped':'#ef4444','unknown':'#71717a','enabled':'#22c55e','disabled':'#71717a','yes':'#22c55e','no':'#f97316','Enforcing':'#22c55e','Permissive':'#f59e0b','Disabled':'#71717a'};\n    var color = colors[status] || colors['unknown'];\n    return '<span class=\"badge\" style=\"background:'+color+'20;color:'+color+';border:1px solid '+color+'40\">'+status+'</span>';\n  }\n\n  function parseJson(key) {\n    try { return JSON.parse(d[key] || '[]'); } catch(e) { return []; }\n  }\n\n  var html = '<div class=\"overview\">';\n  html += '<div class=\"ov-item\"><span class=\"ov-label\">Hostname</span><span class=\"ov-value\">'+(d.hostname||'\u2014')+'</span></div>';\n  html += '<div class=\"ov-item\"><span class=\"ov-label\">OS</span><span class=\"ov-value\">'+(d.os_name||'\u2014')+'</span></div>';\n  html += '<div class=\"ov-item\"><span class=\"ov-label\">Kernel</span><span class=\"ov-value\">'+(d.kernel_version||'\u2014')+'</span></div>';\n  html += '<div class=\"ov-item\"><span class=\"ov-label\">Architecture</span><span class=\"ov-value\">'+(d.architecture||'\u2014')+'</span></div>';\n  html += '<div class=\"ov-item\"><span class=\"ov-label\">CPU</span><span class=\"ov-value\">'+(d.cpu_model||'\u2014')+' ('+(d.cpu_count||'?')+' cores)</span></div>';\n  html += '<div class=\"ov-item\"><span class=\"ov-label\">Memory</span><span class=\"ov-value\">'+(d.total_memory||'\u2014')+'</span></div>';\n  html += '<div class=\"ov-item\"><span class=\"ov-label\">Timezone</span><span class=\"ov-value\">'+(d.timezone||'\u2014')+'</span></div>';\n  html += '<div class=\"ov-item\"><span class=\"ov-label\">Last Boot</span><span class=\"ov-value\">'+(d.last_boot_time||'\u2014')+'</span></div>';\n  html += '<div class=\"ov-item\"><span class=\"ov-label\">Services</span>'+badge(d.service_status||'unknown')+'<span class=\"ov-value\"> '+(d.service_count_running||'0')+' running / '+(d.service_count_failed||'0')+' failed</span></div>';\n  html += '<div class=\"ov-item\"><span class=\"ov-label\">Users</span><span class=\"ov-value\">'+(d.logged_in_user_count||'0')+' logged in</span></div>';\n  html += '<div class=\"ov-item\"><span class=\"ov-label\">Packages</span><span class=\"ov-value\">'+(d.installed_packages_count||'0')+' installed</span></div>';\n  html += '<div class=\"ov-item\"><span class=\"ov-label\">NTP Sync</span>'+badge(d.ntp_synchronized||'unknown')+'</div>';\n  html += '</div>';\n\n  html += '<div class=\"grid\">';\n\n  // Security\n  html += '<div class=\"card\"><div class=\"card-hdr\">Security</div>';\n  html += '<table><tr><th>Feature</th><th>Status</th></tr>';\n  html += '<tr><td>SELinux</td><td>'+badge(d.selinux_status||'unknown')+'</td></tr>';\n  html += '<tr><td>AppArmor</td><td>'+badge(d.apparmor_status||'unknown')+'</td></tr>';\n  html += '</table></div>';\n\n  // DNS Resolvers\n  var dns = parseJson('dns_resolvers');\n  html += '<div class=\"card\"><div class=\"card-hdr\">DNS Resolvers</div>';\n  if (dns.length) {\n    html += '<table><tr><th>Nameserver</th></tr>';\n    dns.forEach(function(ns) { html += '<tr><td>'+ns+'</td></tr>'; });\n    html += '</table>';\n  } else { html += '<div class=\"stat\">No resolvers found</div>'; }\n  html += '</div>';\n\n  // Monitored Services\n  var svcs = parseJson('monitored_services_detail');\n  html += '<div class=\"card\"><div class=\"card-hdr\">Monitored Services '+badge(d.service_status||'unknown')+'</div>';\n  if (svcs.length) {\n    html += '<table><tr><th>Service</th><th>State</th></tr>';\n    svcs.forEach(function(s) { html += '<tr><td>'+s.name+'</td><td>'+badge(s.state)+'</td></tr>'; });\n    html += '</table>';\n  } else { html += '<div class=\"stat\">No monitored services configured</div>'; }\n  html += '</div>';\n\n  // Listening Ports\n  var ports = parseJson('listening_ports');\n  html += '<div class=\"card\"><div class=\"card-hdr\">Listening Ports ('+ports.length+')</div>';\n  if (ports.length) {\n    html += '<table><tr><th>Port</th><th>Process</th></tr>';\n    ports.slice(0,20).forEach(function(p) { html += '<tr><td>'+p.port+'</td><td>'+p.process+'</td></tr>'; });\n    if (ports.length > 20) html += '<tr><td colspan=\"2\" class=\"stat\">... and '+(ports.length-20)+' more</td></tr>';\n    html += '</table>';\n  } else { html += '<div class=\"stat\">No listening ports found</div>'; }\n  html += '</div>';\n\n  // Top CPU Processes\n  var cpuProcs = parseJson('top_cpu_processes');\n  html += '<div class=\"card\"><div class=\"card-hdr\">Top CPU Processes</div>';\n  if (cpuProcs.length) {\n    html += '<table><tr><th>User</th><th>PID</th><th>CPU%</th><th>MEM%</th><th>Command</th></tr>';\n    cpuProcs.slice(0,5).forEach(function(p) { html += '<tr><td>'+p.user+'</td><td>'+p.pid+'</td><td>'+p.cpu+'</td><td>'+p.mem+'</td><td class=\"cmd\">'+p.command+'</td></tr>'; });\n    html += '</table>';\n  }\n  html += '</div>';\n\n  // Top Memory Processes\n  var memProcs = parseJson('top_mem_processes');\n  html += '<div class=\"card\"><div class=\"card-hdr\">Top Memory Processes</div>';\n  if (memProcs.length) {\n    html += '<table><tr><th>User</th><th>PID</th><th>CPU%</th><th>MEM%</th><th>Command</th></tr>';\n    memProcs.slice(0,5).forEach(function(p) { html += '<tr><td>'+p.user+'</td><td>'+p.pid+'</td><td>'+p.cpu+'</td><td>'+p.mem+'</td><td class=\"cmd\">'+p.command+'</td></tr>'; });\n    html += '</table>';\n  }\n  html += '</div>';\n\n  // Mounted Filesystems\n  var mounts = parseJson('mounted_filesystems');\n  html += '<div class=\"card\"><div class=\"card-hdr\">Filesystems</div>';\n  if (mounts.length) {\n    html += '<table><tr><th>Mount</th><th>Size</th><th>Used</th><th>Avail</th><th>Use%</th></tr>';\n    mounts.forEach(function(m) { html += '<tr><td>'+m.mount+'</td><td>'+m.size+'</td><td>'+m.used+'</td><td>'+m.avail+'</td><td>'+m.use_pct+'</td></tr>'; });\n    html += '</table>';\n  }\n  html += '</div>';\n\n  // Network Interfaces\n  var ifaces = parseJson('network_interfaces');\n  html += '<div class=\"card\"><div class=\"card-hdr\">Network Interfaces</div>';\n  if (ifaces.length) {\n    html += '<table><tr><th>Interface</th><th>Addresses</th></tr>';\n    ifaces.forEach(function(i) {\n      var addrs = i.addresses.map(function(a) { return a.address+' ('+a.family+')'; }).join(', ');\n      html += '<tr><td>'+i.name+'</td><td>'+addrs+'</td></tr>';\n    });\n    html += '</table>';\n  }\n  html += '</div>';\n\n  // Logged-in Users\n  var users = parseJson('logged_in_users');\n  html += '<div class=\"card\"><div class=\"card-hdr\">Logged-in Users ('+(d.logged_in_user_count||'0')+')</div>';\n  if (users.length) {\n    html += '<table><tr><th>User</th><th>Terminal</th><th>Login Time</th></tr>';\n    users.forEach(function(u) { html += '<tr><td>'+u.user+'</td><td>'+u.terminal+'</td><td>'+u.login_time+'</td></tr>'; });\n    html += '</table>';\n  } else { html += '<div class=\"stat\">No users logged in</div>'; }\n  html += '</div>';\n\n  html += '</div>';\n  el.innerHTML = html;\n})();\n</script>",
+              "css": ".overview { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-bottom:16px; padding:12px; background:#27272a; border-radius:8px; }\n.ov-item { display:flex; align-items:center; gap:8px; }\n.ov-label { font-size:11px; color:#71717a; min-width:70px; }\n.ov-value { font-size:13px; }\n.grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }\n.card { background:#27272a; border-radius:8px; padding:12px; border:1px solid #3f3f46; }\n.card-hdr { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; font-weight:600; font-size:13px; }\n.stat { font-size:12px; color:#a1a1aa; margin-bottom:8px; }\n.badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600; text-transform:uppercase; }\ntable { width:100%; border-collapse:collapse; font-size:12px; }\nth { text-align:left; padding:4px 8px; color:#a1a1aa; border-bottom:1px solid #3f3f46; font-weight:500; }\ntd { padding:4px 8px; border-bottom:1px solid #27272a; }\ntd.cmd { max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }\ntr:hover td { background:#3f3f4620; }",
+              "key_mappings": [
+                "hostname",
+                "kernel_version",
+                "architecture",
+                "os_name",
+                "os_id",
+                "cpu_model",
+                "cpu_count",
+                "total_memory",
+                "timezone",
+                "last_boot_time",
+                "service_count_running",
+                "service_count_failed",
+                "service_status",
+                "monitored_services_detail",
+                "top_cpu_processes",
+                "top_mem_processes",
+                "mounted_filesystems",
+                "network_interfaces",
+                "logged_in_users",
+                "logged_in_user_count",
+                "selinux_status",
+                "apparmor_status",
+                "dns_resolvers",
+                "ntp_synchronized",
+                "listening_ports",
+                "installed_packages_count"
+              ]
+            },
+            "volatile_keys": [
+              "top_cpu_processes",
+              "top_mem_processes",
+              "logged_in_users",
+              "logged_in_user_count",
+              "service_count_running",
+              "service_count_failed",
+              "monitored_services_detail",
+              "mounted_filesystems",
+              "network_interfaces",
+              "listening_ports",
+              "ntp_synchronized"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "linux_uptime",
+        "description": "Monitors Linux system uptime via SSH. Reads /proc/uptime and reports uptime in seconds and days. Detects reboots when uptime drops below threshold.",
+        "app_type": "script",
+        "target_table": "performance",
+        "config_schema": {
+          "type": "object",
+          "properties": {
+            "ssh_credential": {
+              "type": "string",
+              "title": "SSH Credential",
+              "description": "SSH credential for authentication",
+              "x-widget": "credential"
+            }
+          }
+        },
+        "connector_bindings": [
+          {"alias": "ssh", "connector_name": "ssh"}
+        ],
+        "threshold_variables": [
+          {
+            "name": "reboot_threshold",
+            "default_value": 300.0,
+            "display_name": "Reboot Detection Threshold",
+            "unit": "seconds",
+            "description": "Alert when uptime is below this value (indicates recent reboot)"
+          }
+        ],
+        "alert_definitions": [
+          {
+            "name": "Linux Device Rebooted",
+            "description": "Device uptime is below threshold, indicating a recent reboot.",
+            "expression": "last(uptime_seconds) < $reboot_threshold",
+            "window": "5m",
+            "severity": "warning",
+            "enabled": true,
+            "message_template": "{device_name} has rebooted (uptime: {value}s)"
+          }
+        ],
+        "versions": [
+          {
+            "version": "1.0.0",
+            "source_code": "\"\"\"Linux uptime monitor \u2014 reads /proc/uptime for uptime tracking.\n\nReads /proc/uptime which contains two floats: seconds since boot and\ncumulative idle time. Reports uptime in seconds and days.\n\nConnector binding required:\n    alias \"ssh\" -> SSH connector with credential\n\nWrites to: performance table\n    uptime_seconds   System uptime in seconds (gauge)\n    uptime_days      System uptime in days (gauge)\n\"\"\"\n\nfrom __future__ import annotations\n\nimport time\n\nfrom monctl_collector.jobs.models import PollContext, PollResult\nfrom monctl_collector.polling.base import BasePoller\n\n\nclass Poller(BasePoller):\n    \"\"\"Linux uptime poller \u2014 reads /proc/uptime via SSH.\"\"\"\n\n    async def poll(self, context: PollContext) -> PollResult:\n        host = context.device_host or context.parameters.get(\"host\", \"localhost\")\n\n        ssh = context.connectors.get(\"ssh\")\n        if ssh is None:\n            return PollResult(\n                job_id=context.job.job_id,\n                device_id=context.job.device_id,\n                collector_node=context.node_id,\n                timestamp=time.time(),\n                metrics=[],\n                config_data=None,\n                status=\"error\",\n                reachable=False,\n                error_message=\"No SSH connector bound (expected alias 'ssh')\",\n                execution_time_ms=0,\n            )\n\n        start = time.monotonic()\n        try:\n            result = await ssh.run(\"cat /proc/uptime\")\n            elapsed_ms = int((time.monotonic() - start) * 1000)\n\n            if result[\"exit_status\"] != 0:\n                return PollResult(\n                    job_id=context.job.job_id,\n                    device_id=context.job.device_id,\n                    collector_node=context.node_id,\n                    timestamp=time.time(),\n                    metrics=[],\n                    config_data=None,\n                    status=\"critical\",\n                    reachable=True,\n                    error_message=f\"Failed to read /proc/uptime (exit {result['exit_status']})\",\n                    execution_time_ms=elapsed_ms,\n                )\n\n            # /proc/uptime: \"12345.67 98765.43\\n\"\n            parts = result[\"stdout\"].strip().split()\n            if not parts:\n                return PollResult(\n                    job_id=context.job.job_id,\n                    device_id=context.job.device_id,\n                    collector_node=context.node_id,\n                    timestamp=time.time(),\n                    metrics=[],\n                    config_data=None,\n                    status=\"critical\",\n                    reachable=True,\n                    error_message=f\"Could not parse uptime from {host}\",\n                    execution_time_ms=elapsed_ms,\n                )\n\n            uptime_seconds = float(parts[0])\n            uptime_days = round(uptime_seconds / 86400.0, 2)\n\n            return PollResult(\n                job_id=context.job.job_id,\n                device_id=context.job.device_id,\n                collector_node=context.node_id,\n                timestamp=time.time(),\n                metrics=[\n                    {\n                        \"name\": \"uptime_seconds\",\n                        \"value\": uptime_seconds,\n                        \"labels\": {\"host\": host, \"source\": \"/proc/uptime\"},\n                        \"unit\": \"seconds\",\n                        \"component\": \"uptime\",\n                        \"component_type\": \"system\",\n                    },\n                    {\n                        \"name\": \"uptime_days\",\n                        \"value\": uptime_days,\n                        \"labels\": {\"host\": host, \"source\": \"/proc/uptime\"},\n                        \"unit\": \"days\",\n                        \"component\": \"uptime\",\n                        \"component_type\": \"system\",\n                    },\n                ],\n                config_data=None,\n                status=\"ok\",\n                reachable=True,\n                error_message=None,\n                execution_time_ms=elapsed_ms,\n            )\n\n        except Exception as exc:\n            elapsed_ms = int((time.monotonic() - start) * 1000)\n            return PollResult(\n                job_id=context.job.job_id,\n                device_id=context.job.device_id,\n                collector_node=context.node_id,\n                timestamp=time.time(),\n                metrics=[],\n                config_data=None,\n                status=\"critical\",\n                reachable=False,\n                error_message=f\"Linux uptime check failed \u2014 {host}: {type(exc).__name__}: {exc}\",\n                execution_time_ms=elapsed_ms,\n            )\n",
+            "requirements": [],
+            "entry_class": "Poller",
+            "is_latest": true
+          }
+        ]
+      },
+      {
+        "name": "linux_interface",
+        "description": "Collects Linux network interface metrics via SSH for the interface table: traffic counters (in/out octets), errors, discards, link speed, and operational status. Data appears in the Interfaces tab with rate calculations handled by central.",
+        "app_type": "script",
+        "target_table": "interface",
+        "config_schema": {
+          "type": "object",
+          "properties": {
+            "ssh_credential": {
+              "type": "string",
+              "title": "SSH Credential",
+              "description": "SSH credential for authentication",
+              "x-widget": "credential"
+            }
+          }
+        },
+        "connector_bindings": [
+          {"alias": "ssh", "connector_name": "ssh"}
+        ],
+        "threshold_variables": [],
+        "alert_definitions": [],
+        "versions": [
+          {
+            "version": "1.0.0",
+            "source_code": "\"\"\"Linux network interface poller \u2014 collects per-interface traffic and status.\n\nReads /proc/net/dev for byte counters and /sys/class/net/ for interface\nmetadata (speed, operstate, errors, drops). Returns interface_rows so\ncentral handles rate calculation and storage in the interface table.\n\nConnector binding required:\n    alias \"ssh\" -> SSH connector with credential\n\nWrites to: interface table (via interface_rows in PollResult)\n\"\"\"\n\nfrom __future__ import annotations\n\nimport time\n\nfrom monctl_collector.jobs.models import PollContext, PollResult\nfrom monctl_collector.polling.base import BasePoller\n\n_CMD = (\n    \"echo '===NETDEV===' && cat /proc/net/dev \"\n    \"&& echo '===IFACES===' && \"\n    \"for iface in $(ls /sys/class/net/ 2>/dev/null | grep -v '^lo$'); do \"\n    \"  echo \\\"IFACE:$iface\\\"; \"\n    \"  cat /sys/class/net/$iface/ifindex 2>/dev/null || echo '-1'; \"\n    \"  cat /sys/class/net/$iface/operstate 2>/dev/null || echo 'unknown'; \"\n    \"  cat /sys/class/net/$iface/speed 2>/dev/null || echo '-1'; \"\n    \"  cat /sys/class/net/$iface/statistics/rx_errors 2>/dev/null || echo '0'; \"\n    \"  cat /sys/class/net/$iface/statistics/tx_errors 2>/dev/null || echo '0'; \"\n    \"  cat /sys/class/net/$iface/statistics/rx_dropped 2>/dev/null || echo '0'; \"\n    \"  cat /sys/class/net/$iface/statistics/tx_dropped 2>/dev/null || echo '0'; \"\n    \"done\"\n)\n\n\ndef _parse_sections(output: str) -> dict[str, str]:\n    sections: dict[str, str] = {}\n    current_key: str | None = None\n    lines: list[str] = []\n    for line in output.split(\"\\n\"):\n        stripped = line.strip()\n        if stripped.startswith(\"===\") and stripped.endswith(\"===\"):\n            if current_key:\n                sections[current_key] = \"\\n\".join(lines)\n            current_key = stripped.strip(\"=\")\n            lines = []\n        else:\n            lines.append(line)\n    if current_key:\n        sections[current_key] = \"\\n\".join(lines)\n    return sections\n\n\ndef _parse_netdev(text: str) -> dict[str, dict[str, int]]:\n    \"\"\"Parse /proc/net/dev -> {iface_name: {rx_bytes, tx_bytes}}.\"\"\"\n    result: dict[str, dict[str, int]] = {}\n    for line in text.strip().split(\"\\n\"):\n        if \":\" not in line or \"|\" in line:\n            continue\n        iface, rest = line.split(\":\", 1)\n        iface = iface.strip()\n        if iface == \"lo\":\n            continue\n        parts = rest.split()\n        if len(parts) >= 10:\n            result[iface] = {\n                \"rx_bytes\": int(parts[0]),\n                \"rx_packets\": int(parts[1]),\n                \"tx_bytes\": int(parts[8]),\n                \"tx_packets\": int(parts[9]),\n            }\n    return result\n\n\ndef _parse_iface_metadata(text: str) -> dict[str, dict]:\n    \"\"\"Parse /sys/class/net/ output -> {iface_name: {ifindex, operstate, speed, ...}}.\"\"\"\n    result: dict[str, dict] = {}\n    current_iface: str | None = None\n    values: list[str] = []\n\n    for line in text.strip().split(\"\\n\"):\n        stripped = line.strip()\n        if stripped.startswith(\"IFACE:\"):\n            if current_iface and len(values) >= 6:\n                _store_iface(result, current_iface, values)\n            current_iface = stripped[6:]\n            values = []\n        elif current_iface is not None:\n            values.append(stripped)\n\n    if current_iface and len(values) >= 6:\n        _store_iface(result, current_iface, values)\n\n    return result\n\n\ndef _store_iface(result: dict, name: str, values: list[str]) -> None:\n    \"\"\"Store parsed interface metadata.\"\"\"\n    def _safe_int(s: str, default: int = 0) -> int:\n        try:\n            return int(s)\n        except (ValueError, TypeError):\n            return default\n\n    ifindex = _safe_int(values[0], -1)\n    operstate = values[1] if values[1] in (\"up\", \"down\", \"unknown\", \"dormant\", \"lowerlayerdown\") else \"unknown\"\n    speed = _safe_int(values[2], -1)\n    if speed < 0:\n        speed = 0\n\n    result[name] = {\n        \"ifindex\": ifindex,\n        \"operstate\": operstate,\n        \"speed_mbps\": speed,\n        \"rx_errors\": _safe_int(values[3]),\n        \"tx_errors\": _safe_int(values[4]),\n        \"rx_dropped\": _safe_int(values[5]),\n        \"tx_dropped\": _safe_int(values[6]) if len(values) > 6 else 0,\n    }\n\n\nclass Poller(BasePoller):\n    \"\"\"Linux interface poller \u2014 returns interface_rows for the interface table.\"\"\"\n\n    async def poll(self, context: PollContext) -> PollResult:\n        host = context.device_host or context.parameters.get(\"host\", \"localhost\")\n        ssh = context.connectors.get(\"ssh\")\n        if ssh is None:\n            return PollResult(\n                job_id=context.job.job_id,\n                device_id=context.job.device_id,\n                collector_node=context.node_id,\n                timestamp=time.time(),\n                metrics=[],\n                config_data=None,\n                status=\"error\",\n                reachable=False,\n                error_message=\"No SSH connector bound (expected alias 'ssh')\",\n                execution_time_ms=0,\n            )\n\n        start = time.monotonic()\n        try:\n            result = await ssh.run(_CMD)\n            elapsed_ms = int((time.monotonic() - start) * 1000)\n\n            if result[\"exit_status\"] != 0:\n                return PollResult(\n                    job_id=context.job.job_id,\n                    device_id=context.job.device_id,\n                    collector_node=context.node_id,\n                    timestamp=time.time(),\n                    metrics=[],\n                    config_data=None,\n                    status=\"critical\",\n                    reachable=True,\n                    error_message=f\"SSH command failed (exit {result['exit_status']}): {result['stderr'][:500]}\",\n                    execution_time_ms=elapsed_ms,\n                )\n\n            sections = _parse_sections(result[\"stdout\"])\n            counters = _parse_netdev(sections.get(\"NETDEV\", \"\"))\n            metadata = _parse_iface_metadata(sections.get(\"IFACES\", \"\"))\n\n            # Determine poll interval from job definition\n            poll_interval = 300\n            if hasattr(context.job, \"interval\"):\n                poll_interval = context.job.interval or 300\n            elif hasattr(context.job, \"schedule_value\"):\n                try:\n                    poll_interval = int(context.job.schedule_value)\n                except (ValueError, TypeError, AttributeError):\n                    pass\n\n            interface_rows: list[dict] = []\n            for iface_name, cnt in counters.items():\n                meta = metadata.get(iface_name, {})\n                operstate = meta.get(\"operstate\", \"unknown\")\n\n                # Map operstate to admin/oper status\n                if_oper_status = operstate\n                if_admin_status = \"up\" if operstate not in (\"down\",) else \"down\"\n\n                interface_rows.append({\n                    \"if_index\": meta.get(\"ifindex\", 0),\n                    \"if_name\": iface_name,\n                    \"if_alias\": \"\",\n                    \"if_speed_mbps\": meta.get(\"speed_mbps\", 0),\n                    \"if_admin_status\": if_admin_status,\n                    \"if_oper_status\": if_oper_status,\n                    \"in_octets\": cnt[\"rx_bytes\"],\n                    \"out_octets\": cnt[\"tx_bytes\"],\n                    \"in_errors\": meta.get(\"rx_errors\", 0),\n                    \"out_errors\": meta.get(\"tx_errors\", 0),\n                    \"in_discards\": meta.get(\"rx_dropped\", 0),\n                    \"out_discards\": meta.get(\"tx_dropped\", 0),\n                    \"in_unicast_pkts\": cnt.get(\"rx_packets\", 0),\n                    \"out_unicast_pkts\": cnt.get(\"tx_packets\", 0),\n                    \"poll_interval_sec\": poll_interval,\n                    \"counter_bits\": 64,\n                })\n\n            return PollResult(\n                job_id=context.job.job_id,\n                device_id=context.job.device_id,\n                collector_node=context.node_id,\n                timestamp=time.time(),\n                metrics=[],\n                config_data=None,\n                status=\"ok\",\n                reachable=True,\n                error_message=None,\n                execution_time_ms=elapsed_ms,\n                interface_rows=interface_rows,\n            )\n\n        except Exception as exc:\n            elapsed_ms = int((time.monotonic() - start) * 1000)\n            return PollResult(\n                job_id=context.job.job_id,\n                device_id=context.job.device_id,\n                collector_node=context.node_id,\n                timestamp=time.time(),\n                metrics=[],\n                config_data=None,\n                status=\"critical\",\n                reachable=False,\n                error_message=f\"Linux interface check failed \u2014 {host}: {type(exc).__name__}: {exc}\",\n                execution_time_ms=elapsed_ms,\n            )\n",
+            "requirements": [],
+            "entry_class": "Poller",
+            "is_latest": true
+          }
+        ]
+      }
+    ],
+    "device_categories": [
+      {
+        "name": "linux-server",
+        "description": "Linux server monitored via SSH",
+        "category": "server",
+        "icon": "server"
+      }
+    ],
+    "event_policies": [
+      {
+        "name": "Linux High CPU Event",
+        "description": "Promotes sustained high CPU alerts to events. Fires after 3 consecutive high CPU polls.",
+        "app_name": "linux_performance",
+        "alert_name": "High CPU Usage",
+        "mode": "consecutive",
+        "fire_count_threshold": 3,
+        "window_size": 5,
+        "event_severity": "warning",
+        "auto_clear_on_resolve": true,
+        "enabled": true
+      },
+      {
+        "name": "Linux High Memory Event",
+        "description": "Promotes sustained high memory alerts to events. Fires after 3 consecutive polls.",
+        "app_name": "linux_performance",
+        "alert_name": "High Memory Usage",
+        "mode": "consecutive",
+        "fire_count_threshold": 3,
+        "window_size": 5,
+        "event_severity": "warning",
+        "auto_clear_on_resolve": true,
+        "enabled": true
+      },
+      {
+        "name": "Linux High Disk Event",
+        "description": "Promotes sustained high disk usage alerts to events. Fires after 2 consecutive polls.",
+        "app_name": "linux_performance",
+        "alert_name": "High Disk Usage",
+        "mode": "consecutive",
+        "fire_count_threshold": 2,
+        "window_size": 5,
+        "event_severity": "critical",
+        "auto_clear_on_resolve": true,
+        "enabled": true
+      },
+      {
+        "name": "Linux High Swap Event",
+        "description": "Promotes sustained high swap usage alerts to events. Fires after 3 consecutive polls.",
+        "app_name": "linux_performance",
+        "alert_name": "High Swap Usage",
+        "mode": "consecutive",
+        "fire_count_threshold": 3,
+        "window_size": 5,
+        "event_severity": "warning",
+        "auto_clear_on_resolve": true,
+        "enabled": true
+      },
+      {
+        "name": "Linux High Load Event",
+        "description": "Promotes sustained high load average alerts to events. Fires after 3 consecutive polls.",
+        "app_name": "linux_performance",
+        "alert_name": "High Load Average",
+        "mode": "consecutive",
+        "fire_count_threshold": 3,
+        "window_size": 5,
+        "event_severity": "warning",
+        "auto_clear_on_resolve": true,
+        "enabled": true
+      },
+      {
+        "name": "Linux Service Down Event",
+        "description": "Immediate event when monitored services are down.",
+        "app_name": "linux_config",
+        "alert_name": "Linux Service Down",
+        "mode": "consecutive",
+        "fire_count_threshold": 1,
+        "window_size": 5,
+        "event_severity": "critical",
+        "auto_clear_on_resolve": true,
+        "enabled": true
+      },
+      {
+        "name": "Linux SSH Unreachable Event",
+        "description": "Event when SSH connection fails twice consecutively.",
+        "app_name": "linux_config",
+        "alert_name": "Linux SSH Unreachable",
+        "mode": "consecutive",
+        "fire_count_threshold": 2,
+        "window_size": 5,
+        "event_severity": "critical",
+        "auto_clear_on_resolve": true,
+        "enabled": true
+      },
+      {
+        "name": "Linux Reboot Event",
+        "description": "Event when device uptime indicates a recent reboot.",
+        "app_name": "linux_uptime",
+        "alert_name": "Linux Device Rebooted",
+        "mode": "consecutive",
+        "fire_count_threshold": 1,
+        "window_size": 5,
+        "event_severity": "warning",
+        "auto_clear_on_resolve": true,
+        "enabled": true
+      }
+    ]
+  }
+}

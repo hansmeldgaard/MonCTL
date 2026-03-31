@@ -104,6 +104,44 @@ def _store_wheel_file(normalized_name: str, filename: str, data: bytes) -> Path:
     return dest
 
 
+def _pick_best_wheel(urls: list[dict]) -> tuple[str | None, str | None]:
+    """Pick the best wheel for Linux amd64 collectors (Python 3.12).
+
+    Preference order:
+      1. pure-python (py3-none-any)
+      2. manylinux x86_64 cp312
+      3. manylinux x86_64 cp311
+      4. manylinux x86_64 (any cpython)
+      5. any linux x86_64
+      6. first available wheel (fallback)
+    """
+    wheels = [u for u in urls if u.get("packagetype") == "bdist_wheel"]
+    if not wheels:
+        return None, None
+
+    def score(u: dict) -> tuple[int, str]:
+        fn = u.get("filename", "")
+        fl = fn.lower()
+        # Pure python — best
+        if "py3-none-any" in fl or "py2.py3-none-any" in fl:
+            return (0, fn)
+        # manylinux x86_64 with matching cpython
+        if "manylinux" in fl and "x86_64" in fl:
+            if "cp312" in fl:
+                return (1, fn)
+            if "cp311" in fl:
+                return (2, fn)
+            return (3, fn)
+        # any linux x86_64
+        if "linux" in fl and "x86_64" in fl:
+            return (4, fn)
+        # Fallback
+        return (5, fn)
+
+    best = min(wheels, key=score)
+    return best["url"], best["filename"]
+
+
 def _delete_wheel_file(normalized_name: str, filename: str) -> None:
     """Remove a wheel file from disk (ignore if missing)."""
     path = _wheel_dir() / normalized_name / filename
@@ -455,6 +493,7 @@ async def upload_wheel(
         python_tag=meta.python_tag,
         abi_tag=meta.abi_tag,
         platform_tag=meta.platform_tag,
+        file_data=data,
     )
     db.add(wheel)
     await db.flush()
@@ -535,6 +574,7 @@ async def upload_wheels_batch(
                 python_tag=meta.python_tag,
                 abi_tag=meta.abi_tag,
                 platform_tag=meta.platform_tag,
+                file_data=data,
             )
             db.add(wheel)
             await db.flush()
@@ -596,15 +636,9 @@ async def import_from_pypi(
     if not version_str:
         raise HTTPException(status_code=400, detail="Could not determine version")
 
-    # Find a wheel URL in the release files
+    # Find the best wheel for Linux amd64 collectors
     urls = info.get("urls", [])
-    wheel_url = None
-    wheel_filename = None
-    for u in urls:
-        if u.get("packagetype") == "bdist_wheel":
-            wheel_url = u["url"]
-            wheel_filename = u["filename"]
-            break
+    wheel_url, wheel_filename = _pick_best_wheel(urls)
 
     if not wheel_url:
         raise HTTPException(
@@ -656,6 +690,7 @@ async def import_from_pypi(
         python_tag=meta.python_tag,
         abi_tag=meta.abi_tag,
         platform_tag=meta.platform_tag,
+        file_data=wheel_data,
     )
     db.add(wheel)
     await db.flush()
@@ -785,25 +820,15 @@ async def auto_resolve(
                     failed.append({"name": dep_name, "error": "No version found"})
                     continue
 
-                # Find a wheel
+                # Find the best wheel for Linux amd64 collectors
                 urls = info.get("urls", [])
-                wheel_url = None
-                wheel_filename = None
-                for u in urls:
-                    if u.get("packagetype") == "bdist_wheel":
-                        wheel_url = u["url"]
-                        wheel_filename = u["filename"]
-                        break
+                wheel_url, wheel_filename = _pick_best_wheel(urls)
 
                 if not wheel_url:
                     # Try the specific version's releases
                     releases = info.get("releases", {})
                     ver_files = releases.get(version_str, [])
-                    for u in ver_files:
-                        if u.get("packagetype") == "bdist_wheel":
-                            wheel_url = u["url"]
-                            wheel_filename = u["filename"]
-                            break
+                    wheel_url, wheel_filename = _pick_best_wheel(ver_files)
 
                 if not wheel_url:
                     failed.append({"name": dep_name, "error": "No wheel available"})
@@ -838,6 +863,7 @@ async def auto_resolve(
                     python_tag=meta.python_tag,
                     abi_tag=meta.abi_tag,
                     platform_tag=meta.platform_tag,
+                    file_data=wheel_data,
                 )
                 normalized = normalize_package_name(meta.name)
                 _store_wheel_file(normalized, wheel_filename, wheel_data)

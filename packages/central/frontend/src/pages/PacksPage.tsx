@@ -34,6 +34,8 @@ const SECTION_LABELS: Record<string, string> = {
   label_keys: "Label Keys",
   connectors: "Connectors",
   device_types: "Device Types",
+  event_policies: "Event Policies",
+  grafana_dashboards: "Grafana Dashboards",
 };
 
 export function PacksPage() {
@@ -111,6 +113,8 @@ export function PacksPage() {
       for (const entity of res.data.entities) {
         if (entity.status === "conflict") {
           defaultResolutions[`${entity.section}:${entity.name}`] = "skip";
+        } else if (entity.status === "upgrade") {
+          defaultResolutions[`${entity.section}:${entity.name}`] = "overwrite";
         }
       }
       setResolutions(defaultResolutions);
@@ -262,7 +266,7 @@ export function PacksPage() {
       </Dialog>
 
       {/* Import Dialog */}
-      <Dialog open={importOpen} onClose={closeImport} title={importResult ? "Import Complete" : importPreview ? `Import: ${importPreview.name}` : "Import Pack"}>
+      <Dialog open={importOpen} onClose={closeImport} size="full" title={importResult ? "Import Complete" : importPreview ? `Import: ${importPreview.name}` : "Import Pack"}>
         {importError && !importPreview && (
           <div>
             <p className="text-sm text-red-400">{importError}</p>
@@ -306,21 +310,33 @@ export function PacksPage() {
                 <TableBody>
                   {importPreview.entities.map((entity) => {
                     const key = `${entity.section}:${entity.name}`;
+                    const versionLabel = entity.current_version && entity.incoming_version
+                      ? `v${entity.current_version} → v${entity.incoming_version}`
+                      : null;
                     return (
                       <TableRow key={key}>
-                        <TableCell className="font-medium text-zinc-100">{entity.name}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-zinc-100">{entity.name}</span>
+                            {versionLabel && (
+                              <span className="text-[10px] text-zinc-500 font-mono">{versionLabel}</span>
+                            )}
+                          </div>
+                        </TableCell>
                         <TableCell className="text-zinc-400">{SECTION_LABELS[entity.section] ?? entity.section}</TableCell>
                         <TableCell>
                           {entity.status === "new" && <Badge className="bg-green-600">New</Badge>}
                           {entity.status === "conflict" && <Badge className="bg-amber-600">Conflict</Badge>}
+                          {entity.status === "upgrade" && entity.has_changes && <Badge className="bg-blue-600">Upgrade</Badge>}
+                          {entity.status === "upgrade" && !entity.has_changes && <Badge variant="info">Unchanged</Badge>}
                           {entity.status === "unchanged" && <Badge variant="info">Unchanged</Badge>}
                           {entity.status === "info" && <Badge className="bg-blue-600">Included</Badge>}
                         </TableCell>
                         <TableCell>
-                          {entity.status === "conflict" ? (
+                          {entity.status === "conflict" || entity.status === "upgrade" ? (
                             <select
                               className="rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-200"
-                              value={resolutions[key] ?? "skip"}
+                              value={resolutions[key] ?? (entity.status === "upgrade" ? "overwrite" : "skip")}
                               onChange={(e) => setResolutions(prev => ({ ...prev, [key]: e.target.value }))}
                             >
                               <option value="skip">Skip</option>
@@ -331,6 +347,8 @@ export function PacksPage() {
                             <span className="text-xs text-green-400">Will create</span>
                           ) : entity.status === "info" ? (
                             <span className="text-xs text-blue-400">Included with app</span>
+                          ) : entity.status === "unchanged" ? (
+                            <span className="text-xs text-zinc-500">No changes</span>
                           ) : (
                             <span className="text-xs text-zinc-500">Will skip</span>
                           )}

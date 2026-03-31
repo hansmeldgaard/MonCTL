@@ -2,7 +2,7 @@ import { useState } from "react";
 import { FileText, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button.tsx";
 import { Label } from "@/components/ui/label.tsx";
-import { Select } from "@/components/ui/select.tsx";
+import { SearchableSelect } from "@/components/ui/searchable-select.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import { useTemplates, useApplyTemplate } from "@/api/hooks.ts";
@@ -58,7 +58,7 @@ export function ApplyTemplateDialog({ open, onClose, deviceIds, deviceName }: Pr
   }
 
   return (
-    <Dialog open={open} onClose={handleClose} title="Apply Template">
+    <Dialog open={open} onClose={handleClose} title="Apply Template" size="lg" className="min-h-[28rem]">
       <div className="space-y-4">
         {deviceName && (
           <p className="text-sm text-zinc-400">
@@ -73,15 +73,15 @@ export function ApplyTemplateDialog({ open, onClose, deviceIds, deviceName }: Pr
 
         <div className="space-y-1.5">
           <Label>Template</Label>
-          <Select
+          <SearchableSelect
             value={selectedTemplateId}
-            onChange={(e) => setSelectedTemplateId(e.target.value)}
-          >
-            <option value="">Select a template...</option>
-            {(templates ?? []).map((t: Template) => (
-              <option key={t.id} value={t.id}>{t.name}</option>
-            ))}
-          </Select>
+            onChange={setSelectedTemplateId}
+            options={[
+              { value: "", label: "Select a template..." },
+              ...(templates ?? []).map((t: Template) => ({ value: t.id, label: t.name })),
+            ]}
+            placeholder="Select a template..."
+          />
         </div>
 
         {selectedTemplate && hasContent && (

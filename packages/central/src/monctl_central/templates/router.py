@@ -82,10 +82,14 @@ def _resolve_credential_id(cred_value: str | None) -> uuid.UUID | None:
 
     - None / empty: no credential
     - UUID string: use as-is
+    - Invalid UUID: return None (gracefully ignore)
     """
     if not cred_value:
         return None
-    return uuid.UUID(cred_value)
+    try:
+        return uuid.UUID(cred_value)
+    except (ValueError, AttributeError):
+        return None
 
 
 async def apply_config_to_device(

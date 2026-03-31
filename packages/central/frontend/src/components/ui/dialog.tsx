@@ -64,14 +64,14 @@ export function Dialog({ open, onClose, title, children, className, size = "md" 
         className={cn(
           isFullscreen
             ? "relative z-10 w-full h-full flex flex-col bg-zinc-900"
-            : `relative z-10 w-full ${SIZE_CLASSES[size]} rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl`,
+            : `relative z-10 w-full ${SIZE_CLASSES[size]} max-h-[calc(100vh-2rem)] flex flex-col rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl`,
           className,
         )}
       >
         {title && (
           <div className={cn(
             "flex items-center justify-between border-b border-zinc-800 px-6 py-4",
-            isFullscreen && "shrink-0",
+            "shrink-0",
           )}>
             <h2 className="text-base font-semibold text-zinc-100">{title}</h2>
             <button
@@ -83,7 +83,7 @@ export function Dialog({ open, onClose, title, children, className, size = "md" 
           </div>
         )}
         <div className={cn(
-          isFullscreen ? "flex-1 overflow-y-auto px-6 py-5" : "px-6 py-5",
+          "flex-1 overflow-y-auto px-6 py-5",
         )}>{children}</div>
       </div>
     </div>,

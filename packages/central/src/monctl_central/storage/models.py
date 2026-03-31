@@ -920,6 +920,7 @@ class WheelFile(Base):
     python_tag: Mapped[str] = mapped_column(String(50), nullable=False)
     abi_tag: Mapped[str] = mapped_column(String(50), nullable=False)
     platform_tag: Mapped[str] = mapped_column(String(100), nullable=False)
+    file_data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default="now()"
     )

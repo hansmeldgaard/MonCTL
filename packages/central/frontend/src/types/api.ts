@@ -304,6 +304,7 @@ export interface DeviceInfo {
   name: string;
   address: string;
   device_category: string;
+  device_type_name?: string | null;
 }
 
 export interface Assignment {
@@ -323,6 +324,7 @@ export interface Assignment {
   credential_overrides?: { alias: string; credential_id: string; credential_name: string }[];
   device_default_credential_name: string | null;
   created_at: string;
+  updated_at?: string | null;
 }
 
 /** Device-scoped assignment (from GET /v1/apps/assignments?device_id=...) */
@@ -1217,8 +1219,11 @@ export interface PackDetail extends Pack {
 export interface PackImportPreviewEntity {
   section: string;
   name: string;
-  status: "new" | "conflict" | "unchanged" | "info";
+  status: "new" | "conflict" | "unchanged" | "info" | "upgrade";
   existing_pack: string | null;
+  current_version?: string | null;
+  incoming_version?: string | null;
+  has_changes?: boolean;
 }
 
 export interface PackImportPreview {

@@ -66,6 +66,14 @@ export function formatUptime(seconds: number): string {
   return `${mins}m`;
 }
 
+/** Format epoch ms as "Mar 31, 14:32" for chart tooltips (always includes date). */
+export function formatChartDateTime(ts: number, timezone = "UTC"): string {
+  const d = new Date(ts);
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: timezone }) +
+    ", " +
+    d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: timezone });
+}
+
 export function formatNumber(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;

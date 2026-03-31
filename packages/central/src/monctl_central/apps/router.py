@@ -450,6 +450,11 @@ async def list_assignments(
     device_name: str | None = Query(default=None),
     device_address: str | None = Query(default=None),
     device_type: str | None = Query(default=None),
+    device_type_name: str | None = Query(default=None),
+    schedule_type: str | None = Query(default=None),
+    schedule_value: str | None = Query(default=None),
+    credential_name: str | None = Query(default=None),
+    enabled: bool | None = Query(default=None),
     sort_by: str = Query(default="app_name"),
     sort_dir: str = Query(default="asc"),
     limit: int = Query(default=50, le=500),
@@ -457,9 +462,14 @@ async def list_assignments(
 ):
     """List all app assignments with app, device, and schedule details."""
     from sqlalchemy.orm import selectinload
-    from monctl_central.storage.models import App, AppVersion, Collector, Device
+    from monctl_central.storage.models import (
+        App, AppVersion, Collector, Credential, Device, DeviceType,
+    )
 
     from monctl_central.storage.models import Device as DeviceModel
+
+    # Track whether we already joined DeviceType
+    _joined_device_type = False
 
     stmt = (
         select(AppAssignment, App, AppVersion)
@@ -485,6 +495,19 @@ async def list_assignments(
         stmt = stmt.where(DeviceModel.address.ilike(f"%{device_address}%"))
     if device_type:
         stmt = stmt.where(DeviceModel.device_category.ilike(f"%{device_type}%"))
+    if device_type_name:
+        stmt = stmt.outerjoin(DeviceType, DeviceModel.device_type_id == DeviceType.id)
+        stmt = stmt.where(DeviceType.name.ilike(f"%{device_type_name}%"))
+        _joined_device_type = True
+    if schedule_type:
+        stmt = stmt.where(AppAssignment.schedule_type == schedule_type)
+    if schedule_value:
+        stmt = stmt.where(AppAssignment.schedule_value.ilike(f"%{schedule_value}%"))
+    if credential_name:
+        stmt = stmt.outerjoin(Credential, AppAssignment.credential_id == Credential.id)
+        stmt = stmt.where(Credential.name.ilike(f"%{credential_name}%"))
+    if enabled is not None:
+        stmt = stmt.where(AppAssignment.enabled == enabled)
 
     ASSIGNMENTS_SORT_MAP = {
         "app_name": App.name,
@@ -494,6 +517,7 @@ async def list_assignments(
         "schedule": AppAssignment.schedule_value,
         "enabled": AppAssignment.enabled,
         "created_at": AppAssignment.created_at,
+        "updated_at": AppAssignment.updated_at,
     }
     sort_col = ASSIGNMENTS_SORT_MAP.get(sort_by, App.name)
     stmt = stmt.order_by(sort_col.desc() if sort_dir == "desc" else sort_col.asc())
@@ -508,9 +532,15 @@ async def list_assignments(
     # Load devices for assignments that have a device_id
     device_ids = {row.AppAssignment.device_id for row in rows if row.AppAssignment.device_id}
     devices = {}
+    device_type_names: dict[uuid.UUID, str | None] = {}
     if device_ids:
-        dev_result = await db.execute(select(Device).where(Device.id.in_(device_ids)))
-        devices = {d.id: d for d in dev_result.scalars().all()}
+        dev_result = await db.execute(
+            select(Device).where(Device.id.in_(device_ids))
+            .options(selectinload(Device.device_type))
+        )
+        for d in dev_result.scalars().all():
+            devices[d.id] = d
+            device_type_names[d.id] = d.device_type.name if d.device_type else None
 
     # ── Resolve credential names for display ──────────────────────────
     from monctl_central.storage.models import Credential, AssignmentCredentialOverride
@@ -616,6 +646,7 @@ async def list_assignments(
                         "name": devices[row.AppAssignment.device_id].name,
                         "address": devices[row.AppAssignment.device_id].address,
                         "device_category": devices[row.AppAssignment.device_id].device_category,
+                        "device_type_name": device_type_names.get(row.AppAssignment.device_id),
                     }
                     if row.AppAssignment.device_id and row.AppAssignment.device_id in devices
                     else None
@@ -659,6 +690,7 @@ async def list_assignments(
                     for b in row.AppAssignment.connector_bindings
                 ],
                 "created_at": row.AppAssignment.created_at.isoformat() if row.AppAssignment.created_at else None,
+                "updated_at": row.AppAssignment.updated_at.isoformat() if row.AppAssignment.updated_at else None,
             }
             for row in rows
         ],

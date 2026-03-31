@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import {
   Loader2,
   Pencil,
@@ -13,6 +14,7 @@ import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { Select } from "@/components/ui/select.tsx";
+import { SearchableSelect } from "@/components/ui/searchable-select.tsx";
 import {
   Table,
   TableBody,
@@ -142,13 +144,14 @@ function DeviceTypesTab() {
                 <TableHead>Model</TableHead>
                 <TableHead>OS Family</TableHead>
                 <FilterableSortHead col="priority" label="Priority" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterable={false} />
+                <TableHead className="text-center">Devices</TableHead>
                 <TableHead className="w-20"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {rules.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center text-zinc-500 py-8">
+                  <TableCell colSpan={9} className="text-center text-zinc-500 py-8">
                     {listState.hasActiveFilters
                       ? "No device types match your filters"
                       : "No device types defined — add types to enable SNMP device auto-classification"}
@@ -190,6 +193,19 @@ function DeviceTypesTab() {
                       </TableCell>
                       <TableCell className="text-zinc-500 text-sm tabular-nums">
                         {rule.priority}
+                      </TableCell>
+                      <TableCell className="text-center">
+                        {(rule as any).device_count > 0 ? (
+                          <Link
+                            to={`/devices?device_type_name=${encodeURIComponent(rule.name)}`}
+                            className="text-sm font-medium text-brand-400 hover:text-brand-300 transition-colors"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {(rule as any).device_count}
+                          </Link>
+                        ) : (
+                          <span className="text-sm text-zinc-600">0</span>
+                        )}
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
@@ -557,14 +573,14 @@ function DeviceTypeTemplateBindingsPanel({
       <div className="flex items-end gap-2">
         <div className="flex-1 space-y-1">
           <Label className="text-xs text-zinc-500">Add template</Label>
-          <Select value={addTemplateId} onChange={(e) => setAddTemplateId(e.target.value)}>
-            <option value="">Select template…</option>
-            {allTemplates
+          <SearchableSelect
+            value={addTemplateId}
+            onChange={setAddTemplateId}
+            options={allTemplates
               .filter((t) => !boundTypeIds.has(t.id))
-              .map((t) => (
-                <option key={t.id} value={t.id}>{t.name}</option>
-              ))}
-          </Select>
+              .map((t) => ({ value: t.id, label: t.name }))}
+            placeholder="Select template…"
+          />
         </div>
         <Button
           type="button"

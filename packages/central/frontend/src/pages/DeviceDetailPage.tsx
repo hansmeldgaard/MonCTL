@@ -46,6 +46,7 @@ import { Input } from "@/components/ui/input.tsx";
 import { ClearableInput } from "@/components/ui/clearable-input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { Select } from "@/components/ui/select.tsx";
+import { SearchableSelect } from "@/components/ui/searchable-select.tsx";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import { Tabs, TabsList, TabTrigger, TabsContent } from "@/components/ui/tabs.tsx";
 import {
@@ -297,15 +298,13 @@ function AddAssignmentDialog({
       <form onSubmit={handleSubmit} className="space-y-4">
         <div className="space-y-1.5">
           <Label htmlFor="aa-app">App</Label>
-          <Select
+          <SearchableSelect
             id="aa-app"
             value={selectedAppId}
-            onChange={(e) => setSelectedAppId(e.target.value)}
-          >
-            {(apps ?? []).map((a) => (
-              <option key={a.id} value={a.id}>{a.name}</option>
-            ))}
-          </Select>
+            onChange={setSelectedAppId}
+            options={(apps ?? []).map((a) => ({ value: a.id, label: a.name }))}
+            placeholder="Select app..."
+          />
           {vc?.match === false && vc.warning && (
             <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-2.5 mt-1.5">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
@@ -853,6 +852,8 @@ function EditAssignmentDialog({ assignment, deviceCollectorGroupId, deviceCreden
 function OverviewTab({ deviceId }: { deviceId: string }) {
   const tz = useTimezone();
   const [timeRange, setTimeRange] = useState<TimeRangeValue>(DEFAULT_RANGE);
+  const [baseRange, setBaseRange] = useState<TimeRangeValue>(DEFAULT_RANGE);
+  const [isZoomed, setIsZoomed] = useState(false);
   const { fromTs, toTs } = useMemo(() => rangeToTimestamps(timeRange), [timeRange]);
   const { data: deviceResults } = useDeviceResults(deviceId);
   const { data: history, isLoading: histLoading } = useAvailabilityHistory(
@@ -861,6 +862,20 @@ function OverviewTab({ deviceId }: { deviceId: string }) {
     toTs,
     5000,
   );
+  const handleChartZoom = useCallback((fromMs: number, toMs: number) => {
+    if (!isZoomed) setBaseRange(timeRange);
+    setTimeRange({ type: "absolute", fromTs: new Date(fromMs).toISOString(), toTs: new Date(toMs).toISOString() });
+    setIsZoomed(true);
+  }, [isZoomed, timeRange]);
+  const handleResetZoom = useCallback(() => {
+    setTimeRange(baseRange);
+    setIsZoomed(false);
+  }, [baseRange]);
+  const handleTimeRangeChange = useCallback((v: TimeRangeValue) => {
+    setTimeRange(v);
+    setBaseRange(v);
+    setIsZoomed(false);
+  }, []);
 
   // ── Staleness detection ───────────────────────────────────
   const STALE_THRESHOLD_MS = 15 * 60 * 1000; // 15 minutes
@@ -900,8 +915,15 @@ function OverviewTab({ deviceId }: { deviceId: string }) {
 
       {/* Chart header + time picker */}
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-medium text-zinc-400">Availability &amp; Latency</h3>
-        <TimeRangePicker value={timeRange} onChange={setTimeRange} timezone={tz} />
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-medium text-zinc-400">Availability &amp; Latency</h3>
+          {isZoomed && (
+            <button onClick={handleResetZoom} className="text-xs text-brand-400 hover:text-brand-300 cursor-pointer">
+              Reset zoom
+            </button>
+          )}
+        </div>
+        <TimeRangePicker value={timeRange} onChange={handleTimeRangeChange} timezone={tz} />
       </div>
 
       {/* Chart card */}
@@ -912,7 +934,7 @@ function OverviewTab({ deviceId }: { deviceId: string }) {
               <Loader2 className="h-6 w-6 animate-spin text-brand-500" />
             </div>
           ) : (
-            <AvailabilityChart results={history ?? []} fromTs={fromTs} toTs={toTs} timezone={tz} />
+            <AvailabilityChart results={history ?? []} fromTs={fromTs} toTs={toTs} timezone={tz} onZoom={handleChartZoom} />
           )}
         </CardContent>
       </Card>
@@ -997,7 +1019,16 @@ function OverviewTab({ deviceId }: { deviceId: string }) {
 function PerformanceTab({ deviceId }: { deviceId: string }) {
   const tz = useTimezone();
   const [timeRange, setTimeRange] = useState<TimeRangeValue>(DEFAULT_RANGE);
+  const [baseRange, setBaseRange] = useState<TimeRangeValue>(DEFAULT_RANGE);
+  const [isZoomed, setIsZoomed] = useState(false);
   const { fromTs, toTs } = useMemo(() => rangeToTimestamps(timeRange), [timeRange]);
+  const handleChartZoom = useCallback((fromMs: number, toMs: number) => {
+    if (!isZoomed) setBaseRange(timeRange);
+    setTimeRange({ type: "absolute", fromTs: new Date(fromMs).toISOString(), toTs: new Date(toMs).toISOString() });
+    setIsZoomed(true);
+  }, [isZoomed, timeRange]);
+  const handleResetZoom = useCallback(() => { setTimeRange(baseRange); setIsZoomed(false); }, [baseRange]);
+  const handleTimeRangeChange = useCallback((v: TimeRangeValue) => { setTimeRange(v); setBaseRange(v); setIsZoomed(false); }, []);
 
   const { data: summary, isLoading: summaryLoading } = usePerformanceSummary(deviceId);
 
@@ -1058,8 +1089,15 @@ function PerformanceTab({ deviceId }: { deviceId: string }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-medium text-zinc-300">Performance Metrics</h3>
-        <TimeRangePicker value={timeRange} onChange={setTimeRange} />
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-medium text-zinc-300">Performance Metrics</h3>
+          {isZoomed && (
+            <button onClick={handleResetZoom} className="text-xs text-brand-400 hover:text-brand-300 cursor-pointer">
+              Reset zoom
+            </button>
+          )}
+        </div>
+        <TimeRangePicker value={timeRange} onChange={handleTimeRangeChange} />
       </div>
 
       {summaryLoading ? (
@@ -1225,6 +1263,7 @@ function PerformanceTab({ deviceId }: { deviceId: string }) {
                           selectedMetric.includes("_ms") ? "ms" :
                           selectedMetric.includes("_bytes") ? "B" : ""}
                     title={`${selectedComponentType ?? ""} — ${selectedMetric ?? ""}`}
+                    onZoom={handleChartZoom}
                   />
                 ) : (
                   <div className="flex items-center justify-center h-72 text-zinc-600 text-sm">
@@ -2248,12 +2287,22 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
     setChartMetric(next);
     updateIfacePrefs.mutate({ iface_chart_metric: next });
   };
+  const [baseRange, setBaseRange] = useState<TimeRangeValue>(timeRange);
+  const [isZoomed, setIsZoomed] = useState(false);
   const handleTimeRange = (next: TimeRangeValue) => {
     setTimeRange(next);
+    setBaseRange(next);
+    setIsZoomed(false);
     if (next.type === "preset" && ["1h", "6h", "24h", "7d", "30d"].includes(next.preset)) {
       updateIfacePrefs.mutate({ iface_time_range: next.preset as any });
     }
   };
+  const handleChartZoom = useCallback((fromMs: number, toMs: number) => {
+    if (!isZoomed) setBaseRange(timeRange);
+    setTimeRange({ type: "absolute", fromTs: new Date(fromMs).toISOString(), toTs: new Date(toMs).toISOString() });
+    setIsZoomed(true);
+  }, [isZoomed, timeRange]);
+  const handleResetZoom = useCallback(() => { setTimeRange(baseRange); setIsZoomed(false); }, [baseRange]);
 
   return (
     <div className="space-y-4">
@@ -2308,6 +2357,11 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
             <option value="discards">Discards</option>
           </Select>
           <TimeRangePicker value={timeRange} onChange={handleTimeRange} timezone={tz} />
+          {isZoomed && (
+            <button onClick={handleResetZoom} className="text-xs text-brand-400 hover:text-brand-300 cursor-pointer">
+              Reset zoom
+            </button>
+          )}
         </div>
       </div>
 
@@ -2345,6 +2399,7 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
               unit={trafficUnit}
               mode={chartMode}
               timezone={tz}
+              onZoom={handleChartZoom}
             />
           </CardContent>
         </Card>

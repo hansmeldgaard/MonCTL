@@ -32,7 +32,11 @@ export function AssignmentsPage() {
       { key: "app_name", label: "App" },
       { key: "device_name", label: "Device" },
       { key: "device_category", label: "Category" },
+      { key: "device_type_name", label: "Device Type" },
       { key: "device_address", label: "Device Address", sortable: false },
+      { key: "schedule_value", label: "Schedule" },
+      { key: "credential_name", label: "Credential" },
+      { key: "enabled", label: "Enabled" },
     ],
     defaultSortBy: "app_name",
     defaultPageSize: pageSize,
@@ -330,6 +334,12 @@ export function AssignmentsPage() {
                   onFilterChange={(v) => listState.setFilter("device_category", v)}
                 />
                 <FilterableSortHead
+                  col="device_type_name" label="Device Type"
+                  sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
+                  filterValue={listState.filters.device_type_name}
+                  onFilterChange={(v) => listState.setFilter("device_type_name", v)}
+                />
+                <FilterableSortHead
                   col="device_address" label="Device Address"
                   sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
                   sortable={false}
@@ -339,16 +349,28 @@ export function AssignmentsPage() {
                 <FilterableSortHead
                   col="schedule" label="Schedule"
                   sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
-                  filterable={false}
+                  filterValue={listState.filters.schedule_value}
+                  onFilterChange={(v) => listState.setFilter("schedule_value", v)}
                 />
-                <TableHead>Credential(s)</TableHead>
+                <FilterableSortHead
+                  col="credential_name" label="Credential"
+                  sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
+                  filterValue={listState.filters.credential_name}
+                  onFilterChange={(v) => listState.setFilter("credential_name", v)}
+                />
                 <FilterableSortHead
                   col="enabled" label="Enabled"
+                  sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
+                  filterValue={listState.filters.enabled}
+                  onFilterChange={(v) => listState.setFilter("enabled", v)}
+                />
+                <FilterableSortHead
+                  col="created_at" label="Created"
                   sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
                   filterable={false}
                 />
                 <FilterableSortHead
-                  col="created_at" label="Created"
+                  col="updated_at" label="Updated"
                   sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
                   filterable={false}
                 />
@@ -357,7 +379,7 @@ export function AssignmentsPage() {
             <TableBody>
               {assignments.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center py-8 text-zinc-500 text-sm">
+                  <TableCell colSpan={12} className="text-center py-8 text-zinc-500 text-sm">
                     {listState.hasActiveFilters ? "No assignments match your filters" : "No assignments configured"}
                   </TableCell>
                 </TableRow>
@@ -404,6 +426,9 @@ export function AssignmentsPage() {
                   <TableCell className="text-zinc-400 text-xs">
                     {assignment.device?.device_category ?? "—"}
                   </TableCell>
+                  <TableCell className="text-zinc-400 text-xs">
+                    {assignment.device?.device_type_name ?? <span className="text-zinc-600">&mdash;</span>}
+                  </TableCell>
                   <TableCell className="font-mono text-xs text-zinc-400">
                     {assignment.device
                       ? assignment.device.address
@@ -428,6 +453,9 @@ export function AssignmentsPage() {
                   </TableCell>
                   <TableCell className="text-zinc-500">
                     {formatDate(assignment.created_at, tz)}
+                  </TableCell>
+                  <TableCell className="text-zinc-500">
+                    {assignment.updated_at ? formatDate(assignment.updated_at, tz) : "—"}
                   </TableCell>
                 </TableRow>
               ))}

@@ -14,6 +14,7 @@ from sqlalchemy.orm import selectinload
 from monctl_central.storage.models import (
     App,
     AlertDefinition,
+    AppConnectorBinding,
     AppVersion,
     Connector,
     ConnectorVersion,
@@ -22,6 +23,7 @@ from monctl_central.storage.models import (
     DeviceCategoryTemplateBinding,
     DeviceType,
     DeviceTypeTemplateBinding,
+    EventPolicy,
     LabelKey,
     Pack,
     PackVersion,
@@ -158,6 +160,39 @@ async def export_pack(pack_id: uuid.UUID, db: AsyncSession) -> dict:
     if connectors:
         result["contents"]["connectors"] = [_export_connector(c) for c in connectors]
 
+    # Event policies (via alert definitions on pack apps)
+    if apps:
+        app_ids = [a.id for a in apps]
+        ep_rows = (await db.execute(
+            select(EventPolicy)
+            .join(AlertDefinition, EventPolicy.definition_id == AlertDefinition.id)
+            .where(AlertDefinition.app_id.in_(app_ids))
+            .options(selectinload(EventPolicy.definition))
+        )).scalars().all()
+        if ep_rows:
+            app_by_id = {a.id: a for a in apps}
+            ep_exports = []
+            for ep in ep_rows:
+                defn = ep.definition
+                app_obj = app_by_id.get(defn.app_id)
+                if not app_obj:
+                    continue
+                ep_exports.append({
+                    "name": ep.name,
+                    "description": ep.description,
+                    "app_name": app_obj.name,
+                    "alert_name": defn.name,
+                    "mode": ep.mode,
+                    "fire_count_threshold": ep.fire_count_threshold,
+                    "window_size": ep.window_size,
+                    "event_severity": ep.event_severity,
+                    "message_template": ep.message_template,
+                    "auto_clear_on_resolve": ep.auto_clear_on_resolve,
+                    "enabled": ep.enabled,
+                })
+            if ep_exports:
+                result["contents"]["event_policies"] = ep_exports
+
     # Template hierarchy bindings (category-level)
     cat_bindings = (await db.execute(
         select(DeviceCategoryTemplateBinding)
@@ -232,6 +267,7 @@ def _export_app(
             "is_latest": v.is_latest,
             "display_template": v.display_template,
             "eligibility_oids": v.eligibility_oids,
+            "volatile_keys": v.volatile_keys or [],
         }
         d["versions"].append(ver_data)
     # Export threshold variables at the app level
@@ -458,6 +494,14 @@ async def _import_grafana_dashboards(
 
 async def preview_import(data: dict, db: AsyncSession) -> dict:
     """Analyze a pack JSON and return conflict information."""
+    pack_uid = data["pack_uid"]
+
+    # Pre-check if this is an upgrade of the same pack
+    existing_pack = (await db.execute(
+        select(Pack).where(Pack.pack_uid == pack_uid)
+    )).scalar_one_or_none()
+    existing_pack_id = existing_pack.id if existing_pack else None
+
     entities: list[dict] = []
 
     for section, model, name_field in ENTITY_MAP:
@@ -480,27 +524,123 @@ async def preview_import(data: dict, db: AsyncSession) -> dict:
                 "name": item_name,
                 "status": "new",
                 "existing_pack": None,
+                "current_version": None,
+                "incoming_version": None,
+                "has_changes": None,
             }
 
             if existing is not None:
-                entry["status"] = "conflict"
+                # Determine if this belongs to the same pack (upgrade) or a different pack (conflict)
+                same_pack = (
+                    hasattr(existing, "pack_id")
+                    and existing.pack_id is not None
+                    and existing_pack_id is not None
+                    and existing.pack_id == existing_pack_id
+                )
+
                 if hasattr(existing, "pack_id") and existing.pack_id:
                     pack = await db.get(Pack, existing.pack_id)
                     entry["existing_pack"] = pack.name if pack else None
 
+                # For apps and connectors: compare versions
+                if section == "apps":
+                    incoming_versions = item.get("versions", [])
+                    incoming_latest = next(
+                        (v["version"] for v in incoming_versions if v.get("is_latest")),
+                        incoming_versions[0]["version"] if incoming_versions else None,
+                    )
+                    existing_latest_ver = (await db.execute(
+                        select(AppVersion.version).where(
+                            AppVersion.app_id == existing.id,
+                            AppVersion.is_latest == True,  # noqa: E712
+                        )
+                    )).scalar_one_or_none()
+                    entry["incoming_version"] = incoming_latest
+                    entry["current_version"] = existing_latest_ver
+                    entry["has_changes"] = incoming_latest != existing_latest_ver
+                elif section == "connectors":
+                    incoming_versions = item.get("versions", [])
+                    incoming_latest = next(
+                        (v["version"] for v in incoming_versions if v.get("is_latest")),
+                        incoming_versions[0]["version"] if incoming_versions else None,
+                    )
+                    existing_latest_ver = (await db.execute(
+                        select(ConnectorVersion.version).where(
+                            ConnectorVersion.connector_id == existing.id,
+                            ConnectorVersion.is_latest == True,  # noqa: E712
+                        )
+                    )).scalar_one_or_none()
+                    entry["incoming_version"] = incoming_latest
+                    entry["current_version"] = existing_latest_ver
+                    entry["has_changes"] = incoming_latest != existing_latest_ver
+
+                if same_pack:
+                    entry["status"] = "upgrade"
+                else:
+                    entry["status"] = "conflict"
+
             entities.append(entry)
 
-    # Count alert definitions at app level (informational entries)
+    # Alert definitions at app level
     for app_item in data.get("contents", {}).get("apps", []):
-        alert_count = len(app_item.get("alert_definitions", []))
-        if alert_count > 0:
-            entities.append({
+        alert_defs = app_item.get("alert_definitions", [])
+        if not alert_defs:
+            continue
+        # Check for existing app to compare alerts
+        existing_app = (await db.execute(
+            select(App).where(App.name == app_item["name"])
+        )).scalar_one_or_none()
+        for ad in alert_defs:
+            ad_entry: dict = {
                 "section": "alert_definitions",
-                "name": f"{app_item['name']} ({alert_count} alert"
-                        f"{'s' if alert_count != 1 else ''})",
-                "status": "info",
+                "name": f"{app_item['name']} / {ad['name']}",
+                "status": "new",
                 "existing_pack": None,
-            })
+                "has_changes": None,
+            }
+            if existing_app:
+                existing_ad = (await db.execute(
+                    select(AlertDefinition).where(
+                        AlertDefinition.app_id == existing_app.id,
+                        AlertDefinition.name == ad["name"],
+                    )
+                )).scalar_one_or_none()
+                if existing_ad:
+                    # Compare expression, window, enabled
+                    changed = (
+                        existing_ad.expression != ad.get("expression")
+                        or existing_ad.window != ad.get("window")
+                        or existing_ad.enabled != ad.get("enabled", True)
+                    )
+                    ad_entry["has_changes"] = changed
+                    ad_entry["status"] = "upgrade" if changed else "unchanged"
+                else:
+                    ad_entry["status"] = "new"
+            entities.append(ad_entry)
+
+    # Event policies
+    for ep in data.get("contents", {}).get("event_policies", []):
+        existing_ep = (await db.execute(
+            select(EventPolicy).where(EventPolicy.name == ep.get("name", ""))
+        )).scalar_one_or_none()
+        ep_entry: dict = {
+            "section": "event_policies",
+            "name": ep.get("name", "?"),
+            "status": "new",
+            "existing_pack": None,
+            "has_changes": None,
+        }
+        if existing_ep:
+            changed = (
+                existing_ep.mode != ep.get("mode", "consecutive")
+                or existing_ep.fire_count_threshold != ep.get("fire_count_threshold", 1)
+                or existing_ep.window_size != ep.get("window_size", 5)
+                or str(existing_ep.event_severity) != ep.get("event_severity", "warning")
+                or existing_ep.enabled != ep.get("enabled", True)
+            )
+            ep_entry["has_changes"] = changed
+            ep_entry["status"] = "upgrade" if changed else "unchanged"
+        entities.append(ep_entry)
 
     # Grafana dashboards (informational — not stored in DB)
     for gd in data.get("contents", {}).get("grafana_dashboards", []):
@@ -512,7 +652,7 @@ async def preview_import(data: dict, db: AsyncSession) -> dict:
         })
 
     result: dict = {
-        "pack_uid": data["pack_uid"],
+        "pack_uid": pack_uid,
         "name": data["name"],
         "version": data["version"],
         "is_upgrade": False,
@@ -520,9 +660,6 @@ async def preview_import(data: dict, db: AsyncSession) -> dict:
         "entities": entities,
     }
 
-    existing_pack = (await db.execute(
-        select(Pack).where(Pack.pack_uid == data["pack_uid"])
-    )).scalar_one_or_none()
     if existing_pack:
         result["is_upgrade"] = True
         result["current_version"] = existing_pack.current_version
@@ -618,6 +755,7 @@ async def import_pack(
                         pack_uid=pack_uid, pack_id=pack.id, skip_app_update=True,
                         alert_defs_data=item.get("alert_definitions", []),
                         threshold_vars_data=item.get("threshold_variables", []),
+                        connector_bindings_data=item.get("connector_bindings", []),
                     )
                 continue
             elif existing and resolution == "overwrite":
@@ -628,6 +766,7 @@ async def import_pack(
                         pack_uid=pack_uid, pack_id=pack.id,
                         alert_defs_data=item.get("alert_definitions", []),
                         threshold_vars_data=item.get("threshold_variables", []),
+                        connector_bindings_data=item.get("connector_bindings", []),
                     )
                 elif section == "connectors":
                     await _sync_connector_versions(db, existing, item.get("versions", []))
@@ -644,6 +783,7 @@ async def import_pack(
                         pack_uid=pack_uid, pack_id=pack.id,
                         alert_defs_data=item.get("alert_definitions", []),
                         threshold_vars_data=item.get("threshold_variables", []),
+                        connector_bindings_data=item.get("connector_bindings", []),
                     )
                 elif section == "connectors":
                     await _create_connector_versions(db, entity, item.get("versions", []))
@@ -658,10 +798,74 @@ async def import_pack(
                         pack_uid=pack_uid, pack_id=pack.id,
                         alert_defs_data=item.get("alert_definitions", []),
                         threshold_vars_data=item.get("threshold_variables", []),
+                        connector_bindings_data=item.get("connector_bindings", []),
                     )
                 elif section == "connectors":
                     await _create_connector_versions(db, entity, item.get("versions", []))
                 stats["created"] += 1
+
+    await db.flush()
+
+    # Import event policies (after apps/alert definitions are created)
+    for ep_data in data.get("contents", {}).get("event_policies", []):
+        ep_name = ep_data.get("name", "")
+        app_name = ep_data.get("app_name", "")
+        alert_name = ep_data.get("alert_name", "")
+
+        # Resolve app → alert definition
+        app_row = (await db.execute(
+            select(App).where(App.name == app_name)
+        )).scalar_one_or_none()
+        if not app_row:
+            logger.warning("event_policy_skip_no_app", policy=ep_name, app_name=app_name)
+            stats["skipped"] += 1
+            continue
+
+        defn = (await db.execute(
+            select(AlertDefinition).where(
+                AlertDefinition.app_id == app_row.id,
+                AlertDefinition.name == alert_name,
+            )
+        )).scalar_one_or_none()
+        if not defn:
+            logger.warning("event_policy_skip_no_alert", policy=ep_name, alert_name=alert_name)
+            stats["skipped"] += 1
+            continue
+
+        existing_ep = (await db.execute(
+            select(EventPolicy).where(EventPolicy.name == ep_name)
+        )).scalar_one_or_none()
+
+        resolution_key = f"event_policies:{ep_name}"
+        resolution = resolutions.get(resolution_key, "skip" if existing_ep else "create")
+
+        if existing_ep and resolution == "skip":
+            stats["skipped"] += 1
+        elif existing_ep and resolution == "overwrite":
+            existing_ep.description = ep_data.get("description")
+            existing_ep.definition_id = defn.id
+            existing_ep.mode = ep_data.get("mode", "consecutive")
+            existing_ep.fire_count_threshold = ep_data.get("fire_count_threshold", 1)
+            existing_ep.window_size = ep_data.get("window_size", 5)
+            existing_ep.event_severity = ep_data.get("event_severity", "warning")
+            existing_ep.message_template = ep_data.get("message_template")
+            existing_ep.auto_clear_on_resolve = ep_data.get("auto_clear_on_resolve", True)
+            existing_ep.enabled = ep_data.get("enabled", True)
+            stats["updated"] += 1
+        elif not existing_ep:
+            db.add(EventPolicy(
+                name=ep_name,
+                description=ep_data.get("description"),
+                definition_id=defn.id,
+                mode=ep_data.get("mode", "consecutive"),
+                fire_count_threshold=ep_data.get("fire_count_threshold", 1),
+                window_size=ep_data.get("window_size", 5),
+                event_severity=ep_data.get("event_severity", "warning"),
+                message_template=ep_data.get("message_template"),
+                auto_clear_on_resolve=ep_data.get("auto_clear_on_resolve", True),
+                enabled=ep_data.get("enabled", True),
+            ))
+            stats["created"] += 1
 
     await db.flush()
 
@@ -761,6 +965,10 @@ def _build_manifest(data: dict) -> dict:
             else:
                 name_field = "key" if section == "label_keys" else "name"
                 manifest[section] = [item[name_field] for item in items]
+    # Event policies
+    ep_items = contents.get("event_policies", [])
+    if ep_items:
+        manifest["event_policies"] = [item["name"] for item in ep_items]
     return manifest
 
 
@@ -882,6 +1090,45 @@ def _update_entity(existing, item: dict, section: str, pack_id: uuid.UUID) -> No
         existing.requirements = item.get("requirements", existing.requirements)
 
 
+async def _sync_connector_bindings_for_app(
+    db: AsyncSession,
+    app: App,
+    bindings_data: list[dict],
+) -> None:
+    """Ensure AppConnectorBinding records exist for declared connector requirements."""
+    if not bindings_data:
+        return
+    for b in bindings_data:
+        alias = b.get("alias", "")
+        connector_name = b.get("connector_name", "")
+        if not alias or not connector_name:
+            continue
+        # Check if binding already exists for this alias
+        existing = (await db.execute(
+            select(AppConnectorBinding).where(
+                AppConnectorBinding.app_id == app.id,
+                AppConnectorBinding.alias == alias,
+            )
+        )).scalar_one_or_none()
+        if existing:
+            continue
+        # Resolve connector by name
+        connector = (await db.execute(
+            select(Connector).where(Connector.name == connector_name)
+        )).scalar_one_or_none()
+        if connector is None:
+            logger.warning("connector_binding_skip_no_connector",
+                           app=app.name, alias=alias, connector_name=connector_name)
+            continue
+        db.add(AppConnectorBinding(
+            app_id=app.id,
+            connector_id=connector.id,
+            alias=alias,
+            use_latest=True,
+        ))
+    await db.flush()
+
+
 async def _create_app_versions(
     db: AsyncSession,
     app: App,
@@ -890,6 +1137,7 @@ async def _create_app_versions(
     pack_id: uuid.UUID | None = None,
     alert_defs_data: list[dict] | None = None,
     threshold_vars_data: list[dict] | None = None,
+    connector_bindings_data: list[dict] | None = None,
 ) -> None:
     for vdata in versions_data:
         checksum = hashlib.sha256((vdata.get("source_code") or "").encode()).hexdigest()
@@ -903,9 +1151,13 @@ async def _create_app_versions(
             is_latest=vdata.get("is_latest", False),
             display_template=vdata.get("display_template"),
             eligibility_oids=vdata.get("eligibility_oids"),
+            volatile_keys=vdata.get("volatile_keys", []),
         )
         db.add(v)
         await db.flush()
+    # Sync connector bindings for the app
+    if connector_bindings_data:
+        await _sync_connector_bindings_for_app(db, app, connector_bindings_data)
     # Import threshold variables BEFORE alert definitions
     if threshold_vars_data:
         await _import_threshold_variables(db, app, threshold_vars_data)
@@ -923,6 +1175,7 @@ async def _sync_app_versions(
     skip_app_update: bool = False,
     alert_defs_data: list[dict] | None = None,
     threshold_vars_data: list[dict] | None = None,
+    connector_bindings_data: list[dict] | None = None,
 ) -> None:
     existing = (await db.execute(
         select(AppVersion).where(AppVersion.app_id == app.id)
@@ -945,6 +1198,8 @@ async def _sync_app_versions(
                     ev.display_template = vdata["display_template"]
                 if "eligibility_oids" in vdata:
                     ev.eligibility_oids = vdata["eligibility_oids"]
+                if "volatile_keys" in vdata:
+                    ev.volatile_keys = vdata["volatile_keys"]
         else:
             checksum = hashlib.sha256(
                 (vdata.get("source_code") or "").encode()
@@ -959,6 +1214,7 @@ async def _sync_app_versions(
                 is_latest=False,
                 display_template=vdata.get("display_template"),
                 eligibility_oids=vdata.get("eligibility_oids"),
+                volatile_keys=vdata.get("volatile_keys", []),
             )
             db.add(new_ver)
             await db.flush()
@@ -971,6 +1227,9 @@ async def _sync_app_versions(
         matching = next((vd for vd in versions_data if vd["version"] == v.version), None)
         v.is_latest = matching.get("is_latest", False) if matching else False
 
+    # Sync connector bindings for the app
+    if connector_bindings_data:
+        await _sync_connector_bindings_for_app(db, app, connector_bindings_data)
     # Import threshold variables BEFORE alert definitions
     if threshold_vars_data:
         await _import_threshold_variables(db, app, threshold_vars_data)

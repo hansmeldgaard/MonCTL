@@ -1672,28 +1672,40 @@ def _filter_config_rows(
     volatile_keys: set[str],
     ch,
 ) -> list[dict]:
-    """Suppress unchanged config keys. Volatile keys are skipped entirely."""
+    """Suppress unchanged non-volatile config keys.
+
+    Volatile keys are always written (they change every cycle and must be
+    available in config_latest for display templates), but are excluded from
+    the hash-based change detection so they don't generate changelog entries.
+    """
     if not config_rows:
         return []
 
-    # Filter out volatile keys — they change every cycle and should not
-    # create change history entries or be written to ClickHouse at all.
-    if volatile_keys:
-        config_rows = [r for r in config_rows if r.get("config_key", "") not in volatile_keys]
+    # Separate volatile and stable rows
+    volatile_rows: list[dict] = []
+    stable_rows: list[dict] = []
+    for row in config_rows:
+        if volatile_keys and row.get("config_key", "") in volatile_keys:
+            volatile_rows.append(row)
+        else:
+            stable_rows.append(row)
 
     existing_hashes = _get_cached_config_hashes(ch, device_id, app_id)
 
-    # First-ever poll — write everything (non-volatile only)
+    # First-ever poll — write everything
     if not existing_hashes:
-        return config_rows
+        return stable_rows + volatile_rows
 
+    # Only write stable rows that have actually changed
     filtered = []
-    for row in config_rows:
+    for row in stable_rows:
         lookup = (row.get("component_type", ""), row.get("component", ""), row.get("config_key", ""))
         existing_hash = existing_hashes.get(lookup)
         if existing_hash is None or existing_hash != row.get("config_hash", ""):
             filtered.append(row)
 
+    # Always include volatile rows
+    filtered.extend(volatile_rows)
     return filtered
 
 
@@ -1940,11 +1952,25 @@ async def pypi_serve_wheel(
             filename=filename,
         )
 
-    # Fall back to database
+    # Fall back to database blob (shared across all nodes)
     stmt = select(WheelFile).where(WheelFile.filename == filename)
     wf = (await db.execute(stmt)).scalar_one_or_none()
-    if wf is None or not wf.file_data:
-        raise HTTPException(status_code=404, detail="Wheel file not found")
+    if wf is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Wheel file '{filename}' not found. The required python module may need "
+                   f"to be imported first via the Modules page.",
+        )
+    if not wf.file_data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Wheel file '{filename}' is registered but has no stored data. "
+                   f"Delete and re-import the module to fix this.",
+        )
+
+    # Cache to disk for future requests
+    wheel_path.parent.mkdir(parents=True, exist_ok=True)
+    wheel_path.write_bytes(wf.file_data)
 
     return Response(
         content=wf.file_data,

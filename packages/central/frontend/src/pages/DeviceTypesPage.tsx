@@ -29,6 +29,7 @@ import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { Select } from "@/components/ui/select.tsx";
+import { SearchableSelect } from "@/components/ui/searchable-select.tsx";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import {
   Table,
@@ -310,6 +311,7 @@ export function DeviceCategoriesPage() {
               <TableHead>Name</TableHead>
               <TableHead>Category</TableHead>
               <TableHead>Description</TableHead>
+              <TableHead className="text-center">Types</TableHead>
               <TableHead className="w-20"></TableHead>
             </TableRow>
           </TableHeader>
@@ -349,6 +351,9 @@ export function DeviceCategoriesPage() {
                     </TableCell>
                     <TableCell className="text-sm text-zinc-500 truncate max-w-xs">
                       {dt.description || "—"}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <span className="text-sm text-zinc-400">{(dt as any).device_type_count ?? 0}</span>
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
@@ -673,14 +678,14 @@ function CategoryTemplateBindingsPanel({ categoryId }: { categoryId: string }) {
       <div className="flex items-end gap-2">
         <div className="flex-1 space-y-1">
           <Label className="text-xs text-zinc-500">Add template</Label>
-          <Select value={addTemplateId} onChange={(e) => setAddTemplateId(e.target.value)}>
-            <option value="">Select template…</option>
-            {allTemplates
+          <SearchableSelect
+            value={addTemplateId}
+            onChange={setAddTemplateId}
+            options={allTemplates
               .filter((t) => !boundIds.has(t.id))
-              .map((t) => (
-                <option key={t.id} value={t.id}>{t.name}</option>
-              ))}
-          </Select>
+              .map((t) => ({ value: t.id, label: t.name }))}
+            placeholder="Select template…"
+          />
         </div>
         <Button
           type="button"

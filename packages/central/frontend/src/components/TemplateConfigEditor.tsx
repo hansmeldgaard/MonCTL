@@ -402,7 +402,8 @@ function MonitoringRoleRow({
 }) {
   const { data: credentials } = useCredentials();
   const enabled = !!check;
-  const appId = apps.find((a) => a.name === check?.app_name)?.id;
+  const selectedApp = apps.find((a) => a.name === check?.app_name);
+  const appId = selectedApp?.id;
   const { data: appDetail } = useAppDetail(appId);
   const hasSchema =
     appDetail?.config_schema &&
@@ -410,6 +411,15 @@ function MonitoringRoleRow({
     Object.keys(
       (appDetail.config_schema as { properties: Record<string, unknown> }).properties,
     ).length > 0;
+
+  // Determine connector type for credential filtering
+  const connectorNames = selectedApp?.connector_bindings?.map((b) => b.connector_name) ?? [];
+  const needsCredential = connectorNames.length > 0;
+  const filteredCredentials = (credentials ?? []).filter((c) => {
+    if (connectorNames.length === 0) return true;
+    // Match credential type to connector: snmp→snmp*, ssh→ssh*
+    return connectorNames.some((cn) => c.credential_type.startsWith(cn));
+  });
 
   function toggle() {
     if (enabled) {
@@ -457,22 +467,24 @@ function MonitoringRoleRow({
               ))}
             </Select>
           </div>
-          <div>
-            <Label className="text-xs text-zinc-400">Credential</Label>
-            <Select
-              value={check.credential_id ?? ""}
-              onChange={(e) => onChange({ ...check, credential_id: e.target.value || undefined })}
-              disabled={disabled}
-            >
-              <option value="">-- Device default --</option>
-              <option value="device_default">Device default (explicit)</option>
-              {(credentials ?? []).map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} ({c.credential_type})
-                </option>
-              ))}
-            </Select>
-          </div>
+          {needsCredential && (
+            <div>
+              <Label className="text-xs text-zinc-400">Credential</Label>
+              <Select
+                value={check.credential_id ?? ""}
+                onChange={(e) => onChange({ ...check, credential_id: e.target.value || undefined })}
+                disabled={disabled}
+              >
+                <option value="">-- Device default --</option>
+                <option value="device_default">Device default (explicit)</option>
+                {filteredCredentials.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} ({c.credential_type})
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
           {check.app_name && hasSchema && (
             <SchemaConfigFields
               schema={appDetail!.config_schema}
