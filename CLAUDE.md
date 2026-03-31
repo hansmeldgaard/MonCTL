@@ -81,7 +81,7 @@ packages/
 │   │       ├── types/api.ts    # TypeScript interfaces for API responses
 │   │       ├── pages/          # Page components
 │   │       ├── components/     # Reusable UI components
-│   │       ├── hooks/          # useAuth, useTimezone
+│   │       ├── hooks/          # useAuth, useTimezone, usePermissions
 │   │       └── layouts/        # Sidebar + Header (pageTitles map) + AppLayout
 │   └── alembic/                # Database migrations
 ├── collector/                  # Collector node
@@ -171,7 +171,9 @@ packages/
 - **Web UI**: JWT in HTTP-only cookies (`access_token` + `refresh_token`)
 - **Management API**: `Authorization: Bearer monctl_m_<key>`
 - **Collector API**: `Authorization: Bearer <MONCTL_COLLECTOR_API_KEY>` (shared secret)
-- **Dependencies**: `require_auth` (any authenticated), `require_admin` (admin role only)
+- **Dependencies**: `require_permission("resource", "action")` (RBAC-enforced), `require_admin` (admin role only)
+- **RBAC**: All endpoints use `require_permission`. Admins and API keys bypass automatically. Resources: `device`, `app`, `assignment`, `credential`, `alert`, `collector`, `tenant`, `user`, `template`, `settings`, `result`. Actions: `view`, `create`, `edit`, `delete`, `manage`.
+- **Frontend**: `usePermissions()` hook controls sidebar visibility, settings tabs, and action buttons
 
 ### Routes
 
