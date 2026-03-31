@@ -202,7 +202,9 @@ function buildChartData(
     }
     interGaps.sort((a, b) => a - b);
     const medianGap = interGaps[Math.floor(interGaps.length / 2)];
-    const gapThreshold = Math.max(3 * medianGap, 3 * bucketMs);
+    // Use 6× bucket size so that isolated missing hourly/daily rollup points
+    // don't generate gray "no data" overlays — only genuine multi-hour gaps do.
+    const gapThreshold = Math.max(3 * medianGap, 6 * bucketMs);
 
     // Fill [gapStart, gapEnd) with no-data placeholder bucket keys
     const addGapBuckets = (gapStart: number, gapEnd: number) => {
@@ -274,9 +276,11 @@ function buildChartData(
       const recs = bucket.get(assignId) ?? [];
       // Only include latency from reachable results — 0ms from a failed check is
       // not real latency data and would draw a misleading flat line at 0.
+      // Use || instead of ?? so that rtt_ms=0 falls through to response_time_ms
+      // (rollup data sets rtt_avg=0 for port_check, response_time_avg has the value).
       const latencies = recs
         .filter((r) => r.reachable)
-        .map((r) => r.rtt_ms ?? r.response_time_ms ?? null)
+        .map((r) => r.rtt_ms || r.response_time_ms || null)
         .filter((v): v is number => v !== null && v > 0);
       if (latencies.length > 0) {
         const avg = latencies.reduce((a, b) => a + b, 0) / latencies.length;
