@@ -103,7 +103,7 @@ async def list_results(
     role: Optional[str] = Query(default=None, description="Filter by assignment role (comma-separated: availability,latency,interface)"),
     from_ts: Optional[str] = Query(default=None, description="ISO datetime — return only results at or after this time"),
     to_ts: Optional[str] = Query(default=None, description="ISO datetime — return only results at or before this time"),
-    limit: int = Query(default=50, le=5000),
+    limit: int = Query(default=50, le=20000),
     offset: int = Query(default=0, ge=0),
     auth: dict = Depends(require_auth),
 ):

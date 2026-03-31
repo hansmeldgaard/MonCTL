@@ -47,7 +47,7 @@ interface AvailabilityChartProps {
 function chooseBucketMs(spanMs: number): number {
   const DAY = 86400_000;
   const HOUR = 3_600_000;
-  if (spanMs > 7 * DAY)  return 60 * HOUR;       // 1 hour buckets for > 7 days
+  if (spanMs >= 7 * DAY) return 60 * HOUR;        // 1 hour buckets for >= 7 days
   if (spanMs > 1 * DAY)  return 15 * 60_000;     // 15 min buckets for > 24h
   if (spanMs > 6 * HOUR) return 5 * 60_000;      // 5 min buckets for > 6h
   if (spanMs > 1 * HOUR) return 60_000;           // 1 min buckets for > 1h

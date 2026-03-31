@@ -1024,7 +1024,7 @@ export function useAvailabilityHistory(
   deviceId: string | undefined,
   fromTs: string | null,
   toTs: string | null = null,
-  limit = 5000,
+  limit = 20000,
 ) {
   return useQuery({
     queryKey: ["availability-history", deviceId, fromTs, toTs, limit],
