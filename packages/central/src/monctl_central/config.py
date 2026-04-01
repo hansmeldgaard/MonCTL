@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     redis_sentinel_hosts: str = ""  # comma-separated: "host1:26379,host2:26379,host3:26379"
     redis_sentinel_master: str = "monctl-redis"
 
+    # Infrastructure node topology (used by system health checks)
+    # Format: "name:ip,name:ip,..." e.g. "central1:10.145.210.41,central2:10.145.210.42"
+    patroni_nodes: str = ""
+    etcd_nodes: str = ""
+
     # ClickHouse (replaces VictoriaMetrics for time-series + text data)
     clickhouse_hosts: str = "localhost"  # comma-separated: "192.168.1.41,192.168.1.42,192.168.1.43"
     clickhouse_port: int = 8123
@@ -80,3 +85,16 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def parse_node_list(raw: str) -> list[tuple[str, str]]:
+    """Parse 'name:ip,name:ip,...' into [(name, ip), ...]."""
+    if not raw.strip():
+        return []
+    nodes = []
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if ":" in entry:
+            name, ip = entry.split(":", 1)
+            nodes.append((name.strip(), ip.strip()))
+    return nodes

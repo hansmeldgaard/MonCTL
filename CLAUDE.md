@@ -160,6 +160,7 @@ packages/
 - **Scheduler leader election**: Redis SETNX with 30s TTL, renewed every 10s. Only `role=all` or `role=scheduler` instances participate. **Gotcha**: Do not reuse `role` as a variable name in `main.py` lifespan — it shadows `settings.role` and breaks the scheduler check.
 - **Lightweight status endpoint**: `GET /system/health/status` returns cached `overall_status` from last full check. Used by the top-bar health indicator dot (admin-only).
 - **Patroni switchover**: `POST /system/patroni/switchover` proxies to Patroni REST API. Admin-only.
+- **Infrastructure node config**: Patroni/etcd/sentinel node lists are configured via env vars — **no hardcoded IPs in application code**. Set `MONCTL_PATRONI_NODES`, `MONCTL_ETCD_NODES`, `MONCTL_REDIS_SENTINEL_HOSTS` in compose env files. Format: `"name:ip,name:ip,..."` (e.g. `"central1:10.145.210.41,central2:10.145.210.42"`). Health checks report "unconfigured" if not set.
 - **Docker host count**: Central nodes report via both sidecar agents and Redis push. The health check deduplicates by filtering push labels that match sidecar labels.
 
 ---

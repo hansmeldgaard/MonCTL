@@ -65,7 +65,7 @@ packages/
 ├── central/                        # Central management server
 │   ├── src/monctl_central/
 │   │   ├── main.py                 # FastAPI app, lifespan, seeding (admin, device types, built-in apps)
-│   │   ├── config.py               # Settings via MONCTL_ env vars
+│   │   ├── config.py               # Settings via MONCTL_ env vars + parse_node_list() helper
 │   │   ├── dependencies.py         # DI: get_db, get_engine, get_session_factory, get_clickhouse,
 │   │   │                           #     require_auth, require_admin, require_collector_auth,
 │   │   │                           #     apply_tenant_filter, check_tenant_access
@@ -342,6 +342,18 @@ Query: `GET /v1/logs` (filter, paginate, sort), `GET /v1/logs/filters` (distinct
 ### Redis Sentinel HA
 
 3 sentinels (central1-3), primary (central1), replica (central2). **Critical**: `sentinel announce-ip <host-ip>` in sentinel.conf and `--replica-announce-ip <host-ip>` in Redis command — required for Docker bridge networking. Without this, sentinels advertise container-internal IPs (172.x.x.x) and cross-host communication breaks. Coordinated restart needed to reset corrupt sentinel state (stop all 3 simultaneously, then start all).
+
+### Infrastructure Node Configuration
+
+**Ingen hardcodede IP-adresser i applikationskoden.** Patroni, etcd og Redis Sentinel node-lister konfigureres via env vars:
+
+| Env var | Format | Eksempel |
+|---------|--------|----------|
+| `MONCTL_PATRONI_NODES` | `name:ip,name:ip,...` | `central1:10.145.210.41,central2:10.145.210.42` |
+| `MONCTL_ETCD_NODES` | `name:ip,name:ip,...` | `central1:10.145.210.41,central2:10.145.210.42,central3:10.145.210.43` |
+| `MONCTL_REDIS_SENTINEL_HOSTS` | `host:port,host:port,...` | `10.145.210.41:26379,10.145.210.42:26379,10.145.210.43:26379` |
+
+`parse_node_list()` i `config.py` parser `name:ip`-formatet. Health checks returnerer "unconfigured" status hvis ikke sat.
 
 ### Dashboard & Analytics
 

@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from monctl_central.config import settings
+from monctl_central.config import parse_node_list, settings
 from monctl_central.dependencies import (
     get_clickhouse,
     get_engine,
@@ -297,10 +297,9 @@ async def _check_patroni() -> dict:
     import httpx
 
     # Patroni REST API on central nodes
-    patroni_nodes = [
-        ("central1", "10.145.210.41"),
-        ("central2", "10.145.210.42"),
-    ]
+    patroni_nodes = parse_node_list(settings.patroni_nodes)
+    if not patroni_nodes:
+        return {"name": "Patroni", "status": "unconfigured", "message": "MONCTL_PATRONI_NODES not set"}
     t0 = time.monotonic()
     status = "healthy"
     members = []
@@ -399,11 +398,9 @@ async def _check_etcd() -> dict:
     """Check etcd cluster health."""
     import httpx
 
-    etcd_nodes = [
-        ("central1", "10.145.210.41"),
-        ("central2", "10.145.210.42"),
-        ("central3", "10.145.210.43"),
-    ]
+    etcd_nodes = parse_node_list(settings.etcd_nodes)
+    if not etcd_nodes:
+        return {"name": "etcd", "status": "unconfigured", "message": "MONCTL_ETCD_NODES not set"}
     t0 = time.monotonic()
     node_health = []
     leader_id = None
@@ -1141,13 +1138,13 @@ async def _check_redis() -> dict:
     except Exception:
         pass
 
-    # Sentinel info — use configured hosts or fall back to known sentinel nodes
+    # Sentinel info
     sentinel_info = None
     sentinel_hosts_raw = settings.redis_sentinel_hosts
-    if not sentinel_hosts_raw:
-        sentinel_hosts_raw = "10.145.210.41:26379,10.145.210.42:26379,10.145.210.43:26379"
     sentinel_master_name = settings.redis_sentinel_master or "monctl-redis"
     try:
+        if not sentinel_hosts_raw.strip():
+            raise ValueError("MONCTL_REDIS_SENTINEL_HOSTS not configured")
         for entry in sentinel_hosts_raw.split(","):
             entry = entry.strip()
             if ":" in entry:
@@ -1779,10 +1776,9 @@ async def patroni_switchover(
         return {"status": "error", "message": "Both 'leader' and 'candidate' are required."}
 
     # Resolve leader IP from Patroni cluster
-    patroni_nodes = [
-        ("central1", "10.145.210.41"),
-        ("central2", "10.145.210.42"),
-    ]
+    patroni_nodes = parse_node_list(settings.patroni_nodes)
+    if not patroni_nodes:
+        return {"status": "error", "message": "MONCTL_PATRONI_NODES not configured"}
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             # Find the leader node's Patroni API

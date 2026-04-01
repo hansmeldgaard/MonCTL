@@ -13,6 +13,7 @@ import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
+from monctl_central.config import parse_node_list, settings
 from monctl_central.scheduler.leader import LeaderElection
 
 logger = logging.getLogger(__name__)
@@ -276,7 +277,7 @@ class SchedulerRunner:
 
             async with httpx.AsyncClient(timeout=5.0) as client:
                 cluster = None
-                for ip in ["10.145.210.41", "10.145.210.42"]:
+                for _name, ip in parse_node_list(settings.patroni_nodes):
                     try:
                         resp = await client.get(f"http://{ip}:8008/cluster")
                         if resp.status_code == 200:
@@ -314,18 +315,20 @@ class SchedulerRunner:
             import httpx
 
             async with httpx.AsyncClient(timeout=5.0) as client:
+                etcd_nodes = parse_node_list(settings.etcd_nodes)
                 healthy = 0
-                for ip in ["10.145.210.41", "10.145.210.42", "10.145.210.43"]:
+                for _name, ip in etcd_nodes:
                     try:
                         resp = await client.get(f"http://{ip}:2379/health")
                         if resp.status_code == 200 and resp.json().get("health") == "true":
                             healthy += 1
                     except Exception:
                         continue
+                total = len(etcd_nodes) or 1
                 checks.append(_check_def(
                     "etcd Unhealthy Nodes", "etcd|unhealthy",
-                    3 - healthy, 0.5, severity="critical" if healthy == 0 else "warning",
-                    message_tpl="{name}: {current:.0f} of 3 nodes unhealthy",
+                    total - healthy, 0.5, severity="critical" if healthy == 0 else "warning",
+                    message_tpl=f"{{name}}: {{current:.0f}} of {total} nodes unhealthy",
                 ))
         except Exception:
             logger.exception("system_health_etcd_checks_failed")
