@@ -36,6 +36,16 @@ _CHECK_TIMEOUT = 5.0  # seconds per subsystem check
 _STARTED_AT = time.time()
 
 
+def _safe_int(val) -> int | None:
+    """Convert a value to int, returning None if not possible."""
+    if val is None or val == "":
+        return None
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        return None
+
+
 async def _check_central() -> dict:
     """Process info for this central instance."""
     import resource
@@ -336,7 +346,7 @@ async def _check_patroni() -> dict:
                     "host": m.get("host"),
                     "port": m.get("port"),
                     "timeline": m.get("timeline"),
-                    "lag": m.get("lag"),
+                    "lag": _safe_int(m.get("lag")),
                     "pending_restart": m.get("tags", {}).get("pending_restart", False),
                 }
                 members.append(member)
@@ -375,7 +385,7 @@ async def _check_patroni() -> dict:
         for m in members:
             if m["state"] not in ("running", "streaming"):
                 status = "degraded"
-            if m.get("lag") and m["lag"] > 10_000_000:  # >10MB lag
+            if (m.get("lag") or 0) > 10_000_000:  # >10MB lag
                 status = "degraded"
             if m.get("pending_restart"):
                 status = "degraded" if status == "healthy" else status
