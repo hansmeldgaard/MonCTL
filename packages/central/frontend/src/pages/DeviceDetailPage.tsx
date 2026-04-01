@@ -2084,6 +2084,14 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
   const [filterAlias, setFilterAlias] = useState("");
   const [filterOperStatus, setFilterOperStatus] = useState<string>("");
   const [filterSpeed, setFilterSpeed] = useState<string>("");
+  const [baseRange, setBaseRange] = useState<TimeRangeValue>(timeRange);
+  const [isZoomed, setIsZoomed] = useState(false);
+  const handleChartZoom = useCallback((fromMs: number, toMs: number) => {
+    if (!isZoomed) setBaseRange(timeRange);
+    setTimeRange({ type: "absolute", fromTs: new Date(fromMs).toISOString(), toTs: new Date(toMs).toISOString() });
+    setIsZoomed(true);
+  }, [isZoomed, timeRange]);
+  const handleResetZoom = useCallback(() => { setTimeRange(baseRange); setIsZoomed(false); }, [baseRange]);
   const tz = useTimezone();
   const { data: monitoring } = useDeviceMonitoring(deviceId);
   const { fromTs, toTs } = useMemo(() => rangeToTimestamps(timeRange), [timeRange]);
@@ -2287,8 +2295,6 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
     setChartMetric(next);
     updateIfacePrefs.mutate({ iface_chart_metric: next });
   };
-  const [baseRange, setBaseRange] = useState<TimeRangeValue>(timeRange);
-  const [isZoomed, setIsZoomed] = useState(false);
   const handleTimeRange = (next: TimeRangeValue) => {
     setTimeRange(next);
     setBaseRange(next);
@@ -2297,13 +2303,6 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
       updateIfacePrefs.mutate({ iface_time_range: next.preset as any });
     }
   };
-  const handleChartZoom = useCallback((fromMs: number, toMs: number) => {
-    if (!isZoomed) setBaseRange(timeRange);
-    setTimeRange({ type: "absolute", fromTs: new Date(fromMs).toISOString(), toTs: new Date(toMs).toISOString() });
-    setIsZoomed(true);
-  }, [isZoomed, timeRange]);
-  const handleResetZoom = useCallback(() => { setTimeRange(baseRange); setIsZoomed(false); }, [baseRange]);
-
   return (
     <div className="space-y-4">
       {/* Summary bar */}

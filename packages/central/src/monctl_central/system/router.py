@@ -39,10 +39,23 @@ _STARTED_AT = time.time()
 async def _check_central() -> dict:
     """Process info for this central instance."""
     import resource
+    from monctl_central.cache import _redis
 
     rss_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     rss_mb = round(rss_kb / 1024, 1)  # Linux reports KB
     uptime_seconds = round(time.time() - _STARTED_AT, 1)
+
+    # Scheduler leader check
+    is_scheduler_leader = False
+    scheduler_leader = None
+    if _redis is not None:
+        try:
+            scheduler_leader = await _redis.get("monctl:scheduler:leader")
+            is_scheduler_leader = scheduler_leader == settings.instance_id
+        except Exception:
+            pass
+
+    hostname = os.environ.get("MONCTL_NODE_NAME", settings.instance_id)
 
     return {
         "status": "healthy",
@@ -50,11 +63,14 @@ async def _check_central() -> dict:
         "details": {
             "role": "central",
             "instance_id": settings.instance_id,
+            "hostname": hostname,
             "python_version": platform.python_version(),
             "pid": os.getpid(),
             "uptime_seconds": uptime_seconds,
             "rss_mb": rss_mb,
             "debug": settings.debug,
+            "is_scheduler_leader": is_scheduler_leader,
+            "scheduler_leader": scheduler_leader,
         },
     }
 
@@ -411,6 +427,9 @@ async def _check_etcd() -> dict:
                 node_health.append(node)
 
             # Get cluster status from first healthy node
+            raft_index = None
+            raft_term = None
+            etcd_version = None
             for node in node_health:
                 if not node["healthy"]:
                     continue
@@ -423,11 +442,15 @@ async def _check_etcd() -> dict:
                         data = resp.json()
                         leader_id = data.get("leader")
                         db_size = data.get("dbSize")
+                        raft_index = data.get("raftIndex")
+                        raft_term = data.get("raftTerm")
+                        etcd_version = data.get("version")
                         break
                 except Exception:
                     continue
 
             # Get member list
+            member_details = []
             for node in node_health:
                 if not node["healthy"]:
                     continue
@@ -440,12 +463,41 @@ async def _check_etcd() -> dict:
                         data = resp.json()
                         members = data.get("members", [])
                         member_count = len(members)
-                        # Resolve leader_id to a human-readable name
-                        if leader_id:
-                            for m in members:
-                                if str(m.get("ID")) == str(leader_id):
-                                    leader_name = m.get("name", "")
-                                    break
+                        for m in members:
+                            mid = str(m.get("ID", ""))
+                            mname = m.get("name", "")
+                            if leader_id and mid == str(leader_id):
+                                leader_name = mname
+                            member_details.append({
+                                "id": mid,
+                                "name": mname,
+                                "peer_urls": m.get("peerURLs", []),
+                                "client_urls": m.get("clientURLs", []),
+                                "is_leader": mid == str(leader_id) if leader_id else False,
+                            })
+                        break
+                except Exception:
+                    continue
+
+            # Check for active alarms
+            alarms = []
+            for node in node_health:
+                if not node["healthy"]:
+                    continue
+                try:
+                    resp = await client.post(
+                        f"http://{node['host']}:2379/v3/maintenance/alarm",
+                        json={"action": "GET"},
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        for a in data.get("alarms", []):
+                            alarm_type = a.get("alarm", 0)
+                            if alarm_type and alarm_type != 0:
+                                alarms.append({
+                                    "member_id": str(a.get("memberID", "")),
+                                    "alarm": "NOSPACE" if alarm_type == 1 else "CORRUPT" if alarm_type == 2 else str(alarm_type),
+                                })
                         break
                 except Exception:
                     continue
@@ -473,6 +525,9 @@ async def _check_etcd() -> dict:
     if db_size and db_size > 2_000_000_000:
         status = "degraded" if status == "healthy" else status
 
+    if alarms:
+        status = "degraded" if status == "healthy" else status
+
     return {
         "status": status,
         "latency_ms": latency_ms,
@@ -484,6 +539,11 @@ async def _check_etcd() -> dict:
             "leader_name": leader_name,
             "member_count": member_count,
             "db_size_bytes": db_size,
+            "raft_index": raft_index,
+            "raft_term": raft_term,
+            "version": etcd_version,
+            "alarms": alarms,
+            "members": member_details,
         },
     }
 
@@ -1081,40 +1141,44 @@ async def _check_redis() -> dict:
     except Exception:
         pass
 
-    # Sentinel info (only if Sentinel mode is configured)
+    # Sentinel info — use configured hosts or fall back to known sentinel nodes
     sentinel_info = None
-    if settings.redis_sentinel_hosts:
-        try:
-            for entry in settings.redis_sentinel_hosts.split(","):
-                entry = entry.strip()
-                if ":" in entry:
-                    host, port = entry.rsplit(":", 1)
-                else:
-                    host, port = entry, "26379"
-                try:
-                    s = aioredis.from_url(
-                        f"redis://{host}:{port}", decode_responses=True
-                    )
-                    master_info = await s.execute_command(
-                        "SENTINEL", "master", settings.redis_sentinel_master
-                    )
-                    master_dict = dict(
-                        zip(master_info[::2], master_info[1::2])
-                    )
-                    sentinel_info = {
-                        "master_ip": master_dict.get("ip"),
-                        "master_port": master_dict.get("port"),
-                        "num_slaves": master_dict.get("num-slaves"),
-                        "num_sentinels": int(master_dict.get("num-other-sentinels", 0)) + 1,
-                        "quorum": master_dict.get("quorum"),
-                        "flags": master_dict.get("flags"),
-                    }
-                    await s.close()
-                    break
-                except Exception:
-                    continue
-        except Exception:
-            pass
+    sentinel_hosts_raw = settings.redis_sentinel_hosts
+    if not sentinel_hosts_raw:
+        sentinel_hosts_raw = "10.145.210.41:26379,10.145.210.42:26379,10.145.210.43:26379"
+    sentinel_master_name = settings.redis_sentinel_master or "monctl-redis"
+    try:
+        for entry in sentinel_hosts_raw.split(","):
+            entry = entry.strip()
+            if ":" in entry:
+                host, port = entry.rsplit(":", 1)
+            else:
+                host, port = entry, "26379"
+            try:
+                s = aioredis.from_url(
+                    f"redis://{host}:{port}", decode_responses=True,
+                    socket_connect_timeout=3, socket_timeout=3,
+                )
+                master_info = await s.execute_command(
+                    "SENTINEL", "master", sentinel_master_name
+                )
+                master_dict = dict(
+                    zip(master_info[::2], master_info[1::2])
+                )
+                sentinel_info = {
+                    "master_ip": master_dict.get("ip"),
+                    "master_port": master_dict.get("port"),
+                    "num_slaves": master_dict.get("num-slaves"),
+                    "num_sentinels": int(master_dict.get("num-other-sentinels", 0)) + 1,
+                    "quorum": master_dict.get("quorum"),
+                    "flags": master_dict.get("flags"),
+                }
+                await s.close()
+                break
+            except Exception:
+                continue
+    except Exception:
+        pass
 
     # Clients
     connected_clients = None
@@ -1124,10 +1188,12 @@ async def _check_redis() -> dict:
     except Exception:
         pass
 
-    # Key stats by prefix (sampled)
-    key_stats = {}
+    # Key stats by prefix (full scan if small, proportional for large)
+    key_stats: dict[str, int] = {}
+    total_keys = db_size or 0
     try:
         prefixes: dict[str, int] = {}
+        scan_limit = total_keys if total_keys <= 10_000 else 5_000
         count = 0
         async for key in _redis.scan_iter(match="*", count=500):
             if isinstance(key, bytes):
@@ -1136,9 +1202,14 @@ async def _check_redis() -> dict:
             prefix = parts[0] if parts else key
             prefixes[prefix] = prefixes.get(prefix, 0) + 1
             count += 1
-            if count >= 2000:
+            if count >= scan_limit:
                 break
-        key_stats = prefixes
+        # Normalize proportionally if we sampled a subset
+        if count > 0 and total_keys > count:
+            scale = total_keys / count
+            key_stats = {k: round(v * scale) for k, v in prefixes.items()}
+        else:
+            key_stats = prefixes
     except Exception:
         pass
 
@@ -1185,21 +1256,30 @@ async def _check_collectors(db: AsyncSession) -> dict:
         await db.execute(select(Collector))
     ).scalars().all()
 
-    # Build group name lookup
+    # Build group name + weight snapshot lookup
     group_ids = {c.group_id for c in all_collectors if c.group_id}
     group_names: dict[str, str] = {}
+    group_weights: dict[str, dict] = {}  # group_id -> {hostname: weight}
     if group_ids:
         groups = (
             await db.execute(
                 select(CollectorGroup).where(CollectorGroup.id.in_(group_ids))
             )
         ).scalars().all()
-        group_names = {str(g.id): g.name for g in groups}
+        for g in groups:
+            group_names[str(g.id)] = g.name
+            if g.weight_snapshot:
+                group_weights[str(g.id)] = g.weight_snapshot
 
     # Per-collector detail
     collector_list = []
     for c in all_collectors:
         peer_states = c.reported_peer_states or {}
+        # Resolve weight for this collector from group snapshot
+        weight = None
+        if c.group_id and str(c.group_id) in group_weights:
+            ws = group_weights[str(c.group_id)]
+            weight = ws.get(c.hostname)
         entry = {
             "id": str(c.id),
             "name": c.name,
@@ -1218,6 +1298,7 @@ async def _check_collectors(db: AsyncSession) -> dict:
             "labels": c.labels,
             "container_states": peer_states.get("_container_states"),
             "queue_stats": peer_states.get("_queue_stats"),
+            "weight": weight,
         }
         collector_list.append(entry)
 
@@ -1333,6 +1414,22 @@ async def _check_alerts(db: AsyncSession) -> dict:
         )
     ).scalar() or 0
 
+    # Firing by severity
+    firing_by_severity: dict[str, int] = {}
+    try:
+        sev_rows = (
+            await db.execute(
+                select(AlertDefinition.severity, func.count(AlertEntity.id))
+                .join(AlertDefinition, AlertEntity.definition_id == AlertDefinition.id)
+                .where(AlertEntity.state == "firing")
+                .group_by(AlertDefinition.severity)
+            )
+        ).all()
+        for sev, cnt in sev_rows:
+            firing_by_severity[sev] = cnt
+    except Exception:
+        pass
+
     if total_firing > 0:
         status = "degraded"
     else:
@@ -1345,6 +1442,7 @@ async def _check_alerts(db: AsyncSession) -> dict:
             "total_rules": total_rules,
             "enabled_rules": enabled_rules,
             "total_firing": total_firing,
+            "firing_by_severity": firing_by_severity,
         },
     }
 
@@ -1457,11 +1555,15 @@ async def _check_docker_infrastructure() -> dict:
     # Worker tier: prefer Redis push data, fall back to ClickHouse
     from monctl_central.cache import get_docker_push, get_pushed_docker_hosts
 
+    sidecar_labels = {h["label"] for h in sidecar_hosts}
     pushed_hosts = await get_pushed_docker_hosts()
     pushed_labels = set()
     worker_results: list[dict] = []
     for meta in pushed_hosts:
         label = meta["host_label"]
+        # Skip hosts already covered by sidecar queries
+        if label in sidecar_labels:
+            continue
         pushed_labels.add(label)
         stats = await get_docker_push(label, "stats")
         system = await get_docker_push(label, "system")
@@ -1487,7 +1589,7 @@ async def _check_docker_infrastructure() -> dict:
     # ClickHouse fallback for workers not using push mode
     collector_results = await asyncio.to_thread(_fetch_collector_docker_stats_from_ch)
     for cr in collector_results:
-        if cr["label"] not in pushed_labels:
+        if cr["label"] not in pushed_labels and cr["label"] not in sidecar_labels:
             worker_results.append(cr)
 
     latency_ms = round((time.monotonic() - t0) * 1000, 2)
@@ -1610,23 +1712,107 @@ async def system_health(
     ):
         ingestion["status"] = "healthy"
 
-    # Overall status = worst of all
+    # Overall status = worst of all (exclude alerts — they reflect monitored
+    # devices, not infrastructure health)
+    _INFRA_SUBSYSTEMS = {
+        "central", "postgresql", "patroni", "etcd", "clickhouse",
+        "redis", "collectors", "scheduler", "ingestion", "docker",
+    }
     priority = {"critical": 2, "degraded": 1, "healthy": 0, "unknown": -1}
     worst = max(
-        (s.get("status", "unknown") for s in subsystems.values()),
+        (
+            s.get("status", "unknown")
+            for name, s in subsystems.items()
+            if name in _INFRA_SUBSYSTEMS
+        ),
         key=lambda s: priority.get(s, -1),
         default="unknown",
     )
 
     from monctl_common.utils import utc_now
 
+    checked_at = utc_now().isoformat()
+
+    # Resolve human-readable node name from central subsystem
+    central_details = subsystems.get("central", {}).get("details", {})
+    node_hostname = central_details.get("hostname", settings.instance_id)
+
+    # Cache for lightweight status endpoint
+    global _last_health_status
+    _last_health_status = {"overall_status": worst, "checked_at": checked_at}
+
     return {
         "status": "success",
         "data": {
             "overall_status": worst,
             "instance_id": settings.instance_id,
+            "hostname": node_hostname,
             "version": "0.1.0",
-            "checked_at": utc_now().isoformat(),
+            "checked_at": checked_at,
             "subsystems": subsystems,
         },
     }
+
+
+_last_health_status: dict = {"overall_status": "unknown", "checked_at": None}
+
+
+@router.get("/health/status")
+async def system_health_status(
+    auth: dict = Depends(require_admin),
+):
+    """Lightweight endpoint returning only overall status (for top-bar indicator)."""
+    return {"status": "success", "data": _last_health_status}
+
+
+@router.post("/patroni/switchover")
+async def patroni_switchover(
+    body: dict,
+    auth: dict = Depends(require_admin),
+):
+    """Initiate a planned Patroni switchover to a target replica."""
+    import httpx
+
+    leader = body.get("leader")
+    candidate = body.get("candidate")
+    if not leader or not candidate:
+        return {"status": "error", "message": "Both 'leader' and 'candidate' are required."}
+
+    # Resolve leader IP from Patroni cluster
+    patroni_nodes = [
+        ("central1", "10.145.210.41"),
+        ("central2", "10.145.210.42"),
+    ]
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # Find the leader node's Patroni API
+            leader_ip = None
+            for name, ip in patroni_nodes:
+                try:
+                    resp = await client.get(f"http://{ip}:8008/cluster")
+                    if resp.status_code == 200:
+                        cluster = resp.json()
+                        for m in cluster.get("members", []):
+                            if m.get("role") == "leader":
+                                leader_ip = m.get("host")
+                                break
+                        if leader_ip:
+                            break
+                except Exception:
+                    continue
+
+            if not leader_ip:
+                return {"status": "error", "message": "Could not find Patroni leader."}
+
+            # Execute switchover via Patroni REST API
+            resp = await client.post(
+                f"http://{leader_ip}:8008/switchover",
+                json={"leader": leader, "candidate": candidate},
+            )
+            if resp.status_code == 200:
+                return {"status": "success", "data": {"message": f"Switchover initiated: {leader} → {candidate}"}}
+            else:
+                return {"status": "error", "message": f"Patroni returned {resp.status_code}: {resp.text}"}
+    except Exception as exc:
+        logger.exception("patroni_switchover_failed")
+        return {"status": "error", "message": str(exc)}

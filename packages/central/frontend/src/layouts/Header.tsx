@@ -1,6 +1,7 @@
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate, Link } from "react-router-dom";
 import { LogOut, User } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth.tsx";
+import { useSystemHealthStatus } from "@/api/hooks.ts";
 import { Button } from "@/components/ui/button.tsx";
 
 const pageTitles: Record<string, string> = {
@@ -48,9 +49,26 @@ export function Header() {
     navigate("/login");
   };
 
+  const isAdmin = user?.role === "admin";
+  const { data: healthStatus } = useSystemHealthStatus();
+  const healthColor = !healthStatus?.overall_status || healthStatus.overall_status === "unknown"
+    ? "bg-zinc-500"
+    : healthStatus.overall_status === "healthy"
+      ? "bg-emerald-400"
+      : healthStatus.overall_status === "degraded"
+        ? "bg-amber-400"
+        : "bg-red-400";
+
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b border-zinc-800 bg-zinc-900/60 px-6 backdrop-blur-sm">
-      <h1 className="text-base font-semibold text-zinc-100">{title}</h1>
+      <div className="flex items-center gap-3">
+        <h1 className="text-base font-semibold text-zinc-100">{title}</h1>
+        {isAdmin && healthStatus && (
+          <Link to="/system-health" className="group flex items-center gap-1.5" title={`System: ${healthStatus.overall_status}`}>
+            <span className={`inline-block h-2.5 w-2.5 rounded-full ${healthColor} group-hover:ring-2 group-hover:ring-offset-1 group-hover:ring-offset-zinc-900 group-hover:ring-current transition-shadow`} />
+          </Link>
+        )}
+      </div>
       <div className="flex items-center gap-3">
         {user && (
           <div className="flex items-center gap-2 text-sm text-zinc-400">

@@ -2441,6 +2441,27 @@ export function useSystemHealth() {
   });
 }
 
+export function usePatroniSwitchover() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { leader: string; candidate: string }) =>
+      apiPost<{ message: string }>("/system/patroni/switchover", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["system-health"] });
+    },
+  });
+}
+
+export function useSystemHealthStatus() {
+  return useQuery({
+    queryKey: ["system-health-status"],
+    queryFn: () => apiGet<{ overall_status: string; checked_at: string | null }>("/system/health/status"),
+    select: (res) => res.data,
+    refetchInterval: 30_000,
+    retry: false,
+  });
+}
+
 // ── Credential Detail ────────────────────────────────────
 
 export function useCredentialDetail(id: string | undefined) {

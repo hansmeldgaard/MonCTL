@@ -200,17 +200,17 @@ async def lifespan(app: FastAPI):
                 ("dashboard", "view"), ("dashboard", "create"), ("dashboard", "edit"),
             ]
             for role_name, new_perms in [("Viewer", _NEW_VIEWER_PERMS), ("Operator", _NEW_OPERATOR_PERMS)]:
-                role = (await session.execute(
+                db_role = (await session.execute(
                     select(Role).where(Role.name == role_name, Role.is_system.is_(True))
                 )).scalar_one_or_none()
-                if not role:
+                if not db_role:
                     continue
                 existing = {(p.resource, p.action) for p in (await session.execute(
-                    select(RolePermission).where(RolePermission.role_id == role.id)
+                    select(RolePermission).where(RolePermission.role_id == db_role.id)
                 )).scalars().all()}
                 for res, act in new_perms:
                     if (res, act) not in existing:
-                        session.add(RolePermission(role_id=role.id, resource=res, action=act))
+                        session.add(RolePermission(role_id=db_role.id, resource=res, action=act))
                         logger.info("role_permission_added", role=role_name, resource=res, action=act)
             await session.commit()
 

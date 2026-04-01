@@ -892,7 +892,7 @@ async def device_availability(
                 "device_id": str(r.get("device_id", "")),
                 "device_name": r.get("device_name", ""),
                 "app_name": r.get("app_name", ""),
-                "executed_at": str(r.get(time_col, "")),
+                "executed_at": _ensure_utc_iso(r.get(time_col)) or "",
                 "rtt_ms": r.get("rtt_avg", 0),
                 "response_time_ms": r.get("response_time_avg", 0),
                 "reachable": 1 if r.get("availability_pct", 0) >= 50 else 0,

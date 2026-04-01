@@ -155,6 +155,13 @@ packages/
 - `logs` ClickHouse table uses `toDateTime(timestamp)` wrapper in TTL (required for ClickHouse 24.3 DateTime64).
 - `log_level_filter` on Collector model controls minimum shipped level.
 
+### System Health
+- **Overall status excludes alerts** — only infrastructure subsystems (postgresql, clickhouse, redis, scheduler, collectors, etc.) count. Alerts reflect monitored devices, not platform health.
+- **Scheduler leader election**: Redis SETNX with 30s TTL, renewed every 10s. Only `role=all` or `role=scheduler` instances participate. **Gotcha**: Do not reuse `role` as a variable name in `main.py` lifespan — it shadows `settings.role` and breaks the scheduler check.
+- **Lightweight status endpoint**: `GET /system/health/status` returns cached `overall_status` from last full check. Used by the top-bar health indicator dot (admin-only).
+- **Patroni switchover**: `POST /system/patroni/switchover` proxies to Patroni REST API. Admin-only.
+- **Docker host count**: Central nodes report via both sidecar agents and Redis push. The health check deduplicates by filtering push labels that match sidecar labels.
+
 ---
 
 ## API Conventions
@@ -244,6 +251,8 @@ SSH user: `monctl` for all servers.
 | docker-stats | `/opt/monctl/docker-stats/` | stats agent | stats agent | stats agent | stats agent |
 
 **Important**: Central1-3 use `central-ha` (:8443). Central4 uses `central` (:8443). Never start both on same node.
+
+**`MONCTL_NODE_NAME`**: Each central compose file must set `MONCTL_NODE_NAME: centralN` (e.g. `central1`). Used by system health to show human-readable node name instead of container ID.
 
 **Workers**: Single compose project at `/opt/monctl/collector/`.
 

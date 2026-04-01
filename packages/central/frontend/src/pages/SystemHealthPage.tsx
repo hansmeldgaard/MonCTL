@@ -5,7 +5,6 @@ import {
   ArrowDownToLine,
   ArrowUp,
   ArrowUpDown,
-  Bell,
   ChevronDown,
   ChevronRight,
   Clock,
@@ -35,7 +34,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table.tsx";
-import { useSystemHealth, useDockerOverview } from "@/api/hooks.ts";
+import { useSystemHealth, useDockerOverview, usePatroniSwitchover } from "@/api/hooks.ts";
 import { timeAgo, formatBytes, formatUptime, formatNumber } from "@/lib/utils.ts";
 import type { SubsystemStatus, CollectorHealthDetail, DockerOverviewHost, DockerContainerStats } from "@/types/api.ts";
 import { AlertTriangle } from "lucide-react";
@@ -109,7 +108,9 @@ function ProgressBar({ pct, className }: { pct: number; className?: string }) {
 
 function FreshnessDot({ isoDate }: { isoDate: string | null }) {
   if (!isoDate) return <span className="inline-block h-2 w-2 rounded-full bg-zinc-600" />;
-  const age = (Date.now() - new Date(isoDate).getTime()) / 1000;
+  // ClickHouse returns DateTime without timezone suffix — force UTC interpretation
+  const ts = isoDate.includes("Z") || isoDate.includes("+") ? isoDate : isoDate + "Z";
+  const age = (Date.now() - new Date(ts).getTime()) / 1000;
   const color = age < 120 ? "bg-emerald-400" : age < 600 ? "bg-amber-400" : "bg-red-400";
   return <span className={`inline-block h-2 w-2 rounded-full ${color}`} />;
 }
@@ -133,79 +134,6 @@ function Collapsible({ title, defaultOpen = false, children, badge }: {
 }
 
 // ── Top row cards ────────────────────────────────────────────────────────────
-
-function CentralCard({ d }: { d: Record<string, unknown> }) {
-  return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between pb-2">
-        <div className="flex items-center gap-2"><Server className="h-4 w-4 text-zinc-400" /><CardTitle>Central</CardTitle></div>
-        <StatusBadge status={(d.status as SubsystemStatus) ?? "unknown"} />
-      </CardHeader>
-      <CardContent>
-        <DetailGrid>
-          <DetailRow label="Role" value={String(d.role ?? "\u2014")} />
-          <DetailRow label="Uptime" value={formatUptime(Number(d.uptime_seconds ?? 0))} />
-          <DetailRow label="RSS" value={`${d.rss_mb} MB`} />
-          <DetailRow label="Python" value={String(d.python_version ?? "\u2014")} />
-          <DetailRow label="PID" value={String(d.pid ?? "\u2014")} />
-        </DetailGrid>
-      </CardContent>
-    </Card>
-  );
-}
-
-function AlertsCard({ sub }: { sub: { status: SubsystemStatus; details: Record<string, unknown> } }) {
-  const d = sub.details;
-  const firing = d.firing_by_severity as Record<string, number> | undefined;
-  const totalFiring = Number(d.total_firing ?? 0);
-  return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between pb-2">
-        <div className="flex items-center gap-2"><Bell className="h-4 w-4 text-zinc-400" /><CardTitle>Alerts</CardTitle></div>
-        <StatusBadge status={sub.status} />
-      </CardHeader>
-      <CardContent>
-        <DetailGrid>
-          {totalFiring === 0 ? (
-            <span className="col-span-full text-sm text-zinc-500">No alerts firing</span>
-          ) : (
-            <>
-              {firing && Object.entries(firing).map(([sev, count]) => (
-                <DetailRow key={sev} label={sev} value={
-                  <span className={sev === "critical" ? "text-red-400" : sev === "warning" ? "text-amber-400" : "text-zinc-300"}>
-                    {count}
-                  </span>
-                } />
-              ))}
-            </>
-          )}
-          <DetailRow label="Rules" value={`${d.enabled_rules ?? 0} / ${d.total_rules ?? 0} enabled`} />
-        </DetailGrid>
-      </CardContent>
-    </Card>
-  );
-}
-
-function IngestionCard({ sub }: { sub: { status: SubsystemStatus; details: Record<string, unknown> } }) {
-  const d = sub.details;
-  const byTable = d.by_table as Record<string, { rows_5m: number; rows_per_sec: number }> | undefined;
-  return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between pb-2">
-        <div className="flex items-center gap-2"><ArrowDownToLine className="h-4 w-4 text-zinc-400" /><CardTitle>Ingestion</CardTitle></div>
-        <StatusBadge status={sub.status} />
-      </CardHeader>
-      <CardContent>
-        <DetailGrid>
-          <DetailRow label="Total" value={`${d.total_rows_per_sec ?? 0} rows/s`} />
-          {byTable && Object.entries(byTable).map(([table, info]) => (
-            <DetailRow key={table} label={table} value={`${info.rows_per_sec}/s`} />
-          ))}
-        </DetailGrid>
-      </CardContent>
-    </Card>
-  );
-}
 
 // ── PostgreSQL card ──────────────────────────────────────────────────────────
 
@@ -491,7 +419,7 @@ function ClickHouseCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: n
                       {info.rows > 0 ? (
                         <span className="flex items-center gap-1.5">
                           <FreshnessDot isoDate={info.latest_received_at} />
-                          {info.latest_received_at ? timeAgo(info.latest_received_at) : "\u2014"}
+                          {info.latest_received_at ? timeAgo(info.latest_received_at.includes("Z") || info.latest_received_at.includes("+") ? info.latest_received_at : info.latest_received_at + "Z") : "\u2014"}
                         </span>
                       ) : (
                         <span className="text-zinc-600">No data</span>
@@ -845,6 +773,7 @@ function CollectorsSection({ sub }: { sub: { status: SubsystemStatus; details: R
                           <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-1 text-xs">
                             <DetailRow label="Workers" value={String(c.worker_count)} />
                             <DetailRow label="Eff. load" value={c.effective_load.toFixed(3)} />
+                            <DetailRow label="Weight" value={c.weight != null ? c.weight.toFixed(3) : "—"} tip="Hash ring weight from group snapshot. Higher = more jobs assigned." />
                             <DetailRow label="Miss rate" value={
                               <span className={c.deadline_miss_rate > 0.1 ? "text-red-400" : c.deadline_miss_rate > 0.05 ? "text-amber-400" : ""}>
                                 {c.deadline_miss_rate.toFixed(3)}
@@ -975,7 +904,7 @@ function CHNodeCard({ node }: { node: CHNodeData }) {
         </DetailGrid>
         {node.recent_errors && node.recent_errors.length > 0 && (
           <Collapsible title="Errors" badge={<Badge variant="destructive" className="ml-2 text-[10px]">{node.recent_errors.length}</Badge>}>
-            {node.recent_errors.slice(0, 5).map((e, i) => (
+            {node.recent_errors.map((e, i) => (
               <div key={i} className="text-xs py-0.5">
                 <span className="text-red-400 font-mono">{e.name}</span>
                 <span className="text-zinc-500"> ({e.count}x)</span>
@@ -994,6 +923,19 @@ function PatroniCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: numb
   const d = sub.details;
   const members = d.members as { name: string; role: string; state: string; host: string; lag: number | null; pending_restart: boolean; timeline: number }[] | undefined;
   const history = d.failover_history as unknown[] | undefined;
+  const leaderName = String(d.leader ?? "");
+  const replicas = members?.filter((m) => m.role !== "leader") ?? [];
+
+  const [showSwitchover, setShowSwitchover] = useState(false);
+  const [switchoverTarget, setSwitchoverTarget] = useState("");
+  const switchoverMut = usePatroniSwitchover();
+
+  const handleSwitchover = () => {
+    if (!leaderName || !switchoverTarget) return;
+    switchoverMut.mutate({ leader: leaderName, candidate: switchoverTarget }, {
+      onSuccess: () => setShowSwitchover(false),
+    });
+  };
 
   return (
     <Card>
@@ -1018,6 +960,7 @@ function PatroniCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: numb
               <TableHeader><TableRow>
                 <TableHead className="text-xs py-1">Name</TableHead>
                 <TableHead className="text-xs py-1">Host</TableHead>
+                <TableHead className="text-xs py-1"><Tip label="Mode" tip="RW = primary (read-write), RO = replica (read-only)." /></TableHead>
                 <TableHead className="text-xs py-1"><Tip label="Role" tip="leader = primary (accepts writes), replica = read-only standby, sync_standby = synchronous replica." /></TableHead>
                 <TableHead className="text-xs py-1"><Tip label="State" tip="running = healthy, streaming = actively replicating, stopped = not running." /></TableHead>
                 <TableHead className="text-xs py-1"><Tip label="Lag" tip="Replication lag in bytes — how far behind the replica is from the leader." /></TableHead>
@@ -1029,6 +972,11 @@ function PatroniCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: numb
                   <TableRow key={m.name}>
                     <TableCell className="text-xs py-1 font-mono">{m.name}</TableCell>
                     <TableCell className="text-xs py-1 font-mono text-zinc-500">{m.host}</TableCell>
+                    <TableCell className="text-xs py-1">
+                      {m.role === "leader"
+                        ? <Badge className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 text-[10px] font-bold">RW</Badge>
+                        : <Badge className="bg-blue-500/15 text-blue-400 border-blue-500/30 text-[10px] font-bold">RO</Badge>}
+                    </TableCell>
                     <TableCell className="text-xs py-1">
                       <Badge variant={m.role === "leader" ? "success" : "default"}>{m.role}</Badge>
                     </TableCell>
@@ -1043,6 +991,34 @@ function PatroniCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: numb
               </TableBody>
             </Table>
           </>
+        )}
+
+        {/* Switchover */}
+        {leaderName && replicas.length > 0 && (
+          <div className="mt-3">
+            {!showSwitchover ? (
+              <Button variant="outline" size="sm" onClick={() => { setSwitchoverTarget(replicas[0]?.name ?? ""); setShowSwitchover(true); }}>
+                Switchover
+              </Button>
+            ) : (
+              <div className="flex items-center gap-2 p-3 rounded-md bg-zinc-900 border border-zinc-700">
+                <span className="text-xs text-zinc-400">Switchover fra <span className="font-mono text-zinc-200">{leaderName}</span> til</span>
+                <select
+                  className="text-xs bg-zinc-800 border border-zinc-600 rounded px-2 py-1 text-zinc-200 font-mono"
+                  value={switchoverTarget}
+                  onChange={(e) => setSwitchoverTarget(e.target.value)}
+                >
+                  {replicas.map((r) => <option key={r.name} value={r.name}>{r.name} ({r.host})</option>)}
+                </select>
+                <Button variant="destructive" size="sm" onClick={handleSwitchover} disabled={switchoverMut.isPending}>
+                  {switchoverMut.isPending ? "Switching..." : "Confirm"}
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setShowSwitchover(false)}>Cancel</Button>
+                {switchoverMut.isError && <span className="text-xs text-red-400">{String((switchoverMut.error as Error)?.message ?? "Failed")}</span>}
+                {switchoverMut.isSuccess && <span className="text-xs text-emerald-400">Switchover initiated</span>}
+              </div>
+            )}
+          </div>
         )}
 
         {history && history.length > 0 && (
@@ -1083,6 +1059,8 @@ function PatroniCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: numb
 function EtcdCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: number | null; details: Record<string, unknown> } }) {
   const d = sub.details;
   const nodes = d.nodes as { name: string; host: string; healthy: boolean; error?: string }[] | undefined;
+  const alarms = d.alarms as { member_id: string; alarm: string }[] | undefined;
+  const memberDetails = d.members as { id: string; name: string; peer_urls: string[]; client_urls: string[]; is_leader: boolean }[] | undefined;
 
   return (
     <Card>
@@ -1099,7 +1077,26 @@ function EtcdCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: number 
           <DetailRow label="Members" value={String(d.member_count ?? "\u2014")} tip="Total etcd cluster members registered in the Raft consensus group." />
           <DetailRow label="Leader" value={d.leader_name ? `${d.leader_name} (${d.leader_id})` : String(d.leader_id ?? "none")} tip="The etcd member currently elected as cluster leader. Manages the Raft consensus log." />
           {d.db_size_bytes != null && <DetailRow label="DB size" value={formatBytes(Number(d.db_size_bytes))} tip="etcd database size on disk. Alert threshold: 2 GB (etcd default max: 8 GB)." />}
+          {d.version != null && <DetailRow label="Version" value={String(d.version)} />}
+          {d.raft_index != null && <DetailRow label="Raft index" value={formatNumber(Number(d.raft_index))} tip="Current Raft log index — monotonically increasing counter of committed entries." />}
+          {d.raft_term != null && <DetailRow label="Raft term" value={String(d.raft_term)} tip="Current Raft election term — increments each time a new leader is elected." />}
         </DetailGrid>
+
+        {/* Alarms */}
+        {alarms && alarms.length > 0 ? (
+          <>
+            <SectionTitle>Alarms</SectionTitle>
+            {alarms.map((a, i) => (
+              <div key={i} className="flex items-center gap-2 text-xs py-0.5">
+                <AlertTriangle className="h-3 w-3 text-red-400" />
+                <span className="text-red-400 font-semibold">{a.alarm}</span>
+                <span className="text-zinc-500">member {a.member_id}</span>
+              </div>
+            ))}
+          </>
+        ) : (
+          <p className="text-xs text-emerald-400/60 mt-2">No alarms</p>
+        )}
 
         {nodes && nodes.length > 0 && (
           <>
@@ -1113,6 +1110,32 @@ function EtcdCard({ sub }: { sub: { status: SubsystemStatus; latency_ms: number 
               </div>
             ))}
           </>
+        )}
+
+        {/* Member details with URLs */}
+        {memberDetails && memberDetails.length > 0 && (
+          <Collapsible title="Member details">
+            <Table>
+              <TableHeader><TableRow>
+                <TableHead className="text-xs py-1">Name</TableHead>
+                <TableHead className="text-xs py-1">Role</TableHead>
+                <TableHead className="text-xs py-1">Peer URLs</TableHead>
+                <TableHead className="text-xs py-1">Client URLs</TableHead>
+              </TableRow></TableHeader>
+              <TableBody>
+                {memberDetails.map((m) => (
+                  <TableRow key={m.id}>
+                    <TableCell className="text-xs py-1 font-mono">{m.name || m.id}</TableCell>
+                    <TableCell className="text-xs py-1">
+                      {m.is_leader ? <Badge className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 text-[10px]">leader</Badge> : <span className="text-zinc-500">follower</span>}
+                    </TableCell>
+                    <TableCell className="text-xs py-1 font-mono text-zinc-500">{m.peer_urls?.join(", ") || "\u2014"}</TableCell>
+                    <TableCell className="text-xs py-1 font-mono text-zinc-500">{m.client_urls?.join(", ") || "\u2014"}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Collapsible>
         )}
 
         {d.error ? <p className="text-xs text-red-400 mt-2">{String(d.error)}</p> : null}
@@ -1488,8 +1511,6 @@ export function SystemHealthPage() {
   }
 
   const subs = data.subsystems;
-  const central = subs.central;
-  const centralDetails = central?.details ?? {};
 
   // Extract per-node ClickHouse data
   const chDetails = (subs.clickhouse?.details ?? {}) as Record<string, unknown>;
@@ -1504,8 +1525,7 @@ export function SystemHealthPage() {
           <div>
             <h1 className="text-xl font-semibold text-zinc-100">System Health</h1>
             <p className="text-sm text-zinc-500">
-              Instance {data.instance_id} &middot; v{data.version}
-              {centralDetails.role ? ` \u00b7 role: ${centralDetails.role}` : ""}
+              {String((data as unknown as Record<string, unknown>).hostname || data.instance_id)} &middot; v{data.version}
               {" \u00b7 "}{timeAgo(data.checked_at)}
             </p>
           </div>
@@ -1557,65 +1577,45 @@ export function SystemHealthPage() {
 
       {/* Tab content */}
       {activeTab === "overview" && (
-        <div className="space-y-4">
-          {/* Mini cards grid */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <OverviewMiniCard icon={Server} title="Central" status={(central?.status as SubsystemStatus) ?? "unknown"}
-              lines={[`Role: ${centralDetails.role ?? "—"}`, `Up ${formatUptime(Number(centralDetails.uptime_seconds ?? 0))}`]}
-              onClick={() => setTab("overview")} />
-            <OverviewMiniCard icon={Database} title="PostgreSQL" status={(subs.postgresql?.status as SubsystemStatus) ?? "unknown"}
-              lines={[
-                `${(subs.postgresql?.details as Record<string, unknown>)?.db_size ?? "—"}`,
-                `${(subs.postgresql?.details as Record<string, unknown>)?.active_connections ?? "?"} connections`,
-              ]}
-              onClick={() => setTab("postgresql")} />
-            <OverviewMiniCard icon={HardDrive} title="ClickHouse" status={(subs.clickhouse?.status as SubsystemStatus) ?? "unknown"}
-              lines={[
-                `${formatBytes(Number(chDetails.total_bytes ?? 0))} \u00b7 ${formatNumber(Number(chDetails.total_rows ?? 0))} rows`,
-                `${Object.values(chNodes).filter(n => n.reachable).length}/${Object.keys(chNodes).length || "?"} nodes`,
-              ]}
-              onClick={() => setTab("clickhouse")} />
-            <OverviewMiniCard icon={Zap} title="Redis" status={(subs.redis?.status as SubsystemStatus) ?? "unknown"}
-              lines={[
-                `${(subs.redis?.details as Record<string, unknown>)?.total_keys ?? "?"} keys`,
-                `${(subs.redis?.details as Record<string, unknown>)?.connected_clients ?? "?"} clients`,
-              ]}
-              onClick={() => setTab("redis")} />
-            <OverviewMiniCard icon={Bell} title="Alerts" status={(subs.alerts?.status as SubsystemStatus) ?? "unknown"}
-              lines={[
-                `${(subs.alerts?.details as Record<string, unknown>)?.firing_count ?? 0} firing`,
-                `${(subs.alerts?.details as Record<string, unknown>)?.total_rules ?? "?"} rules`,
-              ]}
-              onClick={() => setTab("overview")} />
-            <OverviewMiniCard icon={ArrowDownToLine} title="Ingestion" status={(subs.ingestion?.status as SubsystemStatus) ?? "unknown"}
-              lines={[`${(subs.ingestion?.details as Record<string, unknown>)?.total_rows_per_sec ?? 0} rows/s`]}
-              onClick={() => setTab("overview")} />
-            <OverviewMiniCard icon={Radio} title="Collectors" status={(subs.collectors?.status as SubsystemStatus) ?? "unknown"}
-              lines={[
-                `${(subs.collectors?.details as Record<string, unknown>)?.active_count ?? 0} active`,
-                `${(subs.collectors?.details as Record<string, unknown>)?.total_jobs ?? 0} jobs`,
-              ]}
-              onClick={() => setTab("collectors")} />
-            <OverviewMiniCard icon={Server} title="Docker" status={(subs.docker?.status as SubsystemStatus) ?? "unknown"}
-              lines={(() => {
-                const dd = subs.docker?.details as Record<string, unknown> | undefined;
-                const hc = Number(dd?.total_hosts ?? dd?.host_count ?? 0);
-                const dhosts = (dd?.hosts ?? []) as { data?: { containers?: { health?: string }[] } }[];
-                const uc = dhosts.reduce((s, dh) => s + (Array.isArray(dh.data?.containers) ? dh.data!.containers.filter(c => c.health === "unhealthy").length : 0), 0);
-                return [
-                  `${hc} hosts`,
-                  uc > 0 ? `${uc} unhealthy` : "All healthy",
-                ];
-              })()}
-              onClick={() => setTab("docker")} />
-          </div>
-
-          {/* Detail cards for Central + Alerts + Ingestion (always visible on overview) */}
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            {central && <CentralCard d={centralDetails} />}
-            {subs.alerts && <AlertsCard sub={subs.alerts as { status: SubsystemStatus; details: Record<string, unknown> }} />}
-            {subs.ingestion && <IngestionCard sub={subs.ingestion as { status: SubsystemStatus; details: Record<string, unknown> }} />}
-          </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <OverviewMiniCard icon={Database} title="PostgreSQL" status={(subs.postgresql?.status as SubsystemStatus) ?? "unknown"}
+            lines={[
+              `${(subs.postgresql?.details as Record<string, unknown>)?.db_size_bytes ? formatBytes(Number((subs.postgresql?.details as Record<string, unknown>).db_size_bytes)) : "—"}`,
+              `${((subs.postgresql?.details as Record<string, unknown>)?.connections as { active?: number } | undefined)?.active ?? "?"} connections`,
+            ]}
+            onClick={() => setTab("postgresql")} />
+          <OverviewMiniCard icon={HardDrive} title="ClickHouse" status={(subs.clickhouse?.status as SubsystemStatus) ?? "unknown"}
+            lines={[
+              `${formatBytes(Number(chDetails.total_bytes ?? 0))} \u00b7 ${formatNumber(Number(chDetails.total_rows ?? 0))} rows`,
+              `${Object.values(chNodes).filter(n => n.reachable).length}/${Object.keys(chNodes).length || "?"} nodes`,
+            ]}
+            onClick={() => setTab("clickhouse")} />
+          <OverviewMiniCard icon={Zap} title="Redis" status={(subs.redis?.status as SubsystemStatus) ?? "unknown"}
+            lines={[
+              `${(subs.redis?.details as Record<string, unknown>)?.db_size ?? "?"} keys`,
+              `${(subs.redis?.details as Record<string, unknown>)?.connected_clients ?? "?"} clients`,
+            ]}
+            onClick={() => setTab("redis")} />
+          <OverviewMiniCard icon={ArrowDownToLine} title="Ingestion" status={(subs.ingestion?.status as SubsystemStatus) ?? "unknown"}
+            lines={[`${(subs.ingestion?.details as Record<string, unknown>)?.total_rows_per_sec ?? 0} rows/s`]}
+            onClick={() => setTab("overview")} />
+          <OverviewMiniCard icon={Radio} title="Collectors" status={(subs.collectors?.status as SubsystemStatus) ?? "unknown"}
+            lines={[
+              `${((subs.collectors?.details as Record<string, unknown>)?.by_status as Record<string, number> | undefined)?.ACTIVE ?? 0} active`,
+              `${(subs.collectors?.details as Record<string, unknown>)?.total_jobs ?? 0} jobs`,
+            ]}
+            onClick={() => setTab("collectors")} />
+          <OverviewMiniCard icon={Server} title="Docker" status={(subs.docker?.status as SubsystemStatus) ?? "unknown"}
+            lines={(() => {
+              const dd = subs.docker?.details as Record<string, unknown> | undefined;
+              const dhosts = (dd?.hosts ?? []) as { data?: { containers?: { health?: string }[] } }[];
+              const uc = dhosts.reduce((s, dh) => s + (Array.isArray(dh.data?.containers) ? dh.data!.containers.filter(c => c.health === "unhealthy").length : 0), 0);
+              return [
+                `${dhosts.length} hosts`,
+                uc > 0 ? `${uc} unhealthy` : "All healthy",
+              ];
+            })()}
+            onClick={() => setTab("docker")} />
         </div>
       )}
 

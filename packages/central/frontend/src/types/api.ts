@@ -731,6 +731,7 @@ export interface CollectorHealthDetail {
     avg_execution_ms: number;
     max_execution_ms: number;
   } | null;
+  weight: number | null;
 }
 
 // ── Users ─────────────────────────────────────────────────
