@@ -4,10 +4,12 @@ import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
 import { validateName } from "@/lib/validation.ts";
 import {
   Activity,
+  AlertTriangle,
   Building2,
   Copy,
   Cpu,
   Database,
+  Download,
   Globe,
   KeyRound,
   LayoutList,
@@ -15,11 +17,10 @@ import {
   Lock,
   Network,
   Plus,
-  Server,
-  Settings,
   Shield,
   ShieldCheck,
   Trash2,
+  Upload,
   User,
   Users,
 } from "lucide-react";
@@ -34,11 +35,11 @@ import { useAuth } from "@/hooks/useAuth.tsx";
 import { usePermissions } from "@/hooks/usePermissions.ts";
 import { useTablePreferences, PAGE_SIZE_OPTIONS } from "@/hooks/useTablePreferences.ts";
 import {
-  useHealth,
   useSystemSettings,
   useUpdateSystemSettings,
   useTlsCertificate,
   useGenerateTlsCert,
+  useUploadTlsCert,
   useDeployTlsCert,
   useUpdateMyTimezone,
   useUpdateMyIdleTimeout,
@@ -61,7 +62,6 @@ import { RolesPage } from "@/pages/RolesPage.tsx";
 const TABS = [
   { key: "profile", label: "Profile", icon: User, adminOnly: false },
   { key: "api-keys", label: "API Keys", icon: KeyRound, adminOnly: false, resource: "api_key" as const },
-  { key: "system", label: "System", icon: Settings, adminOnly: true },
   { key: "collectors", label: "Collectors", icon: Cpu, adminOnly: true },
   { key: "snmp-oids", label: "SNMP OIDs", icon: Network, adminOnly: true },
   { key: "data-retention", label: "Data Retention", icon: Database, adminOnly: true },
@@ -651,52 +651,6 @@ function ApiKeysTab() {
   );
 }
 
-function SystemTab() {
-  const { data: health, isLoading: healthLoading } = useHealth();
-
-  return (
-    <div className="space-y-6 max-w-2xl">
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Server className="h-4 w-4" />
-            System Health
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {healthLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-brand-500" />
-            </div>
-          ) : health ? (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between rounded-md bg-zinc-800/50 px-4 py-3">
-                <span className="text-sm text-zinc-400">Status</span>
-                <Badge variant={health.status === "healthy" || health.status === "ok" ? "success" : "destructive"}>
-                  {health.status}
-                </Badge>
-              </div>
-              <div className="flex items-center justify-between rounded-md bg-zinc-800/50 px-4 py-3">
-                <span className="text-sm text-zinc-400">Version</span>
-                <span className="font-mono text-xs text-zinc-300">{health.version}</span>
-              </div>
-              <div className="flex items-center justify-between rounded-md bg-zinc-800/50 px-4 py-3">
-                <span className="text-sm text-zinc-400">Instance ID</span>
-                <span className="font-mono text-xs text-zinc-300">{health.instance_id}</span>
-              </div>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center py-8 text-zinc-500">
-              <Activity className="mb-2 h-6 w-6 text-zinc-600" />
-              <p className="text-sm">Unable to fetch system health</p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
 function formatRetentionDays(days: number): string {
   if (days >= 730) return `${Math.round(days / 365)} years`;
   if (days >= 365) return "1 year";
@@ -1087,26 +1041,72 @@ function NetworkTab() {
 function TlsTab() {
   const { data: cert, isLoading } = useTlsCertificate();
   const generateCert = useGenerateTlsCert();
+  const uploadCert = useUploadTlsCert();
   const deployCert = useDeployTlsCert();
-  const [cn, setCn] = useState("monctl.local");
   const [generateOpen, setGenerateOpen] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [cn, setCn] = useState("monctl.local");
+  const [sanIps, setSanIps] = useState("10.145.210.40,10.145.210.41,10.145.210.42,10.145.210.43,10.145.210.44");
+  const [sanDns, setSanDns] = useState("monctl.local,localhost");
+  const [uploadName, setUploadName] = useState("");
+  const [uploadCertPem, setUploadCertPem] = useState("");
+  const [uploadKeyPem, setUploadKeyPem] = useState("");
+  const [deployMsg, setDeployMsg] = useState("");
 
   if (isLoading) {
     return <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-zinc-500" /></div>;
   }
 
+  const isExpiringSoon = cert?.valid_to && (new Date(cert.valid_to).getTime() - Date.now()) < 30 * 24 * 60 * 60 * 1000;
+  const isExpired = cert?.valid_to && new Date(cert.valid_to).getTime() < Date.now();
+
+  async function handleDeploy() {
+    setDeployMsg("");
+    try {
+      const res = await deployCert.mutateAsync();
+      setDeployMsg(res.data?.message || "Deployed successfully.");
+    } catch {
+      setDeployMsg("Deploy failed.");
+    }
+  }
+
+  async function handleGenerate() {
+    const ips = sanIps.split(",").map(s => s.trim()).filter(Boolean);
+    const dns = sanDns.split(",").map(s => s.trim()).filter(Boolean);
+    await generateCert.mutateAsync({ cn, san_ips: ips, san_dns: dns });
+    setGenerateOpen(false);
+  }
+
+  async function handleUpload() {
+    await uploadCert.mutateAsync({ name: uploadName, cert_pem: uploadCertPem, key_pem: uploadKeyPem });
+    setUploadOpen(false);
+    setUploadName("");
+    setUploadCertPem("");
+    setUploadKeyPem("");
+  }
+
+  function handleDownload() {
+    window.open("/v1/settings/tls/download", "_blank");
+  }
+
   return (
-    <div className="max-w-lg space-y-6">
+    <div className="max-w-2xl space-y-6">
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Shield className="h-4 w-4" />
-            TLS / HTTPS
+            Active Certificate
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           {cert ? (
             <div className="space-y-3">
+              {(isExpired || isExpiringSoon) && (
+                <div className={`flex items-center gap-2 rounded-md px-4 py-2.5 text-sm ${isExpired ? "bg-red-900/30 text-red-400" : "bg-yellow-900/30 text-yellow-400"}`}>
+                  <AlertTriangle className="h-4 w-4 shrink-0" />
+                  {isExpired ? "This certificate has expired." : "This certificate expires within 30 days."}
+                </div>
+              )}
               <div className="flex items-center justify-between rounded-md bg-zinc-800/50 px-4 py-3">
                 <span className="text-sm text-zinc-400">Subject CN</span>
                 <span className="text-sm font-medium text-zinc-100">{cert.subject_cn}</span>
@@ -1119,43 +1119,127 @@ function TlsTab() {
               </div>
               <div className="flex items-center justify-between rounded-md bg-zinc-800/50 px-4 py-3">
                 <span className="text-sm text-zinc-400">Valid From</span>
-                <span className="text-sm text-zinc-300">{cert.valid_from ? new Date(cert.valid_from).toLocaleDateString() : "—"}</span>
+                <span className="text-sm text-zinc-300">{cert.valid_from ? new Date(cert.valid_from).toLocaleDateString() : "\u2014"}</span>
               </div>
               <div className="flex items-center justify-between rounded-md bg-zinc-800/50 px-4 py-3">
                 <span className="text-sm text-zinc-400">Valid To</span>
-                <span className="text-sm text-zinc-300">{cert.valid_to ? new Date(cert.valid_to).toLocaleDateString() : "—"}</span>
+                <span className="text-sm text-zinc-300">{cert.valid_to ? new Date(cert.valid_to).toLocaleDateString() : "\u2014"}</span>
               </div>
-              <div className="flex gap-2 pt-2">
-                <Button size="sm" onClick={() => deployCert.mutateAsync()} disabled={deployCert.isPending}>
+              {cert.san_list?.length > 0 && (
+                <div className="rounded-md bg-zinc-800/50 px-4 py-3">
+                  <span className="text-sm text-zinc-400 block mb-1.5">Subject Alternative Names</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {cert.san_list.map((san, i) => (
+                      <Badge key={i} variant="default" className="text-xs font-mono">{san}</Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {cert.fingerprint && (
+                <div className="rounded-md bg-zinc-800/50 px-4 py-3">
+                  <span className="text-sm text-zinc-400 block mb-1">SHA-256 Fingerprint</span>
+                  <span className="text-xs font-mono text-zinc-300 break-all">{cert.fingerprint}</span>
+                </div>
+              )}
+
+              <div className="flex flex-wrap gap-2 pt-2">
+                <Button size="sm" onClick={handleDeploy} disabled={deployCert.isPending}>
                   {deployCert.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
                   Deploy to HAProxy
                 </Button>
                 <Button size="sm" variant="secondary" onClick={() => setGenerateOpen(true)}>
                   Regenerate
                 </Button>
+                <Button size="sm" variant="secondary" onClick={() => setUploadOpen(true)}>
+                  <Upload className="h-3.5 w-3.5" />
+                  Upload Certificate
+                </Button>
+                <Button size="sm" variant="ghost" onClick={handleDownload}>
+                  <Download className="h-3.5 w-3.5" />
+                  Download PEM
+                </Button>
               </div>
+              {deployMsg && (
+                <p className="text-sm text-zinc-400 pt-1">{deployMsg}</p>
+              )}
             </div>
           ) : (
             <div className="text-center py-8">
               <Shield className="h-8 w-8 text-zinc-600 mx-auto mb-2" />
               <p className="text-sm text-zinc-500 mb-4">No TLS certificate configured.</p>
-              <Button size="sm" onClick={() => setGenerateOpen(true)}>Generate Self-Signed Certificate</Button>
+              <div className="flex justify-center gap-2">
+                <Button size="sm" onClick={() => setGenerateOpen(true)}>Generate Self-Signed Certificate</Button>
+                <Button size="sm" variant="secondary" onClick={() => setUploadOpen(true)}>
+                  <Upload className="h-3.5 w-3.5" />
+                  Upload Certificate
+                </Button>
+              </div>
             </div>
           )}
         </CardContent>
       </Card>
 
+      {/* Generate self-signed dialog */}
       <Dialog open={generateOpen} onClose={() => setGenerateOpen(false)} title="Generate Self-Signed Certificate">
         <div className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="tls-cn">Common Name (CN)</Label>
             <Input id="tls-cn" value={cn} onChange={e => setCn(e.target.value)} placeholder="monctl.local" />
           </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="tls-san-ips">IP SANs (comma-separated)</Label>
+            <Input id="tls-san-ips" value={sanIps} onChange={e => setSanIps(e.target.value)} placeholder="10.145.210.40,10.145.210.41,..." />
+            <p className="text-xs text-zinc-500">IP addresses to include as Subject Alternative Names.</p>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="tls-san-dns">DNS SANs (comma-separated)</Label>
+            <Input id="tls-san-dns" value={sanDns} onChange={e => setSanDns(e.target.value)} placeholder="monctl.local,localhost" />
+          </div>
           <DialogFooter>
             <Button variant="secondary" onClick={() => setGenerateOpen(false)}>Cancel</Button>
-            <Button onClick={async () => { await generateCert.mutateAsync({ cn }); setGenerateOpen(false); }} disabled={generateCert.isPending}>
+            <Button onClick={handleGenerate} disabled={generateCert.isPending}>
               {generateCert.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
               Generate
+            </Button>
+          </DialogFooter>
+        </div>
+      </Dialog>
+
+      {/* Upload certificate dialog */}
+      <Dialog open={uploadOpen} onClose={() => setUploadOpen(false)} title="Upload Certificate">
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="upload-name">Certificate Name</Label>
+            <Input id="upload-name" value={uploadName} onChange={e => setUploadName(e.target.value)} placeholder="my-ca-cert" />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="upload-cert">Certificate PEM</Label>
+            <textarea
+              id="upload-cert"
+              value={uploadCertPem}
+              onChange={e => setUploadCertPem(e.target.value)}
+              placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"
+              rows={6}
+              className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm font-mono text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+            />
+            <p className="text-xs text-zinc-500">Paste the full certificate chain (server cert + intermediates).</p>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="upload-key">Private Key PEM</Label>
+            <textarea
+              id="upload-key"
+              value={uploadKeyPem}
+              onChange={e => setUploadKeyPem(e.target.value)}
+              placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----"
+              rows={6}
+              className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm font-mono text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setUploadOpen(false)}>Cancel</Button>
+            <Button onClick={handleUpload} disabled={uploadCert.isPending || !uploadName || !uploadCertPem || !uploadKeyPem}>
+              {uploadCert.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              Upload
             </Button>
           </DialogFooter>
         </div>
@@ -1183,7 +1267,6 @@ export function SettingsPage() {
     switch (activeTab) {
       case "profile": return <ProfileTab />;
       case "api-keys": return <ApiKeysTab />;
-      case "system": return <SystemTab />;
       case "collectors": return <CollectorsPage />;
       case "snmp-oids": return <SnmpOidsPage />;
       case "data-retention": return <DataRetentionTab />;

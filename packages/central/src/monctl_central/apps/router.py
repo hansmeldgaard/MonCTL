@@ -371,7 +371,7 @@ class CreateVersionRequest(BaseModel):
     version: str = Field(min_length=1, max_length=32)
     source_code: str = Field(min_length=1)
     requirements: list[str] = Field(default_factory=list)
-    entry_class: str | None = None
+    entry_class: str = "Poller"
     set_latest: bool = False
     display_template: dict | None = None
     volatile_keys: list[str] | None = None

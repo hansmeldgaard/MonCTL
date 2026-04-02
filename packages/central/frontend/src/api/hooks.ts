@@ -2219,7 +2219,7 @@ export function useTlsCertificate() {
 export function useGenerateTlsCert() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { cn?: string }) =>
+    mutationFn: (data: { cn?: string; san_ips?: string[]; san_dns?: string[]; validity_days?: number }) =>
       apiPost<TlsCertificateInfo>("/settings/tls/generate", data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["tls-cert"] });
@@ -2241,7 +2241,7 @@ export function useUploadTlsCert() {
 export function useDeployTlsCert() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => apiPost<{ deployed: boolean }>("/settings/tls/deploy", {}),
+    mutationFn: () => apiPost<{ deployed: boolean; written: boolean; message: string }>("/settings/tls/deploy", {}),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["tls-cert"] });
     },

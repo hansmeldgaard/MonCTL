@@ -237,8 +237,11 @@ EOF
     scp docker/docker-compose.haproxy.yml ${SSH_USER}@${IP}:/opt/monctl/haproxy/docker-compose.yml
     scp docker/haproxy.cfg ${SSH_USER}@${IP}:/opt/monctl/haproxy/haproxy.cfg
     scp docker/keepalived.conf ${SSH_USER}@${IP}:/opt/monctl/haproxy/keepalived.conf
-    scp -r docker/certs ${SSH_USER}@${IP}:/opt/monctl/haproxy/certs
     ssh ${SSH_USER}@${IP} "echo 'KEEPALIVED_PRIORITY=${PRIO}' > /opt/monctl/haproxy/.env && echo 'KEEPALIVED_INTERFACE=eth0' >> /opt/monctl/haproxy/.env"
+    # Create shared TLS cert volume and seed initial cert
+    ssh ${SSH_USER}@${IP} 'docker volume create monctl_tls_certs 2>/dev/null || true'
+    scp docker/certs/monctl.pem ${SSH_USER}@${IP}:/tmp/monctl.pem
+    ssh ${SSH_USER}@${IP} 'docker run --rm -v monctl_tls_certs:/certs -v /tmp/monctl.pem:/tmp/monctl.pem:ro alpine sh -c "cp /tmp/monctl.pem /certs/monctl.pem && chmod 600 /certs/monctl.pem" && rm /tmp/monctl.pem'
     ssh ${SSH_USER}@${IP} 'cd /opt/monctl/haproxy && docker compose up -d'
   done
 

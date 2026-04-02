@@ -80,6 +80,12 @@ class Settings(BaseSettings):
     # Upgrade management
     upgrade_storage_dir: str = "/data/upgrades"
 
+    # TLS certificate SANs (for self-signed generation)
+    # Comma-separated IP addresses to include as Subject Alternative Names
+    tls_san_ips: str = ""  # e.g. "10.145.210.40,10.145.210.41,10.145.210.42"
+    # Path where HAProxy reads its cert (shared volume mount point)
+    tls_cert_path: str = "/etc/haproxy/certs/monctl.pem"
+
     # Initial admin user (created on first startup if no users exist)
     admin_username: str = "admin"
     admin_password: str = ""  # Set via MONCTL_ADMIN_PASSWORD to seed admin on first boot

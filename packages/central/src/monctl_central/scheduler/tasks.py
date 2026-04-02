@@ -1196,10 +1196,10 @@ class SchedulerRunner:
             # Inverse: high cost → low weight → fewer jobs
             new_weights[hostname] = 1.0 / max(cost, 0.001)
 
-        # Normalize so max = 1.0
+        # Normalize so max = 1.0, with a floor of 0.05 to prevent starvation
         max_w = max(new_weights.values())
         if max_w > 0:
-            new_weights = {h: round(w / max_w, 4) for h, w in new_weights.items()}
+            new_weights = {h: max(0.05, round(w / max_w, 4)) for h, w in new_weights.items()}
 
         # Hysteresis: only apply if any weight changed by more than 15%
         significant_change = False

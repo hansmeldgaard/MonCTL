@@ -685,6 +685,15 @@ class SshConnector:
     except Exception:
         logger.warning("redis_connect_failed", exc_info=True)
 
+    # ── TLS cert sync (runs on ALL nodes, not leader-gated) ─────────────
+    cert_sync_task = None
+    try:
+        from monctl_central.tls.sync import run_cert_sync_loop
+        cert_sync_task = asyncio.create_task(run_cert_sync_loop(factory))
+        logger.info("tls_cert_sync_started")
+    except Exception:
+        logger.warning("tls_cert_sync_start_failed", exc_info=True)
+
     # ── Scheduler with leader election (health monitor + alert engine) ─────
     leader = None
     scheduler_runner = None
@@ -712,6 +721,13 @@ class SshConnector:
     yield
 
     # Shutdown
+    if cert_sync_task:
+        cert_sync_task.cancel()
+        try:
+            await cert_sync_task
+        except asyncio.CancelledError:
+            pass
+
     if scheduler_runner:
         await scheduler_runner.stop()
     if leader:

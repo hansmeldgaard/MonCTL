@@ -160,7 +160,7 @@ class AppManager:
         # Fetch metadata
         meta = await self._central.get_app_metadata(app_id)
         requirements: list[str] = meta.get("requirements", [])
-        entry_class: str = meta.get("entry_class", "Poller")
+        entry_class: str = meta.get("entry_class") or "Poller"
         expected_checksum: str = meta.get("checksum", "")
 
         # Fetch source code
@@ -314,7 +314,7 @@ class AppManager:
         """
         app_dir = self._apps_dir / app_id / version
         meta = json.loads((app_dir / "metadata.json").read_text())
-        entry_class: str = meta.get("entry_class", "Poller")
+        entry_class: str = meta.get("entry_class") or "Poller"
         venv_hash: str = meta["venv_hash"]
 
         venv_site = self._venvs_dir / venv_hash / "venv" / "lib"
@@ -397,7 +397,7 @@ class AppManager:
         """Download connector code from central, verify checksum, install venv."""
         meta = await self._central.get_connector_metadata(connector_id, version_id)
         requirements: list[str] = meta.get("requirements", [])
-        entry_class: str = meta.get("entry_class", "Connector")
+        entry_class: str = meta.get("entry_class") or "Connector"
         expected_checksum: str = meta.get("checksum", "")
         version_str: str = meta.get("version", version_id)
 
@@ -434,7 +434,7 @@ class AppManager:
         """Dynamically load a connector class from disk."""
         conn_dir = self._apps_dir / "_connectors" / connector_id / version_id
         meta = json.loads((conn_dir / "metadata.json").read_text())
-        entry_class: str = meta.get("entry_class", "Connector")
+        entry_class: str = meta.get("entry_class") or "Connector"
         venv_hash: str = meta["venv_hash"]
 
         venv_site = self._venvs_dir / venv_hash / "venv" / "lib"
