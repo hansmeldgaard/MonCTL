@@ -2455,6 +2455,18 @@ export function useSystemHealth() {
   });
 }
 
+export function useCollectorErrors(collectorName: string | null, hours = 1) {
+  return useQuery({
+    queryKey: ["collector-errors", collectorName, hours],
+    queryFn: () => apiGet<import("@/types/api").CollectorErrorAnalytics>(
+      `/system/collector-errors/${encodeURIComponent(collectorName!)}?hours=${hours}`
+    ),
+    select: (res) => res.data,
+    enabled: !!collectorName,
+    staleTime: 30_000,
+  });
+}
+
 export function usePatroniSwitchover() {
   const qc = useQueryClient();
   return useMutation({

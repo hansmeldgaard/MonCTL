@@ -746,6 +746,13 @@ export interface CollectorHealthDetail {
   weight: number | null;
 }
 
+export interface CollectorErrorAnalytics {
+  collector_name: string;
+  hours: number;
+  top_errors: { message: string; count: number }[];
+  app_errors: { app: string; errors: number; total: number }[];
+}
+
 // ── Users ─────────────────────────────────────────────────
 
 export interface User {

@@ -34,7 +34,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table.tsx";
-import { useSystemHealth, useDockerOverview, usePatroniSwitchover } from "@/api/hooks.ts";
+import { useSystemHealth, useDockerOverview, usePatroniSwitchover, useCollectorErrors, useLogs } from "@/api/hooks.ts";
 import { timeAgo, formatBytes, formatUptime, formatNumber } from "@/lib/utils.ts";
 import type { SubsystemStatus, CollectorHealthDetail, DockerOverviewHost, DockerContainerStats } from "@/types/api.ts";
 import { AlertTriangle } from "lucide-react";
@@ -612,6 +612,82 @@ function CollectorSortHead({
   );
 }
 
+function CollectorErrorPanel({ collectorName }: { collectorName: string }) {
+  const { data: errors, isLoading } = useCollectorErrors(collectorName);
+  const [showLogs, setShowLogs] = useState(false);
+  const logsQuery = useLogs(
+    { collector_name: collectorName, level: "ERROR", page_size: 50, sort_dir: "desc" },
+    showLogs,
+  );
+  const logEntries = logsQuery.data?.data?.data ?? [];
+
+  if (isLoading) return <div className="text-xs text-zinc-500 py-2">Loading error analytics...</div>;
+  if (!errors) return null;
+
+  const hasErrors = errors.top_errors.length > 0 || errors.app_errors.some((a) => a.errors > 0);
+
+  return (
+    <div className="mt-2 space-y-3">
+      {/* Per-app error breakdown */}
+      {errors.app_errors.length > 0 && (
+        <div>
+          <SectionTitle>Errors by App (1h)</SectionTitle>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-1">
+            {errors.app_errors.map((a) => (
+              <DetailRow key={a.app} label={a.app} value={
+                <span className={a.errors > 0 ? "text-red-400" : "text-zinc-400"}>
+                  {a.errors} / {a.total}
+                </span>
+              } tip={`${a.errors} errors out of ${a.total} total executions`} />
+            ))}
+          </div>
+        </div>
+      )}
+      {/* Top error messages */}
+      {errors.top_errors.length > 0 && (
+        <div>
+          <SectionTitle>Top Error Messages (1h)</SectionTitle>
+          <div className="space-y-1 max-h-48 overflow-y-auto">
+            {errors.top_errors.map((e, i) => (
+              <div key={i} className="flex items-start gap-2 text-xs">
+                <span className="text-red-400 font-mono whitespace-nowrap">{e.count}x</span>
+                <span className="text-zinc-400 font-mono break-all">{e.message}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {!hasErrors && (
+        <div className="text-xs text-emerald-400 py-1">No errors in the last hour.</div>
+      )}
+      {/* Collector logs toggle */}
+      <div>
+        <button
+          onClick={() => setShowLogs(!showLogs)}
+          className="text-xs text-blue-400 hover:text-blue-300 underline cursor-pointer"
+        >
+          {showLogs ? "Hide recent logs" : "Show recent error logs"}
+        </button>
+        {showLogs && (
+          <div className="mt-2 max-h-64 overflow-y-auto rounded bg-zinc-950 border border-zinc-800 p-2 space-y-0.5">
+            {logEntries.length === 0 ? (
+              <div className="text-xs text-zinc-500">No error logs found.</div>
+            ) : logEntries.map((entry, i) => (
+              <div key={i} className="text-[11px] font-mono leading-tight">
+                <span className="text-zinc-600">{entry.timestamp.replace("T", " ").slice(0, 19)}</span>
+                {" "}
+                <span className="text-zinc-500">[{entry.container_name}]</span>
+                {" "}
+                <span className="text-red-400">{entry.message.slice(0, 300)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function CollectorsSection({ sub }: { sub: { status: SubsystemStatus; details: Record<string, unknown> } }) {
   const d = sub.details;
   const byStatus = d.by_status as Record<string, number> | undefined;
@@ -871,6 +947,8 @@ function CollectorsSection({ sub }: { sub: { status: SubsystemStatus; details: R
                               </>
                             )}
                           </div>
+                          {/* Error analytics & logs */}
+                          <CollectorErrorPanel collectorName={c.hostname ?? c.name} />
                         </TableCell>
                       </TableRow>
                     )}

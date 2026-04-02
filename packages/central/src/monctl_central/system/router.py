@@ -1811,6 +1811,85 @@ async def system_health_status(
     return {"status": "success", "data": _last_health_status}
 
 
+@router.get("/collector-errors/{collector_name}")
+async def get_collector_errors(
+    collector_name: str,
+    hours: int = 1,
+    ch=Depends(get_clickhouse),
+    auth: dict = Depends(require_admin),
+):
+    """Error analytics for a single collector: top errors + per-app breakdown."""
+    from monctl_common.utils import utc_now
+    from datetime import timedelta
+
+    cutoff = (utc_now() - timedelta(hours=min(hours, 24))).strftime("%Y-%m-%d %H:%M:%S")
+    tables = ["availability_latency", "performance", "config"]
+    # Top errors (across all tables)
+    top_errors: dict[str, int] = {}
+    # Per-app error counts
+    app_errors: dict[str, int] = {}
+    app_totals: dict[str, int] = {}
+
+    for table in tables:
+        # Top error messages
+        try:
+            rows = ch.query(
+                f"SELECT error_message, count() AS cnt"
+                f" FROM {table}"
+                f" WHERE collector_name = %(cn)s"
+                f"   AND executed_at >= '{cutoff}'"
+                f"   AND error_message != ''"
+                f" GROUP BY error_message"
+                f" ORDER BY cnt DESC"
+                f" LIMIT 20",
+                {"cn": collector_name},
+            )
+            for r in rows.result_rows:
+                msg = r[0][:200]
+                top_errors[msg] = top_errors.get(msg, 0) + r[1]
+        except Exception:
+            pass
+
+        # Per-app error/total counts
+        try:
+            rows = ch.query(
+                f"SELECT app_name,"
+                f"   countIf(error_message != '') AS errors,"
+                f"   count() AS total"
+                f" FROM {table}"
+                f" WHERE collector_name = %(cn)s"
+                f"   AND executed_at >= '{cutoff}'"
+                f" GROUP BY app_name",
+                {"cn": collector_name},
+            )
+            for r in rows.result_rows:
+                name = r[0] or "unknown"
+                app_errors[name] = app_errors.get(name, 0) + r[1]
+                app_totals[name] = app_totals.get(name, 0) + r[2]
+        except Exception:
+            pass
+
+    # Sort and limit
+    sorted_errors = sorted(top_errors.items(), key=lambda x: -x[1])[:15]
+    sorted_apps = sorted(
+        [
+            {"app": k, "errors": app_errors[k], "total": app_totals[k]}
+            for k in app_errors
+        ],
+        key=lambda x: -x["errors"],
+    )
+
+    return {
+        "status": "success",
+        "data": {
+            "collector_name": collector_name,
+            "hours": hours,
+            "top_errors": [{"message": m, "count": c} for m, c in sorted_errors],
+            "app_errors": sorted_apps,
+        },
+    }
+
+
 @router.post("/patroni/switchover")
 async def patroni_switchover(
     body: dict,
