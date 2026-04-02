@@ -1682,10 +1682,16 @@ async def submit_results(
                 "tenant_id": enrichment.get("tenant_id", "00000000-0000-0000-0000-000000000000"),
                 "tenant_name": enrichment.get("tenant_name", ""),
             }
-            # Performance table requires component/component_type
+            # Table-specific required fields
             if target_table == "performance":
                 row["component"] = ""
                 row["component_type"] = ""
+            elif target_table == "config":
+                row["component"] = ""
+                row["component_type"] = ""
+                row["config_key"] = ""
+                row["config_value"] = r.error_message or ""
+                row["config_hash"] = ""
             ch_rows.append(row)
 
     # Route results to the correct ClickHouse table via write buffer
