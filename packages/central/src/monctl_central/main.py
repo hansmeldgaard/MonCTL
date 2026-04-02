@@ -99,54 +99,54 @@ async def lifespan(app: FastAPI):
                 await session.commit()
                 logger.info("label_keys_seeded", count=len(default_label_keys))
 
-        # Seed built-in snmp_discovery app (required for device auto-discovery)
-        from monctl_central.storage.models import App, AppVersion
+        # Auto-import built-in packs (creates apps if they don't exist yet)
         from pathlib import Path
-        import hashlib
+        import json as _json
 
-        try:
-            existing_discovery = (await session.execute(
-                select(App).where(App.name == "snmp_discovery")
-            )).scalar_one_or_none()
-            if existing_discovery is None:
-                discovery_app = App(
-                    name="snmp_discovery",
-                    description="SNMP device discovery — collects system identity OIDs for auto-classification",
-                    app_type="script",
-                    target_table="config",
-                )
-                session.add(discovery_app)
-                await session.flush()
+        _BUILTIN_PACKS = ["snmp-core-v1.0.0.json", "basic-checks-v1.0.0.json"]
+        _pack_dirs = [
+            Path("/app/packs"),
+            Path(__file__).resolve().parents[4] / "packs",
+        ]
+        for pack_file in _BUILTIN_PACKS:
+            pack_path = None
+            for d in _pack_dirs:
+                candidate = d / pack_file
+                if candidate.exists():
+                    pack_path = candidate
+                    break
+            if pack_path is None:
+                continue
+            try:
+                pack_data = _json.loads(pack_path.read_text())
+                pack_uid = pack_data["pack_uid"]
+                pack_version = pack_data["version"]
 
-                source_code = ""
-                # Try multiple paths: dev layout and Docker container
-                for candidate in [
-                    Path(__file__).resolve().parents[4] / "apps" / "snmp_discovery.py",
-                    Path("/app/apps/snmp_discovery.py"),
-                ]:
-                    if candidate.exists():
-                        source_code = candidate.read_text()
-                        break
+                # Skip if this pack version was already imported
+                from monctl_central.storage.models import Pack, PackVersion
+                async with factory() as pack_session:
+                    existing = (await pack_session.execute(
+                        select(PackVersion)
+                        .join(Pack, PackVersion.pack_id == Pack.id)
+                        .where(Pack.pack_uid == pack_uid, PackVersion.version == pack_version)
+                    )).scalar_one_or_none()
+                    if existing:
+                        continue
 
-                checksum = hashlib.sha256(source_code.encode()).hexdigest()
-
-                version = AppVersion(
-                    app_id=discovery_app.id,
-                    version="1.0.0",
-                    source_code=source_code,
-                    checksum_sha256=checksum,
-                    entry_class="Poller",
-                    requirements=[],
-                    is_latest=True,
-                    metadata_={"built_in": True},
-                    volatile_keys=[],
-                )
-                session.add(version)
-                await session.commit()
-                logger.info("snmp_discovery_app_seeded")
-        except Exception as exc:
-            await session.rollback()
-            logger.error("snmp_discovery_seed_failed", error=str(exc))
+                from monctl_central.packs.service import import_pack
+                # "skip" resolution: create missing apps, don't overwrite existing
+                resolutions = {}
+                for app_item in pack_data.get("contents", {}).get("apps", []):
+                    resolutions[f"apps:{app_item['name']}"] = "skip"
+                async with factory() as pack_session:
+                    stats = await import_pack(pack_data, resolutions, pack_session)
+                    await pack_session.commit()
+                if stats["created"] > 0:
+                    logger.info("builtin_pack_imported", pack=pack_file, **stats)
+                else:
+                    logger.debug("builtin_pack_skipped", pack=pack_file)
+            except Exception as exc:
+                logger.warning("builtin_pack_import_failed", pack=pack_file, error=str(exc))
 
     # ── Seed default RBAC roles ────────────────────────────────────────────
     from monctl_central.storage.models import Role, RolePermission
@@ -629,12 +629,18 @@ class SshConnector:
         logger.warning("clickhouse_init_failed", exc_info=True)
 
     # Register this central node's version
+    import os as _os
     import platform as _platform
     import socket as _socket
     from monctl_central.storage.models import SystemVersion
 
     async with factory() as session:
-        _hostname = settings.instance_id or _socket.gethostname()
+        _hostname = (
+            _os.environ.get("MONCTL_NODE_NAME")
+            or settings.node_name
+            or settings.instance_id
+            or _socket.gethostname()
+        )
         sv = (await session.execute(
             select(SystemVersion).where(SystemVersion.node_hostname == _hostname)
         )).scalar_one_or_none()
@@ -642,9 +648,11 @@ class SshConnector:
             sv = SystemVersion(
                 node_hostname=_hostname,
                 node_role="central",
-                node_ip=_socket.gethostbyname(_socket.gethostname()),
+                node_ip="",
             )
             session.add(sv)
+        _node_ip = _os.environ.get("MONCTL_NODE_IP") or _socket.gethostbyname(_socket.gethostname())
+        sv.node_ip = _node_ip
         sv.monctl_version = "0.1.0"
         sv.os_version = f"{_platform.system()} {_platform.release()}"
         sv.kernel_version = _platform.release()
