@@ -62,31 +62,11 @@ async def list_collector_groups(
 
 
 def _compute_group_health(collectors: list, total: int) -> dict:
-    """Compute health status for a collector group based on member statuses.
-
-    Uses central's own status tracking (ACTIVE/DOWN) as the primary source,
-    and gossip-reported peer_states as supplementary info for SUSPECTED peers.
-    """
+    """Compute health status for a collector group based on member statuses."""
     if total == 0:
         return {"status": "empty", "message": "No collectors"}
 
-    active = [c for c in collectors if c.status == "ACTIVE"]
     down = [c for c in collectors if c.status == "DOWN"]
-
-    # Check gossip for SUSPECTED peers (not yet DOWN in central but flaky)
-    suspected_names: set[str] = set()
-    for c in active:
-        peer_states = getattr(c, "reported_peer_states", None) or {}
-        for peer_id, state in peer_states.items():
-            if state == "SUSPECTED":
-                suspected_names.add(peer_id)
-
-    issues: list[str] = []
-    if down:
-        down_names = ", ".join(c.hostname or c.name for c in down)
-        issues.append(f"{len(down)} DOWN: {down_names}")
-    if suspected_names:
-        issues.append(f"{len(suspected_names)} SUSPECTED: {', '.join(sorted(suspected_names))}")
 
     if len(down) == total:
         return {
@@ -94,10 +74,11 @@ def _compute_group_health(collectors: list, total: int) -> dict:
             "message": f"All {total} collectors are DOWN",
         }
 
-    if issues:
+    if down:
+        down_names = ", ".join(c.hostname or c.name for c in down)
         return {
             "status": "degraded",
-            "message": "; ".join(issues),
+            "message": f"{len(down)} DOWN: {down_names}",
         }
 
     return {"status": "healthy", "message": f"All {total} collectors online"}

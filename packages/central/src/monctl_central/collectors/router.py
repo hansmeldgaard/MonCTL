@@ -32,7 +32,6 @@ class RegisterRequest(BaseModel):
     ip_addresses: list[str] | None = None
     labels: dict[str, str] = Field(default_factory=dict)
     cluster_id: str | None = None
-    peer_address: str | None = Field(default=None, max_length=500)
     fingerprint: str | None = Field(default=None, max_length=512)
 
     @field_validator("labels")
@@ -61,8 +60,6 @@ class HeartbeatRequest(BaseModel):
     config_version: int = Field(ge=0)
     system_stats: dict | None = None
     app_statuses: dict | None = None
-    peer_states: dict | None = None
-
     @field_validator("collector_id")
     @classmethod
     def check_collector_id(cls, v: str) -> str:
@@ -185,7 +182,6 @@ async def register_collector(
         collector.labels = request.labels
         collector.status = "PENDING"
         collector.fingerprint = request.fingerprint
-        collector.peer_address = request.peer_address
         collector.approved_at = None
         collector.approved_by = None
         collector.rejected_reason = None
@@ -208,7 +204,6 @@ async def register_collector(
             labels=request.labels,
             status="PENDING",
             cluster_id=uuid.UUID(request.cluster_id) if request.cluster_id else reg_token.cluster_id,
-            peer_address=request.peer_address,
             fingerprint=request.fingerprint,
             last_seen_at=utc_now(),
         )
@@ -264,33 +259,12 @@ async def get_registration_status(
     if collector is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Collector not found")
 
-    response = {
+    return {
         "status": collector.status,
         "group_id": str(collector.group_id) if collector.group_id else None,
         "group_name": collector.group.name if collector.group else None,
         "rejected_reason": collector.rejected_reason,
-        "peers": [],
     }
-
-    # If ACTIVE and has a group, include peers
-    if collector.status == "ACTIVE" and collector.group_id:
-        peer_stmt = (
-            select(Collector)
-            .where(
-                Collector.group_id == collector.group_id,
-                Collector.id != collector.id,
-                Collector.status == "ACTIVE",
-            )
-        )
-        peer_result = await db.execute(peer_stmt)
-        peers = peer_result.scalars().all()
-        response["peers"] = [
-            {"node_id": p.hostname, "address": p.peer_address}
-            for p in peers
-            if p.peer_address
-        ]
-
-    return response
 
 
 # ---------------------------------------------------------------------------
@@ -591,7 +565,7 @@ async def get_collector_config(
             "resource_limits": assignment.resource_limits,
         })
 
-    # Build cluster info with peers
+    # Build cluster info
     cluster_info = None
     if collector.group_id:
         from sqlalchemy.orm import selectinload
@@ -602,11 +576,6 @@ async def get_collector_config(
         cluster_info = {
             "group_id": str(collector.group_id),
             "group_name": group.name if group else None,
-            "peers": [
-                {"node_id": c.hostname, "address": c.peer_address}
-                for c in group_collectors
-                if c.id != collector.id and c.peer_address
-            ],
         }
 
     return {

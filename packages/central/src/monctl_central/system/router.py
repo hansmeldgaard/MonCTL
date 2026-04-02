@@ -1287,6 +1287,42 @@ async def _check_collectors(db: AsyncSession) -> dict:
         if c.group_id and str(c.group_id) in group_weights:
             ws = group_weights[str(c.group_id)]
             weight = ws.get(c.hostname)
+        system_resources = peer_states.get("_system_resources")
+
+        # Compute capacity status based on CPU, memory, and deadline misses
+        capacity_status = "ok"
+        capacity_warnings: list[str] = []
+        if system_resources:
+            cpu_load = system_resources.get("cpu_load", [])
+            cpu_count = system_resources.get("cpu_count", 1) or 1
+            if cpu_load:
+                # Use 1-minute load average
+                cpu_pct = (cpu_load[0] / cpu_count) * 100
+                if cpu_pct >= 95:
+                    capacity_status = "critical"
+                    capacity_warnings.append(f"CPU {cpu_pct:.0f}%")
+                elif cpu_pct >= 80:
+                    capacity_status = "warning"
+                    capacity_warnings.append(f"CPU {cpu_pct:.0f}%")
+            mem_total = system_resources.get("memory_total_mb", 0)
+            mem_used = system_resources.get("memory_used_mb", 0)
+            if mem_total > 0:
+                mem_pct = (mem_used / mem_total) * 100
+                if mem_pct >= 95:
+                    capacity_status = "critical"
+                    capacity_warnings.append(f"Memory {mem_pct:.0f}%")
+                elif mem_pct >= 80:
+                    if capacity_status != "critical":
+                        capacity_status = "warning"
+                    capacity_warnings.append(f"Memory {mem_pct:.0f}%")
+        if c.deadline_miss_rate > 0.10:
+            capacity_status = "critical"
+            capacity_warnings.append(f"Miss rate {c.deadline_miss_rate:.1%}")
+        elif c.deadline_miss_rate > 0.05:
+            if capacity_status != "critical":
+                capacity_status = "warning"
+            capacity_warnings.append(f"Miss rate {c.deadline_miss_rate:.1%}")
+
         entry = {
             "id": str(c.id),
             "name": c.name,
@@ -1305,6 +1341,9 @@ async def _check_collectors(db: AsyncSession) -> dict:
             "labels": c.labels,
             "container_states": peer_states.get("_container_states"),
             "queue_stats": peer_states.get("_queue_stats"),
+            "system_resources": system_resources,
+            "capacity_status": capacity_status,
+            "capacity_warnings": capacity_warnings if capacity_warnings else None,
             "weight": weight,
         }
         collector_list.append(entry)

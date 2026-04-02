@@ -83,9 +83,8 @@ The collector needs outbound access to:
 | Monitored devices        | ICMP | —        | Ping checks                            |
 | Monitored devices        | 161  | UDP      | SNMP polling                           |
 | Monitored devices        | *    | TCP      | Port checks, HTTP checks               |
-| Other collectors         | 50051| TCP/gRPC | Peer communication (work stealing)     |
 
-No inbound ports need to be open from the internet. Inter-collector gRPC (50051) is only needed within the collector cluster.
+No inbound ports need to be open from the internet. Port 50051 (gRPC) is only used internally within each collector's Docker network.
 
 ### Firewall
 

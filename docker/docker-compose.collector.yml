@@ -22,7 +22,6 @@ services:
     container_name: cache-node
     hostname: ${NODE_ID:-collector-node}
     ports:
-      - "50051:50051"           # gRPC: peer↔peer + worker→cache communication
       - "127.0.0.1:50052:50052" # HTTP: status/health endpoints (localhost only)
     environment:
       MONCTL_NODE_ID:           ${NODE_ID}

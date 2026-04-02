@@ -739,12 +739,13 @@ function CollectorsSection({ sub }: { sub: { status: SubsystemStatus; details: R
               <CollectorSortHead label="Last seen" field="last_seen_at" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
               <CollectorSortHead label="Jobs" field="total_jobs" sortBy={sortBy} sortDir={sortDir} onSort={onSort} className="text-right" />
               <CollectorSortHead label="Load" field="effective_load" sortBy={sortBy} sortDir={sortDir} onSort={onSort} className="text-right" />
+              <TableHead className="text-xs py-1">Capacity</TableHead>
               <CollectorSortHead label="Group" field="group_name" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
             </TableRow></TableHeader>
             <TableBody>
               {sortedCollectors.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center py-8 text-zinc-500 text-sm">
+                  <TableCell colSpan={8} className="text-center py-8 text-zinc-500 text-sm">
                     No collectors match the current filters.
                   </TableCell>
                 </TableRow>
@@ -765,20 +766,82 @@ function CollectorsSection({ sub }: { sub: { status: SubsystemStatus; details: R
                       <TableCell className="py-1.5 text-xs text-zinc-500">{timeAgo(c.last_seen_at)}</TableCell>
                       <TableCell className="py-1.5 text-xs font-mono text-right">{c.total_jobs}</TableCell>
                       <TableCell className="py-1.5 text-xs font-mono text-right">{c.effective_load.toFixed(3)}</TableCell>
+                      <TableCell className="py-1.5">
+                        {c.capacity_status === "critical" ? (
+                          <span className="text-xs font-semibold text-red-400" title={c.capacity_warnings?.join(", ")}>Critical</span>
+                        ) : c.capacity_status === "warning" ? (
+                          <span className="text-xs font-semibold text-amber-400" title={c.capacity_warnings?.join(", ")}>Warning</span>
+                        ) : (
+                          <span className="text-xs text-emerald-400">OK</span>
+                        )}
+                      </TableCell>
                       <TableCell className="py-1.5 text-xs text-zinc-500">{c.group_name ?? "\u2014"}</TableCell>
                     </TableRow>
                     {isExp && (
                       <TableRow key={`${c.id}-detail`}>
-                        <TableCell colSpan={7} className="py-2 px-6 bg-zinc-900/50">
+                        <TableCell colSpan={8} className="py-2 px-6 bg-zinc-900/50">
                           <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-1 text-xs">
+                            {/* Load metrics */}
                             <DetailRow label="Workers" value={String(c.worker_count)} />
-                            <DetailRow label="Eff. load" value={c.effective_load.toFixed(3)} />
+                            <DetailRow label="Load score" value={c.load_score.toFixed(3)} tip="Sum of (avg_execution_time / interval) for all jobs. Represents total CPU-seconds needed per wall-clock second. Values above 1.0 are normal with async I/O." />
+                            <DetailRow label="Eff. load" value={c.effective_load.toFixed(3)} tip="Load score divided by worker count. How much work each worker handles." />
                             <DetailRow label="Weight" value={c.weight != null ? c.weight.toFixed(3) : "—"} tip="Hash ring weight from group snapshot. Higher = more jobs assigned." />
                             <DetailRow label="Miss rate" value={
                               <span className={c.deadline_miss_rate > 0.1 ? "text-red-400" : c.deadline_miss_rate > 0.05 ? "text-amber-400" : ""}>
-                                {c.deadline_miss_rate.toFixed(3)}
+                                {(c.deadline_miss_rate * 100).toFixed(1)}%
                               </span>
-                            } />
+                            } tip="Percentage of jobs that miss their scheduled deadline. Warning at 5%, critical at 10%. High miss rate means the collector can't keep up." />
+
+                            {/* System resources */}
+                            {c.system_resources ? (() => {
+                              const sr = c.system_resources;
+                              const cpuPct = sr.cpu_count > 0 && sr.cpu_load.length > 0 ? (sr.cpu_load[0] / sr.cpu_count) * 100 : 0;
+                              const memPct = sr.memory_total_mb > 0 ? (sr.memory_used_mb / sr.memory_total_mb) * 100 : 0;
+                              const diskPct = sr.disk_total_gb > 0 ? (sr.disk_used_gb / sr.disk_total_gb) * 100 : 0;
+                              return (
+                                <>
+                                  <SectionTitle>System Resources</SectionTitle>
+                                  <DetailRow label="CPU" value={
+                                    <div className="flex items-center gap-2">
+                                      <span className={cpuPct >= 95 ? "text-red-400" : cpuPct >= 80 ? "text-amber-400" : ""}>{cpuPct.toFixed(0)}%</span>
+                                      <ProgressBar pct={cpuPct} className="w-20" />
+                                      <span className="text-zinc-500">({sr.cpu_load[0]?.toFixed(1)}/{sr.cpu_count} cores)</span>
+                                    </div>
+                                  } tip="1-minute load average as percentage of available CPU cores. Warning at 80%, critical at 95%." />
+                                  <DetailRow label="Memory" value={
+                                    <div className="flex items-center gap-2">
+                                      <span className={memPct >= 95 ? "text-red-400" : memPct >= 80 ? "text-amber-400" : ""}>{memPct.toFixed(0)}%</span>
+                                      <ProgressBar pct={memPct} className="w-20" />
+                                      <span className="text-zinc-500">({sr.memory_used_mb}/{sr.memory_total_mb} MB)</span>
+                                    </div>
+                                  } tip="Memory usage. Warning at 80%, critical at 95%." />
+                                  <DetailRow label="Disk" value={
+                                    <div className="flex items-center gap-2">
+                                      <span className={diskPct >= 90 ? "text-red-400" : diskPct >= 80 ? "text-amber-400" : ""}>{diskPct.toFixed(0)}%</span>
+                                      <ProgressBar pct={diskPct} className="w-20" />
+                                      <span className="text-zinc-500">({sr.disk_used_gb}/{sr.disk_total_gb} GB)</span>
+                                    </div>
+                                  } />
+                                </>
+                              );
+                            })() : (
+                              <>
+                                <SectionTitle>System Resources</SectionTitle>
+                                <DetailRow label="System" value="Not reported" tip="System resources will appear after the next heartbeat from this collector." />
+                              </>
+                            )}
+
+                            {/* Capacity warnings */}
+                            {c.capacity_warnings && c.capacity_warnings.length > 0 && (
+                              <div className="col-span-full mt-1 p-2 rounded bg-amber-950/30 border border-amber-800/30">
+                                <span className={`text-xs font-semibold ${c.capacity_status === "critical" ? "text-red-400" : "text-amber-400"}`}>
+                                  {c.capacity_status === "critical" ? "Capacity critical" : "Capacity warning"}:
+                                </span>
+                                <span className="text-xs text-zinc-300 ml-1">{c.capacity_warnings.join(", ")}</span>
+                              </div>
+                            )}
+
+                            {/* Containers */}
                             {c.container_states ? (
                               <>
                                 <div className="col-span-full mt-1">
@@ -796,14 +859,14 @@ function CollectorsSection({ sub }: { sub: { status: SubsystemStatus; details: R
                             )}
                             {c.queue_stats && (
                               <>
-                                <DetailRow label="Pending results" value={String(c.queue_stats.pending_results)} />
+                                <DetailRow label="Pending results" value={String(c.queue_stats.pending_results)} tip="Results waiting to be shipped to central by the forwarder." />
                                 <DetailRow label="Overdue" value={
                                   <span className={c.queue_stats.jobs_overdue > 0 ? "text-amber-400" : ""}>{c.queue_stats.jobs_overdue}</span>
-                                } />
+                                } tip="Jobs that missed their scheduled execution time. Non-zero indicates the collector is falling behind." />
                                 <DetailRow label="Errors (1h)" value={
                                   <span className={c.queue_stats.jobs_errored_last_hour > 5 ? "text-red-400" : ""}>{c.queue_stats.jobs_errored_last_hour}</span>
                                 } />
-                                <DetailRow label="Avg exec" value={`${c.queue_stats.avg_execution_ms.toFixed(0)}ms`} />
+                                <DetailRow label="Avg exec" value={`${c.queue_stats.avg_execution_ms.toFixed(0)}ms`} tip="Average job execution time across all recent jobs." />
                                 <DetailRow label="Max exec" value={`${c.queue_stats.max_execution_ms.toFixed(0)}ms`} />
                               </>
                             )}

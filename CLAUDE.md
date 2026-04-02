@@ -23,7 +23,7 @@ Collectors (worker1-4) → poll jobs from central → execute checks → forward
 - **Relational DB**: PostgreSQL 16 (Patroni HA)
 - **Cache**: Redis
 - **Proxy**: HAProxy (TLS termination, round-robin to 4 central nodes)
-- **Collector**: Python 3.12, gRPC (peer communication), SQLite (local result buffer)
+- **Collector**: Python 3.12, gRPC (internal cache-node ↔ worker), SQLite (local result buffer)
 - **Icons**: Lucide React
 - **Charts**: Recharts
 
@@ -99,8 +99,8 @@ packages/
 │       ├── apps/manager.py     # App/connector download, venv management, class loading
 │       ├── forward/forwarder.py # Result batching + posting to central
 │       ├── cache/              # SQLite backend + app cache sync
-│       ├── jobs/               # Job models, scheduling, work stealing
-│       └── peer/               # gRPC client/server for inter-collector communication
+│       ├── jobs/               # Job models, scheduling
+│       └── peer/               # gRPC client/server for cache-node ↔ worker communication
 ├── common/                     # Shared: monctl_common.utils (utc_now, hash_api_key)
 └── sdk/                        # SDK package (base classes, testing utilities)
 ```

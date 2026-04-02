@@ -209,11 +209,10 @@ class CentralAPIClient:
         self,
         node_id: str,
         load_info: dict,
-        peer_address: str | None = None,
-        peer_states: dict[str, str] | None = None,
         container_states: dict[str, str] | None = None,
         queue_stats: dict | None = None,
         job_costs: dict[str, float] | None = None,
+        system_resources: dict | None = None,
     ) -> bool:
         """Send a heartbeat with current load information.
 
@@ -228,12 +227,10 @@ class CentralAPIClient:
             "effective_load": load_info.get("effective_load", 0.0),
             "deadline_miss_rate": load_info.get("deadline_miss_rate", 0.0),
             "total_jobs": load_info.get("total_jobs", 0),
-            "stolen_job_count": load_info.get("stolen_job_count", 0),
-            "peer_address": peer_address,
-            "peer_states": peer_states,
             "container_states": container_states,
             "queue_stats": queue_stats,
             "job_costs": job_costs,
+            "system_resources": system_resources,
             "system_stats": {
                 "monctl_version": "0.1.0",
                 "os_info": {

@@ -21,6 +21,7 @@ export interface AuthUser {
   iface_traffic_unit: "auto" | "kbps" | "mbps" | "gbps" | "pct";
   iface_chart_metric: "traffic" | "errors" | "discards";
   iface_time_range: "1h" | "6h" | "24h" | "7d" | "30d";
+  default_page?: string;
   all_tenants?: boolean;
   tenant_ids?: string[] | null; // null = unrestricted, [] = see nothing, [ids] = specific
   permissions?: string[] | null; // null = admin (full access), ["resource:action", ...]
@@ -305,6 +306,7 @@ export interface DeviceInfo {
   address: string;
   device_category: string;
   device_type_name?: string | null;
+  collector_group_name?: string | null;
 }
 
 export interface Assignment {
@@ -731,6 +733,16 @@ export interface CollectorHealthDetail {
     avg_execution_ms: number;
     max_execution_ms: number;
   } | null;
+  system_resources: {
+    cpu_load: number[];
+    cpu_count: number;
+    memory_total_mb: number;
+    memory_used_mb: number;
+    disk_total_gb: number;
+    disk_used_gb: number;
+  } | null;
+  capacity_status: "ok" | "warning" | "critical";
+  capacity_warnings: string[] | null;
   weight: number | null;
 }
 

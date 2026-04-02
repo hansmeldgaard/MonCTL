@@ -431,6 +431,7 @@ async def _heartbeat_loop(
             container_states = await _get_container_states()
             queue_stats = _get_queue_stats(scheduler)
             job_costs = scheduler.get_job_costs()
+            system_resources = _read_system_resources()
 
             ok = await central_client.post_heartbeat(
                 node_id,
@@ -438,6 +439,7 @@ async def _heartbeat_loop(
                 container_states=container_states,
                 queue_stats=queue_stats,
                 job_costs=job_costs or None,
+                system_resources=system_resources,
             )
             if ok:
                 logger.debug("heartbeat_sent", node_id=node_id,

@@ -244,7 +244,8 @@ async def get_jobs(
             group_obj = await db.get(CollectorGroup, group_id)
             snapshot = group_obj.weight_snapshot if group_obj else None
             if snapshot and set(snapshot.keys()) == active_hostnames:
-                weights = snapshot
+                # Enforce minimum weight to prevent starvation
+                weights = {h: max(w, 0.05) for h, w in snapshot.items()}
             else:
                 # Topology changed or no snapshot — use equal weights
                 weights = {c.hostname: 1.0 for c in group_collectors}
@@ -1771,12 +1772,10 @@ class HeartbeatRequest(BaseModel):
     effective_load: float = 0.0
     deadline_miss_rate: float = 0.0
     total_jobs: int = 0
-    stolen_job_count: int = 0
-    peer_address: str | None = None  # gRPC address for peer discovery (e.g. 192.168.1.31:50051)
-    peer_states: dict[str, str] | None = None  # {node_id: "ALIVE"|"SUSPECTED"|"DEAD"}
     container_states: dict[str, str] | None = None
     queue_stats: dict | None = None
     job_costs: dict[str, float] | None = None  # {assignment_id: avg_execution_time_seconds}
+    system_resources: dict | None = None  # cpu_load, cpu_count, memory_total_mb, memory_used_mb, disk_*
 
 
 @router.post("/heartbeat", tags=["collector-api"])
@@ -1802,16 +1801,13 @@ async def collector_heartbeat(
         # Don't flip PENDING or REJECTED to ACTIVE via heartbeat
         if collector.status not in ("PENDING", "REJECTED"):
             collector.status = "ACTIVE"
-        if request.peer_address:
-            collector.peer_address = request.peer_address
-        # Store gossip peer states reported by this collector
         states = dict(collector.reported_peer_states or {})
-        if request.peer_states:
-            states.update(request.peer_states)
         if request.container_states:
             states["_container_states"] = request.container_states
         if request.queue_stats:
             states["_queue_stats"] = request.queue_stats
+        if request.system_resources:
+            states["_system_resources"] = request.system_resources
         collector.reported_peer_states = states
         # Persist load metrics for weighted job partitioning
         collector.load_score = request.load_score

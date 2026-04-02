@@ -67,7 +67,6 @@ class Collector(Base):
     group_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("collector_groups.id", ondelete="SET NULL"), nullable=True
     )
-    peer_address: Mapped[str | None] = mapped_column(String(255))
     reported_peer_states: Mapped[dict | None] = mapped_column(JSONB)
     load_score: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.0")
     effective_load: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.0")
@@ -623,6 +622,10 @@ class User(Base):
     iface_time_range: Mapped[str] = mapped_column(
         String(16), nullable=False, server_default="24h",
         comment="Default interface time range: 1h | 6h | 24h | 7d | 30d",
+    )
+    default_page: Mapped[str] = mapped_column(
+        String(255), nullable=False, server_default="/", default="/",
+        comment="Default landing page route for this user",
     )
     # Legacy single-tenant FK (kept for backward compat, not used for access control)
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
