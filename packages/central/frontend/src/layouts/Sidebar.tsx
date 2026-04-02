@@ -10,7 +10,7 @@ import {
   FileText,
   HeartPulse,
   KeyRound,
-  LayoutDashboard,
+
   ListChecks,
   Monitor,
   Package,
@@ -33,7 +33,7 @@ interface SidebarProps {
 
 interface NavItem {
   to: string;
-  icon: typeof LayoutDashboard;
+  icon: typeof Monitor;
   label: string;
   end?: boolean;
   resource?: string;  // permission resource required to see this item
@@ -48,7 +48,6 @@ interface NavGroup {
 const navGroups: NavGroup[] = [
   {
     items: [
-      { to: "/", icon: LayoutDashboard, label: "Dashboard", end: true },
       { to: "/system-health", icon: HeartPulse, label: "System Health", adminOnly: true },
     ],
   },

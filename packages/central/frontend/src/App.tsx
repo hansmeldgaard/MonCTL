@@ -1,7 +1,6 @@
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, Navigate } from "react-router-dom";
 import { AppLayout } from "@/layouts/AppLayout.tsx";
 import { LoginPage } from "@/pages/LoginPage.tsx";
-import { DashboardPage } from "@/pages/DashboardPage.tsx";
 import { DevicesPage } from "@/pages/DevicesPage.tsx";
 import { DeviceDetailPage } from "@/pages/DeviceDetailPage.tsx";
 import { AppsPage } from "@/pages/AppsPage.tsx";
@@ -33,7 +32,7 @@ export function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route element={<AppLayout />}>
-        <Route index element={<DashboardPage />} />
+        <Route index element={<Navigate to="/devices" replace />} />
         <Route path="system-health" element={<SystemHealthPage />} />
         <Route path="docker-infrastructure" element={<DockerInfraPage />} />
         <Route path="devices" element={<DevicesPage />} />

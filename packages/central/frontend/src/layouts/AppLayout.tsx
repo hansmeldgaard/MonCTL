@@ -1,13 +1,14 @@
 import { useState } from "react";
-import { Navigate, Outlet } from "react-router-dom";
+import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth.tsx";
 import { Sidebar } from "@/layouts/Sidebar.tsx";
 import { Header } from "@/layouts/Header.tsx";
 
 export function AppLayout() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, user } = useAuth();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const location = useLocation();
 
   if (isLoading) {
     return (
@@ -19,6 +20,12 @@ export function AppLayout() {
 
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
+  }
+
+  // Redirect to user's default page when landing on "/"
+  const defaultPage = user?.default_page;
+  if (defaultPage && defaultPage !== "/devices" && location.pathname === "/") {
+    return <Navigate to={defaultPage} replace />;
   }
 
   return (
