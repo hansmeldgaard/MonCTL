@@ -10,7 +10,7 @@ services:
     volumes:
       - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
       - tls_certs:/etc/haproxy/certs:ro
-    restart: unless-stopped
+    restart: always
     healthcheck:
       test: ["CMD", "haproxy", "-c", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]
       interval: 10s
@@ -28,9 +28,19 @@ services:
     environment:
       KEEPALIVED_INTERFACE: ${KEEPALIVED_INTERFACE:-eth0}
       KEEPALIVED_PRIORITY: ${KEEPALIVED_PRIORITY:-97}
+      KEEPALIVED_VIP: ${KEEPALIVED_VIP}
     volumes:
-      - ./keepalived.conf:/container/service/keepalived/assets/keepalived.conf
-    restart: unless-stopped
+      - ./keepalived.conf:/tmp/keepalived-template.conf:ro
+    entrypoint:
+      - sh
+      - -c
+      - |
+        sed -e "s/__INTERFACE__/$$KEEPALIVED_INTERFACE/g" \
+            -e "s/__PRIORITY__/$$KEEPALIVED_PRIORITY/g" \
+            -e "s|__VIP__|$$KEEPALIVED_VIP|g" \
+          /tmp/keepalived-template.conf > /container/service/keepalived/assets/keepalived.conf
+        exec /container/tool/run --copy-service
+    restart: always
     depends_on:
       haproxy:
         condition: service_healthy
@@ -38,3 +48,4 @@ services:
 volumes:
   tls_certs:
     name: monctl_tls_certs
+    external: true

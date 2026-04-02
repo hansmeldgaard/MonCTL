@@ -38,6 +38,10 @@
             <host>10.145.210.44</host>
             <port>9181</port>
         </node>
+        <node>
+            <host>10.145.210.41</host>
+            <port>9181</port>
+        </node>
     </zookeeper>
 
     <!-- Enable built-in ClickHouse Keeper -->
@@ -60,6 +64,11 @@
             <server>
                 <id>2</id>
                 <hostname>10.145.210.44</hostname>
+                <port>9234</port>
+            </server>
+            <server>
+                <id>3</id>
+                <hostname>10.145.210.41</hostname>
                 <port>9234</port>
             </server>
         </raft_configuration>

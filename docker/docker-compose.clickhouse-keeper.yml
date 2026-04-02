@@ -1,0 +1,28 @@
+# ClickHouse Keeper-only node — lightweight quorum voter
+# Deploy on central1 to give the 2-node CH cluster a 3rd Keeper for fault tolerance.
+# This node participates in Raft consensus only — no data, no queries.
+
+services:
+  clickhouse-keeper:
+    image: clickhouse/clickhouse-server:24.3-alpine
+    container_name: clickhouse-keeper
+    network_mode: host
+    environment:
+      KEEPER_SERVER_ID: ${KEEPER_SERVER_ID:-3}
+    volumes:
+      - keeper_data:/var/lib/clickhouse
+      - ./clickhouse-keeper-config.xml:/etc/clickhouse-server/config.d/keeper.xml:ro
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    restart: always
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--port", "9000", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    mem_limit: 256m
+
+volumes:
+  keeper_data:

@@ -572,7 +572,7 @@ def _query_node_resources(host: str, port: int, username: str, password: str, da
         t0 = time.monotonic()
         client = clickhouse_connect.get_client(
             host=host, port=port, username=username, password=password,
-            database=database, connect_timeout=5, send_receive_timeout=10,
+            database=database, connect_timeout=2, send_receive_timeout=5,
         )
         client.query("SELECT 1")
         result["reachable"] = True
@@ -741,7 +741,7 @@ async def _check_clickhouse() -> dict:
         client = clickhouse_connect.get_client(
             host=ch._hosts[0], port=ch._port,
             username=ch._username, password=ch._password,
-            database=ch._database, connect_timeout=5, send_receive_timeout=10,
+            database=ch._database, connect_timeout=2, send_receive_timeout=5,
         )
         client.query("SELECT 1")
         latency_ms = round((time.monotonic() - t0) * 1000, 2)
@@ -1738,7 +1738,7 @@ async def system_health(
         _run_check("postgresql", _check_postgresql_standalone()),
         _run_check("patroni", _check_patroni()),
         _run_check("etcd", _check_etcd()),
-        _run_check("clickhouse", _check_clickhouse()),
+        _run_check("clickhouse", _check_clickhouse(), timeout=15.0),
         _run_check("redis", _check_redis()),
         _run_check("collectors", _check_collectors_standalone()),
         _run_check("scheduler", _check_scheduler()),
@@ -1821,7 +1821,7 @@ async def _compute_overall_status() -> dict:
         _run_check("postgresql", _check_postgresql_standalone()),
         _run_check("patroni", _check_patroni()),
         _run_check("etcd", _check_etcd()),
-        _run_check("clickhouse", _check_clickhouse()),
+        _run_check("clickhouse", _check_clickhouse(), timeout=15.0),
         _run_check("redis", _check_redis()),
         _run_check("collectors", _check_collectors_standalone()),
         _run_check("scheduler", _check_scheduler()),
