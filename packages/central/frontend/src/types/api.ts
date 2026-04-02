@@ -1577,6 +1577,37 @@ export interface OsInstallResult {
   error?: string;
 }
 
+export interface OsInstallJobStep {
+  id: string;
+  step_order: number;
+  node_hostname: string;
+  node_role: string;
+  node_ip: string;
+  action: string;
+  status: string;
+  is_test_node: boolean;
+  started_at: string | null;
+  completed_at: string | null;
+  output_log: string | null;
+  error_message: string | null;
+}
+
+export interface OsInstallJob {
+  id: string;
+  package_names: string[];
+  scope: string;
+  target_nodes: string[] | null;
+  strategy: string;
+  restart_policy: string;
+  status: string;
+  started_by: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  error_message: string | null;
+  created_at: string | null;
+  steps: OsInstallJobStep[];
+}
+
 export interface UpgradeBadge {
   os_update_count: number;
 }

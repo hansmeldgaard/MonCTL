@@ -26,6 +26,14 @@ class InstallOsOnNodeRequest(BaseModel):
     package_names: list[str] = Field(min_length=1, max_length=100)
 
 
+class StartOsInstallJobRequest(BaseModel):
+    package_names: list[str] = Field(min_length=1, max_length=100)
+    scope: str = Field(pattern="^(central|collectors|all|nodes)$")
+    target_nodes: list[str] | None = None
+    strategy: str = Field(default="rolling", pattern="^(rolling|test_first)$")
+    restart_policy: str = Field(default="none", pattern="^(none|rolling)$")
+
+
 class CollectorUpgradeReport(BaseModel):
     collector_id: str = Field(default="")
     upgrade_type: str = Field(default="monctl")

@@ -85,6 +85,7 @@ import type {
   OsCheckResult,
   OsCachedPkg,
   OsInstallResult,
+  OsInstallJob,
   UpgradeBadge,
   DashboardSummary,
   DeviceCategoryListMeta,
@@ -3168,6 +3169,48 @@ export function useInstallOsOnNode() {
       qc.invalidateQueries({ queryKey: ["os-updates"] });
       qc.invalidateQueries({ queryKey: ["upgrade-badge"] });
     },
+  });
+}
+
+export function useOsInstallJobs() {
+  return useQuery({
+    queryKey: ["os-install-jobs"],
+    queryFn: () => apiGet<OsInstallJob[]>("/upgrades/os-install-jobs"),
+    select: (res) => res.data,
+    refetchInterval: POLL_DETAIL,
+  });
+}
+
+export function useStartOsInstallJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: {
+      package_names: string[];
+      scope: string;
+      target_nodes?: string[];
+      strategy?: string;
+      restart_policy?: string;
+    }) => apiPost<OsInstallJob>("/upgrades/os-install-job", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["os-install-jobs"] });
+      qc.invalidateQueries({ queryKey: ["os-updates"] });
+    },
+  });
+}
+
+export function useApproveOsInstallJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => apiPost(`/upgrades/os-install-jobs/${jobId}/approve`, {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["os-install-jobs"] }),
+  });
+}
+
+export function useCancelOsInstallJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => apiPost(`/upgrades/os-install-jobs/${jobId}/cancel`, {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["os-install-jobs"] }),
   });
 }
 

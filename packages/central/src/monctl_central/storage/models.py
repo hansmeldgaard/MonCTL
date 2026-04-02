@@ -1341,6 +1341,52 @@ class OsCachedPackage(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
 
 
+class OsInstallJob(Base):
+    """A multi-node OS package installation job."""
+    __tablename__ = "os_install_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    package_names: Mapped[list] = mapped_column(JSONB, nullable=False)
+    scope: Mapped[str] = mapped_column(String(50), nullable=False)
+    target_nodes: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    strategy: Mapped[str] = mapped_column(String(50), nullable=False, server_default="'rolling'")
+    restart_policy: Mapped[str] = mapped_column(String(50), nullable=False, server_default="'none'")
+    status: Mapped[str] = mapped_column(String(50), nullable=False, server_default="'pending'")
+    started_by: Mapped[str | None] = mapped_column(String(200))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
+
+    steps: Mapped[list["OsInstallJobStep"]] = relationship(
+        back_populates="job", order_by="OsInstallJobStep.step_order",
+        cascade="all, delete-orphan",
+    )
+
+
+class OsInstallJobStep(Base):
+    """A single step in an OS install job (install, reboot, or health_check)."""
+    __tablename__ = "os_install_job_steps"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("os_install_jobs.id", ondelete="CASCADE"), nullable=False
+    )
+    step_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    node_hostname: Mapped[str] = mapped_column(String(200), nullable=False)
+    node_role: Mapped[str] = mapped_column(String(50), nullable=False)
+    node_ip: Mapped[str] = mapped_column(String(50), nullable=False)
+    action: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, server_default="'pending'")
+    is_test_node: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    output_log: Mapped[str | None] = mapped_column(Text)
+    error_message: Mapped[str | None] = mapped_column(Text)
+
+    job: Mapped["OsInstallJob"] = relationship(back_populates="steps")
+
+
 class AnalyticsDashboard(Base):
     """A user-created analytics dashboard with SQL-based widgets."""
     __tablename__ = "analytics_dashboards"

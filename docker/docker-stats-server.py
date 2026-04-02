@@ -434,6 +434,22 @@ class StatsHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._json_response(500, {"updates": [], "error": str(e)})
 
+        elif path == "/os/reboot-required":
+            reboot_file = "/host_root/var/run/reboot-required"
+            pkgs_file = "/host_root/var/run/reboot-required.pkgs"
+            required = os.path.isfile(reboot_file)
+            packages = []
+            if required and os.path.isfile(pkgs_file):
+                try:
+                    with open(pkgs_file) as f:
+                        packages = [line.strip() for line in f if line.strip()]
+                except Exception:
+                    pass
+            self._json_response(200, {
+                "reboot_required": required,
+                "packages": packages,
+            })
+
         elif path.startswith("/os/packages/"):
             filename = path[len("/os/packages/"):]
             # Sanitize: no path traversal
@@ -556,6 +572,22 @@ class StatsHandler(BaseHTTPRequestHandler):
                 })
             except subprocess.TimeoutExpired:
                 self._json_response(500, {"downloaded": [], "output": "", "success": False})
+
+        elif path == "/os/reboot":
+            delay = payload.get("delay_seconds", 3)
+            delay = max(1, min(int(delay), 60))
+            try:
+                subprocess.Popen(
+                    ["chroot", "/host_root", "bash", "-c",
+                     f"sleep {delay} && shutdown -r now"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+                self._json_response(200, {
+                    "success": True,
+                    "message": f"Reboot initiated (delay={delay}s)",
+                })
+            except Exception as e:
+                self._json_response(500, {"success": False, "message": str(e)})
 
         else:
             self.send_response(404)

@@ -5,6 +5,7 @@ Mounted at /v1/upgrades (see api/router.py).
 
 from __future__ import annotations
 
+import asyncio
 import os
 import shutil
 import uuid
@@ -23,6 +24,8 @@ from monctl_central.storage.models import (
     Collector,
     OsAvailableUpdate,
     OsCachedPackage,
+    OsInstallJob,
+    OsInstallJobStep,
     OsUpdatePackage,
     SystemVersion,
     UpgradeJob,
@@ -37,6 +40,10 @@ from monctl_central.upgrades.os_updates import (
 )
 from monctl_central.upgrades.os_service import (
     check_node_updates,
+    check_reboot_required,
+    create_os_install_job,
+    execute_os_install_job,
+    resume_os_install_job,
     install_packages_on_node,
     fetch_deb_from_sidecar,
     compute_file_hash,
@@ -46,6 +53,7 @@ from monctl_central.upgrades.schemas import (
     DownloadOsPackagesRequest,
     DownloadOsUpdatesRequest,
     InstallOsOnNodeRequest,
+    StartOsInstallJobRequest,
     StartUpgradeRequest,
 )
 from monctl_central.upgrades.service import create_upgrade_job, execute_upgrade_job
@@ -61,9 +69,9 @@ logger = structlog.get_logger()
 def _fmt_version(v: SystemVersion) -> dict:
     return {
         "id": str(v.id),
-        "node_hostname": v.node_hostname,
-        "node_role": v.node_role,
-        "node_ip": v.node_ip,
+        "hostname": v.node_hostname,
+        "role": v.node_role,
+        "ip": v.node_ip,
         "monctl_version": v.monctl_version,
         "docker_image_id": v.docker_image_id,
         "os_version": v.os_version,
@@ -159,7 +167,7 @@ async def get_upgrade_status(
     return {
         "status": "success",
         "data": {
-            "versions": versions,
+            "nodes": versions,
             "packages": packages,
         },
     }
@@ -520,19 +528,33 @@ async def check_os_updates_sidecar(
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_admin),
 ):
-    """Check all nodes for OS updates via their sidecars."""
+    """Check all nodes for OS updates via their sidecars (parallel)."""
     result = await db.execute(select(SystemVersion))
     nodes = result.scalars().all()
 
-    all_updates: dict[str, list[dict]] = {}
+    # Deduplicate by node_ip (stale entries may exist with different hostnames)
+    seen_ips: dict[str, SystemVersion] = {}
     for node in nodes:
+        # Prefer entries with real hostnames over container IDs
+        if node.node_ip not in seen_ips or not seen_ips[node.node_ip].node_hostname.startswith(
+            ("central", "worker")
+        ):
+            seen_ips[node.node_ip] = node
+    unique_nodes = list(seen_ips.values())
+
+    # Check all nodes in parallel
+    async def _check_one(node: SystemVersion) -> tuple[SystemVersion, list[dict]]:
         try:
             updates = await check_node_updates(node.node_ip)
         except Exception as exc:
             logger.warning("check_node_updates_failed", node=node.node_hostname, error=str(exc))
-            all_updates[node.node_hostname] = []
-            continue
+            return node, []
+        return node, updates
 
+    results = await asyncio.gather(*[_check_one(n) for n in unique_nodes])
+
+    all_updates: dict[str, list[dict]] = {}
+    for node, updates in results:
         # Delete old entries for this node
         await db.execute(
             delete(OsAvailableUpdate).where(
@@ -546,8 +568,8 @@ async def check_os_updates_sidecar(
                 node_hostname=node.node_hostname,
                 node_role=node.node_role,
                 package_name=u.get("package_name", u.get("package", "")),
-                current_version=u.get("current_version", ""),
-                new_version=u.get("new_version", u.get("version", "")),
+                current_version=u.get("current_version", u.get("current", "")),
+                new_version=u.get("new_version", u.get("new", "")),
                 severity=u.get("severity", "normal"),
             )
             db.add(entry)
@@ -591,9 +613,9 @@ async def list_os_updates(
     for r in rows:
         grouped.setdefault(r.node_hostname, []).append({
             "id": str(r.id),
-            "package_name": r.package_name,
-            "current_version": r.current_version,
-            "new_version": r.new_version,
+            "package": r.package_name,
+            "current": r.current_version,
+            "new": r.new_version,
             "severity": r.severity,
             "is_downloaded": r.is_downloaded,
             "checked_at": r.checked_at.isoformat() if r.checked_at else None,
@@ -618,7 +640,12 @@ async def download_os_packages(
 
     # Tell sidecar to download packages
     dl_result = await download_packages_via_sidecar(node.node_ip, request.package_names)
-    filenames = dl_result.get("files", [])
+    # Sidecar returns {"downloaded": [{"filename": "...", "size": ...}], ...}
+    raw_files = dl_result.get("files") or dl_result.get("downloaded", [])
+    filenames = [
+        f["filename"] if isinstance(f, dict) else f
+        for f in raw_files
+    ]
 
     os_dir = Path(settings.upgrade_storage_dir) / "os-packages"
     os_dir.mkdir(parents=True, exist_ok=True)
@@ -807,3 +834,176 @@ async def install_os_on_node(
         await _redis.set("monctl:os_updates:count", str(count))
 
     return {"status": "success", "data": install_result}
+
+
+# ---------------------------------------------------------------------------
+# OS Install Jobs (multi-node)
+# ---------------------------------------------------------------------------
+
+def _fmt_os_job(j: OsInstallJob) -> dict:
+    return {
+        "id": str(j.id),
+        "package_names": j.package_names,
+        "scope": j.scope,
+        "target_nodes": j.target_nodes,
+        "strategy": j.strategy,
+        "restart_policy": j.restart_policy,
+        "status": j.status,
+        "started_by": j.started_by,
+        "started_at": j.started_at.isoformat() if j.started_at else None,
+        "completed_at": j.completed_at.isoformat() if j.completed_at else None,
+        "error_message": j.error_message,
+        "created_at": j.created_at.isoformat() if j.created_at else None,
+        "steps": [_fmt_os_step(s) for s in j.steps] if j.steps else [],
+    }
+
+
+def _fmt_os_step(s: OsInstallJobStep) -> dict:
+    return {
+        "id": str(s.id),
+        "step_order": s.step_order,
+        "node_hostname": s.node_hostname,
+        "node_role": s.node_role,
+        "node_ip": s.node_ip,
+        "action": s.action,
+        "status": s.status,
+        "is_test_node": s.is_test_node,
+        "started_at": s.started_at.isoformat() if s.started_at else None,
+        "completed_at": s.completed_at.isoformat() if s.completed_at else None,
+        "output_log": s.output_log,
+        "error_message": s.error_message,
+    }
+
+
+@router.post("/os-install-job")
+async def start_os_install_job(
+    request: StartOsInstallJobRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    session_factory=Depends(get_session_factory),
+    auth: dict = Depends(require_admin),
+):
+    """Create and start a multi-node OS package installation job."""
+    # Check no other active jobs
+    active = await db.execute(
+        select(OsInstallJob).where(
+            OsInstallJob.status.in_(["pending", "running", "awaiting_approval"])
+        )
+    )
+    if active.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Another OS install job is already active",
+        )
+
+    if request.scope == "nodes" and not request.target_nodes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="target_nodes required when scope is 'nodes'",
+        )
+
+    job = await create_os_install_job(
+        db,
+        package_names=request.package_names,
+        scope=request.scope,
+        target_nodes=request.target_nodes,
+        strategy=request.strategy,
+        restart_policy=request.restart_policy,
+        started_by=auth.get("username"),
+    )
+    await db.commit()
+
+    # Reload with steps
+    await db.refresh(job, ["steps"])
+
+    background_tasks.add_task(execute_os_install_job, session_factory, job.id)
+    return {"status": "success", "data": _fmt_os_job(job)}
+
+
+@router.get("/os-install-jobs")
+async def list_os_install_jobs(
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_admin),
+):
+    """List all OS install jobs with steps."""
+    from sqlalchemy.orm import selectinload
+
+    result = await db.execute(
+        select(OsInstallJob)
+        .options(selectinload(OsInstallJob.steps))
+        .order_by(OsInstallJob.created_at.desc())
+        .limit(20)
+    )
+    jobs = result.scalars().unique().all()
+    return {"status": "success", "data": [_fmt_os_job(j) for j in jobs]}
+
+
+@router.get("/os-install-jobs/{job_id}")
+async def get_os_install_job(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_admin),
+):
+    """Get a single OS install job with steps."""
+    from sqlalchemy.orm import selectinload
+
+    job = await db.get(
+        OsInstallJob, uuid.UUID(job_id),
+        options=[selectinload(OsInstallJob.steps)],
+    )
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"status": "success", "data": _fmt_os_job(job)}
+
+
+@router.post("/os-install-jobs/{job_id}/approve")
+async def approve_os_install_job(
+    job_id: str,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    session_factory=Depends(get_session_factory),
+    auth: dict = Depends(require_admin),
+):
+    """Resume a test-first job that is awaiting approval."""
+    job = await db.get(OsInstallJob, uuid.UUID(job_id))
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status != "awaiting_approval":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Job is not awaiting approval (status={job.status})",
+        )
+
+    background_tasks.add_task(resume_os_install_job, session_factory, job.id)
+    return {"status": "success", "data": {"message": "Job resumed"}}
+
+
+@router.post("/os-install-jobs/{job_id}/cancel")
+async def cancel_os_install_job(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_admin),
+):
+    """Cancel a running or pending OS install job."""
+    from sqlalchemy.orm import selectinload
+
+    job = await db.get(
+        OsInstallJob, uuid.UUID(job_id),
+        options=[selectinload(OsInstallJob.steps)],
+    )
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status not in ("pending", "running", "awaiting_approval"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot cancel job in status={job.status}",
+        )
+
+    job.status = "cancelled"
+    job.completed_at = func.now()
+    for step in job.steps:
+        if step.status == "pending":
+            step.status = "skipped"
+    await db.commit()
+
+    return {"status": "success", "data": _fmt_os_job(job)}

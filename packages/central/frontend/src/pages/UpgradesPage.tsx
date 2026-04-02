@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useMemo } from "react";
 import {
   ArrowUpCircle,
   CheckCircle2,
@@ -15,6 +15,8 @@ import {
   ChevronDown,
   ChevronRight,
   HardDrive,
+  SkipForward,
+  ListOrdered,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
@@ -41,9 +43,13 @@ import {
   useUploadOsPackage,
   useOsCachedPackages,
   useInstallOsOnNode,
+  useOsInstallJobs,
+  useStartOsInstallJob,
+  useApproveOsInstallJob,
+  useCancelOsInstallJob,
 } from "@/api/hooks.ts";
 import { timeAgo, formatBytes } from "@/lib/utils.ts";
-import type { UpgradeJob, UpgradeJobStep, OsInstallResult } from "@/types/api.ts";
+import type { UpgradeJob, UpgradeJobStep, OsInstallResult, OsInstallJob, OsInstallJobStep } from "@/types/api.ts";
 
 // ── Status helpers ────────────────────────────────────────────────────────────
 
@@ -54,6 +60,41 @@ const jobStatusConfig: Record<string, { color: string; icon: typeof CheckCircle2
   failed: { color: "bg-red-500/15 text-red-400 border-red-500/30", icon: XCircle },
   cancelled: { color: "bg-zinc-500/15 text-zinc-400 border-zinc-500/30", icon: XCircle },
 };
+
+const installJobStatusConfig: Record<string, { color: string; icon: typeof CheckCircle2 }> = {
+  pending: { color: "bg-zinc-500/15 text-zinc-400 border-zinc-500/30", icon: Clock },
+  running: { color: "bg-amber-500/15 text-amber-400 border-amber-500/30", icon: Loader2 },
+  awaiting_approval: { color: "bg-blue-500/15 text-blue-400 border-blue-500/30", icon: Clock },
+  completed: { color: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30", icon: CheckCircle2 },
+  failed: { color: "bg-red-500/15 text-red-400 border-red-500/30", icon: XCircle },
+  cancelled: { color: "bg-zinc-500/15 text-zinc-400 border-zinc-500/30", icon: XCircle },
+};
+
+function InstallJobStatusBadge({ status }: { status: string }) {
+  const cfg = installJobStatusConfig[status] ?? installJobStatusConfig.pending;
+  const Icon = cfg.icon;
+  return (
+    <Badge className={`${cfg.color} text-xs font-semibold`}>
+      <Icon className={`mr-1 h-3 w-3 ${status === "running" ? "animate-spin" : ""}`} />
+      {status.replace(/_/g, " ")}
+    </Badge>
+  );
+}
+
+function InstallStepStatusIcon({ status }: { status: string }) {
+  switch (status) {
+    case "completed":
+      return <CheckCircle2 className="h-4 w-4 text-emerald-400" />;
+    case "failed":
+      return <XCircle className="h-4 w-4 text-red-400" />;
+    case "running":
+      return <Loader2 className="h-4 w-4 text-amber-400 animate-spin" />;
+    case "skipped":
+      return <SkipForward className="h-4 w-4 text-zinc-500" />;
+    default:
+      return <Clock className="h-4 w-4 text-zinc-500" />;
+  }
+}
 
 function JobStatusBadge({ status }: { status: string }) {
   const cfg = jobStatusConfig[status] ?? jobStatusConfig.pending;
@@ -96,6 +137,10 @@ export function UpgradesPage() {
   const uploadOs = useUploadOsPackage();
   const { data: cachedPackages } = useOsCachedPackages();
   const installOs = useInstallOsOnNode();
+  const { data: osInstallJobs } = useOsInstallJobs();
+  const startInstallJob = useStartOsInstallJob();
+  const approveInstallJob = useApproveOsInstallJob();
+  const cancelInstallJob = useCancelOsInstallJob();
 
   const [selectedPkgId, setSelectedPkgId] = useState<string | null>(null);
   const [scope, setScope] = useState("all");
@@ -106,10 +151,56 @@ export function UpgradesPage() {
   const debInputRef = useRef<HTMLInputElement>(null);
   const [osSelectedPkgs, setOsSelectedPkgs] = useState<Record<string, Set<string>>>({});
   const [installResult, setInstallResult] = useState<{ hostname: string; result: OsInstallResult } | null>(null);
+  const [showInstallDialog, setShowInstallDialog] = useState(false);
+  const [installScope, setInstallScope] = useState("all");
+  const [installTargetNodes, setInstallTargetNodes] = useState<Set<string>>(new Set());
+  const [installStrategy, setInstallStrategy] = useState("rolling");
+  const [installRestart, setInstallRestart] = useState("none");
+  const [expandedInstallJobId, setExpandedInstallJobId] = useState<string | null>(null);
 
   const nodes = status?.nodes ?? [];
   const packages = status?.packages ?? [];
   const selectedPkg = packages.find((p) => p.id === selectedPkgId) ?? null;
+
+  // Compute union of selected OS packages across all nodes for the install dialog
+  const installDialogPkgs = useMemo(() => {
+    const selected = new Set<string>();
+    for (const pkgSet of Object.values(osSelectedPkgs)) {
+      for (const p of pkgSet) selected.add(p);
+    }
+    if (selected.size > 0) return Array.from(selected);
+    // If nothing selected, use all packages from current OS updates
+    if (osUpdatesByNode) {
+      const all = new Set<string>();
+      for (const updates of Object.values(osUpdatesByNode)) {
+        for (const u of updates) all.add(u.package);
+      }
+      return Array.from(all);
+    }
+    return [];
+  }, [osSelectedPkgs, osUpdatesByNode]);
+
+  function handleStartInstallJob() {
+    if (installDialogPkgs.length === 0) return;
+    startInstallJob.mutate(
+      {
+        package_names: installDialogPkgs,
+        scope: installScope === "select" ? "nodes" : installScope,
+        target_nodes: installScope === "select" ? Array.from(installTargetNodes) : undefined,
+        strategy: installStrategy,
+        restart_policy: installRestart,
+      },
+      {
+        onSuccess: () => {
+          setShowInstallDialog(false);
+          setInstallScope("all");
+          setInstallTargetNodes(new Set());
+          setInstallStrategy("rolling");
+          setInstallRestart("none");
+        },
+      },
+    );
+  }
 
   function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -440,6 +531,14 @@ export function UpgradesPage() {
                 )}
                 Check All Nodes
               </Button>
+              <Button
+                size="sm"
+                onClick={() => setShowInstallDialog(true)}
+                disabled={installDialogPkgs.length === 0}
+              >
+                <ListOrdered className="h-3 w-3 mr-1" />
+                Install on Nodes...
+              </Button>
             </div>
           </div>
         </CardHeader>
@@ -622,6 +721,178 @@ export function UpgradesPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* ── OS Install Jobs ─────────────────────────────────────────────── */}
+      {osInstallJobs && osInstallJobs.length > 0 && (
+        <Card className="border-zinc-800 bg-zinc-900">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <ListOrdered className="h-4 w-4 text-zinc-400" />
+              OS Install Jobs
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {[...osInstallJobs].sort((a, b) => {
+                const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
+                const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
+                return tb - ta;
+              }).map((job) => (
+                <OsInstallJobCard
+                  key={job.id}
+                  job={job}
+                  expanded={expandedInstallJobId === job.id}
+                  onToggle={() => setExpandedInstallJobId(expandedInstallJobId === job.id ? null : job.id)}
+                  onApprove={() => approveInstallJob.mutate(job.id)}
+                  onCancel={() => cancelInstallJob.mutate(job.id)}
+                  approving={approveInstallJob.isPending}
+                  cancelling={cancelInstallJob.isPending}
+                />
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Install Job Dialog ──────────────────────────────────────────── */}
+      {showInstallDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="w-full max-w-lg rounded-lg border border-zinc-700 bg-zinc-900 p-6 shadow-xl">
+            <h3 className="text-base font-semibold text-zinc-100 mb-4">Install Packages on Nodes</h3>
+
+            <div className="space-y-4">
+              {/* Scope */}
+              <div className="space-y-1">
+                <label className="text-xs text-zinc-400 font-medium">Scope</label>
+                <Select
+                  value={installScope}
+                  onChange={(e) => {
+                    setInstallScope(e.target.value);
+                    setInstallTargetNodes(new Set());
+                  }}
+                  className="w-full"
+                >
+                  <option value="all">All Nodes</option>
+                  <option value="central">Central Nodes</option>
+                  <option value="collectors">Collector Nodes</option>
+                  <option value="select">Select Nodes...</option>
+                </Select>
+              </div>
+
+              {/* Node selection */}
+              {installScope === "select" && (
+                <div className="space-y-1.5 rounded-md border border-zinc-800 bg-zinc-800/30 p-3">
+                  <label className="text-xs text-zinc-400 font-medium">Target Nodes</label>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {nodes.map((node) => (
+                      <label
+                        key={node.id}
+                        className="flex items-center gap-2 text-xs text-zinc-300 cursor-pointer hover:text-zinc-100"
+                      >
+                        <input
+                          type="checkbox"
+                          className="accent-brand-500"
+                          checked={installTargetNodes.has(node.hostname)}
+                          onChange={() => {
+                            setInstallTargetNodes((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(node.hostname)) next.delete(node.hostname);
+                              else next.add(node.hostname);
+                              return next;
+                            });
+                          }}
+                        />
+                        <span className="font-mono">{node.hostname}</span>
+                        <Badge className={node.role === "central"
+                          ? "bg-brand-500/15 text-brand-400 border-brand-500/30 text-[10px]"
+                          : "bg-zinc-500/15 text-zinc-400 border-zinc-500/30 text-[10px]"
+                        }>
+                          {node.role}
+                        </Badge>
+                      </label>
+                    ))}
+                  </div>
+                  {installTargetNodes.size === 0 && (
+                    <p className="text-[10px] text-zinc-600 mt-1">Select at least one node</p>
+                  )}
+                </div>
+              )}
+
+              {/* Strategy */}
+              <div className="space-y-1">
+                <label className="text-xs text-zinc-400 font-medium">Strategy</label>
+                <Select value={installStrategy} onChange={(e) => setInstallStrategy(e.target.value)} className="w-full">
+                  <option value="rolling">Rolling</option>
+                  <option value="test_first">Test First</option>
+                </Select>
+              </div>
+
+              {/* Restart Policy */}
+              <div className="space-y-1">
+                <label className="text-xs text-zinc-400 font-medium">Restart</label>
+                <Select value={installRestart} onChange={(e) => setInstallRestart(e.target.value)} className="w-full">
+                  <option value="none">No Restart</option>
+                  <option value="rolling">Rolling Restart</option>
+                </Select>
+              </div>
+
+              {/* Packages summary */}
+              <div className="space-y-1">
+                <label className="text-xs text-zinc-400 font-medium">Packages ({installDialogPkgs.length})</label>
+                <div className="rounded-md border border-zinc-800 bg-zinc-800/30 p-2 max-h-28 overflow-y-auto">
+                  <p className="text-xs text-zinc-300 font-mono whitespace-pre-wrap">
+                    {installDialogPkgs.join(", ")}
+                  </p>
+                </div>
+              </div>
+
+              {/* Confirmation summary */}
+              <div className="rounded-md border border-zinc-700 bg-zinc-800/50 p-3 text-xs text-zinc-400">
+                <span className="font-medium text-zinc-300">Summary: </span>
+                Install {installDialogPkgs.length} package(s) on{" "}
+                <span className="text-zinc-200">
+                  {installScope === "select"
+                    ? `${installTargetNodes.size} selected node(s)`
+                    : installScope === "all"
+                      ? "all nodes"
+                      : `${installScope} nodes`}
+                </span>
+                {" "}using <span className="text-zinc-200">{installStrategy.replace(/_/g, " ")}</span> strategy
+                {installRestart !== "none" && <> with <span className="text-zinc-200">{installRestart} restart</span></>}
+              </div>
+
+              {startInstallJob.isError && (
+                <div className="rounded-md bg-red-500/10 border border-red-500/30 p-2 text-xs text-red-400">
+                  <AlertTriangle className="inline h-3 w-3 mr-1" />
+                  {(startInstallJob.error as Error)?.message ?? "Failed to start install job"}
+                </div>
+              )}
+            </div>
+
+            <div className="mt-5 flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setShowInstallDialog(false)}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleStartInstallJob}
+                disabled={
+                  startInstallJob.isPending ||
+                  installDialogPkgs.length === 0 ||
+                  (installScope === "select" && installTargetNodes.size === 0)
+                }
+              >
+                {startInstallJob.isPending ? (
+                  <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                ) : (
+                  <Play className="h-3.5 w-3.5 mr-1" />
+                )}
+                Start Install Job
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Install Result Dialog ────────────────────────────────────────── */}
       {installResult && (
@@ -817,6 +1088,221 @@ function StepRow({ step }: { step: UpgradeJobStep }) {
       {showLog && hasDetails && (
         <TableRow>
           <TableCell colSpan={8} className="p-0">
+            <div className="mx-4 my-2 rounded-md bg-zinc-950 border border-zinc-800 p-3">
+              {step.error_message && (
+                <p className="text-xs text-red-400 mb-2">
+                  <AlertTriangle className="inline h-3 w-3 mr-1" />
+                  {step.error_message}
+                </p>
+              )}
+              {step.output_log && (
+                <pre className="text-[11px] text-zinc-400 whitespace-pre-wrap font-mono max-h-48 overflow-y-auto">
+                  {step.output_log}
+                </pre>
+              )}
+            </div>
+          </TableCell>
+        </TableRow>
+      )}
+    </>
+  );
+}
+
+// ── OS Install Job Card ──────────────────────────────────────────────────────
+
+function OsInstallJobCard({
+  job,
+  expanded,
+  onToggle,
+  onApprove,
+  onCancel,
+  approving,
+  cancelling,
+}: {
+  job: OsInstallJob;
+  expanded: boolean;
+  onToggle: () => void;
+  onApprove: () => void;
+  onCancel: () => void;
+  approving: boolean;
+  cancelling: boolean;
+}) {
+  const isActive = job.status === "pending" || job.status === "running" || job.status === "awaiting_approval";
+  const completedSteps = job.steps.filter((s) => s.status === "completed").length;
+  const totalSteps = job.steps.length;
+
+  return (
+    <div className="rounded-lg border border-zinc-800 bg-zinc-800/30">
+      {/* Header row */}
+      <div
+        className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-zinc-800/50 transition-colors"
+        onClick={onToggle}
+      >
+        <div className="flex items-center gap-3">
+          {expanded ? (
+            <ChevronDown className="h-4 w-4 text-zinc-500" />
+          ) : (
+            <ChevronRight className="h-4 w-4 text-zinc-500" />
+          )}
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-sm font-semibold text-zinc-100">
+                {job.package_names.length} pkg{job.package_names.length !== 1 ? "s" : ""}
+              </span>
+              <InstallJobStatusBadge status={job.status} />
+              <Badge className="bg-zinc-500/15 text-zinc-400 border-zinc-500/30 text-[10px]">
+                {job.scope}
+              </Badge>
+              <Badge className="bg-zinc-500/15 text-zinc-400 border-zinc-500/30 text-[10px]">
+                {job.strategy.replace(/_/g, " ")}
+              </Badge>
+              <Badge className="bg-zinc-500/15 text-zinc-400 border-zinc-500/30 text-[10px]">
+                {job.restart_policy === "none" ? "no restart" : job.restart_policy.replace(/_/g, " ") + " restart"}
+              </Badge>
+            </div>
+            <div className="flex items-center gap-3 mt-0.5 text-xs text-zinc-500">
+              {job.started_by && <span>by {job.started_by}</span>}
+              {job.started_at ? <span>started {timeAgo(job.started_at)}</span> : job.created_at && <span>created {timeAgo(job.created_at)}</span>}
+              {totalSteps > 0 && (
+                <span>
+                  {completedSteps}/{totalSteps} steps
+                </span>
+              )}
+              {job.completed_at && <span>completed {timeAgo(job.completed_at)}</span>}
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {job.status === "awaiting_approval" && (
+            <Button
+              size="sm"
+              className="text-xs"
+              onClick={(e) => { e.stopPropagation(); onApprove(); }}
+              disabled={approving}
+            >
+              {approving ? (
+                <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+              ) : (
+                <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
+              )}
+              Approve & Continue
+            </Button>
+          )}
+          {isActive && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs"
+              onClick={(e) => { e.stopPropagation(); onCancel(); }}
+              disabled={cancelling}
+            >
+              <XCircle className="h-3.5 w-3.5 mr-1" />
+              Cancel
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* Error message */}
+      {job.error_message && (
+        <div className="mx-4 mb-3 rounded-md bg-red-500/10 border border-red-500/30 p-2 text-xs text-red-400">
+          {job.error_message}
+        </div>
+      )}
+
+      {/* Steps */}
+      {expanded && (
+        <div className="border-t border-zinc-800 px-4 py-3">
+          {/* Package list */}
+          <div className="mb-3">
+            <p className="text-xs text-zinc-500 mb-1">Packages:</p>
+            <p className="text-xs text-zinc-300 font-mono">{job.package_names.join(", ")}</p>
+          </div>
+
+          {job.steps.length > 0 ? (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-10">#</TableHead>
+                  <TableHead>Node</TableHead>
+                  <TableHead>Role</TableHead>
+                  <TableHead>Action</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Test</TableHead>
+                  <TableHead>Started</TableHead>
+                  <TableHead>Completed</TableHead>
+                  <TableHead>Details</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {[...job.steps]
+                  .sort((a, b) => a.step_order - b.step_order)
+                  .map((step) => (
+                    <OsInstallStepRow key={step.id} step={step} />
+                  ))}
+              </TableBody>
+            </Table>
+          ) : (
+            <p className="text-xs text-zinc-600 py-2">No steps yet.</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── OS Install Step Row ──────────────────────────────────────────────────────
+
+function OsInstallStepRow({ step }: { step: OsInstallJobStep }) {
+  const [showLog, setShowLog] = useState(false);
+  const hasDetails = !!(step.output_log || step.error_message);
+
+  return (
+    <>
+      <TableRow>
+        <TableCell className="text-xs text-zinc-500">{step.step_order}</TableCell>
+        <TableCell className="font-mono text-xs">{step.node_hostname}</TableCell>
+        <TableCell>
+          <Badge className="bg-zinc-500/15 text-zinc-400 border-zinc-500/30 text-[10px]">
+            {step.node_role}
+          </Badge>
+        </TableCell>
+        <TableCell className="text-xs">{step.action.replace(/_/g, " ")}</TableCell>
+        <TableCell>
+          <div className="flex items-center gap-1.5">
+            <InstallStepStatusIcon status={step.status} />
+            <span className="text-xs">{step.status.replace(/_/g, " ")}</span>
+          </div>
+        </TableCell>
+        <TableCell>
+          {step.is_test_node && (
+            <Badge className="bg-blue-500/15 text-blue-400 border-blue-500/30 text-[10px]">
+              test
+            </Badge>
+          )}
+        </TableCell>
+        <TableCell className="text-xs text-zinc-400">
+          {step.started_at ? timeAgo(step.started_at) : "\u2014"}
+        </TableCell>
+        <TableCell className="text-xs text-zinc-400">
+          {step.completed_at ? timeAgo(step.completed_at) : "\u2014"}
+        </TableCell>
+        <TableCell>
+          {hasDetails && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 text-xs text-zinc-400"
+              onClick={() => setShowLog(!showLog)}
+            >
+              {showLog ? "Hide" : "Show"}
+            </Button>
+          )}
+        </TableCell>
+      </TableRow>
+      {showLog && hasDetails && (
+        <TableRow>
+          <TableCell colSpan={9} className="p-0">
             <div className="mx-4 my-2 rounded-md bg-zinc-950 border border-zinc-800 p-3">
               {step.error_message && (
                 <p className="text-xs text-red-400 mb-2">

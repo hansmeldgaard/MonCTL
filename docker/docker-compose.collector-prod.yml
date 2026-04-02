@@ -81,7 +81,7 @@ services:
     container_name: monctl-docker-stats
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /:/host_root:ro
+      - /:/host_root:rw
     environment:
       MONCTL_HOST_LABEL: ${NODE_ID:-unknown}
       MONCTL_PUSH_URL: ${DOCKER_STATS_PUSH_URL}
