@@ -140,6 +140,11 @@ class UpdateIdleTimeoutRequest(BaseModel):
     )
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(min_length=1)
+    new_password: str = Field(min_length=6, max_length=128)
+
+
 class AssignTenantRequest(BaseModel):
     tenant_id: str
 
@@ -260,6 +265,62 @@ async def update_my_interface_preferences(
             "iface_time_range": user.iface_time_range,
         },
     }
+
+
+VALID_DEFAULT_PAGES = {
+    "/", "/system-health", "/devices", "/device-types", "/assignments",
+    "/apps", "/connectors", "/python-modules", "/templates", "/credentials",
+    "/labels", "/packs", "/alerts", "/events", "/automations",
+    "/analytics/explorer", "/analytics/dashboards", "/upgrades", "/settings",
+}
+
+
+class UpdateDefaultPageRequest(BaseModel):
+    default_page: str = Field(min_length=1, max_length=255)
+
+
+@router.put("/me/default-page")
+async def update_my_default_page(
+    request: UpdateDefaultPageRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Update the current user's default landing page."""
+    if request.default_page not in VALID_DEFAULT_PAGES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid default_page. Must be one of: {sorted(VALID_DEFAULT_PAGES)}",
+        )
+    user = await db.get(User, uuid.UUID(auth["user_id"]))
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    user.default_page = request.default_page
+    user.updated_at = utc_now()
+    return {"status": "success", "data": {"default_page": user.default_page}}
+
+
+@router.put("/me/password")
+async def change_my_password(
+    request: ChangePasswordRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Change the current user's password (self-service)."""
+    from monctl_central.auth.service import hash_password, verify_password
+
+    user = await db.get(User, uuid.UUID(auth["user_id"]))
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if not verify_password(request.current_password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect",
+        )
+
+    user.password_hash = hash_password(request.new_password)
+    user.updated_at = utc_now()
+    return {"status": "success", "data": {"message": "Password changed successfully"}}
 
 
 @router.get("")

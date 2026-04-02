@@ -38,6 +38,7 @@ import {
   usePythonModuleDetail,
   useAutoResolve,
 } from "@/api/hooks.ts";
+import { usePermissions } from "@/hooks/usePermissions.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 import { useListState } from "@/hooks/useListState.ts";
 import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
@@ -78,6 +79,7 @@ function NetworkBadge({ mode }: { mode: "offline" | "proxy" | "direct" }) {
 }
 
 function ModuleVersionsRow({ moduleId }: { moduleId: string }) {
+  const { isAdmin } = usePermissions();
   const { data: detail, isLoading } = usePythonModuleDetail(moduleId);
   const toggleVerify = useToggleModuleVerify();
   const deleteVersion = useDeleteModuleVersion();
@@ -152,32 +154,34 @@ function ModuleVersionsRow({ moduleId }: { moduleId: string }) {
               )}
             </div>
           </TableCell>
-          <TableCell>
-            <div className="flex items-center gap-1">
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() =>
-                  toggleVerify.mutate({
-                    moduleId,
-                    versionId: v.id,
-                    is_verified: !v.is_verified,
-                  })
-                }
-                disabled={toggleVerify.isPending}
-                title={v.is_verified ? "Unverify" : "Verify"}
-              >
-                <Verified className="h-3.5 w-3.5" />
-              </Button>
-              <button
-                onClick={() => setDeleteTarget({ id: v.id, version: v.version })}
-                className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                title="Delete version"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          </TableCell>
+          {isAdmin && (
+            <TableCell>
+              <div className="flex items-center gap-1">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() =>
+                    toggleVerify.mutate({
+                      moduleId,
+                      versionId: v.id,
+                      is_verified: !v.is_verified,
+                    })
+                  }
+                  disabled={toggleVerify.isPending}
+                  title={v.is_verified ? "Unverify" : "Verify"}
+                >
+                  <Verified className="h-3.5 w-3.5" />
+                </Button>
+                <button
+                  onClick={() => setDeleteTarget({ id: v.id, version: v.version })}
+                  className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                  title="Delete version"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </TableCell>
+          )}
         </TableRow>
         {v.dependencies.length > 0 && (
           <TableRow key={`${v.id}-deps`} className="bg-zinc-800/10">
@@ -240,6 +244,7 @@ function ModuleVersionsRow({ moduleId }: { moduleId: string }) {
 }
 
 export function PythonModulesPage() {
+  const { isAdmin } = usePermissions();
   const tz = useTimezone();
   const { pageSize, scrollMode } = useTablePreferences();
   const listState = useListState({
@@ -297,51 +302,53 @@ export function PythonModulesPage() {
           </div>
           {network && <NetworkBadge mode={network.mode} />}
         </div>
-        <div className="flex items-center gap-2">
-          {network?.mode !== "offline" && (
-            <>
-              {modules && modules.some((m) => m.dep_missing > 0) && (
+        {isAdmin && (
+          <div className="flex items-center gap-2">
+            {network?.mode !== "offline" && (
+              <>
+                {modules && modules.some((m) => m.dep_missing > 0) && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={async () => {
+                      setResolveResult(null);
+                      try {
+                        const res = await autoResolve.mutateAsync({});
+                        setResolveResult({
+                          imported: res.data.imported.length,
+                          failed: res.data.failed.length,
+                          still_missing: res.data.still_missing.length,
+                        });
+                      } catch { /* handled by mutation */ }
+                    }}
+                    disabled={autoResolve.isPending}
+                    className="gap-1.5"
+                  >
+                    {autoResolve.isPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="h-4 w-4" />
+                    )}
+                    Auto-resolve All
+                  </Button>
+                )}
                 <Button
                   size="sm"
                   variant="secondary"
-                  onClick={async () => {
-                    setResolveResult(null);
-                    try {
-                      const res = await autoResolve.mutateAsync({});
-                      setResolveResult({
-                        imported: res.data.imported.length,
-                        failed: res.data.failed.length,
-                        still_missing: res.data.still_missing.length,
-                      });
-                    } catch { /* handled by mutation */ }
-                  }}
-                  disabled={autoResolve.isPending}
+                  onClick={() => setImportOpen(true)}
                   className="gap-1.5"
                 >
-                  {autoResolve.isPending ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <CheckCircle2 className="h-4 w-4" />
-                  )}
-                  Auto-resolve All
+                  <Download className="h-4 w-4" />
+                  Import from PyPI
                 </Button>
-              )}
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => setImportOpen(true)}
-                className="gap-1.5"
-              >
-                <Download className="h-4 w-4" />
-                Import from PyPI
-              </Button>
-            </>
-          )}
-          <Button size="sm" onClick={() => setUploadOpen(true)} className="gap-1.5">
-            <Upload className="h-4 w-4" />
-            Upload .whl
-          </Button>
-        </div>
+              </>
+            )}
+            <Button size="sm" onClick={() => setUploadOpen(true)} className="gap-1.5">
+              <Upload className="h-4 w-4" />
+              Upload .whl
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* Auto-resolve result banner */}
@@ -483,33 +490,35 @@ export function PythonModulesPage() {
                         {formatDate(m.created_at, tz)}
                       </TableCell>
                       <TableCell>
-                        <div className="flex items-center gap-1">
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() =>
-                              toggleApproval.mutate({
-                                id: m.id,
-                                is_approved: !m.is_approved,
-                              })
-                            }
-                            disabled={toggleApproval.isPending}
-                            title={m.is_approved ? "Revoke approval" : "Approve"}
-                          >
-                            {m.is_approved ? (
-                              <ShieldOff className="h-3.5 w-3.5" />
-                            ) : (
-                              <ShieldCheck className="h-3.5 w-3.5" />
-                            )}
-                          </Button>
-                          <button
-                            onClick={() => setDeleteTarget(m)}
-                            className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                            title="Delete"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </div>
+                        {isAdmin && (
+                          <div className="flex items-center gap-1">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() =>
+                                toggleApproval.mutate({
+                                  id: m.id,
+                                  is_approved: !m.is_approved,
+                                })
+                              }
+                              disabled={toggleApproval.isPending}
+                              title={m.is_approved ? "Revoke approval" : "Approve"}
+                            >
+                              {m.is_approved ? (
+                                <ShieldOff className="h-3.5 w-3.5" />
+                              ) : (
+                                <ShieldCheck className="h-3.5 w-3.5" />
+                              )}
+                            </Button>
+                            <button
+                              onClick={() => setDeleteTarget(m)}
+                              className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                              title="Delete"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        )}
                       </TableCell>
                     </TableRow>
                     {expandedId === m.id && (

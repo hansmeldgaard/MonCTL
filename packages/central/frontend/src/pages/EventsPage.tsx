@@ -37,6 +37,7 @@ import {
   useEventPolicies,
 } from "@/api/hooks.ts";
 import { timeAgo, formatDate } from "@/lib/utils.ts";
+import { usePermissions } from "@/hooks/usePermissions.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 import { useListState } from "@/hooks/useListState.ts";
 import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
@@ -413,6 +414,7 @@ function ClearedEventsTab({
 }
 
 function PoliciesTab() {
+  const { canManage } = usePermissions();
   const [showCreate, setShowCreate] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<EventPolicy | null>(null);
   const deleteMut = useDeleteEventPolicy();
@@ -457,10 +459,12 @@ function PoliciesTab() {
               <Settings2 className="h-4 w-4" />
               Event Policies ({meta.total})
             </CardTitle>
-            <Button size="sm" onClick={() => setShowCreate(true)}>
-              <Plus className="h-3.5 w-3.5" />
-              Create Policy
-            </Button>
+            {canManage("event") && (
+              <Button size="sm" onClick={() => setShowCreate(true)}>
+                <Plus className="h-3.5 w-3.5" />
+                Create Policy
+              </Button>
+            )}
           </div>
         </CardHeader>
         <CardContent>
@@ -521,13 +525,15 @@ function PoliciesTab() {
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <button
-                        className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                        onClick={() => setDeleteTarget(p)}
-                        title="Delete"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                      {canManage("event") && (
+                        <button
+                          className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                          onClick={() => setDeleteTarget(p)}
+                          title="Delete"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))

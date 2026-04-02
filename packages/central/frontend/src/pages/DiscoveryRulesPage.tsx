@@ -41,6 +41,7 @@ import {
 import { useListState } from "@/hooks/useListState.ts";
 import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
 import { DeviceCategoriesPage } from "@/pages/DeviceTypesPage.tsx";
+import { usePermissions } from "@/hooks/usePermissions.ts";
 import { cn } from "@/lib/utils.ts";
 import type { DeviceType, TemplateBinding } from "@/types/api.ts";
 import { ArrowDown, ArrowUp, ChevronDown, FileText, X } from "lucide-react";
@@ -84,6 +85,7 @@ export function DeviceTypesPage() {
 }
 
 function DeviceTypesTab() {
+  const { canCreate, canEdit, canDelete } = usePermissions();
   const { pageSize, scrollMode } = useTablePreferences();
   const listState = useListState({
     columns: [
@@ -120,10 +122,12 @@ function DeviceTypesTab() {
         <p className="text-sm text-zinc-500">
           Map SNMP sysObjectID patterns to device categories for automatic device classification.
         </p>
-        <Button size="sm" onClick={() => setShowCreate(true)} className="gap-1.5">
-          <Plus className="h-4 w-4" />
-          Add Device Type
-        </Button>
+        {canCreate("device") && (
+          <Button size="sm" onClick={() => setShowCreate(true)} className="gap-1.5">
+            <Plus className="h-4 w-4" />
+            Add Device Type
+          </Button>
+        )}
       </div>
 
       <Card>
@@ -213,18 +217,22 @@ function DeviceTypesTab() {
                             <span className="text-xs text-zinc-600 italic">pack-managed</span>
                           ) : (
                             <>
-                              <button
-                                onClick={() => setEditTarget(rule)}
-                                className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer"
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                              </button>
-                              <button
-                                onClick={() => setDeleteTarget(rule)}
-                                className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
+                              {canEdit("device") && (
+                                <button
+                                  onClick={() => setEditTarget(rule)}
+                                  className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                              )}
+                              {canDelete("device") && (
+                                <button
+                                  onClick={() => setDeleteTarget(rule)}
+                                  className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              )}
                             </>
                           )}
                         </div>

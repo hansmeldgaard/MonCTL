@@ -17,6 +17,7 @@ import {
 } from "@/api/hooks.ts";
 import type { Pack, PackImportPreviewEntity } from "@/types/api.ts";
 import { CreatePackDialog } from "@/components/CreatePackDialog.tsx";
+import { usePermissions } from "@/hooks/usePermissions.ts";
 import { formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 import { useListState } from "@/hooks/useListState.ts";
@@ -39,6 +40,7 @@ const SECTION_LABELS: Record<string, string> = {
 };
 
 export function PacksPage() {
+  const { canCreate, canDelete } = usePermissions();
   const tz = useTimezone();
   const navigate = useNavigate();
   const { pageSize, scrollMode } = useTablePreferences();
@@ -162,12 +164,16 @@ export function PacksPage() {
         </div>
         <div className="flex items-center gap-2">
           <input ref={fileInputRef} type="file" accept=".json" className="hidden" onChange={handleFileUpload} />
-          <Button size="sm" variant="secondary" onClick={() => setCreateOpen(true)} className="gap-1.5">
-            <Plus className="h-4 w-4" /> Create Pack
-          </Button>
-          <Button size="sm" variant="secondary" onClick={() => fileInputRef.current?.click()} className="gap-1.5">
-            <Upload className="h-4 w-4" /> Import
-          </Button>
+          {canCreate("app") && (
+            <Button size="sm" variant="secondary" onClick={() => setCreateOpen(true)} className="gap-1.5">
+              <Plus className="h-4 w-4" /> Create Pack
+            </Button>
+          )}
+          {canCreate("app") && (
+            <Button size="sm" variant="secondary" onClick={() => fileInputRef.current?.click()} className="gap-1.5">
+              <Upload className="h-4 w-4" /> Import
+            </Button>
+          )}
         </div>
       </div>
 
@@ -227,9 +233,11 @@ export function PacksPage() {
                         <button onClick={() => handleExport(p)} className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer" title="Export">
                           <Download className="h-4 w-4" />
                         </button>
-                        <button onClick={() => setDeleteTarget(p)} className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer" title="Delete">
-                          <Trash2 className="h-4 w-4" />
-                        </button>
+                        {canDelete("app") && (
+                          <button onClick={() => setDeleteTarget(p)} className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer" title="Delete">
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>

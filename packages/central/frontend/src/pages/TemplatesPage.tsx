@@ -28,7 +28,7 @@ import { TemplateConfigEditor } from "@/components/TemplateConfigEditor.tsx";
 import { usePermissions } from "@/hooks/usePermissions.ts";
 
 export function TemplatesPage() {
-  const { canCreate, canDelete } = usePermissions();
+  const { canCreate, canEdit, canDelete } = usePermissions();
   const tz = useTimezone();
   const { pageSize, scrollMode } = useTablePreferences();
   const listState = useListState({
@@ -169,9 +169,11 @@ export function TemplatesPage() {
                     <TableCell className="text-zinc-500">{formatDate(t.created_at, tz)}</TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1">
+                        {canEdit("template") && (
                         <button onClick={() => openEdit(t)} className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer" title="Edit">
                           <Pencil className="h-4 w-4" />
                         </button>
+                        )}
                         {canDelete("template") && (
                           <button onClick={() => setDeleteTarget(t)} className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer" title="Delete">
                             <Trash2 className="h-4 w-4" />

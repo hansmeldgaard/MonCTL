@@ -1396,10 +1396,24 @@ export function useUpdateMyTimezone() {
   });
 }
 
+export function useUpdateMyDefaultPage() {
+  return useMutation({
+    mutationFn: (default_page: string) =>
+      apiPut<{ default_page: string }>("/users/me/default-page", { default_page }),
+  });
+}
+
 export function useUpdateMyIdleTimeout() {
   return useMutation({
     mutationFn: (data: { idle_timeout_minutes: number | null }) =>
       apiPut<{ idle_timeout_minutes: number | null }>("/users/me/idle-timeout", data),
+  });
+}
+
+export function useChangeMyPassword() {
+  return useMutation({
+    mutationFn: (data: { current_password: string; new_password: string }) =>
+      apiPut<{ message: string }>("/users/me/password", data),
   });
 }
 

@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/table.tsx";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import { useConnectors, useCreateConnector, useDeleteConnector } from "@/api/hooks.ts";
+import { usePermissions } from "@/hooks/usePermissions.ts";
 import { useListState } from "@/hooks/useListState.ts";
 import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
 import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
@@ -23,6 +24,7 @@ import { PaginationBar } from "@/components/PaginationBar.tsx";
 import type { ConnectorSummary } from "@/types/api.ts";
 
 export function ConnectorsPage() {
+  const { canCreate, canDelete } = usePermissions();
   const { pageSize, scrollMode } = useTablePreferences();
   const listState = useListState({
     columns: [
@@ -95,10 +97,12 @@ export function ConnectorsPage() {
             Manage connectors and their versions.
           </p>
         </div>
-        <Button size="sm" onClick={() => { setAddName(""); setAddDesc(""); setAddType(""); setAddError(null); setAddOpen(true); }} className="gap-1.5">
-          <Plus className="h-4 w-4" />
-          New Connector
-        </Button>
+        {canCreate("connector") && (
+          <Button size="sm" onClick={() => { setAddName(""); setAddDesc(""); setAddType(""); setAddError(null); setAddOpen(true); }} className="gap-1.5">
+            <Plus className="h-4 w-4" />
+            New Connector
+          </Button>
+        )}
       </div>
 
       <Card>
@@ -170,15 +174,17 @@ export function ConnectorsPage() {
                             <Badge variant="success">built-in</Badge>
                           )}
                         </TableCell>
-                        <TableCell>
-                          <button
-                            onClick={() => setDeleteTarget(c)}
-                            className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                            title="Delete"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </TableCell>
+                        {canDelete("connector") && (
+                          <TableCell>
+                            <button
+                              onClick={() => setDeleteTarget(c)}
+                              className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                              title="Delete"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </TableCell>
+                        )}
                       </TableRow>
                     ))
                   )}

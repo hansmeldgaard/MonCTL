@@ -47,6 +47,7 @@ import {
 import type { Collector, CollectorGroup, RegistrationToken } from "@/types/api.ts";
 import { timeAgo, formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
+import { usePermissions } from "@/hooks/usePermissions.ts";
 
 // ── Status indicator helper ───────────────────────────────────────────────────
 
@@ -65,6 +66,7 @@ function StatusDot({ status }: { status: string }) {
 // ── Pending Collectors Section ────────────────────────────────────────────────
 
 function PendingCollectorsCard() {
+  const { isAdmin } = usePermissions();
   const { data: collectors } = useCollectors();
   const { data: groups } = useCollectorGroups();
   const approveCollector = useApproveCollector();
@@ -130,7 +132,7 @@ function PendingCollectorsCard() {
                 <TableHead>IP Address</TableHead>
                 <TableHead>Fingerprint</TableHead>
                 <TableHead>Registered</TableHead>
-                <TableHead className="w-32"></TableHead>
+                {isAdmin && <TableHead className="w-32"></TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -154,6 +156,7 @@ function PendingCollectorsCard() {
                   <TableCell className="text-zinc-500 text-sm">
                     {c.registered_at ? timeAgo(c.registered_at) : timeAgo(c.last_seen_at)}
                   </TableCell>
+                  {isAdmin && (
                   <TableCell>
                     <div className="flex items-center gap-1">
                       <Button
@@ -183,6 +186,7 @@ function PendingCollectorsCard() {
                       </Button>
                     </div>
                   </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>
@@ -287,6 +291,7 @@ function GroupHealthBadge({ health }: { health: { status: string; message: strin
 // ── Collector Groups Section ──────────────────────────────────────────────────
 
 function CollectorGroupsCard() {
+  const { isAdmin } = usePermissions();
   const { data: groups, isLoading } = useCollectorGroups();
   const { data: collectors } = useCollectors();
   const createGroup = useCreateCollectorGroup();
@@ -382,7 +387,7 @@ function CollectorGroupsCard() {
                   <TableHead>Description</TableHead>
                   <TableHead>Health</TableHead>
                   <TableHead className="text-right">Collectors</TableHead>
-                  <TableHead className="w-20"></TableHead>
+                  {isAdmin && <TableHead className="w-20"></TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -398,6 +403,7 @@ function CollectorGroupsCard() {
                         <GroupHealthBadge health={g.health} />
                       </TableCell>
                       <TableCell className="text-right text-zinc-400 text-sm">{cnt}</TableCell>
+                      {isAdmin && (
                       <TableCell>
                         <div className="flex items-center gap-1">
                           <button
@@ -416,6 +422,7 @@ function CollectorGroupsCard() {
                           </button>
                         </div>
                       </TableCell>
+                      )}
                     </TableRow>
                   );
                 })}
@@ -423,6 +430,7 @@ function CollectorGroupsCard() {
             </Table>
           )}
 
+          {isAdmin && (
           <div className="mt-4 flex justify-end border-t border-zinc-800 pt-4">
             <Button
               size="sm"
@@ -434,6 +442,7 @@ function CollectorGroupsCard() {
               New Group
             </Button>
           </div>
+          )}
         </CardContent>
       </Card>
 
@@ -595,6 +604,7 @@ function EditCollectorDialog({
 }
 
 function CollectorsCard() {
+  const { isAdmin } = usePermissions();
   const { data: collectors, isLoading } = useCollectors();
   const { data: groups } = useCollectorGroups();
   const deleteCollector = useDeleteCollector();
@@ -653,7 +663,7 @@ function CollectorsCard() {
                   <TableHead>Group</TableHead>
                   <TableHead>Labels</TableHead>
                   <TableHead>Last Seen</TableHead>
-                  <TableHead className="w-20"></TableHead>
+                  {isAdmin && <TableHead className="w-20"></TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -700,6 +710,7 @@ function CollectorsCard() {
                     <TableCell className="text-zinc-500 text-sm">
                       {timeAgo(c.last_seen_at)}
                     </TableCell>
+                    {isAdmin && (
                     <TableCell>
                       <div className="flex items-center gap-1">
                         <button
@@ -718,6 +729,7 @@ function CollectorsCard() {
                         </button>
                       </div>
                     </TableCell>
+                    )}
                   </TableRow>
                 ))}
               </TableBody>
@@ -803,6 +815,8 @@ function SetupInstructionsDialog({ onClose }: { onClose: () => void }) {
   const [ctx, setCtx] = useState<{ collector_api_key: string; central_url: string } | null>(null);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
+  const [codeCopied, setCodeCopied] = useState(false);
+  const [scriptCopied, setScriptCopied] = useState(false);
 
   const createToken = useCreateRegistrationToken();
   const { refetch: fetchContext } = useCollectorSetupContext();
@@ -860,8 +874,8 @@ function SetupInstructionsDialog({ onClose }: { onClose: () => void }) {
 
   // Phase 2: full setup guide
   const name = collectorName.trim();
-  const centralUrl = ctx!.central_url;
-  const apiKey = ctx!.collector_api_key;
+  const centralUrl = ctx?.central_url ?? "";
+  const apiKey = ctx?.collector_api_key ?? "";
   const pushUrl = `${centralUrl}/api/v1/docker-stats/push`;
 
   const step1 = `# Create monctl user and install Docker (run as root)
@@ -1019,9 +1033,6 @@ ${step6}
 
 echo "Done! Approve the collector in MonCTL UI."`;
 
-  const [codeCopied, setCodeCopied] = useState(false);
-  const [scriptCopied, setScriptCopied] = useState(false);
-
   function handleCopyCode() {
     navigator.clipboard.writeText(regCode);
     setCodeCopied(true);
@@ -1112,6 +1123,7 @@ echo "Done! Approve the collector in MonCTL UI."`;
 }
 
 function RegistrationTokensCard() {
+  const { isAdmin } = usePermissions();
   const tz = useTimezone();
   const { data: tokens, isLoading } = useRegistrationTokens();
   const createToken = useCreateRegistrationToken();
@@ -1187,7 +1199,7 @@ function RegistrationTokensCard() {
                   <TableHead>Used</TableHead>
                   <TableHead>Expires</TableHead>
                   <TableHead>Created</TableHead>
-                  <TableHead className="w-12"></TableHead>
+                  {isAdmin && <TableHead className="w-12"></TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -1225,6 +1237,7 @@ function RegistrationTokensCard() {
                     <TableCell className="text-zinc-500 text-sm">
                       {formatDate(t.created_at, tz)}
                     </TableCell>
+                    {isAdmin && (
                     <TableCell>
                       <button
                         onClick={() => setDeleteTarget(t)}
@@ -1234,6 +1247,7 @@ function RegistrationTokensCard() {
                         <Trash2 className="h-4 w-4" />
                       </button>
                     </TableCell>
+                    )}
                   </TableRow>
                   );
                 })}
@@ -1241,6 +1255,7 @@ function RegistrationTokensCard() {
             </Table>
           )}
 
+          {isAdmin && (
           <div className="mt-4 flex justify-end border-t border-zinc-800 pt-4">
             <Button
               size="sm"
@@ -1252,6 +1267,7 @@ function RegistrationTokensCard() {
               New Token
             </Button>
           </div>
+          )}
         </CardContent>
       </Card>
 
@@ -1320,6 +1336,7 @@ function RegistrationTokensCard() {
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export function CollectorsPage() {
+  const { isAdmin } = usePermissions();
   const [showSetupGuide, setShowSetupGuide] = useState(false);
 
   return (
@@ -1331,10 +1348,12 @@ export function CollectorsPage() {
             Manage collector groups, registered collectors, and registration tokens.
           </p>
         </div>
+        {isAdmin && (
         <Button onClick={() => setShowSetupGuide(true)} className="gap-1.5">
           <Plus className="h-4 w-4" />
           Add Collector
         </Button>
+        )}
       </div>
       <PendingCollectorsCard />
       <CollectorGroupsCard />

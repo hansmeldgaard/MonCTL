@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
 import { validateLabelKey, validateHexColor } from "@/lib/validation.ts";
 import { Loader2, Plus, Pencil, Trash2, Tag, X } from "lucide-react";
+import { usePermissions } from "@/hooks/usePermissions.ts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
@@ -113,6 +114,7 @@ function TagInput({ values, onChange }: { values: string[]; onChange: (v: string
 }
 
 export function LabelKeysPage() {
+  const { canCreate, canEdit, canDelete } = usePermissions();
   const { data: labelKeys, isLoading } = useLabelKeys();
   const createLabelKey = useCreateLabelKey();
   const updateLabelKey = useUpdateLabelKey();
@@ -206,10 +208,12 @@ export function LabelKeysPage() {
           <CardTitle className="flex items-center gap-2">
             <Tag className="h-4 w-4" />
             Label Keys
-            <Button size="sm" className="ml-auto gap-1.5" onClick={openCreate}>
-              <Plus className="h-3.5 w-3.5" />
-              Add Label Key
-            </Button>
+            {canCreate("device") && (
+              <Button size="sm" className="ml-auto gap-1.5" onClick={openCreate}>
+                <Plus className="h-3.5 w-3.5" />
+                Add Label Key
+              </Button>
+            )}
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -265,12 +269,16 @@ export function LabelKeysPage() {
                       </td>
                       <td className="py-2.5 text-right">
                         <div className="flex items-center justify-end gap-1">
-                          <Button size="sm" variant="ghost" onClick={() => openEdit(lk)}>
-                            <Pencil className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button size="sm" variant="ghost" onClick={() => setDeleteTarget(lk)}>
-                            <Trash2 className="h-3.5 w-3.5 text-red-400" />
-                          </Button>
+                          {canEdit("device") && (
+                            <Button size="sm" variant="ghost" onClick={() => openEdit(lk)}>
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                          {canDelete("device") && (
+                            <Button size="sm" variant="ghost" onClick={() => setDeleteTarget(lk)}>
+                              <Trash2 className="h-3.5 w-3.5 text-red-400" />
+                            </Button>
+                          )}
                         </div>
                       </td>
                     </tr>

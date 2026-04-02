@@ -61,6 +61,7 @@ import {
   useLabelValues,
 } from "@/api/hooks.ts";
 import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
+import { usePermissions } from "@/hooks/usePermissions.ts";
 import type {
   Action,
   Automation,
@@ -111,6 +112,7 @@ const statusBadge = (status: string) => {
 // ── Actions Tab ─────────────────────────────────────────────────────────────
 
 function ActionsTab() {
+  const { canCreate, canEdit, canDelete } = usePermissions();
   const { pageSize } = useTablePreferences();
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -140,9 +142,11 @@ function ActionsTab() {
           onClear={() => { setSearch(""); setPage(1); }}
           className="w-64 h-8 text-sm"
         />
-        <Button size="sm" onClick={() => setCreateOpen(true)} className="gap-1.5">
-          <Plus className="h-3.5 w-3.5" /> New Action
-        </Button>
+        {canCreate("automation") && (
+          <Button size="sm" onClick={() => setCreateOpen(true)} className="gap-1.5">
+            <Plus className="h-3.5 w-3.5" /> New Action
+          </Button>
+        )}
       </div>
 
       <Card>
@@ -203,12 +207,16 @@ function ActionsTab() {
                     </TableCell>
                     <TableCell>
                       <div className="flex gap-1">
-                        <Button variant="ghost" size="icon" onClick={() => setEditAction(a)} title="Edit">
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button variant="ghost" size="icon" onClick={() => setDeleteTarget(a)} title="Delete">
-                          <Trash2 className="h-3.5 w-3.5 text-red-400" />
-                        </Button>
+                        {canEdit("automation") && (
+                          <Button variant="ghost" size="icon" onClick={() => setEditAction(a)} title="Edit">
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                        {canDelete("automation") && (
+                          <Button variant="ghost" size="icon" onClick={() => setDeleteTarget(a)} title="Delete">
+                            <Trash2 className="h-3.5 w-3.5 text-red-400" />
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -435,6 +443,7 @@ function DeleteActionDialog({ action, onClose }: { action: Action; onClose: () =
 // ── Automations Tab ─────────────────────────────────────────────────────────
 
 function AutomationsTab({ prefill, onPrefillConsumed }: { prefill?: AutomationPrefill | null; onPrefillConsumed?: () => void }) {
+  const { canCreate, canEdit, canDelete } = usePermissions();
   const { pageSize } = useTablePreferences();
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -475,9 +484,11 @@ function AutomationsTab({ prefill, onPrefillConsumed }: { prefill?: AutomationPr
           onClear={() => { setSearch(""); setPage(1); }}
           className="w-64 h-8 text-sm"
         />
-        <Button size="sm" onClick={() => setCreateOpen(true)} className="gap-1.5">
-          <Plus className="h-3.5 w-3.5" /> New Automation
-        </Button>
+        {canCreate("automation") && (
+          <Button size="sm" onClick={() => setCreateOpen(true)} className="gap-1.5">
+            <Plus className="h-3.5 w-3.5" /> New Automation
+          </Button>
+        )}
       </div>
 
       <Card>
@@ -540,17 +551,21 @@ function AutomationsTab({ prefill, onPrefillConsumed }: { prefill?: AutomationPr
                     </TableCell>
                     <TableCell>
                       <div className="flex gap-1">
-                        {a.trigger_type === "cron" && (
+                        {a.trigger_type === "cron" && canEdit("automation") && (
                           <Button variant="ghost" size="icon" onClick={() => setTriggerTarget(a)} title="Manual trigger">
                             <Play className="h-3.5 w-3.5 text-emerald-400" />
                           </Button>
                         )}
-                        <Button variant="ghost" size="icon" onClick={() => setEditTarget(a)} title="Edit">
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button variant="ghost" size="icon" onClick={() => setDeleteTarget(a)} title="Delete">
-                          <Trash2 className="h-3.5 w-3.5 text-red-400" />
-                        </Button>
+                        {canEdit("automation") && (
+                          <Button variant="ghost" size="icon" onClick={() => setEditTarget(a)} title="Edit">
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                        {canDelete("automation") && (
+                          <Button variant="ghost" size="icon" onClick={() => setDeleteTarget(a)} title="Delete">
+                            <Trash2 className="h-3.5 w-3.5 text-red-400" />
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -585,6 +600,7 @@ function AutomationsTab({ prefill, onPrefillConsumed }: { prefill?: AutomationPr
 }
 
 function AutomationFormDialog({ automation, prefill, onClose }: { automation: Automation | null; prefill?: AutomationPrefill | null; onClose: () => void }) {
+  const { canEdit } = usePermissions();
   const isEdit = !!automation;
   const initDeviceIds = automation?.device_ids ?? prefill?.device_ids ?? [];
 
@@ -897,9 +913,11 @@ function AutomationFormDialog({ automation, prefill, onClose }: { automation: Au
           <TabsContent value="actions" className="space-y-3">
             <div className="flex items-center justify-between">
               <Label>Steps</Label>
-              <Button type="button" variant="ghost" size="sm" onClick={addStep} className="gap-1">
-                <Plus className="h-3 w-3" /> Add Step
-              </Button>
+              {canEdit("automation") && (
+                <Button type="button" variant="ghost" size="sm" onClick={addStep} className="gap-1">
+                  <Plus className="h-3 w-3" /> Add Step
+                </Button>
+              )}
             </div>
             {steps.length === 0 && (
               <p className="text-xs text-zinc-500 py-2">No steps added. Steps are optional — automations can exist without actions.</p>
@@ -930,9 +948,11 @@ function AutomationFormDialog({ automation, prefill, onClose }: { automation: Au
                   <Button type="button" variant="ghost" size="icon" onClick={() => moveStep(idx, 1)} disabled={idx === steps.length - 1} title="Move down">
                     <ArrowDown className="h-3 w-3" />
                   </Button>
-                  <Button type="button" variant="ghost" size="icon" onClick={() => removeStep(idx)} title="Remove">
-                    <Trash2 className="h-3 w-3 text-red-400" />
-                  </Button>
+                  {canEdit("automation") && (
+                    <Button type="button" variant="ghost" size="icon" onClick={() => removeStep(idx)} title="Remove">
+                      <Trash2 className="h-3 w-3 text-red-400" />
+                    </Button>
+                  )}
                 </div>
               ))}
             </div>

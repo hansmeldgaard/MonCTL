@@ -159,7 +159,8 @@ async def lifespan(app: FastAPI):
             await session.flush()
             for res in ["device", "app", "assignment", "credential", "alert", "automation",
                         "event", "connector", "dashboard", "collector",
-                        "tenant", "user", "template", "settings", "result"]:
+                        "tenant", "user", "template", "settings", "result",
+                        "api_key"]:
                 session.add(RolePermission(role_id=viewer.id, resource=res, action="view"))
 
             operator = Role(
@@ -182,6 +183,7 @@ async def lifespan(app: FastAPI):
                 ("collector", "view"),
                 ("template", "view"), ("template", "create"), ("template", "edit"),
                 ("result", "view"),
+                ("api_key", "view"), ("api_key", "create"), ("api_key", "delete"),
             ]:
                 session.add(RolePermission(role_id=operator.id, resource=res, action=act))
 
@@ -192,12 +194,14 @@ async def lifespan(app: FastAPI):
             _NEW_VIEWER_PERMS = [
                 ("automation", "view"), ("event", "view"),
                 ("connector", "view"), ("dashboard", "view"),
+                ("api_key", "view"),
             ]
             _NEW_OPERATOR_PERMS = [
                 ("automation", "view"), ("automation", "create"), ("automation", "edit"),
                 ("event", "view"), ("event", "manage"),
                 ("connector", "view"),
                 ("dashboard", "view"), ("dashboard", "create"), ("dashboard", "edit"),
+                ("api_key", "view"), ("api_key", "create"), ("api_key", "delete"),
             ]
             for role_name, new_perms in [("Viewer", _NEW_VIEWER_PERMS), ("Operator", _NEW_OPERATOR_PERMS)]:
                 db_role = (await session.execute(

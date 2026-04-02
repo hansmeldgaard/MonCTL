@@ -18,6 +18,7 @@ import {
 import { useAssignments, useAppDetail, useBulkUpdateAssignments, useBulkDeleteAssignments, useCredentials } from "@/api/hooks.ts";
 import { formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
+import { usePermissions } from "@/hooks/usePermissions.ts";
 import { useListState } from "@/hooks/useListState.ts";
 import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
 import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
@@ -26,6 +27,7 @@ import type { BulkUpdateAssignmentsRequest } from "@/types/api.ts";
 
 export function AssignmentsPage() {
   const tz = useTimezone();
+  const { canEdit, canDelete } = usePermissions();
   const { pageSize, scrollMode } = useTablePreferences();
   const listState = useListState({
     columns: [
@@ -34,6 +36,7 @@ export function AssignmentsPage() {
       { key: "device_category", label: "Category" },
       { key: "device_type_name", label: "Device Type" },
       { key: "device_address", label: "Device Address", sortable: false },
+      { key: "collector_group_name", label: "Collector Group" },
       { key: "schedule_value", label: "Schedule" },
       { key: "credential_name", label: "Credential" },
       { key: "enabled", label: "Enabled" },
@@ -163,40 +166,44 @@ export function AssignmentsPage() {
             </span>
             <div className="relative" ref={bulkRef}>
               <div className="flex gap-1.5">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setBulkOpen(!bulkOpen)}
-                  className="gap-1.5"
-                >
-                  Bulk actions
-                  <ChevronDown className="h-3 w-3" />
-                </Button>
-                {!confirmDelete ? (
+                {canEdit("assignment") && (
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => setConfirmDelete(true)}
-                    className="gap-1.5 text-red-400 border-red-400/30 hover:bg-red-400/10"
+                    onClick={() => setBulkOpen(!bulkOpen)}
+                    className="gap-1.5"
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    Delete
+                    Bulk actions
+                    <ChevronDown className="h-3 w-3" />
                   </Button>
-                ) : (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={bulkDelete.isPending}
-                    onClick={async () => {
-                      await bulkDelete.mutateAsync([...selected]);
-                      setSelected(new Set());
-                      setConfirmDelete(false);
-                    }}
-                    className="gap-1.5 text-red-400 border-red-500 hover:bg-red-500/20"
-                  >
-                    {bulkDelete.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-                    Confirm delete {selected.size}?
-                  </Button>
+                )}
+                {canDelete("assignment") && (
+                  !confirmDelete ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setConfirmDelete(true)}
+                      className="gap-1.5 text-red-400 border-red-400/30 hover:bg-red-400/10"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Delete
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={bulkDelete.isPending}
+                      onClick={async () => {
+                        await bulkDelete.mutateAsync([...selected]);
+                        setSelected(new Set());
+                        setConfirmDelete(false);
+                      }}
+                      className="gap-1.5 text-red-400 border-red-500 hover:bg-red-500/20"
+                    >
+                      {bulkDelete.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                      Confirm delete {selected.size}?
+                    </Button>
+                  )
                 )}
               </div>
 
@@ -279,15 +286,17 @@ export function AssignmentsPage() {
                     </Select>
                   </div>
 
-                  <Button
-                    size="sm"
-                    className="w-full"
-                    disabled={bulkUpdate.isPending}
-                    onClick={handleBulkApply}
-                  >
-                    {bulkUpdate.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                    Apply to {selected.size} assignment{selected.size !== 1 ? "s" : ""}
-                  </Button>
+                  {canEdit("assignment") && (
+                    <Button
+                      size="sm"
+                      className="w-full"
+                      disabled={bulkUpdate.isPending}
+                      onClick={handleBulkApply}
+                    >
+                      {bulkUpdate.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                      Apply to {selected.size} assignment{selected.size !== 1 ? "s" : ""}
+                    </Button>
+                  )}
                 </div>
               )}
             </div>
@@ -347,6 +356,12 @@ export function AssignmentsPage() {
                   onFilterChange={(v) => listState.setFilter("device_address", v)}
                 />
                 <FilterableSortHead
+                  col="collector_group_name" label="Collector Group"
+                  sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
+                  filterValue={listState.filters.collector_group_name}
+                  onFilterChange={(v) => listState.setFilter("collector_group_name", v)}
+                />
+                <FilterableSortHead
                   col="schedule" label="Schedule"
                   sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
                   filterValue={listState.filters.schedule_value}
@@ -379,7 +394,7 @@ export function AssignmentsPage() {
             <TableBody>
               {assignments.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={12} className="text-center py-8 text-zinc-500 text-sm">
+                  <TableCell colSpan={13} className="text-center py-8 text-zinc-500 text-sm">
                     {listState.hasActiveFilters ? "No assignments match your filters" : "No assignments configured"}
                   </TableCell>
                 </TableRow>
@@ -433,6 +448,9 @@ export function AssignmentsPage() {
                     {assignment.device
                       ? assignment.device.address
                       : <span className="text-zinc-600 not-italic">{String(assignment.config?.host ?? "—")}</span>}
+                  </TableCell>
+                  <TableCell className="text-zinc-400 text-xs">
+                    {assignment.device?.collector_group_name ?? <span className="text-zinc-600">&mdash;</span>}
                   </TableCell>
                   <TableCell className="text-zinc-400">
                     {assignment.schedule_human}

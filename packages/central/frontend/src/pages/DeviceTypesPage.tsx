@@ -53,6 +53,7 @@ import {
   useTemplates,
 } from "@/api/hooks.ts";
 import type { DeviceCategory, TemplateBinding } from "@/types/api.ts";
+import { usePermissions } from "@/hooks/usePermissions.ts";
 import { cn } from "@/lib/utils.ts";
 
 // Built-in (seeded) categories that shouldn't be deleted
@@ -93,6 +94,7 @@ const ICON_OPTIONS = [
 ] as const;
 
 export function DeviceCategoriesPage() {
+  const { canCreate, canEdit, canDelete } = usePermissions();
   const createType = useCreateDeviceCategory();
   const updateType = useUpdateDeviceCategory();
   const deleteType = useDeleteDeviceCategory();
@@ -243,12 +245,14 @@ export function DeviceCategoriesPage() {
           {total} categor{total !== 1 ? "ies" : "y"}
         </span>
         {isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-600" />}
-        <div className="ml-auto">
-          <Button size="sm" onClick={() => setAddOpen(true)} className="gap-1.5">
-            <Plus className="h-4 w-4" />
-            Add Category
-          </Button>
-        </div>
+        {canCreate("device") && (
+          <div className="ml-auto">
+            <Button size="sm" onClick={() => setAddOpen(true)} className="gap-1.5">
+              <Plus className="h-4 w-4" />
+              Add Category
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* Category filter pills */}
@@ -357,13 +361,15 @@ export function DeviceCategoriesPage() {
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                        <button
-                          onClick={() => openEdit(dt)}
-                          className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer"
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </button>
-                        {!isBuiltin && !isPackManaged && (
+                        {canEdit("device") && (
+                          <button
+                            onClick={() => openEdit(dt)}
+                            className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                        {canDelete("device") && !isBuiltin && !isPackManaged && (
                           <button
                             onClick={() => setDeleteTarget({ id: dt.id, name: dt.name })}
                             className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"

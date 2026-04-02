@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
 import { validateShortName } from "@/lib/validation.ts";
+import { usePermissions } from "@/hooks/usePermissions.ts";
 import { Loader2, Plus, Pencil, Trash2, ShieldCheck } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
@@ -125,6 +126,7 @@ export function RolesPage() {
   const createRole = useCreateRole();
   const updateRole = useUpdateRole();
   const deleteRole = useDeleteRole();
+  const { isAdmin } = usePermissions();
 
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<Role | null>(null);
@@ -199,10 +201,12 @@ export function RolesPage() {
           <CardTitle className="flex items-center gap-2">
             <ShieldCheck className="h-4 w-4" />
             Roles
-            <Button size="sm" className="ml-auto gap-1.5" onClick={openCreate}>
-              <Plus className="h-3.5 w-3.5" />
-              Add Role
-            </Button>
+            {isAdmin && (
+              <Button size="sm" className="ml-auto gap-1.5" onClick={openCreate}>
+                <Plus className="h-3.5 w-3.5" />
+                Add Role
+              </Button>
+            )}
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -238,19 +242,21 @@ export function RolesPage() {
                         {role.permissions.length} permissions
                       </td>
                       <td className="py-2.5 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <Button size="sm" variant="ghost" onClick={() => openEdit(role)}>
-                            <Pencil className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => setDeleteTarget(role)}
-                            disabled={role.is_system}
-                          >
-                            <Trash2 className="h-3.5 w-3.5 text-red-400" />
-                          </Button>
-                        </div>
+                        {isAdmin && (
+                          <div className="flex items-center justify-end gap-1">
+                            <Button size="sm" variant="ghost" onClick={() => openEdit(role)}>
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => setDeleteTarget(role)}
+                              disabled={role.is_system}
+                            >
+                              <Trash2 className="h-3.5 w-3.5 text-red-400" />
+                            </Button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))}

@@ -12,6 +12,7 @@ import {
   KeyRound,
   LayoutList,
   Loader2,
+  Lock,
   Network,
   Plus,
   Server,
@@ -42,6 +43,7 @@ import {
   useUpdateMyTimezone,
   useUpdateMyIdleTimeout,
   useUpdateInterfacePreferences,
+  useChangeMyPassword,
   useUserApiKeys,
   useCreateUserApiKey,
   useDeleteUserApiKey,
@@ -58,7 +60,7 @@ import { RolesPage } from "@/pages/RolesPage.tsx";
 
 const TABS = [
   { key: "profile", label: "Profile", icon: User, adminOnly: false },
-  { key: "api-keys", label: "API Keys", icon: KeyRound, adminOnly: false },
+  { key: "api-keys", label: "API Keys", icon: KeyRound, adminOnly: false, resource: "api_key" as const },
   { key: "system", label: "System", icon: Settings, adminOnly: true },
   { key: "collectors", label: "Collectors", icon: Cpu, adminOnly: true },
   { key: "snmp-oids", label: "SNMP OIDs", icon: Network, adminOnly: true },
@@ -176,6 +178,8 @@ function ProfileTab() {
         </CardContent>
       </Card>
 
+      <ChangePasswordCard />
+
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -288,6 +292,68 @@ function ProfileTab() {
   );
 }
 
+function ChangePasswordCard() {
+  const changePassword = useChangeMyPassword();
+  const [currentPw, setCurrentPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+
+  const canSubmit = currentPw.length > 0 && newPw.length >= 6 && newPw === confirmPw;
+
+  async function handleSubmit() {
+    setError(null);
+    if (newPw !== confirmPw) {
+      setError("Passwords do not match");
+      return;
+    }
+    try {
+      await changePassword.mutateAsync({ current_password: currentPw, new_password: newPw });
+      setCurrentPw("");
+      setNewPw("");
+      setConfirmPw("");
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3000);
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to change password");
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Lock className="h-4 w-4" />
+          Change Password
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-3 max-w-sm">
+          <div className="space-y-1">
+            <Label>Current Password</Label>
+            <Input type="password" value={currentPw} onChange={(e) => setCurrentPw(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label>New Password</Label>
+            <Input type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="Min. 6 characters" />
+          </div>
+          <div className="space-y-1">
+            <Label>Confirm New Password</Label>
+            <Input type="password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)} />
+          </div>
+          {error && <p className="text-sm text-red-400">{error}</p>}
+          {success && <p className="text-sm text-emerald-400">Password changed successfully!</p>}
+          <Button onClick={handleSubmit} disabled={!canSubmit || changePassword.isPending}>
+            {changePassword.isPending && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
+            Change Password
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function InterfaceDefaultsCard() {
   const { user } = useAuth();
   const updateIfacePrefs = useUpdateInterfacePreferences();
@@ -372,6 +438,7 @@ function InterfaceDefaultsCard() {
 
 function ApiKeysTab() {
   const tz = useTimezone();
+  const { canCreate: canCreateKey, canDelete: canDeleteKey } = usePermissions();
   const { data: keys, isLoading } = useUserApiKeys();
   const createKey = useCreateUserApiKey();
   const deleteKey = useDeleteUserApiKey();
@@ -434,10 +501,12 @@ function ApiKeysTab() {
             <KeyRound className="h-4 w-4" />
             API Keys
             <Badge variant="default" className="text-[10px] ml-1">{keys?.length ?? 0}/10</Badge>
-            <Button size="sm" className="ml-auto gap-1.5" onClick={() => setCreateOpen(true)}>
-              <Plus className="h-3.5 w-3.5" />
-              Create API Key
-            </Button>
+            {canCreateKey("api_key") && (
+              <Button size="sm" className="ml-auto gap-1.5" onClick={() => setCreateOpen(true)}>
+                <Plus className="h-3.5 w-3.5" />
+                Create API Key
+              </Button>
+            )}
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -484,11 +553,13 @@ function ApiKeysTab() {
                         <td className="py-2.5 pr-4 text-xs text-zinc-500">
                           {k.last_used_at ? timeAgo(k.last_used_at) : <span className="text-zinc-600">Never</span>}
                         </td>
-                        <td className="py-2.5 text-right">
-                          <Button size="sm" variant="ghost" onClick={() => setDeleteTarget(k.id)}>
-                            <Trash2 className="h-3.5 w-3.5 text-red-400" />
-                          </Button>
-                        </td>
+                        {canDeleteKey("api_key") && (
+                          <td className="py-2.5 text-right">
+                            <Button size="sm" variant="ghost" onClick={() => setDeleteTarget(k.id)}>
+                              <Trash2 className="h-3.5 w-3.5 text-red-400" />
+                            </Button>
+                          </td>
+                        )}
                       </tr>
                     );
                   })}
@@ -1096,8 +1167,12 @@ function TlsTab() {
 export function SettingsPage() {
   const { tab } = useParams<{ tab?: string }>();
   const navigate = useNavigate();
-  const { isAdmin } = usePermissions();
-  const visibleTabs = TABS.filter((t) => !t.adminOnly || isAdmin);
+  const { isAdmin, canView } = usePermissions();
+  const visibleTabs = TABS.filter((t) => {
+    if (t.adminOnly) return isAdmin;
+    if ("resource" in t && t.resource) return canView(t.resource);
+    return true;
+  });
   const activeTab = (tab ?? "profile") as TabKey;
 
   function handleTabChange(key: TabKey) {

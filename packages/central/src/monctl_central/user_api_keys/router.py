@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from monctl_central.dependencies import get_db, require_auth
+from monctl_central.dependencies import get_db, require_auth, require_permission
 from monctl_central.storage.models import ApiKey
 from monctl_common.utils import generate_api_key, hash_api_key, key_prefix_display
 from monctl_common.constants import USER_KEY_PREFIX
@@ -47,7 +47,7 @@ def _require_cookie_user(auth: dict) -> str:
 @router.get("")
 async def list_my_api_keys(
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("api_key", "view")),
 ):
     """List API keys for the current user."""
     user_id = _require_cookie_user(auth)
@@ -64,7 +64,7 @@ async def list_my_api_keys(
 async def create_user_api_key(
     req: CreateUserApiKeyRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("api_key", "create")),
 ):
     """Create a new API key for the current user.
 
@@ -110,7 +110,7 @@ async def create_user_api_key(
 async def delete_user_api_key(
     key_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(require_permission("api_key", "delete")),
 ):
     """Revoke/delete an API key. Only the owning user can delete their keys."""
     user_id = _require_cookie_user(auth)

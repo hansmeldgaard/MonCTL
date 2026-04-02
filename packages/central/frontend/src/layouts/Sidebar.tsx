@@ -49,7 +49,7 @@ const navGroups: NavGroup[] = [
   {
     items: [
       { to: "/", icon: LayoutDashboard, label: "Dashboard", end: true },
-      { to: "/system-health", icon: HeartPulse, label: "System Health" },
+      { to: "/system-health", icon: HeartPulse, label: "System Health", adminOnly: true },
     ],
   },
   {
@@ -91,7 +91,7 @@ const navGroups: NavGroup[] = [
     label: "System",
     items: [
       { to: "/upgrades", icon: ArrowUpCircle, label: "Upgrades", adminOnly: true },
-      { to: "/settings", icon: Settings, label: "Settings", adminOnly: true },
+      { to: "/settings", icon: Settings, label: "Settings" },
     ],
   },
 ];

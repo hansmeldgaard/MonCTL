@@ -43,7 +43,7 @@ import { ApplyTemplateDialog } from "@/components/ApplyTemplateDialog.tsx";
 import { DeviceIcon, categoryIconUrl } from "@/components/DeviceIcon.tsx";
 
 export function DevicesPage() {
-  const { canCreate, canDelete } = usePermissions();
+  const { canCreate, canEdit, canDelete } = usePermissions();
   // ── URL query params (for deep linking from device types page) ──
   const [searchParams] = useSearchParams();
 
@@ -68,6 +68,8 @@ export function DevicesPage() {
   const [filterLabelValue, setFilterLabelValue] = useState("");
   const [labelFilterOpen, setLabelFilterOpen] = useState(false);
   const labelFilterRef = useRef<HTMLDivElement>(null);
+  const [labelPopoverDeviceId, setLabelPopoverDeviceId] = useState<string | null>(null);
+  const labelPopoverRef = useRef<HTMLDivElement>(null);
 
   // ── Debounced filter values ─────────────────────────────
   const [debouncedFilters, setDebouncedFilters] = useState({
@@ -191,6 +193,18 @@ export function DevicesPage() {
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, [labelFilterOpen]);
+
+  // Close label popover on outside click
+  useEffect(() => {
+    if (!labelPopoverDeviceId) return;
+    function handleClick(e: MouseEvent) {
+      if (labelPopoverRef.current && !labelPopoverRef.current.contains(e.target as Node)) {
+        setLabelPopoverDeviceId(null);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [labelPopoverDeviceId]);
 
   // Build status maps
   const availReachability = new Map<string, boolean>();
@@ -333,6 +347,8 @@ export function DevicesPage() {
             <span className="text-sm text-zinc-300">
               {selected.size} selected
             </span>
+            {canEdit("device") && (
+            <>
             <Button
               size="sm"
               variant="outline"
@@ -390,6 +406,8 @@ export function DevicesPage() {
             >
               <FileText className="h-3.5 w-3.5" /> Apply Template
             </Button>
+            </>
+            )}
             {canDelete("device") && (
               <Button
                 size="sm"
@@ -776,21 +794,36 @@ export function DevicesPage() {
                           {/* Labels */}
                           <TableCell>
                             {labelEntries.length > 0 ? (
-                              <div
-                                className="flex gap-1 cursor-default"
-                                title={labelEntries.map(([k, v]) => `${k}: ${v}`).join("\n")}
-                              >
-                                {labelEntries.map(([k]) => {
-                                  const lColor = labelColorMap.get(k) || "#71717a";
-                                  return (
-                                    <span
-                                      key={k}
-                                      className="inline-block h-2.5 w-2.5 rounded-full"
-                                      style={{ backgroundColor: lColor }}
-                                      title={`${k}: ${(device.labels ?? {})[k]}`}
-                                    />
-                                  );
-                                })}
+                              <div className="relative" ref={labelPopoverDeviceId === device.id ? labelPopoverRef : undefined}>
+                                <button
+                                  type="button"
+                                  className="flex items-center gap-1 cursor-pointer hover:opacity-80 transition-opacity"
+                                  onClick={() => setLabelPopoverDeviceId(
+                                    labelPopoverDeviceId === device.id ? null : device.id
+                                  )}
+                                >
+                                  <span
+                                    className="inline-block h-2.5 w-2.5 rounded-full"
+                                    style={{ backgroundColor: labelColorMap.get(labelEntries[0][0]) || "#71717a" }}
+                                  />
+                                  {labelEntries.length > 1 && (
+                                    <span className="text-xs text-zinc-500">+{labelEntries.length - 1}</span>
+                                  )}
+                                </button>
+                                {labelPopoverDeviceId === device.id && (
+                                  <div className="absolute left-0 top-6 z-20 min-w-[180px] rounded-md border border-zinc-700 bg-zinc-900 p-2.5 shadow-lg space-y-1.5">
+                                    {labelEntries.map(([k, v]) => {
+                                      const lColor = labelColorMap.get(k) || "#71717a";
+                                      return (
+                                        <div key={k} className="flex items-center gap-2 text-xs whitespace-nowrap">
+                                          <span className="inline-block h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: lColor }} />
+                                          <span className="text-zinc-400">{k}:</span>
+                                          <span className="text-zinc-200">{v}</span>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
                               </div>
                             ) : (
                               <span className="text-zinc-600">&mdash;</span>

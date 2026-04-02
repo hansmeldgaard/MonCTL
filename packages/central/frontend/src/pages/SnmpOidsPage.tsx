@@ -22,9 +22,11 @@ import {
   useUpdateSnmpOid,
   useDeleteSnmpOid,
 } from "@/api/hooks.ts";
+import { usePermissions } from "@/hooks/usePermissions.ts";
 import type { SnmpOid } from "@/types/api.ts";
 
 export function SnmpOidsPage() {
+  const { canCreate, canEdit, canDelete } = usePermissions();
   const { data: oids, isLoading } = useSnmpOids();
   const createOid = useCreateSnmpOid();
   const updateOid = useUpdateSnmpOid();
@@ -119,10 +121,12 @@ export function SnmpOidsPage() {
             Define SNMP OIDs that can be selected for device monitoring checks.
           </p>
         </div>
-        <Button size="sm" onClick={() => setAddOpen(true)} className="gap-1.5">
-          <Plus className="h-4 w-4" />
-          Add OID
-        </Button>
+        {canCreate("device") && (
+          <Button size="sm" onClick={() => setAddOpen(true)} className="gap-1.5">
+            <Plus className="h-4 w-4" />
+            Add OID
+          </Button>
+        )}
       </div>
 
       <Card>
@@ -140,15 +144,17 @@ export function SnmpOidsPage() {
             <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
               <Network className="mb-2 h-8 w-8 text-zinc-600" />
               <p className="text-sm">No SNMP OIDs defined</p>
-              <Button
-                size="sm"
-                variant="secondary"
-                className="mt-3 gap-1.5"
-                onClick={() => setAddOpen(true)}
-              >
-                <Plus className="h-4 w-4" />
-                Add first OID
-              </Button>
+              {canCreate("device") && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="mt-3 gap-1.5"
+                  onClick={() => setAddOpen(true)}
+                >
+                  <Plus className="h-4 w-4" />
+                  Add first OID
+                </Button>
+              )}
             </div>
           ) : (
             <Table>
@@ -170,20 +176,24 @@ export function SnmpOidsPage() {
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => openEdit(o)}
-                          className="rounded p-1 text-zinc-600 hover:text-brand-400 hover:bg-brand-500/10 transition-colors cursor-pointer"
-                          title="Edit"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </button>
-                        <button
-                          onClick={() => setDeleteTarget(o)}
-                          className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                          title="Delete"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
+                        {canEdit("device") && (
+                          <button
+                            onClick={() => openEdit(o)}
+                            className="rounded p-1 text-zinc-600 hover:text-brand-400 hover:bg-brand-500/10 transition-colors cursor-pointer"
+                            title="Edit"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                        )}
+                        {canDelete("device") && (
+                          <button
+                            onClick={() => setDeleteTarget(o)}
+                            className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                            title="Delete"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>

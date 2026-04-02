@@ -51,6 +51,7 @@ const KEY_TYPE_BADGE: Record<string, { variant: "default" | "destructive" | "inf
 };
 
 function CredentialKeysCard() {
+  const { canEdit, canDelete } = usePermissions();
   const { data: keys, isLoading } = useCredentialKeys();
   const createKey = useCreateCredentialKey();
   const updateKey = useUpdateCredentialKey();
@@ -218,12 +219,16 @@ function CredentialKeysCard() {
                       <TableCell className="text-zinc-400 text-sm">{k.description ?? "—"}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1">
+                          {canEdit("credential") && (
                           <button onClick={() => openEdit(k)} className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer" title="Edit">
                             <Pencil className="h-4 w-4" />
                           </button>
+                          )}
+                          {canDelete("credential") && (
                           <button onClick={() => setDeleteTarget(k)} className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer" title="Delete">
                             <Trash2 className="h-4 w-4" />
                           </button>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -340,7 +345,7 @@ function CredentialDetailRow({ credentialId }: { credentialId: string }) {
 
 function CredentialsCard() {
   const tz = useTimezone();
-  const { canCreate, canDelete } = usePermissions();
+  const { canCreate, canEdit, canDelete } = usePermissions();
   const { data: credentials, isLoading } = useCredentials();
   const { data: credentialKeys } = useCredentialKeys();
   const { data: templates } = useCredentialTemplates();
@@ -530,9 +535,11 @@ function CredentialsCard() {
                       <TableCell className="text-zinc-500">{formatDate(cred.updated_at, tz)}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1">
+                          {canEdit("credential") && (
                           <button onClick={(e) => { e.stopPropagation(); openEdit(cred); }} className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer" title="Edit">
                             <Pencil className="h-4 w-4" />
                           </button>
+                          )}
                           {canDelete("credential") && (
                           <button onClick={(e) => { e.stopPropagation(); setDeleteTarget(cred); }} className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer" title="Delete">
                             <Trash2 className="h-4 w-4" />
@@ -846,6 +853,7 @@ function CredentialsCard() {
 
 function CredentialTemplatesCard() {
   const tz = useTimezone();
+  const { canEdit, canDelete } = usePermissions();
   const { data: templates, isLoading } = useCredentialTemplates();
   const { data: credentialKeys } = useCredentialKeys();
   const { data: credentialTypes } = useCredentialTypes();
@@ -1004,12 +1012,16 @@ function CredentialTemplatesCard() {
                     <TableCell className="text-zinc-500 text-sm">{formatDate(t.created_at, tz)}</TableCell>
                     <TableCell>
                       <div className="flex gap-1">
+                        {canEdit("credential") && (
                         <button onClick={() => openEdit(t)} className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700/50 transition-colors cursor-pointer" title="Edit">
                           <Pencil className="h-4 w-4" />
                         </button>
+                        )}
+                        {canDelete("credential") && (
                         <button onClick={() => setDeleteTarget(t)} className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer" title="Delete">
                           <Trash2 className="h-4 w-4" />
                         </button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -1221,6 +1233,7 @@ function CredentialTemplatesCard() {
 
 function CredentialTypesCard() {
   const tz = useTimezone();
+  const { canEdit, canDelete } = usePermissions();
   const { data: types, isLoading } = useCredentialTypes();
   const createType = useCreateCredentialType();
   const updateType = useUpdateCredentialType();
@@ -1313,12 +1326,16 @@ function CredentialTypesCard() {
                         </div>
                       ) : (
                         <div className="flex items-center justify-end gap-1">
+                          {canEdit("credential") && (
                           <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => startEdit(t)} title="Edit">
                             <Pencil className="h-3 w-3" />
                           </Button>
+                          )}
+                          {canDelete("credential") && (
                           <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-red-400 hover:text-red-300" onClick={() => deleteType.mutate(t.id)} title="Delete">
                             <Trash2 className="h-3 w-3" />
                           </Button>
+                          )}
                         </div>
                       )}
                     </TableCell>

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Plus, Trash2, LayoutDashboard, Loader2 } from "lucide-react";
+import { usePermissions } from "@/hooks/usePermissions.ts";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import {
@@ -13,6 +14,7 @@ import {
 } from "@/api/hooks.ts";
 
 export function CustomDashboardsPage() {
+  const { canCreate, canDelete } = usePermissions();
   const { data: dashboards, isLoading } = useAnalyticsDashboards();
   const createMut = useCreateAnalyticsDashboard();
   const deleteMut = useDeleteAnalyticsDashboard();
@@ -50,10 +52,12 @@ export function CustomDashboardsPage() {
     <div className="p-6 space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold text-zinc-100">Custom Dashboards</h1>
-        <Button size="sm" onClick={() => setShowCreate(true)} className="gap-1.5">
-          <Plus className="h-3.5 w-3.5" />
-          New Dashboard
-        </Button>
+        {canCreate("dashboard") && (
+          <Button size="sm" onClick={() => setShowCreate(true)} className="gap-1.5">
+            <Plus className="h-3.5 w-3.5" />
+            New Dashboard
+          </Button>
+        )}
       </div>
 
       {/* Create form */}
@@ -137,15 +141,17 @@ export function CustomDashboardsPage() {
                   <TableCell className="text-xs text-zinc-400">{d.owner_name || "\u2014"}</TableCell>
                   <TableCell className="text-right text-xs">{d.widget_count}</TableCell>
                   <TableCell className="text-xs text-zinc-500">{formatDate(d.updated_at)}</TableCell>
-                  <TableCell>
-                    <button
-                      onClick={() => handleDelete(d.id, d.name)}
-                      className="text-zinc-600 hover:text-red-400 transition-colors"
-                      title="Delete"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </TableCell>
+                  {canDelete("dashboard") && (
+                    <TableCell>
+                      <button
+                        onClick={() => handleDelete(d.id, d.name)}
+                        className="text-zinc-600 hover:text-red-400 transition-colors"
+                        title="Delete"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>
