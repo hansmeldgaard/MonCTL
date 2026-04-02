@@ -36,6 +36,9 @@ class CheckResult(BaseModel):
     execution_time: float | None = Field(
         default=None, description="Execution time in seconds"
     )
+    error_category: str = Field(
+        default="", description="Error category: 'device', 'config', 'app', or '' (no error)"
+    )
 
 
 class Event(BaseModel):

@@ -328,7 +328,7 @@ class PollEngine:
 
             except asyncio.TimeoutError:
                 execution_ms = int((time.time() - start) * 1000)
-                result = _error_result(job, self._worker_id, "timeout", execution_ms)
+                result = _error_result(job, self._worker_id, "timeout", execution_ms, error_category="device")
             except Exception as exc:  # noqa: BLE001
                 execution_ms = int((time.time() - start) * 1000)
                 result = _error_result(
@@ -410,6 +410,7 @@ class PollEngine:
                 "status": result.status,
                 "reachable": result.reachable,
                 "error_message": result.error_message,
+                "error_category": result.error_category,
                 "execution_time_ms": result.execution_time_ms,
                 "rtt_ms": result.rtt_ms,
                 "response_time_ms": result.response_time_ms,
@@ -432,7 +433,8 @@ class PollEngine:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _error_result(
-    job: JobDefinition, node_id: str, error_message: str, execution_ms: int
+    job: JobDefinition, node_id: str, error_message: str, execution_ms: int,
+    error_category: str = "app",
 ) -> PollResult:
     return PollResult(
         job_id=job.job_id,
@@ -444,5 +446,6 @@ def _error_result(
         status="error",
         reachable=False,
         error_message=error_message,
+        error_category=error_category,
         execution_time_ms=execution_ms,
     )

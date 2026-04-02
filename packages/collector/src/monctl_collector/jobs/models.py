@@ -168,6 +168,7 @@ class PollResult:
     rtt_ms: float | None = None
     response_time_ms: float | None = None
     interface_rows: list[dict] | None = None  # Per-interface data for interface-table apps
+    error_category: str = ""   # "device", "config", "app", or "" (no error)
 
 
 @dataclass

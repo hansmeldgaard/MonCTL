@@ -59,6 +59,7 @@ message JobWithProfile {
   bool   is_heavy           = 11;
   string role               = 12;
   repeated ConnectorBindingProto connector_bindings = 13;
+  string app_checksum       = 14;
 }
 
 message GetJobsResponse {
@@ -114,6 +115,7 @@ message SubmitResultRequest {
   double started_at        = 12;
   string collector_node    = 13;
   string interface_rows_json = 14;  // JSON-encoded list[dict] for interface pollers
+  string error_category      = 15;  // "device", "config", "app", or ""
 }
 
 message SubmitResultResponse {

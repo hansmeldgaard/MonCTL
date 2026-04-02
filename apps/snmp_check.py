@@ -42,6 +42,7 @@ class Poller(BasePoller):
                 status="error",
                 reachable=False,
                 error_message="No SNMP connector bound (expected alias 'snmp')",
+                error_category="config",
                 execution_time_ms=0,
             )
 
@@ -84,6 +85,7 @@ class Poller(BasePoller):
                 status="critical",
                 reachable=False,
                 error_message=f"SNMP CRITICAL — {host} unreachable: {exc}",
+                error_category="device",
                 execution_time_ms=int(rtt_ms),
                 rtt_ms=0.0,
             )

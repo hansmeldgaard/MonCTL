@@ -105,6 +105,7 @@ class Poller(BasePoller):
                 reachable=False,
                 error_message="No SNMP connector bound (expected alias 'snmp'). "
                               "Assign an SNMP connector with alias 'snmp' to this app assignment.",
+                error_category="config",
                 execution_time_ms=0,
             )
 
@@ -273,6 +274,7 @@ class Poller(BasePoller):
                 status="ok" if interface_rows else "unknown",
                 reachable=True,
                 error_message=snmp_error,
+                error_category="device" if snmp_error else "",
                 execution_time_ms=execution_ms,
                 interface_rows=interface_rows,
             )
@@ -286,5 +288,6 @@ class Poller(BasePoller):
                 metrics=[], config_data=None,
                 status="critical", reachable=False,
                 error_message=f"{type(exc).__name__}: {exc}",
+                error_category="device",
                 execution_time_ms=execution_ms,
             )

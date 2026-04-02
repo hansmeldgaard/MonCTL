@@ -626,8 +626,27 @@ function CollectorErrorPanel({ collectorName }: { collectorName: string }) {
 
   const hasErrors = errors.top_errors.length > 0 || errors.app_errors.some((a) => a.errors > 0);
 
+  const categoryColors: Record<string, string> = {
+    device: "bg-blue-500/20 text-blue-400 border-blue-500/30",
+    config: "bg-amber-500/20 text-amber-400 border-amber-500/30",
+    app: "bg-red-500/20 text-red-400 border-red-500/30",
+  };
+  const categoryLabel = (cat: string) => cat || "other";
+
   return (
     <div className="mt-2 space-y-3">
+      {/* Error category summary */}
+      {errors.category_counts && Object.keys(errors.category_counts).length > 0 && (
+        <div className="flex gap-2 flex-wrap">
+          {Object.entries(errors.category_counts)
+            .sort(([, a], [, b]) => b - a)
+            .map(([cat, count]) => (
+              <span key={cat || "_empty"} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium border ${categoryColors[cat] || "bg-zinc-500/20 text-zinc-400 border-zinc-500/30"}`}>
+                {categoryLabel(cat)}: {count}
+              </span>
+            ))}
+        </div>
+      )}
       {/* Per-app error breakdown */}
       {errors.app_errors.length > 0 && (
         <div>
@@ -651,6 +670,11 @@ function CollectorErrorPanel({ collectorName }: { collectorName: string }) {
             {errors.top_errors.map((e, i) => (
               <div key={i} className="flex items-start gap-2 text-xs">
                 <span className="text-red-400 font-mono whitespace-nowrap">{e.count}x</span>
+                {e.category && (
+                  <span className={`inline-flex px-1.5 py-0 rounded text-[10px] font-medium border ${categoryColors[e.category] || "bg-zinc-500/20 text-zinc-400 border-zinc-500/30"}`}>
+                    {e.category}
+                  </span>
+                )}
                 <span className="text-zinc-400 font-mono break-all">{e.message}</span>
               </div>
             ))}

@@ -20,6 +20,12 @@ Example app (minimal):
                 error_message=None,
                 execution_time_ms=100,
             )
+
+Error categories — all apps MUST set ``error_category`` on error results:
+    "device"  — target unreachable, timeout, connection refused
+    "config"  — missing connector, credential, or parameter
+    "app"     — bug or crash in app code (parse error, unhandled exception)
+    ""        — no error (status OK)
 """
 
 from __future__ import annotations

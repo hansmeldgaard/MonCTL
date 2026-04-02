@@ -76,6 +76,7 @@ class Poller(BasePoller):
                 reachable=False,
                 error_message="No SNMP connector bound (expected alias 'snmp'). "
                               "Bind the built-in 'snmp' connector with alias 'snmp' on this assignment.",
+                error_category="config",
                 execution_time_ms=0,
             )
 
@@ -169,6 +170,7 @@ class Poller(BasePoller):
                 status="critical",
                 reachable=False,
                 error_message=f"SNMP discovery failed — {host}: {exc}",
+                error_category="device",
                 execution_time_ms=int(rtt_ms),
                 rtt_ms=0.0,
             )

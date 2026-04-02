@@ -61,6 +61,7 @@ class Poller(BasePoller):
                 status="error",
                 reachable=False,
                 error_message="No SNMP connector bound (expected alias 'snmp')",
+                error_category="config",
                 execution_time_ms=0,
             )
 
@@ -97,6 +98,7 @@ class Poller(BasePoller):
                     status="critical",
                     reachable=True,
                     error_message=f"Could not parse uptime from {host}",
+                    error_category="app",
                     execution_time_ms=int(elapsed_ms),
                 )
 
@@ -144,5 +146,6 @@ class Poller(BasePoller):
                 status="critical",
                 reachable=False,
                 error_message=f"SNMP uptime check failed — {host}: {type(exc).__name__}: {exc}",
+                error_category="device",
                 execution_time_ms=int(elapsed_ms),
             )

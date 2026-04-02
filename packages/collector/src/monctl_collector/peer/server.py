@@ -68,6 +68,7 @@ class CollectorPeerServicer(pb_grpc.CollectorPeerServicer):
                 device_host=job_def.device_host or "",
                 app_id=job_def.app_id,
                 app_version=job_def.app_version,
+                app_checksum=job_def.app_checksum,
                 credential_names=job_def.credential_names,
                 interval=job_def.interval,
                 parameters_json=json.dumps(job_def.parameters),
@@ -137,6 +138,7 @@ class CollectorPeerServicer(pb_grpc.CollectorPeerServicer):
             "started_at": request.started_at if request.started_at > 0 else None,
             "collector_node": request.collector_node or None,
             "interface_rows": iface_rows,
+            "error_category": request.error_category or "",
         }
         await self._local_cache.enqueue_result(result)
         return pb.SubmitResultResponse(accepted=True)

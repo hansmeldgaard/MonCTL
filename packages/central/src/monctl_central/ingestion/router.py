@@ -56,6 +56,7 @@ async def ingest(
             "state": cr.state.value,
             "output": cr.output,
             "error_message": "",
+            "error_category": cr.error_category,
             "rtt_ms": perf.get("rtt_ms", 0.0) or 0.0,
             "response_time_ms": perf.get("response_time_ms", 0.0) or 0.0,
             "reachable": 1 if perf.get("reachable", 1) else 0,

@@ -183,6 +183,7 @@ class PeerClient:
                     started_at=result.get("started_at") or 0.0,
                     collector_node=result.get("collector_node") or "",
                     interface_rows_json=json.dumps(result.get("interface_rows") or []),
+                    error_category=result.get("error_category") or "",
                 ),
                 timeout=self._timeout,
             )
@@ -233,6 +234,7 @@ def _job_to_dict(j: pb.JobWithProfile) -> dict:
         "device_host": j.device_host,
         "app_id": j.app_id,
         "app_version": j.app_version,
+        "app_checksum": j.app_checksum,
         "credential_names": list(j.credential_names),
         "interval": j.interval,
         "parameters": json.loads(j.parameters_json) if j.parameters_json else {},

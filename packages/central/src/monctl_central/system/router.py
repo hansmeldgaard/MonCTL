@@ -1818,35 +1818,43 @@ async def get_collector_errors(
     ch=Depends(get_clickhouse),
     auth: dict = Depends(require_admin),
 ):
-    """Error analytics for a single collector: top errors + per-app breakdown."""
+    """Error analytics for a single collector: top errors + per-app breakdown + category counts."""
     from monctl_common.utils import utc_now
     from datetime import timedelta
 
     cutoff = (utc_now() - timedelta(hours=min(hours, 24))).strftime("%Y-%m-%d %H:%M:%S")
-    tables = ["availability_latency", "performance", "config"]
-    # Top errors (across all tables)
-    top_errors: dict[str, int] = {}
+    tables = ["availability_latency", "performance"]
+    # Top errors (across all tables) — keyed by (message, category)
+    top_errors: dict[str, dict] = {}
     # Per-app error counts
     app_errors: dict[str, int] = {}
     app_totals: dict[str, int] = {}
+    # Category counts
+    category_counts: dict[str, int] = {}
 
     for table in tables:
-        # Top error messages
+        # Top error messages with category
         try:
             rows = ch.query(
-                f"SELECT error_message, count() AS cnt"
+                f"SELECT error_message, error_category, count() AS cnt"
                 f" FROM {table}"
                 f" WHERE collector_name = %(cn)s"
                 f"   AND executed_at >= '{cutoff}'"
                 f"   AND error_message != ''"
-                f" GROUP BY error_message"
+                f" GROUP BY error_message, error_category"
                 f" ORDER BY cnt DESC"
                 f" LIMIT 20",
                 {"cn": collector_name},
             )
             for r in rows.result_rows:
                 msg = r[0][:200]
-                top_errors[msg] = top_errors.get(msg, 0) + r[1]
+                cat = r[1] or ""
+                cnt = r[2]
+                if msg in top_errors:
+                    top_errors[msg]["count"] += cnt
+                else:
+                    top_errors[msg] = {"message": msg, "category": cat, "count": cnt}
+                category_counts[cat] = category_counts.get(cat, 0) + cnt
         except Exception:
             pass
 
@@ -1870,7 +1878,7 @@ async def get_collector_errors(
             pass
 
     # Sort and limit
-    sorted_errors = sorted(top_errors.items(), key=lambda x: -x[1])[:15]
+    sorted_errors = sorted(top_errors.values(), key=lambda x: -x["count"])[:15]
     sorted_apps = sorted(
         [
             {"app": k, "errors": app_errors[k], "total": app_totals[k]}
@@ -1884,8 +1892,9 @@ async def get_collector_errors(
         "data": {
             "collector_name": collector_name,
             "hours": hours,
-            "top_errors": [{"message": m, "count": c} for m, c in sorted_errors],
+            "top_errors": sorted_errors,
             "app_errors": sorted_apps,
+            "category_counts": category_counts,
         },
     }
 

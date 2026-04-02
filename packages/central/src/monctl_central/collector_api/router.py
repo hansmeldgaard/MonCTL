@@ -794,7 +794,7 @@ async def get_app_metadata(
         "version": av.version,
         "description": app.description,
         "requirements": av.requirements or [],
-        "entry_class": av.entry_class,
+        "entry_class": av.entry_class or "Poller",
         "checksum": av.checksum_sha256,
     }
 
@@ -856,7 +856,7 @@ async def get_app_code(
         "code": av.source_code,
         "checksum": checksum,
         "requirements": av.requirements or [],
-        "entry_class": av.entry_class,
+        "entry_class": av.entry_class or "Poller",
     }
 
 
@@ -977,6 +977,7 @@ class CollectorResult(BaseModel):
     status: str = "ok"               # "ok" | "warning" | "critical" | "unknown" | "error"
     reachable: bool = True
     error_message: str | None = None
+    error_category: str = ""          # "device", "config", "app", or ""
     execution_time_ms: int | None = None
     rtt_ms: float | None = None
     response_time_ms: float | None = None
@@ -1436,6 +1437,7 @@ async def submit_results(
                         "state": state,
                         "output": "",
                         "error_message": r.error_message or "",
+                        "error_category": r.error_category,
                         "metric_names": mnames,
                         "metric_values": normalized_values,
                         "metric_types": mtypes,
@@ -1636,6 +1638,7 @@ async def submit_results(
                 "state": state,
                 "output": f"{len(r.config_data)} config keys collected",
                 "error_message": r.error_message or "",
+                "error_category": r.error_category,
                 "rtt_ms": 0.0,
                 "response_time_ms": (r.execution_time_ms or 0) / 1.0,
                 "reachable": 1 if r.reachable else 0,
@@ -1662,6 +1665,7 @@ async def submit_results(
                 "state": state,
                 "output": output,
                 "error_message": r.error_message or "",
+                "error_category": r.error_category,
                 "rtt_ms": r.rtt_ms or 0.0,
                 "response_time_ms": r.response_time_ms or 0.0,
                 "reachable": 1 if r.reachable else 0,

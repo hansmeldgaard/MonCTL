@@ -749,8 +749,9 @@ export interface CollectorHealthDetail {
 export interface CollectorErrorAnalytics {
   collector_name: string;
   hours: number;
-  top_errors: { message: string; count: number }[];
+  top_errors: { message: string; count: number; category: string }[];
   app_errors: { app: string; errors: number; total: number }[];
+  category_counts: Record<string, number>;
 }
 
 // ── Users ─────────────────────────────────────────────────

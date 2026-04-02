@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     # Leader election
     leader_lock_ttl: int = 30
     instance_id: str = ""
+    node_name: str = ""  # MONCTL_NODE_NAME — human-readable hostname for this node
 
     # Heartbeat monitoring
     stale_threshold_seconds: int = 90

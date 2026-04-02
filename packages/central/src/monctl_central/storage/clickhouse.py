@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS availability_latency ON CLUSTER '{cluster}'
 
     state              UInt8,
     output             String,
-    error_message      String        DEFAULT '',
+    error_message      String                  DEFAULT '',
+    error_category     LowCardinality(String)  DEFAULT '',
 
     rtt_ms             Float64       DEFAULT 0,
     response_time_ms   Float64       DEFAULT 0,
@@ -83,8 +84,9 @@ CREATE TABLE IF NOT EXISTS performance ON CLUSTER '{cluster}'
     component_type     String        DEFAULT '',
 
     state              UInt8,
-    output             String        DEFAULT '',
-    error_message      String        DEFAULT '',
+    output             String                  DEFAULT '',
+    error_message      String                  DEFAULT '',
+    error_category     LowCardinality(String)  DEFAULT '',
 
     metric_names       Array(String)   DEFAULT [],
     metric_values      Array(Float64)  DEFAULT [],
@@ -241,7 +243,8 @@ CREATE TABLE IF NOT EXISTS availability_latency
 
     state              UInt8,
     output             String,
-    error_message      String        DEFAULT '',
+    error_message      String                  DEFAULT '',
+    error_category     LowCardinality(String)  DEFAULT '',
 
     rtt_ms             Float64       DEFAULT 0,
     response_time_ms   Float64       DEFAULT 0,
@@ -286,8 +289,9 @@ CREATE TABLE IF NOT EXISTS performance
     component_type     String        DEFAULT '',
 
     state              UInt8,
-    output             String        DEFAULT '',
-    error_message      String        DEFAULT '',
+    output             String                  DEFAULT '',
+    error_message      String                  DEFAULT '',
+    error_category     LowCardinality(String)  DEFAULT '',
 
     metric_names       Array(String)   DEFAULT [],
     metric_values      Array(Float64)  DEFAULT [],
@@ -600,7 +604,7 @@ _ALERT_LOG_INSERT_COLUMNS = [
 
 _AVAIL_INSERT_COLUMNS = [
     "assignment_id", "collector_id", "app_id", "device_id",
-    "state", "output", "error_message",
+    "state", "output", "error_message", "error_category",
     "rtt_ms", "response_time_ms", "reachable", "status_code",
     "executed_at", "execution_time", "started_at",
     "collector_name", "device_name", "app_name", "role", "tenant_id", "tenant_name",
@@ -609,7 +613,7 @@ _AVAIL_INSERT_COLUMNS = [
 _PERF_INSERT_COLUMNS = [
     "assignment_id", "collector_id", "app_id", "device_id",
     "component", "component_type",
-    "state", "output", "error_message",
+    "state", "output", "error_message", "error_category",
     "metric_names", "metric_values", "metric_types",
     "executed_at", "execution_time", "started_at",
     "collector_name", "device_name", "app_name", "tenant_id", "tenant_name",
@@ -1391,6 +1395,9 @@ class ClickHouseClient:
             "ALTER TABLE interface ADD COLUMN IF NOT EXISTS counter_bits UInt8 DEFAULT 64 AFTER poll_interval_sec",
             "ALTER TABLE interface_hourly ADD COLUMN IF NOT EXISTS counter_bits UInt8 DEFAULT 64",
             "ALTER TABLE interface_daily ADD COLUMN IF NOT EXISTS counter_bits UInt8 DEFAULT 64",
+            # Add error_category to availability_latency and performance tables
+            "ALTER TABLE availability_latency ADD COLUMN IF NOT EXISTS error_category LowCardinality(String) DEFAULT '' AFTER error_message",
+            "ALTER TABLE performance ADD COLUMN IF NOT EXISTS error_category LowCardinality(String) DEFAULT '' AFTER error_message",
         ]
         for alter_sql in _TENANT_NAME_ALTERS:
             try:

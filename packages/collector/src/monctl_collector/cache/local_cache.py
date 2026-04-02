@@ -222,6 +222,7 @@ class LocalCache:
                 "device_host": job.device_host,
                 "app_id": job.app_id,
                 "app_version": job.app_version,
+                "app_checksum": job.app_checksum,
                 "credential_names": job.credential_names,
                 "interval": job.interval,
                 "parameters": job.parameters,
@@ -237,6 +238,7 @@ class LocalCache:
                         "credential_name": b.credential_name,
                         "use_latest": b.use_latest,
                         "settings": b.settings,
+                        "connector_checksum": b.connector_checksum,
                     }
                     for b in (job.connector_bindings or [])
                 ],
