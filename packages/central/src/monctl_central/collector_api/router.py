@@ -125,6 +125,65 @@ def _extract_credential_names(config: dict) -> list[str]:
     return list({m for m in _CRED_REF_RE.findall(raw)})
 
 
+def _resolve_credential_refs(
+    params: dict,
+    device: "Device | None",
+    assignment: "AppAssignment",
+    cred_name_map: dict,
+) -> dict:
+    """Replace $credential:<ref> in params with actual credential names.
+
+    The <ref> can be:
+      - A credential name directly (e.g. "SSH - monctl") → use as-is
+      - __device_default__ → resolve from assignment or device credentials
+      - A connector alias (e.g. "snmp") → look up in device.credentials JSONB
+    """
+    cred_names_set = set(cred_name_map.values())
+    resolved = {}
+    for key, val in params.items():
+        if not isinstance(val, str) or not val.startswith("$credential:"):
+            resolved[key] = val
+            continue
+        # Strip one or more $credential: prefixes (some were double-encoded)
+        ref = val
+        while ref.startswith("$credential:"):
+            ref = ref.removeprefix("$credential:")
+
+        # Case 1: ref is already an existing credential name
+        if ref in cred_names_set:
+            resolved[key] = ref
+            continue
+
+        # Case 2: __device_default__ — resolve from assignment or device
+        cred_id = None
+        if ref == "__device_default__":
+            if assignment.credential_id:
+                cred_id = assignment.credential_id
+            elif device and device.credentials:
+                for dev_cred_id in device.credentials.values():
+                    try:
+                        cred_id = uuid.UUID(str(dev_cred_id))
+                        break
+                    except (ValueError, TypeError):
+                        continue
+        else:
+            # Case 3: connector alias — look up in device credentials JSONB
+            if device and device.credentials and ref in device.credentials:
+                try:
+                    cred_id = uuid.UUID(str(device.credentials[ref]))
+                except (ValueError, TypeError):
+                    pass
+            if not cred_id and assignment.credential_id:
+                cred_id = assignment.credential_id
+
+        cred_name = cred_name_map.get(cred_id) if cred_id else None
+        if cred_name:
+            resolved[key] = cred_name
+        else:
+            resolved[key] = val
+    return resolved
+
+
 # ---------------------------------------------------------------------------
 # GET /api/v1/jobs
 # ---------------------------------------------------------------------------
@@ -408,11 +467,19 @@ async def get_jobs(
         if assignment.resource_limits and "timeout_seconds" in assignment.resource_limits:
             max_exec = int(assignment.resource_limits["timeout_seconds"])
 
-        # credential names referenced in config
-        credential_names = _extract_credential_names(assignment.config)
-
-        # Inject monitored_interfaces for interface-type apps
-        params = dict(assignment.config)
+        # Resolve $credential: references in config to actual credential names
+        raw_params = dict(assignment.config)
+        params = _resolve_credential_refs(
+            raw_params, device, assignment, cred_name_map,
+        )
+        # Credential names the collector needs to pre-fetch:
+        # resolved names (from params) + any still-unresolved refs from config
+        credential_names = []
+        for key, orig_val in raw_params.items():
+            if isinstance(orig_val, str) and orig_val.startswith("$credential:"):
+                resolved_val = params.get(key)
+                if resolved_val and not str(resolved_val).startswith("$credential:"):
+                    credential_names.append(resolved_val)
         if app.target_table == "interface" and device is not None:
             dev_key = str(device.id)
             # Check if a metadata refresh was requested (forces full walk)
