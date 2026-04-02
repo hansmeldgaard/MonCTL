@@ -30,12 +30,15 @@ Collectors (worker1-4) → poll jobs from central → execute checks → forward
 ## Package Structure
 
 ```
-apps/                           # Built-in monitoring apps (source stored in DB)
-├── ping_check.py               # ICMP ping (BasePoller)
-├── port_check.py               # TCP port check (BasePoller)
-├── http_check.py               # HTTP/HTTPS check (BasePoller)
+apps/                           # Reference BasePoller source (SNMP apps only)
 ├── snmp_check.py               # SNMP scalar OID query (BasePoller)
-└── snmp_interface_poller.py    # Full ifTable/ifXTable monitoring (BasePoller)
+├── snmp_interface_poller.py    # Full ifTable/ifXTable monitoring (BasePoller)
+├── snmp_discovery.py           # Device auto-discovery (one-shot)
+└── snmp_uptime.py              # Device uptime via snmpEngineTime/sysUpTime
+
+packs/                          # Built-in monitoring packs (auto-imported at startup)
+├── snmp-core-v1.0.0.json      # snmp_check, snmp_interface_poller, snmp_discovery, snmp_uptime
+└── basic-checks-v1.0.0.json   # ping_check, port_check, http_check
 
 packages/
 ├── central/                    # Central management server
@@ -108,6 +111,13 @@ packages/
 ---
 
 ## Key Gotchas & Non-Obvious Behavior
+
+### App & Pack System
+- **All apps are BasePoller subclasses** with `class Poller(BasePoller)` and `async def poll() -> PollResult`. No legacy script (stdin/stdout) execution.
+- **Built-in packs** (`packs/`) are auto-imported at startup if not already present. Uses "skip" resolution (creates missing apps, never overwrites existing).
+- **`snmp_discovery` is special**: One-shot (`interval=0`), injected into job lists when Redis discovery flag is set. Looked up by name, not ID.
+- **`apps/` directory** contains reference source for SNMP apps only. Not used at runtime — packs are the single source of truth.
+- **Error categories**: All apps MUST set `error_category` on error PollResults: `"device"` (unreachable/timeout), `"config"` (missing connector/credential), `"app"` (bug/crash). Empty string = no error.
 
 ### Credential Resolution Chain (precedence order)
 1. `AssignmentCredentialOverride` — per-assignment, per-connector-alias
