@@ -46,6 +46,7 @@ const statusColors: Record<SubsystemStatus, string> = {
   degraded: "bg-amber-500/15 text-amber-400 border-amber-500/30",
   critical: "bg-red-500/15 text-red-400 border-red-500/30",
   unknown: "bg-zinc-500/15 text-zinc-400 border-zinc-500/30",
+  unconfigured: "bg-zinc-500/15 text-zinc-500 border-zinc-500/30",
 };
 
 const statusDotColors: Record<SubsystemStatus, string> = {
@@ -53,6 +54,7 @@ const statusDotColors: Record<SubsystemStatus, string> = {
   degraded: "bg-amber-400",
   critical: "bg-red-400",
   unknown: "bg-zinc-400",
+  unconfigured: "bg-zinc-500",
 };
 
 // ── Shared components ────────────────────────────────────────────────────────
@@ -63,6 +65,18 @@ function StatusBadge({ status }: { status: SubsystemStatus }) {
       <span className={`mr-1.5 inline-block h-1.5 w-1.5 rounded-full ${statusDotColors[status]}`} />
       {status}
     </Badge>
+  );
+}
+
+function UnconfiguredCard({ name, message }: { name: string; message: string }) {
+  return (
+    <Card>
+      <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+        <StatusBadge status="unconfigured" />
+        <p className="mt-3 text-sm text-zinc-400">{name} is not configured on this node.</p>
+        <p className="mt-1 text-xs text-zinc-500 font-mono">{message}</p>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -1718,6 +1732,8 @@ export function SystemHealthPage() {
             const ss = (subs.scheduler?.status as SubsystemStatus) ?? "unknown";
             tabStatus = rs === "critical" || ss === "critical" ? "critical" : rs === "degraded" || ss === "degraded" ? "degraded" : rs === "healthy" && ss === "healthy" ? "healthy" : "unknown";
           }
+          else if (key === "patroni") tabStatus = (subs.patroni?.status as SubsystemStatus) ?? "unknown";
+          else if (key === "etcd") tabStatus = (subs.etcd?.status as SubsystemStatus) ?? "unknown";
           else if (key === "collectors") tabStatus = (subs.collectors?.status as SubsystemStatus) ?? "unknown";
           else if (key === "docker") tabStatus = (subs.docker?.status as SubsystemStatus) ?? "unknown";
           return (
@@ -1789,11 +1805,15 @@ export function SystemHealthPage() {
       )}
 
       {activeTab === "patroni" && subs.patroni && (
-        <PatroniCard sub={subs.patroni as { status: SubsystemStatus; latency_ms: number | null; details: Record<string, unknown> }} />
+        subs.patroni.status === "unconfigured"
+          ? <UnconfiguredCard name="Patroni" message={String(subs.patroni.details?.message ?? "Not configured")} />
+          : <PatroniCard sub={subs.patroni as { status: SubsystemStatus; latency_ms: number | null; details: Record<string, unknown> }} />
       )}
 
       {activeTab === "etcd" && subs.etcd && (
-        <EtcdCard sub={subs.etcd as { status: SubsystemStatus; latency_ms: number | null; details: Record<string, unknown> }} />
+        subs.etcd.status === "unconfigured"
+          ? <UnconfiguredCard name="etcd" message={String(subs.etcd.details?.message ?? "Not configured")} />
+          : <EtcdCard sub={subs.etcd as { status: SubsystemStatus; latency_ms: number | null; details: Record<string, unknown> }} />
       )}
 
       {activeTab === "clickhouse" && subs.clickhouse && (

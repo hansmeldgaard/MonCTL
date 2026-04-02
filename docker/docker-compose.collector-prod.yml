@@ -84,7 +84,7 @@ services:
       - /:/host_root:ro
     environment:
       MONCTL_HOST_LABEL: ${NODE_ID:-unknown}
-      MONCTL_PUSH_URL: ${DOCKER_STATS_PUSH_URL:-https://10.145.210.40/api/v1/docker-stats/push}
+      MONCTL_PUSH_URL: ${DOCKER_STATS_PUSH_URL}
       MONCTL_PUSH_API_KEY: ${CENTRAL_API_KEY}
       MONCTL_PUSH_VERIFY_SSL: "false"
     restart: unless-stopped

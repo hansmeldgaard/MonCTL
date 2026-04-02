@@ -695,7 +695,7 @@ export interface HealthStatus {
 
 // ── System Health ────────────────────────────────────────
 
-export type SubsystemStatus = "healthy" | "degraded" | "critical" | "unknown";
+export type SubsystemStatus = "healthy" | "degraded" | "critical" | "unknown" | "unconfigured";
 
 export interface SubsystemHealth {
   status: SubsystemStatus;
@@ -993,6 +993,8 @@ export interface TlsCertificateInfo {
   valid_to: string;
   is_active: boolean;
   created_at: string;
+  san_list: string[];
+  fingerprint: string;
 }
 
 // ── Templates ────────────────────────────────────────────

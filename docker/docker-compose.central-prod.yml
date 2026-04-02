@@ -1,60 +1,38 @@
-# MonCTL Central — single-node production (central1)
+# MonCTL Central — standalone node (central4)
+# Connects to shared Patroni/Redis cluster via PG_HOST/REDIS_HOST env vars.
 # Deploy: scp to /opt/monctl/central/docker-compose.yml + .env
 # Start:  cd /opt/monctl/central && docker compose up -d
 
 services:
-  postgres:
-    image: timescale/timescaledb:latest-pg16
-    environment:
-      POSTGRES_USER: monctl
-      POSTGRES_PASSWORD: ${PG_PASSWORD}
-      POSTGRES_DB: monctl
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U monctl"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redisdata:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-
   central:
     image: monctl-central:latest
     ports:
       - "8443:8443"
     environment:
-      MONCTL_DATABASE_URL: postgresql+asyncpg://monctl:${PG_PASSWORD}@postgres:5432/monctl
-      MONCTL_REDIS_URL: redis://redis:6379/0
+      MONCTL_DATABASE_URL: postgresql+asyncpg://monctl:${PG_PASSWORD}@${PG_HOST}:5432/monctl
+      MONCTL_REDIS_URL: redis://${REDIS_HOST}:6379/0
       MONCTL_HOST: 0.0.0.0
       MONCTL_PORT: 8443
       MONCTL_DEBUG: "false"
+      MONCTL_ROLE: ${MONCTL_ROLE:-api}
       MONCTL_ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       MONCTL_JWT_SECRET_KEY: ${JWT_SECRET}
       MONCTL_ADMIN_USERNAME: admin
       MONCTL_ADMIN_PASSWORD: ${ADMIN_PASSWORD}
       MONCTL_COLLECTOR_API_KEY: ${COLLECTOR_API_KEY}
+      MONCTL_CLICKHOUSE_HOSTS: ${CLICKHOUSE_HOSTS}
+      MONCTL_CLICKHOUSE_USER: ${MONCTL_CLICKHOUSE_USER:-monctl}
+      MONCTL_CLICKHOUSE_PASSWORD: ${MONCTL_CLICKHOUSE_PASSWORD:-monctl}
+      MONCTL_REDIS_SENTINEL_HOSTS: ${MONCTL_REDIS_SENTINEL_HOSTS:-}
+      MONCTL_REDIS_SENTINEL_MASTER: ${MONCTL_REDIS_SENTINEL_MASTER:-monctl-redis}
+      MONCTL_PATRONI_NODES: ${MONCTL_PATRONI_NODES:-}
+      MONCTL_ETCD_NODES: ${MONCTL_ETCD_NODES:-}
+      MONCTL_NODE_NAME: ${MONCTL_NODE_NAME:-}
+      MONCTL_TLS_SAN_IPS: ${MONCTL_TLS_SAN_IPS:-}
     volumes:
       - upgrades_data:/data/upgrades
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      - tls_certs:/etc/haproxy/certs
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8443/v1/health"]
       interval: 10s
@@ -64,6 +42,7 @@ services:
     restart: unless-stopped
 
 volumes:
-  pgdata:
-  redisdata:
   upgrades_data:
+  tls_certs:
+    name: monctl_tls_certs
+    external: true

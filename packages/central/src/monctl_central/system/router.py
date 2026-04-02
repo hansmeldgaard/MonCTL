@@ -309,7 +309,11 @@ async def _check_patroni() -> dict:
     # Patroni REST API on central nodes
     patroni_nodes = parse_node_list(settings.patroni_nodes)
     if not patroni_nodes:
-        return {"name": "Patroni", "status": "unconfigured", "message": "MONCTL_PATRONI_NODES not set"}
+        return {
+            "status": "unconfigured",
+            "latency_ms": None,
+            "details": {"message": "MONCTL_PATRONI_NODES not set"},
+        }
     t0 = time.monotonic()
     status = "healthy"
     members = []
@@ -410,7 +414,11 @@ async def _check_etcd() -> dict:
 
     etcd_nodes = parse_node_list(settings.etcd_nodes)
     if not etcd_nodes:
-        return {"name": "etcd", "status": "unconfigured", "message": "MONCTL_ETCD_NODES not set"}
+        return {
+            "status": "unconfigured",
+            "latency_ms": None,
+            "details": {"message": "MONCTL_ETCD_NODES not set"},
+        }
     t0 = time.monotonic()
     node_health = []
     leader_id = None
@@ -1801,13 +1809,91 @@ async def system_health(
 
 
 _last_health_status: dict = {"overall_status": "unknown", "checked_at": None}
+_HEALTH_CACHE_TTL = 90  # seconds — re-evaluate if older
+
+
+async def _compute_overall_status() -> dict:
+    """Run the full health check and return overall status dict."""
+    from monctl_common.utils import utc_now
+
+    results = await asyncio.gather(
+        _run_check("central", _check_central()),
+        _run_check("postgresql", _check_postgresql_standalone()),
+        _run_check("patroni", _check_patroni()),
+        _run_check("etcd", _check_etcd()),
+        _run_check("clickhouse", _check_clickhouse()),
+        _run_check("redis", _check_redis()),
+        _run_check("collectors", _check_collectors_standalone()),
+        _run_check("scheduler", _check_scheduler()),
+        _run_check("ingestion", _check_ingestion()),
+        _run_check("docker", _check_docker_infrastructure(), timeout=_DOCKER_CHECK_TIMEOUT),
+        return_exceptions=True,
+    )
+
+    subsystems = {}
+    for item in results:
+        if isinstance(item, Exception):
+            continue
+        name, data = item
+        subsystems[name] = data
+
+    # Post-processing: if 0 ingestion rows but 0 active collectors → healthy
+    ingestion = subsystems.get("ingestion", {})
+    collectors = subsystems.get("collectors", {})
+    if (
+        ingestion.get("status") == "degraded"
+        and ingestion.get("details", {}).get("total_rows_5min", 0) == 0
+        and collectors.get("details", {}).get("by_status", {}).get("ACTIVE", 0) == 0
+    ):
+        ingestion["status"] = "healthy"
+
+    _INFRA_SUBSYSTEMS = {
+        "central", "postgresql", "patroni", "etcd", "clickhouse",
+        "redis", "collectors", "scheduler", "ingestion", "docker",
+    }
+    priority = {"critical": 2, "degraded": 1, "healthy": 0, "unknown": -1}
+    worst = max(
+        (
+            s.get("status", "unknown")
+            for name, s in subsystems.items()
+            if name in _INFRA_SUBSYSTEMS
+        ),
+        key=lambda s: priority.get(s, -1),
+        default="unknown",
+    )
+
+    return {"overall_status": worst, "checked_at": utc_now().isoformat()}
 
 
 @router.get("/health/status")
 async def system_health_status(
     auth: dict = Depends(require_admin),
 ):
-    """Lightweight endpoint returning only overall status (for top-bar indicator)."""
+    """Lightweight endpoint returning overall status (for top-bar indicator).
+
+    Re-evaluates automatically if the cached status is stale (>90s) or unknown.
+    """
+    global _last_health_status
+
+    stale = True
+    if _last_health_status.get("checked_at"):
+        from datetime import datetime, timezone
+
+        try:
+            checked = datetime.fromisoformat(_last_health_status["checked_at"])
+            age = (datetime.now(timezone.utc) - checked).total_seconds()
+            stale = age > _HEALTH_CACHE_TTL
+        except (ValueError, TypeError):
+            stale = True
+
+    if stale:
+        try:
+            _last_health_status = await asyncio.wait_for(
+                _compute_overall_status(), timeout=15.0
+            )
+        except Exception:
+            logger.exception("health_status_refresh_failed")
+
     return {"status": "success", "data": _last_health_status}
 
 
