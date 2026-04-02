@@ -62,6 +62,7 @@ export function AssignmentsPage() {
   const bulkUpdate = useBulkUpdateAssignments();
   const bulkDelete = useBulkDeleteAssignments();
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [bulkError, setBulkError] = useState("");
   const { data: credentials } = useCredentials();
   const bulkRef = useRef<HTMLDivElement>(null);
 
@@ -133,14 +134,19 @@ export function AssignmentsPage() {
     } else if (bulkVersionMode !== "") {
       payload.app_version_id = bulkVersionMode;
     }
-    await bulkUpdate.mutateAsync(payload);
-    setBulkOpen(false);
-    setBulkScheduleType("");
-    setBulkScheduleValue("");
-    setBulkCredentialId("");
-    setBulkEnabled("");
-    setBulkVersionMode("");
-    setSelected(new Set());
+    try {
+      setBulkError("");
+      await bulkUpdate.mutateAsync(payload);
+      setBulkOpen(false);
+      setBulkScheduleType("");
+      setBulkScheduleValue("");
+      setBulkCredentialId("");
+      setBulkEnabled("");
+      setBulkVersionMode("");
+      setSelected(new Set());
+    } catch (e: any) {
+      setBulkError(e?.message ?? "Bulk update failed");
+    }
   }
 
   if (isLoading) {
@@ -194,9 +200,15 @@ export function AssignmentsPage() {
                       size="sm"
                       disabled={bulkDelete.isPending}
                       onClick={async () => {
-                        await bulkDelete.mutateAsync([...selected]);
-                        setSelected(new Set());
-                        setConfirmDelete(false);
+                        try {
+                          setBulkError("");
+                          await bulkDelete.mutateAsync([...selected]);
+                          setSelected(new Set());
+                          setConfirmDelete(false);
+                        } catch (e: any) {
+                          setBulkError(e?.message ?? "Bulk delete failed");
+                          setConfirmDelete(false);
+                        }
                       }}
                       className="gap-1.5 text-red-400 border-red-500 hover:bg-red-500/20"
                     >
@@ -303,6 +315,13 @@ export function AssignmentsPage() {
           </>
         )}
       </div>
+
+      {bulkError && (
+        <div className="flex items-center justify-between rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-400">
+          <span>{bulkError}</span>
+          <button onClick={() => setBulkError("")} className="ml-3 text-red-400 hover:text-red-300">&times;</button>
+        </div>
+      )}
 
       <Card>
         <CardHeader>

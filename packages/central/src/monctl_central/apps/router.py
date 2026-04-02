@@ -451,6 +451,7 @@ async def list_assignments(
     device_address: str | None = Query(default=None),
     device_type: str | None = Query(default=None),
     device_type_name: str | None = Query(default=None),
+    collector_group_name: str | None = Query(default=None),
     schedule_type: str | None = Query(default=None),
     schedule_value: str | None = Query(default=None),
     credential_name: str | None = Query(default=None),
@@ -463,7 +464,7 @@ async def list_assignments(
     """List all app assignments with app, device, and schedule details."""
     from sqlalchemy.orm import selectinload
     from monctl_central.storage.models import (
-        App, AppVersion, Collector, Credential, Device, DeviceType,
+        App, AppVersion, Collector, CollectorGroup, Credential, Device, DeviceType,
     )
 
     from monctl_central.storage.models import Device as DeviceModel
@@ -503,17 +504,27 @@ async def list_assignments(
         stmt = stmt.where(AppAssignment.schedule_type == schedule_type)
     if schedule_value:
         stmt = stmt.where(AppAssignment.schedule_value.ilike(f"%{schedule_value}%"))
+    _joined_collector_group = False
+    if collector_group_name:
+        stmt = stmt.outerjoin(CollectorGroup, DeviceModel.collector_group_id == CollectorGroup.id)
+        stmt = stmt.where(CollectorGroup.name.ilike(f"%{collector_group_name}%"))
+        _joined_collector_group = True
     if credential_name:
         stmt = stmt.outerjoin(Credential, AppAssignment.credential_id == Credential.id)
         stmt = stmt.where(Credential.name.ilike(f"%{credential_name}%"))
     if enabled is not None:
         stmt = stmt.where(AppAssignment.enabled == enabled)
 
+    # Join CollectorGroup for sorting if not already joined for filtering
+    if sort_by == "collector_group_name" and not _joined_collector_group:
+        stmt = stmt.outerjoin(CollectorGroup, DeviceModel.collector_group_id == CollectorGroup.id)
+
     ASSIGNMENTS_SORT_MAP = {
         "app_name": App.name,
         "device_name": DeviceModel.name,
         "device_address": DeviceModel.address,
         "device_category": DeviceModel.device_category,
+        "collector_group_name": CollectorGroup.name,
         "schedule": AppAssignment.schedule_value,
         "enabled": AppAssignment.enabled,
         "created_at": AppAssignment.created_at,
@@ -536,7 +547,7 @@ async def list_assignments(
     if device_ids:
         dev_result = await db.execute(
             select(Device).where(Device.id.in_(device_ids))
-            .options(selectinload(Device.device_type))
+            .options(selectinload(Device.device_type), selectinload(Device.collector_group))
         )
         for d in dev_result.scalars().all():
             devices[d.id] = d
@@ -647,6 +658,11 @@ async def list_assignments(
                         "address": devices[row.AppAssignment.device_id].address,
                         "device_category": devices[row.AppAssignment.device_id].device_category,
                         "device_type_name": device_type_names.get(row.AppAssignment.device_id),
+                        "collector_group_name": (
+                            devices[row.AppAssignment.device_id].collector_group.name
+                            if devices[row.AppAssignment.device_id].collector_group
+                            else None
+                        ),
                     }
                     if row.AppAssignment.device_id and row.AppAssignment.device_id in devices
                     else None
@@ -731,8 +747,8 @@ async def bulk_update_assignments(
 
     if not request.assignment_ids:
         raise HTTPException(status_code=400, detail="No assignment IDs provided")
-    if len(request.assignment_ids) > 200:
-        raise HTTPException(status_code=400, detail="Max 200 assignments per bulk update")
+    if len(request.assignment_ids) > 500:
+        raise HTTPException(status_code=400, detail="Max 500 assignments per bulk update")
 
     uuids = [uuid.UUID(aid) for aid in request.assignment_ids]
     stmt = select(AppAssignment).where(AppAssignment.id.in_(uuids))
@@ -808,8 +824,8 @@ async def bulk_delete_assignments(
 
     if not request.assignment_ids:
         raise HTTPException(status_code=400, detail="No assignment IDs provided")
-    if len(request.assignment_ids) > 200:
-        raise HTTPException(status_code=400, detail="Max 200 assignments per bulk delete")
+    if len(request.assignment_ids) > 500:
+        raise HTTPException(status_code=400, detail="Max 500 assignments per bulk delete")
 
     uuids = [uuid.UUID(aid) for aid in request.assignment_ids]
     stmt = select(AppAssignment).where(AppAssignment.id.in_(uuids))
