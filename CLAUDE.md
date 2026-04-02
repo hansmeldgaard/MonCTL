@@ -257,6 +257,7 @@ SSH user: `monctl` for all servers.
 | central-ha | `/opt/monctl/central-ha/` | app + Patroni + Redis primary + sentinel + Metabase | app + Patroni + Redis replica + sentinel | app + Redis sentinel | — |
 | central | `/opt/monctl/central/` | — | — | — | app + Grafana |
 | clickhouse | `/opt/monctl/clickhouse/` | — | — | ClickHouse node | ClickHouse node |
+| clickhouse-keeper | `/opt/monctl/clickhouse-keeper/` | Keeper-only (quorum voter) | — | — | — |
 | haproxy | `/opt/monctl/haproxy/` | HAProxy + keepalived | HAProxy + keepalived | HAProxy + keepalived | HAProxy + keepalived |
 | etcd | `/opt/monctl/etcd/` | etcd | etcd | etcd | — |
 | docker-stats | `/opt/monctl/docker-stats/` | stats agent | stats agent | stats agent | stats agent |
