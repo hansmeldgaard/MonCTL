@@ -35,6 +35,7 @@ class SchedulerRunner:
         self._last_hourly_rollup: datetime | None = None
         self._last_daily_rollup: datetime | None = None
         self._last_os_check: datetime | None = None
+        self._last_inventory_collect: datetime | None = None
         self._last_eligibility_scan: datetime | None = None
 
     async def start(self) -> asyncio.Task:
@@ -80,6 +81,8 @@ class SchedulerRunner:
                     await self._rebalance_collector_groups()
                 # OS update check (daily) — fire-and-forget to avoid blocking alerts
                 asyncio.create_task(self._check_os_updates())
+                # Package inventory collection (every 6h) — fire-and-forget
+                asyncio.create_task(self._collect_package_inventory())
                 # Nightly eligibility scan (daily, configurable time)
                 await self._run_eligibility_scan()
                 # Finalize completed eligibility runs (every cycle)
@@ -1072,6 +1075,24 @@ class SchedulerRunner:
 
         except Exception:
             logger.exception("os_update_check_error")
+
+    async def _collect_package_inventory(self) -> None:
+        """Collect installed package inventory from all nodes (every 6 hours)."""
+        now = datetime.now(timezone.utc)
+        if self._last_inventory_collect is not None and (
+            now - self._last_inventory_collect
+        ).total_seconds() < 21600:
+            return
+
+        self._last_inventory_collect = now
+
+        try:
+            from monctl_central.upgrades.os_inventory import collect_all_inventory
+
+            summary = await collect_all_inventory(self._session_factory)
+            logger.info("package_inventory_collected", nodes=len(summary))
+        except Exception:
+            logger.exception("package_inventory_collection_error")
 
     async def _rebalance_collector_groups(self) -> None:
         """Periodically rebalance job weights across collector groups.

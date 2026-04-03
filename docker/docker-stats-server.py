@@ -402,9 +402,12 @@ class StatsHandler(BaseHTTPRequestHandler):
 
         elif path == "/os/check":
             try:
+                params = _parse_qs_single(self.path)
+                proxy_url = params.get("proxy_url", "")
+                proxy_env = f"http_proxy={proxy_url} https_proxy={proxy_url} " if proxy_url else ""
                 result = subprocess.run(
                     ["chroot", "/host_root", "bash", "-c",
-                     "apt-get update -qq 2>/dev/null && apt list --upgradable 2>/dev/null"],
+                     f"{proxy_env}apt-get update -qq 2>/dev/null && apt list --upgradable 2>/dev/null"],
                     capture_output=True, text=True, timeout=120,
                 )
                 updates = []
@@ -449,6 +452,28 @@ class StatsHandler(BaseHTTPRequestHandler):
                 "reboot_required": required,
                 "packages": packages,
             })
+
+        elif path == "/os/installed":
+            try:
+                result = subprocess.run(
+                    ["chroot", "/host_root", "dpkg-query", "-W",
+                     "-f", "${Package}\t${Version}\t${Architecture}\t${Status}\n"],
+                    capture_output=True, text=True, timeout=30,
+                )
+                packages = []
+                for line in result.stdout.strip().splitlines():
+                    parts = line.split("\t")
+                    if len(parts) >= 4 and "installed" in parts[3]:
+                        packages.append({
+                            "package": parts[0],
+                            "version": parts[1],
+                            "architecture": parts[2] if len(parts) > 2 else "amd64",
+                        })
+                self._json_response(200, {"packages": packages})
+            except subprocess.TimeoutExpired:
+                self._json_response(500, {"packages": [], "error": "dpkg-query timed out"})
+            except Exception as e:
+                self._json_response(500, {"packages": [], "error": str(e)})
 
         elif path.startswith("/os/packages/"):
             filename = path[len("/os/packages/"):]
@@ -540,6 +565,7 @@ class StatsHandler(BaseHTTPRequestHandler):
 
         elif path == "/os/download":
             packages = payload.get("packages", [])
+            proxy_url = payload.get("proxy_url", "")
             if not packages:
                 self._json_response(400, {"error": "packages list required"})
                 return
@@ -548,10 +574,11 @@ class StatsHandler(BaseHTTPRequestHandler):
                     self._json_response(400, {"error": f"invalid package name: {pkg}"})
                     return
             pkg_str = " ".join(packages)
+            proxy_env = f"http_proxy={proxy_url} https_proxy={proxy_url} " if proxy_url else ""
             try:
                 result = subprocess.run(
                     ["chroot", "/host_root", "bash", "-c",
-                     f"mkdir -p /opt/monctl/os-packages && cd /opt/monctl/os-packages && apt-get download {pkg_str} 2>&1"],
+                     f"mkdir -p /opt/monctl/os-packages && cd /opt/monctl/os-packages && {proxy_env}apt-get download {pkg_str} 2>&1"],
                     capture_output=True, text=True, timeout=300,
                 )
                 # List .deb files in the directory
@@ -572,6 +599,42 @@ class StatsHandler(BaseHTTPRequestHandler):
                 })
             except subprocess.TimeoutExpired:
                 self._json_response(500, {"downloaded": [], "output": "", "success": False})
+
+        elif path == "/os/fetch-debs":
+            central_url = payload.get("central_url", "")
+            api_key = payload.get("api_key", "")
+            filenames = payload.get("filenames", [])
+            if not filenames or not central_url:
+                self._json_response(400, {"error": "central_url and filenames required"})
+                return
+            for fn in filenames:
+                if "/" in fn or "\\" in fn or ".." in fn:
+                    self._json_response(400, {"error": f"invalid filename: {fn}"})
+                    return
+            deb_dir = "/opt/monctl/os-packages"
+            fetched = []
+            errors = []
+            for fn in filenames:
+                try:
+                    url = f"{central_url}/api/v1/os-packages/download/{fn}"
+                    result = subprocess.run(
+                        ["chroot", "/host_root", "bash", "-c",
+                         f"mkdir -p {deb_dir} && curl -sfk "
+                         f"-H 'Authorization: Bearer {api_key}' "
+                         f"-o {deb_dir}/{fn} '{url}'"],
+                        capture_output=True, text=True, timeout=120,
+                    )
+                    if result.returncode == 0:
+                        fetched.append(fn)
+                    else:
+                        errors.append(f"{fn}: {result.stderr.strip()}")
+                except subprocess.TimeoutExpired:
+                    errors.append(f"{fn}: timeout")
+            self._json_response(200, {
+                "fetched": fetched,
+                "errors": errors,
+                "success": len(fetched) == len(filenames),
+            })
 
         elif path == "/os/reboot":
             delay = payload.get("delay_seconds", 3)

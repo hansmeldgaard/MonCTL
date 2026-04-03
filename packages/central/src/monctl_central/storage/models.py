@@ -1387,6 +1387,23 @@ class OsInstallJobStep(Base):
     job: Mapped["OsInstallJob"] = relationship(back_populates="steps")
 
 
+class NodePackage(Base):
+    """Installed OS packages per node (full inventory from dpkg-query)."""
+    __tablename__ = "node_packages"
+    __table_args__ = (
+        UniqueConstraint("node_hostname", "package_name", name="uq_node_pkg"),
+        Index("ix_node_packages_package_name", "package_name"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    node_hostname: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    node_role: Mapped[str] = mapped_column(String(50), nullable=False)
+    package_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    installed_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    architecture: Mapped[str] = mapped_column(String(50), nullable=False, server_default="'amd64'")
+    collected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
+
+
 class AnalyticsDashboard(Base):
     """A user-created analytics dashboard with SQL-based widgets."""
     __tablename__ = "analytics_dashboards"

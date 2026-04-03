@@ -1608,6 +1608,23 @@ export interface OsInstallJob {
   steps: OsInstallJobStep[];
 }
 
+export interface PackageNodeStatus {
+  hostname: string;
+  role: string;
+  current_version: string;
+  status: "installed" | "pending" | "unknown";
+}
+
+export interface PackageInventoryItem {
+  package_name: string;
+  new_version: string;
+  severity: string;
+  downloaded: boolean;
+  total_nodes: number;
+  installed_count: number;
+  nodes: PackageNodeStatus[];
+}
+
 export interface UpgradeBadge {
   os_update_count: number;
 }

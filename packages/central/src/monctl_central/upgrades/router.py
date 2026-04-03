@@ -22,6 +22,7 @@ from monctl_central.config import settings
 from monctl_central.dependencies import get_db, get_session_factory, require_admin, require_auth
 from monctl_central.storage.models import (
     Collector,
+    NodePackage,
     OsAvailableUpdate,
     OsCachedPackage,
     OsInstallJob,
@@ -1006,4 +1007,138 @@ async def cancel_os_install_job(
             step.status = "skipped"
     await db.commit()
 
+    return {"status": "success", "data": _fmt_os_job(job)}
+
+
+# ---------------------------------------------------------------------------
+# Package Inventory (package-centric view)
+# ---------------------------------------------------------------------------
+
+@router.get("/package-inventory")
+async def get_package_inventory(
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_admin),
+):
+    """Package-centric view: cached packages with per-node rollout status."""
+    cached_result = await db.execute(
+        select(OsCachedPackage).order_by(OsCachedPackage.package_name)
+    )
+    cached_pkgs = cached_result.scalars().all()
+
+    if not cached_pkgs:
+        return {"status": "success", "data": []}
+
+    nodes_result = await db.execute(select(SystemVersion).order_by(SystemVersion.node_hostname))
+    all_nodes = list(nodes_result.scalars().all())
+
+    pkg_names = [c.package_name for c in cached_pkgs]
+    inv_result = await db.execute(
+        select(NodePackage).where(NodePackage.package_name.in_(pkg_names))
+    )
+    inventory = inv_result.scalars().all()
+
+    # (hostname, package_name) → installed_version
+    inv_map: dict[tuple[str, str], str] = {}
+    for inv in inventory:
+        inv_map[(inv.node_hostname, inv.package_name)] = inv.installed_version
+
+    # Severity from OsAvailableUpdate
+    sev_result = await db.execute(
+        select(
+            OsAvailableUpdate.package_name,
+            OsAvailableUpdate.severity,
+        )
+        .where(OsAvailableUpdate.package_name.in_(pkg_names))
+        .distinct(OsAvailableUpdate.package_name)
+    )
+    severity_map = {row[0]: row[1] for row in sev_result}
+
+    data = []
+    for cached in cached_pkgs:
+        nodes_status = []
+        installed_count = 0
+        for node in all_nodes:
+            installed_ver = inv_map.get((node.node_hostname, cached.package_name), "")
+            if installed_ver == cached.version:
+                node_status = "installed"
+                installed_count += 1
+            elif installed_ver:
+                node_status = "pending"
+            else:
+                node_status = "unknown"
+            nodes_status.append({
+                "hostname": node.node_hostname,
+                "role": node.node_role,
+                "current_version": installed_ver,
+                "status": node_status,
+            })
+
+        data.append({
+            "package_name": cached.package_name,
+            "new_version": cached.version,
+            "severity": severity_map.get(cached.package_name, "normal"),
+            "downloaded": True,
+            "total_nodes": len(all_nodes),
+            "installed_count": installed_count,
+            "nodes": nodes_status,
+        })
+
+    return {"status": "success", "data": data}
+
+
+@router.post("/collect-inventory")
+async def trigger_inventory_collection(
+    background_tasks: BackgroundTasks,
+    session_factory=Depends(get_session_factory),
+    auth: dict = Depends(require_admin),
+):
+    """Trigger package inventory collection from all nodes."""
+    from monctl_central.upgrades.os_inventory import collect_all_inventory
+
+    background_tasks.add_task(collect_all_inventory, session_factory)
+    return {"status": "success", "data": {"message": "Inventory collection started"}}
+
+
+@router.post("/os-install-all")
+async def install_all_updates(
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    session_factory=Depends(get_session_factory),
+    auth: dict = Depends(require_admin),
+    strategy: str = "rolling",
+    restart_policy: str = "rolling",
+):
+    """Quick action: install all cached packages on all nodes with rolling restart."""
+    active = await db.execute(
+        select(OsInstallJob).where(
+            OsInstallJob.status.in_(["pending", "running", "awaiting_approval"])
+        )
+    )
+    if active.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Another OS install job is already active",
+        )
+
+    result = await db.execute(select(OsCachedPackage.package_name).distinct())
+    package_names = [row[0] for row in result]
+    if not package_names:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No cached packages available. Download packages first.",
+        )
+
+    job = await create_os_install_job(
+        db,
+        package_names=package_names,
+        scope="all",
+        target_nodes=None,
+        strategy=strategy,
+        restart_policy=restart_policy,
+        started_by=auth.get("username"),
+    )
+    await db.commit()
+    await db.refresh(job, ["steps"])
+
+    background_tasks.add_task(execute_os_install_job, session_factory, job.id)
     return {"status": "success", "data": _fmt_os_job(job)}

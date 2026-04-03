@@ -125,6 +125,76 @@ def compute_file_hash(path: Path) -> str:
     return h.hexdigest()
 
 
+async def fetch_debs_on_node(
+    node_ip: str, central_url: str, api_key: str, filenames: list[str],
+) -> dict:
+    """Tell a node's sidecar to download .deb files from central."""
+    url = f"http://{node_ip}:{SIDECAR_PORT}/os/fetch-debs"
+    async with httpx.AsyncClient(timeout=300) as client:
+        resp = await client.post(url, json={
+            "central_url": central_url,
+            "api_key": api_key,
+            "filenames": filenames,
+        })
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def install_via_deb(
+    node_ip: str, package_names: list[str], db: AsyncSession,
+) -> dict:
+    """Install packages on a node via .deb distribution from central cache.
+
+    Used for collectors (no internet) and central nodes in offline mode.
+    1. Look up .deb filenames from OsCachedPackage
+    2. Tell sidecar to fetch .debs from central VIP
+    3. Tell sidecar to install via dpkg -i
+    """
+    from monctl_central.config import settings as _settings
+    from monctl_central.storage.models import OsCachedPackage
+
+    # Find cached .deb files for requested packages
+    stmt = select(OsCachedPackage).where(OsCachedPackage.package_name.in_(package_names))
+    cached = (await db.execute(stmt)).scalars().all()
+    filenames = [c.filename for c in cached]
+    if not filenames:
+        raise RuntimeError(f"No cached .deb files for packages: {', '.join(package_names)}")
+
+    # Determine central URL and API key
+    central_url = f"https://{_settings.vip_address}" if hasattr(_settings, "vip_address") and _settings.vip_address else "https://10.145.210.40"
+    api_key = _settings.collector_api_key or ""
+
+    # Step 1: Sidecar downloads .debs from central
+    fetch_result = await fetch_debs_on_node(node_ip, central_url, api_key, filenames)
+    if not fetch_result.get("success"):
+        errors = fetch_result.get("errors", [])
+        raise RuntimeError(f"Failed to fetch .deb files: {errors}")
+
+    # Step 2: Install via dpkg -i
+    result = await install_deb_files_on_node(node_ip, "/opt/monctl/os-packages", filenames)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Network mode helper (reuse pattern from python_modules)
+# ---------------------------------------------------------------------------
+
+async def _get_network_mode(db: AsyncSession) -> tuple[str, str]:
+    """Return (network_mode, proxy_url) from system settings."""
+    from monctl_central.storage.models import SystemSetting
+
+    mode = "direct"
+    proxy_url = ""
+    for key in ("pypi_network_mode", "pypi_proxy_url"):
+        row = await db.get(SystemSetting, key)
+        if row:
+            if key == "pypi_network_mode":
+                mode = row.value
+            else:
+                proxy_url = row.value
+    return mode, proxy_url
+
+
 # ---------------------------------------------------------------------------
 # OS Install Job: creation
 # ---------------------------------------------------------------------------
@@ -272,11 +342,17 @@ async def _run_steps(db: AsyncSession, job: OsInstallJob) -> None:
 
         try:
             if step.action == "install":
-                result = await install_packages_on_node(step.node_ip, job.package_names)
+                network_mode, proxy_url = await _get_network_mode(db)
+                # Central with internet: apt-get install
+                # Collectors or offline mode: .deb distribution from central cache
+                if step.node_role == "central" and network_mode != "offline":
+                    result = await install_packages_on_node(step.node_ip, job.package_names)
+                else:
+                    result = await install_via_deb(step.node_ip, job.package_names, db)
                 step.output_log = result.get("output", "")
                 if not result.get("success", False):
                     raise RuntimeError(
-                        f"apt-get failed (rc={result.get('returncode')}): "
+                        f"Install failed (rc={result.get('returncode')}): "
                         f"{result.get('output', '')[:500]}"
                     )
                 # Mark packages as installed for this node

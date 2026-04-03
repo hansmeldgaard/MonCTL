@@ -86,6 +86,7 @@ import type {
   OsCachedPkg,
   OsInstallResult,
   OsInstallJob,
+  PackageInventoryItem,
   UpgradeBadge,
   DashboardSummary,
   DeviceCategoryListMeta,
@@ -3211,6 +3212,35 @@ export function useCancelOsInstallJob() {
   return useMutation({
     mutationFn: (jobId: string) => apiPost(`/upgrades/os-install-jobs/${jobId}/cancel`, {}),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["os-install-jobs"] }),
+  });
+}
+
+export function usePackageInventory() {
+  return useQuery({
+    queryKey: ["package-inventory"],
+    queryFn: () => apiGet<PackageInventoryItem[]>("/upgrades/package-inventory"),
+    select: (res) => res.data,
+    refetchInterval: 30_000,
+  });
+}
+
+export function useCollectInventory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiPost("/upgrades/collect-inventory", {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["package-inventory"] }),
+  });
+}
+
+export function useInstallAllUpdates() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { strategy: string; restart_policy: string }) =>
+      apiPost<OsInstallJob>("/upgrades/os-install-all", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["os-install-jobs"] });
+      qc.invalidateQueries({ queryKey: ["package-inventory"] });
+    },
   });
 }
 

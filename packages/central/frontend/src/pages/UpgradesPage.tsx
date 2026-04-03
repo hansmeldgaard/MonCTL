@@ -17,6 +17,11 @@ import {
   HardDrive,
   SkipForward,
   ListOrdered,
+  Search,
+  Download,
+  Check,
+  ArrowUp,
+  HelpCircle,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
@@ -47,9 +52,12 @@ import {
   useStartOsInstallJob,
   useApproveOsInstallJob,
   useCancelOsInstallJob,
+  usePackageInventory,
+  useCollectInventory,
+  useInstallAllUpdates,
 } from "@/api/hooks.ts";
 import { timeAgo, formatBytes } from "@/lib/utils.ts";
-import type { UpgradeJob, UpgradeJobStep, OsInstallResult, OsInstallJob, OsInstallJobStep } from "@/types/api.ts";
+import type { UpgradeJob, UpgradeJobStep, OsInstallResult, OsInstallJob, OsInstallJobStep, PackageInventoryItem } from "@/types/api.ts";
 
 // ── Status helpers ────────────────────────────────────────────────────────────
 
@@ -157,6 +165,18 @@ export function UpgradesPage() {
   const [installStrategy, setInstallStrategy] = useState("rolling");
   const [installRestart, setInstallRestart] = useState("none");
   const [expandedInstallJobId, setExpandedInstallJobId] = useState<string | null>(null);
+
+  // Package inventory state
+  const { data: packageInventory } = usePackageInventory();
+  const collectInventory = useCollectInventory();
+  const installAll = useInstallAllUpdates();
+  const [pkgSearch, setPkgSearch] = useState("");
+  const [selectedPkgs, setSelectedPkgs] = useState<Set<string>>(new Set());
+  const [expandedPkg, setExpandedPkg] = useState<string | null>(null);
+  const [showInstallAllDialog, setShowInstallAllDialog] = useState(false);
+  const [showPerNodeUpdates, setShowPerNodeUpdates] = useState(false);
+  const [expandedNodeSearch, setExpandedNodeSearch] = useState("");
+  const [showAllNodes, setShowAllNodes] = useState(false);
 
   const nodes = status?.nodes ?? [];
   const packages = status?.packages ?? [];
@@ -485,13 +505,13 @@ export function UpgradesPage() {
         </CardContent>
       </Card>
 
-      {/* ── OS Updates ──────────────────────────────────────────────────── */}
+      {/* ── OS Package Manager ────────────────────────────────────────── */}
       <Card className="border-zinc-800 bg-zinc-900">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <CardTitle className="flex items-center gap-2 text-base">
-              <HardDrive className="h-4 w-4 text-zinc-400" />
-              OS Updates
+              <Package className="h-4 w-4 text-zinc-400" />
+              OS Package Manager
             </CardTitle>
             <div className="flex gap-2">
               <input
@@ -508,6 +528,19 @@ export function UpgradesPage() {
               <Button
                 variant="outline"
                 size="sm"
+                onClick={() => checkOs.mutate()}
+                disabled={checkOs.isPending}
+              >
+                {checkOs.isPending ? (
+                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                ) : (
+                  <RefreshCw className="h-3 w-3 mr-1" />
+                )}
+                Scan for Updates
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={() => debInputRef.current?.click()}
                 disabled={uploadOs.isPending}
               >
@@ -521,23 +554,23 @@ export function UpgradesPage() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => checkOs.mutate()}
-                disabled={checkOs.isPending}
+                onClick={() => collectInventory.mutate()}
+                disabled={collectInventory.isPending}
               >
-                {checkOs.isPending ? (
+                {collectInventory.isPending ? (
                   <Loader2 className="h-3 w-3 animate-spin mr-1" />
                 ) : (
                   <RefreshCw className="h-3 w-3 mr-1" />
                 )}
-                Check All Nodes
+                Collect Inventory
               </Button>
               <Button
                 size="sm"
-                onClick={() => setShowInstallDialog(true)}
-                disabled={installDialogPkgs.length === 0}
+                onClick={() => setShowInstallAllDialog(true)}
+                disabled={!packageInventory || packageInventory.length === 0}
               >
-                <ListOrdered className="h-3 w-3 mr-1" />
-                Install on Nodes...
+                <Play className="h-3 w-3 mr-1" />
+                Install All + Restart
               </Button>
             </div>
           </div>
@@ -556,171 +589,221 @@ export function UpgradesPage() {
             </div>
           )}
 
-          {/* Per-node update cards */}
-          {osUpdatesByNode && Object.keys(osUpdatesByNode).length > 0 ? (
-            <div className="space-y-4 mb-6">
-              {Object.entries(osUpdatesByNode).map(([hostname, updates]) => {
-                const selected = osSelectedPkgs[hostname] ?? new Set<string>();
-                const allSelected = updates.length > 0 && selected.size === updates.length;
-                const togglePkg = (pkgName: string) => {
-                  setOsSelectedPkgs((prev) => {
-                    const s = new Set(prev[hostname] ?? []);
-                    if (s.has(pkgName)) s.delete(pkgName);
-                    else s.add(pkgName);
-                    return { ...prev, [hostname]: s };
-                  });
-                };
-                const toggleAll = () => {
-                  setOsSelectedPkgs((prev) => {
-                    if (allSelected) return { ...prev, [hostname]: new Set<string>() };
-                    return { ...prev, [hostname]: new Set(updates.map((u) => u.package)) };
-                  });
-                };
-                return (
-                  <div key={hostname} className="border border-zinc-800 rounded-lg p-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <Server className="h-3.5 w-3.5 text-zinc-500" />
-                        <span className="text-sm font-medium">{hostname}</span>
-                        <Badge variant="default" className="text-[10px]">
-                          {updates.length} updates
-                        </Badge>
-                      </div>
-                      <div className="flex gap-1.5">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-6 text-[10px]"
-                          onClick={() => {
-                            const names = Array.from(selected);
-                            if (names.length > 0) downloadOs.mutate(names);
-                          }}
-                          disabled={selected.size === 0 || downloadOs.isPending}
-                        >
-                          {downloadOs.isPending ? (
-                            <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                          ) : null}
-                          Download Selected
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="default"
-                          className="h-6 text-[10px]"
-                          onClick={() => {
-                            const names = Array.from(selected);
-                            if (names.length === 0) return;
-                            installOs.mutate(
-                              { node_hostname: hostname, package_names: names },
-                              {
-                                onSuccess: (res) =>
-                                  setInstallResult({ hostname, result: res.data }),
-                              },
-                            );
-                          }}
-                          disabled={selected.size === 0 || installOs.isPending}
-                        >
-                          {installOs.isPending ? (
-                            <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                          ) : null}
-                          Install Selected
-                        </Button>
-                      </div>
-                    </div>
+          {/* Search */}
+          <div className="relative mb-4">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-500" />
+            <input
+              type="text"
+              value={pkgSearch}
+              onChange={(e) => setPkgSearch(e.target.value)}
+              placeholder="Filter packages..."
+              className="w-full rounded-md border border-zinc-700 bg-zinc-800/50 py-1.5 pl-9 pr-3 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            />
+          </div>
+
+          {/* Package table */}
+          {(() => {
+            const filtered = (packageInventory ?? []).filter(
+              (p) => !pkgSearch || p.package_name.toLowerCase().includes(pkgSearch.toLowerCase()),
+            );
+            const allFilteredSelected =
+              filtered.length > 0 && filtered.every((p) => selectedPkgs.has(p.package_name));
+            return (
+              <>
+                {filtered.length === 0 ? (
+                  <p className="text-sm text-zinc-500 py-4 text-center">
+                    {pkgSearch
+                      ? "No packages match the filter."
+                      : 'No package inventory yet. Click "Collect Inventory" to scan nodes.'}
+                  </p>
+                ) : (
+                  <div className="overflow-x-auto">
                     <Table>
                       <TableHeader>
                         <TableRow>
                           <TableHead className="w-8">
                             <input
                               type="checkbox"
-                              checked={allSelected}
-                              onChange={toggleAll}
+                              checked={allFilteredSelected}
+                              onChange={() => {
+                                if (allFilteredSelected) {
+                                  setSelectedPkgs(new Set());
+                                } else {
+                                  setSelectedPkgs(new Set(filtered.map((p) => p.package_name)));
+                                }
+                              }}
                               className="accent-brand-500"
                             />
                           </TableHead>
                           <TableHead>Package</TableHead>
-                          <TableHead>Current</TableHead>
-                          <TableHead>New</TableHead>
+                          <TableHead>New Version</TableHead>
                           <TableHead>Severity</TableHead>
-                          <TableHead>Status</TableHead>
+                          <TableHead>Progress</TableHead>
+                          <TableHead className="w-10"></TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {updates.map((u) => (
-                          <TableRow key={u.id}>
-                            <TableCell>
-                              <input
-                                type="checkbox"
-                                checked={selected.has(u.package)}
-                                onChange={() => togglePkg(u.package)}
-                                className="accent-brand-500"
-                              />
-                            </TableCell>
-                            <TableCell className="font-mono text-xs">{u.package}</TableCell>
-                            <TableCell className="text-xs text-zinc-500">{u.current}</TableCell>
-                            <TableCell className="text-xs">{u.new}</TableCell>
-                            <TableCell>
-                              <Badge
-                                variant={u.severity === "security" ? "destructive" : "default"}
-                                className="text-[10px]"
+                        {filtered.map((pkg) => {
+                          const isExpanded = expandedPkg === pkg.package_name;
+                          const pct =
+                            pkg.total_nodes > 0
+                              ? Math.round((pkg.installed_count / pkg.total_nodes) * 100)
+                              : 0;
+                          return (
+                            <>
+                              <TableRow
+                                key={pkg.package_name}
+                                className={`cursor-pointer ${isExpanded ? "bg-zinc-800/50" : ""}`}
+                                onClick={() =>
+                                  setExpandedPkg(isExpanded ? null : pkg.package_name)
+                                }
                               >
-                                {u.severity}
-                              </Badge>
-                            </TableCell>
-                            <TableCell>
-                              {u.is_downloaded && (
-                                <Badge className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 text-[10px]">
-                                  cached
-                                </Badge>
+                                <TableCell onClick={(e) => e.stopPropagation()}>
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedPkgs.has(pkg.package_name)}
+                                    onChange={() => {
+                                      setSelectedPkgs((prev) => {
+                                        const next = new Set(prev);
+                                        if (next.has(pkg.package_name))
+                                          next.delete(pkg.package_name);
+                                        else next.add(pkg.package_name);
+                                        return next;
+                                      });
+                                    }}
+                                    className="accent-brand-500"
+                                  />
+                                </TableCell>
+                                <TableCell className="font-mono text-xs">{pkg.package_name}</TableCell>
+                                <TableCell className="font-mono text-xs">{pkg.new_version}</TableCell>
+                                <TableCell>
+                                  <Badge
+                                    className={
+                                      pkg.severity === "security"
+                                        ? "bg-red-500/15 text-red-400 border-red-500/30 text-[10px]"
+                                        : "bg-emerald-500/15 text-emerald-400 border-emerald-500/30 text-[10px]"
+                                    }
+                                  >
+                                    {pkg.severity}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs text-zinc-400">
+                                      {pkg.installed_count}/{pkg.total_nodes}
+                                    </span>
+                                    <div className="w-16 h-1.5 bg-zinc-700 rounded-full overflow-hidden">
+                                      <div
+                                        className="h-full bg-emerald-500 rounded-full"
+                                        style={{ width: `${pct}%` }}
+                                      />
+                                    </div>
+                                  </div>
+                                </TableCell>
+                                <TableCell>
+                                  {isExpanded ? (
+                                    <ChevronDown className="h-4 w-4 text-zinc-500" />
+                                  ) : (
+                                    <ChevronRight className="h-4 w-4 text-zinc-500" />
+                                  )}
+                                </TableCell>
+                              </TableRow>
+                              {isExpanded && (
+                                <TableRow key={`${pkg.package_name}-detail`}>
+                                  <TableCell colSpan={6} className="p-0">
+                                    <PackageNodeDetail
+                                      pkg={pkg}
+                                      nodeSearch={expandedNodeSearch}
+                                      setNodeSearch={setExpandedNodeSearch}
+                                      showAll={showAllNodes}
+                                      setShowAll={setShowAllNodes}
+                                    />
+                                  </TableCell>
+                                </TableRow>
                               )}
-                            </TableCell>
-                          </TableRow>
-                        ))}
+                            </>
+                          );
+                        })}
                       </TableBody>
                     </Table>
                   </div>
-                );
-              })}
-            </div>
-          ) : (
-            <p className="text-sm text-zinc-500 py-4 text-center mb-4">
-              No OS updates detected. Click "Check All Nodes" to scan.
-            </p>
-          )}
+                )}
 
-          {/* Cached Packages */}
-          <h4 className="text-sm font-medium text-zinc-400 mb-2">Cached Packages</h4>
-          {cachedPackages && cachedPackages.length > 0 ? (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Package</TableHead>
-                  <TableHead>Version</TableHead>
-                  <TableHead>Arch</TableHead>
-                  <TableHead>Filename</TableHead>
-                  <TableHead>Size</TableHead>
-                  <TableHead>Source</TableHead>
-                  <TableHead>Added</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {cachedPackages.map((pkg) => (
-                  <TableRow key={pkg.id}>
-                    <TableCell className="font-mono text-xs">{pkg.package}</TableCell>
-                    <TableCell className="text-xs">{pkg.version}</TableCell>
-                    <TableCell className="text-xs text-zinc-500">{pkg.architecture}</TableCell>
-                    <TableCell className="font-mono text-xs max-w-48 truncate">{pkg.filename}</TableCell>
-                    <TableCell className="text-xs">{formatBytes(pkg.file_size)}</TableCell>
-                    <TableCell className="text-xs text-zinc-500">{pkg.source}</TableCell>
-                    <TableCell className="text-xs text-zinc-400">{timeAgo(pkg.created_at)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          ) : (
-            <p className="text-xs text-zinc-600">No cached OS packages.</p>
-          )}
+                {/* Selected actions bar */}
+                {selectedPkgs.size > 0 && (
+                  <div className="mt-3 flex items-center gap-3 rounded-lg border border-zinc-700 bg-zinc-800/50 px-4 py-2.5">
+                    <span className="text-sm text-zinc-300">
+                      {selectedPkgs.size} package{selectedPkgs.size !== 1 ? "s" : ""} selected
+                    </span>
+                    <div className="flex-1" />
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => downloadOs.mutate(Array.from(selectedPkgs))}
+                      disabled={downloadOs.isPending}
+                    >
+                      {downloadOs.isPending ? (
+                        <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                      ) : (
+                        <Download className="h-3 w-3 mr-1" />
+                      )}
+                      Download Selected
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={() => setShowInstallDialog(true)}
+                    >
+                      <ListOrdered className="h-3 w-3 mr-1" />
+                      Install Selected...
+                    </Button>
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </CardContent>
       </Card>
+
+      {/* ── Install All + Restart Confirm Dialog ───────────────────────── */}
+      {showInstallAllDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="w-full max-w-md rounded-lg border border-zinc-700 bg-zinc-900 p-6 shadow-xl">
+            <h3 className="text-base font-semibold text-zinc-100 mb-3">Confirm Install All + Restart</h3>
+            <p className="text-sm text-zinc-400 mb-5">
+              Install {packageInventory?.length ?? 0} package{(packageInventory?.length ?? 0) !== 1 ? "s" : ""} on
+              all {nodes.length} node{nodes.length !== 1 ? "s" : ""} with rolling restart?
+            </p>
+            {installAll.isError && (
+              <div className="mb-3 rounded-md bg-red-500/10 border border-red-500/30 p-2 text-xs text-red-400">
+                <AlertTriangle className="inline h-3 w-3 mr-1" />
+                {(installAll.error as Error)?.message ?? "Failed to start install"}
+              </div>
+            )}
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setShowInstallAllDialog(false)}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  installAll.mutate(
+                    { strategy: "rolling", restart_policy: "rolling" },
+                    { onSuccess: () => setShowInstallAllDialog(false) },
+                  );
+                }}
+                disabled={installAll.isPending}
+              >
+                {installAll.isPending ? (
+                  <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                ) : (
+                  <Play className="h-3.5 w-3.5 mr-1" />
+                )}
+                Confirm
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── OS Install Jobs ─────────────────────────────────────────────── */}
       {osInstallJobs && osInstallJobs.length > 0 && (
@@ -753,6 +836,226 @@ export function UpgradesPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* ── Advanced: Per-Node Updates (collapsible) ──────────────────── */}
+      <Card className="border-zinc-800 bg-zinc-900">
+        <CardHeader className="pb-0">
+          <button
+            className="flex w-full items-center gap-2 text-left"
+            onClick={() => setShowPerNodeUpdates(!showPerNodeUpdates)}
+          >
+            {showPerNodeUpdates ? (
+              <ChevronDown className="h-4 w-4 text-zinc-500" />
+            ) : (
+              <ChevronRight className="h-4 w-4 text-zinc-500" />
+            )}
+            <CardTitle className="flex items-center gap-2 text-base text-zinc-400">
+              <HardDrive className="h-4 w-4 text-zinc-500" />
+              Advanced: Per-Node Updates
+            </CardTitle>
+          </button>
+        </CardHeader>
+        {showPerNodeUpdates && (
+          <CardContent className="pt-4">
+            <div className="flex gap-2 mb-4">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => checkOs.mutate()}
+                disabled={checkOs.isPending}
+              >
+                {checkOs.isPending ? (
+                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                ) : (
+                  <RefreshCw className="h-3 w-3 mr-1" />
+                )}
+                Check All Nodes
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => setShowInstallDialog(true)}
+                disabled={installDialogPkgs.length === 0}
+              >
+                <ListOrdered className="h-3 w-3 mr-1" />
+                Install on Nodes...
+              </Button>
+            </div>
+
+            {/* Per-node update cards */}
+            {osUpdatesByNode && Object.keys(osUpdatesByNode).length > 0 ? (
+              <div className="space-y-4">
+                {Object.entries(osUpdatesByNode).map(([hostname, updates]) => {
+                  const selected = osSelectedPkgs[hostname] ?? new Set<string>();
+                  const allSelected = updates.length > 0 && selected.size === updates.length;
+                  const togglePkg = (pkgName: string) => {
+                    setOsSelectedPkgs((prev) => {
+                      const s = new Set(prev[hostname] ?? []);
+                      if (s.has(pkgName)) s.delete(pkgName);
+                      else s.add(pkgName);
+                      return { ...prev, [hostname]: s };
+                    });
+                  };
+                  const toggleAll = () => {
+                    setOsSelectedPkgs((prev) => {
+                      if (allSelected) return { ...prev, [hostname]: new Set<string>() };
+                      return { ...prev, [hostname]: new Set(updates.map((u) => u.package)) };
+                    });
+                  };
+                  return (
+                    <div key={hostname} className="border border-zinc-800 rounded-lg p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <Server className="h-3.5 w-3.5 text-zinc-500" />
+                          <span className="text-sm font-medium">{hostname}</span>
+                          <Badge variant="default" className="text-[10px]">
+                            {updates.length} updates
+                          </Badge>
+                        </div>
+                        <div className="flex gap-1.5">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-6 text-[10px]"
+                            onClick={() => {
+                              const names = Array.from(selected);
+                              if (names.length > 0) downloadOs.mutate(names);
+                            }}
+                            disabled={selected.size === 0 || downloadOs.isPending}
+                          >
+                            {downloadOs.isPending ? (
+                              <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                            ) : null}
+                            Download Selected
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="default"
+                            className="h-6 text-[10px]"
+                            onClick={() => {
+                              const names = Array.from(selected);
+                              if (names.length === 0) return;
+                              installOs.mutate(
+                                { node_hostname: hostname, package_names: names },
+                                {
+                                  onSuccess: (res) =>
+                                    setInstallResult({ hostname, result: res.data }),
+                                },
+                              );
+                            }}
+                            disabled={selected.size === 0 || installOs.isPending}
+                          >
+                            {installOs.isPending ? (
+                              <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                            ) : null}
+                            Install Selected
+                          </Button>
+                        </div>
+                      </div>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="w-8">
+                              <input
+                                type="checkbox"
+                                checked={allSelected}
+                                onChange={toggleAll}
+                                className="accent-brand-500"
+                              />
+                            </TableHead>
+                            <TableHead>Package</TableHead>
+                            <TableHead>Current</TableHead>
+                            <TableHead>New</TableHead>
+                            <TableHead>Severity</TableHead>
+                            <TableHead>Status</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {updates.map((u) => (
+                            <TableRow key={u.id}>
+                              <TableCell>
+                                <input
+                                  type="checkbox"
+                                  checked={selected.has(u.package)}
+                                  onChange={() => togglePkg(u.package)}
+                                  className="accent-brand-500"
+                                />
+                              </TableCell>
+                              <TableCell className="font-mono text-xs">{u.package}</TableCell>
+                              <TableCell className="text-xs text-zinc-500">{u.current}</TableCell>
+                              <TableCell className="text-xs">{u.new}</TableCell>
+                              <TableCell>
+                                <Badge
+                                  variant={u.severity === "security" ? "destructive" : "default"}
+                                  className="text-[10px]"
+                                >
+                                  {u.severity}
+                                </Badge>
+                              </TableCell>
+                              <TableCell>
+                                {u.is_downloaded && (
+                                  <Badge className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 text-[10px]">
+                                    cached
+                                  </Badge>
+                                )}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-sm text-zinc-500 py-4 text-center">
+                No OS updates detected. Click "Check All Nodes" to scan.
+              </p>
+            )}
+          </CardContent>
+        )}
+      </Card>
+
+      {/* ── Cached Packages ────────────────────────────────────────────── */}
+      <Card className="border-zinc-800 bg-zinc-900">
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Package className="h-4 w-4 text-zinc-400" />
+            Cached Packages
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {cachedPackages && cachedPackages.length > 0 ? (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Package</TableHead>
+                  <TableHead>Version</TableHead>
+                  <TableHead>Arch</TableHead>
+                  <TableHead>Filename</TableHead>
+                  <TableHead>Size</TableHead>
+                  <TableHead>Source</TableHead>
+                  <TableHead>Added</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {cachedPackages.map((pkg) => (
+                  <TableRow key={pkg.id}>
+                    <TableCell className="font-mono text-xs">{pkg.package}</TableCell>
+                    <TableCell className="text-xs">{pkg.version}</TableCell>
+                    <TableCell className="text-xs text-zinc-500">{pkg.architecture}</TableCell>
+                    <TableCell className="font-mono text-xs max-w-48 truncate">{pkg.filename}</TableCell>
+                    <TableCell className="text-xs">{formatBytes(pkg.file_size)}</TableCell>
+                    <TableCell className="text-xs text-zinc-500">{pkg.source}</TableCell>
+                    <TableCell className="text-xs text-zinc-400">{timeAgo(pkg.created_at)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : (
+            <p className="text-xs text-zinc-600 py-4 text-center">No cached OS packages.</p>
+          )}
+        </CardContent>
+      </Card>
 
       {/* ── Install Job Dialog ──────────────────────────────────────────── */}
       {showInstallDialog && (
@@ -929,6 +1232,102 @@ export function UpgradesPage() {
             </div>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// ── Package Node Detail (expanded row) ───────────────────────────────────────
+
+function PackageNodeDetail({
+  pkg,
+  nodeSearch,
+  setNodeSearch,
+  showAll,
+  setShowAll,
+}: {
+  pkg: PackageInventoryItem;
+  nodeSearch: string;
+  setNodeSearch: (v: string) => void;
+  showAll: boolean;
+  setShowAll: (v: boolean) => void;
+}) {
+  const NODE_LIMIT = 25;
+  const filtered = pkg.nodes.filter(
+    (n) => !nodeSearch || n.hostname.toLowerCase().includes(nodeSearch.toLowerCase()),
+  );
+  const displayed = showAll ? filtered : filtered.slice(0, NODE_LIMIT);
+  const hasMore = filtered.length > NODE_LIMIT && !showAll;
+
+  return (
+    <div className="mx-4 my-3 rounded-md border border-zinc-800 bg-zinc-800/30 p-3">
+      {/* Search within nodes */}
+      {pkg.nodes.length > 10 && (
+        <div className="relative mb-3">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-zinc-600" />
+          <input
+            type="text"
+            value={nodeSearch}
+            onChange={(e) => setNodeSearch(e.target.value)}
+            placeholder="Filter by hostname..."
+            className="w-64 rounded border border-zinc-700 bg-zinc-900/50 py-1 pl-7 pr-2 text-xs text-zinc-300 placeholder:text-zinc-600 focus:border-brand-500 focus:outline-none"
+          />
+        </div>
+      )}
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Hostname</TableHead>
+            <TableHead>Role</TableHead>
+            <TableHead>Current Version</TableHead>
+            <TableHead>Status</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {displayed.map((node) => (
+            <TableRow key={node.hostname}>
+              <TableCell className="font-mono text-xs">{node.hostname}</TableCell>
+              <TableCell>
+                <Badge
+                  className={
+                    node.role === "central"
+                      ? "bg-brand-500/15 text-brand-400 border-brand-500/30 text-[10px]"
+                      : "bg-zinc-500/15 text-zinc-400 border-zinc-500/30 text-[10px]"
+                  }
+                >
+                  {node.role}
+                </Badge>
+              </TableCell>
+              <TableCell className="font-mono text-xs text-zinc-400">{node.current_version}</TableCell>
+              <TableCell>
+                {node.status === "installed" ? (
+                  <div className="flex items-center gap-1.5">
+                    <Check className="h-3.5 w-3.5 text-emerald-400" />
+                    <span className="text-xs text-emerald-400">installed</span>
+                  </div>
+                ) : node.status === "pending" ? (
+                  <div className="flex items-center gap-1.5">
+                    <ArrowUp className="h-3.5 w-3.5 text-amber-400" />
+                    <span className="text-xs text-amber-400">pending</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5">
+                    <HelpCircle className="h-3.5 w-3.5 text-zinc-500" />
+                    <span className="text-xs text-zinc-500">unknown</span>
+                  </div>
+                )}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+      {hasMore && (
+        <button
+          className="mt-2 text-xs text-brand-400 hover:text-brand-300"
+          onClick={() => setShowAll(true)}
+        >
+          Show all {filtered.length} nodes
+        </button>
       )}
     </div>
   );
