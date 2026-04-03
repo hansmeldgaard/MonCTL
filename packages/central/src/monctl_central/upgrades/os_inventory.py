@@ -10,6 +10,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from monctl_central.storage.models import NodePackage, SystemVersion
+from monctl_central.upgrades.os_service import check_reboot_required
 
 logger = structlog.get_logger()
 
@@ -76,6 +77,23 @@ async def collect_all_inventory(session_factory) -> dict[str, int]:
                         architecture=pkg.get("architecture", "amd64"),
                     ))
                 summary[hostname] = len(packages)
+
+            await db.commit()
+
+        # Also check reboot-required on each node in this batch
+        async with session_factory() as db:
+            for node in batch:
+                try:
+                    reboot_info = await check_reboot_required(node.node_ip)
+                    sv = (await db.execute(
+                        select(SystemVersion).where(
+                            SystemVersion.node_hostname == node.node_hostname
+                        )
+                    )).scalar_one_or_none()
+                    if sv:
+                        sv.reboot_required = reboot_info.get("reboot_required", False)
+                except Exception:
+                    pass
 
             await db.commit()
 

@@ -1472,6 +1472,7 @@ export interface SystemVersionNode {
   os_version: string | null;
   kernel_version: string | null;
   python_version: string | null;
+  reboot_required: boolean;
   last_reported_at: string | null;
 }
 
@@ -1619,6 +1620,7 @@ export interface PackageInventoryItem {
   package_name: string;
   new_version: string;
   severity: string;
+  requires_reboot: boolean;
   downloaded: boolean;
   total_nodes: number;
   installed_count: number;

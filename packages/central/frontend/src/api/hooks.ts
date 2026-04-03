@@ -3232,14 +3232,14 @@ export function useCollectInventory() {
   });
 }
 
-export function useInstallAllUpdates() {
+export function useRestartNodes() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { strategy: string; restart_policy: string }) =>
-      apiPost<OsInstallJob>("/upgrades/os-install-all", data),
+    mutationFn: (data: { node_hostnames: string[]; strategy?: string }) =>
+      apiPost<OsInstallJob>("/upgrades/os-restart-nodes", data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["os-install-jobs"] });
-      qc.invalidateQueries({ queryKey: ["package-inventory"] });
+      qc.invalidateQueries({ queryKey: ["upgrade-status"] });
     },
   });
 }

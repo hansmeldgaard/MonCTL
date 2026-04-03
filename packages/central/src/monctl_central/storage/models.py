@@ -1226,6 +1226,7 @@ class SystemVersion(Base):
     os_version: Mapped[str | None] = mapped_column(String(200))
     kernel_version: Mapped[str | None] = mapped_column(String(100))
     python_version: Mapped[str | None] = mapped_column(String(50))
+    reboot_required: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     last_reported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")

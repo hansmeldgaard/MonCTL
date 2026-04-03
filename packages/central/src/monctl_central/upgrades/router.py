@@ -78,6 +78,7 @@ def _fmt_version(v: SystemVersion) -> dict:
         "os_version": v.os_version,
         "kernel_version": v.kernel_version,
         "python_version": v.python_version,
+        "reboot_required": v.reboot_required,
         "last_reported_at": v.last_reported_at.isoformat() if v.last_reported_at else None,
     }
 
@@ -1010,6 +1011,70 @@ async def cancel_os_install_job(
     return {"status": "success", "data": _fmt_os_job(job)}
 
 
+@router.post("/os-restart-nodes")
+async def restart_nodes(
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    session_factory=Depends(get_session_factory),
+    auth: dict = Depends(require_admin),
+    node_hostnames: list[str] = [],
+    strategy: str = "rolling",
+):
+    """Rolling restart of specific nodes (reboot + health check only)."""
+    if not node_hostnames:
+        raise HTTPException(status_code=400, detail="node_hostnames required")
+
+    active = await db.execute(
+        select(OsInstallJob).where(
+            OsInstallJob.status.in_(["pending", "running", "awaiting_approval"])
+        )
+    )
+    if active.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="Another job is already active")
+
+    from monctl_central.upgrades.os_service import _current_hostname
+
+    result = await db.execute(
+        select(SystemVersion).where(SystemVersion.node_hostname.in_(node_hostnames))
+    )
+    nodes = list(result.scalars().all())
+    if not nodes:
+        raise HTTPException(status_code=404, detail="No matching nodes found")
+
+    current = _current_hostname()
+    nodes.sort(key=lambda n: (n.node_role == "central", n.node_hostname == current, n.node_hostname))
+
+    job = OsInstallJob(
+        package_names=[],
+        scope="nodes",
+        target_nodes=node_hostnames,
+        strategy=strategy,
+        restart_policy="rolling",
+        status="pending",
+        started_by=auth.get("username"),
+    )
+    db.add(job)
+    await db.flush()
+
+    for i, node in enumerate(nodes):
+        db.add(OsInstallJobStep(
+            job_id=job.id, step_order=i * 2 + 1,
+            node_hostname=node.node_hostname, node_role=node.node_role, node_ip=node.node_ip,
+            action="reboot", status="pending",
+        ))
+        db.add(OsInstallJobStep(
+            job_id=job.id, step_order=i * 2 + 2,
+            node_hostname=node.node_hostname, node_role=node.node_role, node_ip=node.node_ip,
+            action="health_check", status="pending",
+        ))
+
+    await db.commit()
+    await db.refresh(job, ["steps"])
+
+    background_tasks.add_task(execute_os_install_job, session_factory, job.id)
+    return {"status": "success", "data": _fmt_os_job(job)}
+
+
 # ---------------------------------------------------------------------------
 # Package Inventory (package-centric view)
 # ---------------------------------------------------------------------------
@@ -1073,10 +1138,14 @@ async def get_package_inventory(
                 "status": node_status,
             })
 
+        # Kernel packages require reboot after install
+        requires_reboot = cached.package_name.startswith("linux-")
+
         data.append({
             "package_name": cached.package_name,
             "new_version": cached.version,
             "severity": severity_map.get(cached.package_name, "normal"),
+            "requires_reboot": requires_reboot,
             "downloaded": True,
             "total_nodes": len(all_nodes),
             "installed_count": installed_count,

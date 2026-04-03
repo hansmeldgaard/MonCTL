@@ -14,7 +14,6 @@ import {
   RefreshCw,
   ChevronDown,
   ChevronRight,
-  HardDrive,
   SkipForward,
   ListOrdered,
   Search,
@@ -42,22 +41,19 @@ import {
   useStartUpgrade,
   useUpgradeJobs,
   useCancelUpgradeJob,
-  useOsUpdates,
   useCheckOsUpdatesNew,
   useDownloadOsPackages,
   useUploadOsPackage,
-  useOsCachedPackages,
-  useInstallOsOnNode,
   useOsInstallJobs,
   useStartOsInstallJob,
   useApproveOsInstallJob,
   useCancelOsInstallJob,
   usePackageInventory,
   useCollectInventory,
-  useInstallAllUpdates,
+  useRestartNodes,
 } from "@/api/hooks.ts";
 import { timeAgo, formatBytes } from "@/lib/utils.ts";
-import type { UpgradeJob, UpgradeJobStep, OsInstallResult, OsInstallJob, OsInstallJobStep, PackageInventoryItem } from "@/types/api.ts";
+import type { UpgradeJob, UpgradeJobStep, OsInstallJob, OsInstallJobStep, PackageInventoryItem } from "@/types/api.ts";
 
 // ── Status helpers ────────────────────────────────────────────────────────────
 
@@ -139,16 +135,14 @@ export function UpgradesPage() {
   const deleteMutation = useDeleteUpgradePackage();
   const startMutation = useStartUpgrade();
   const cancelMutation = useCancelUpgradeJob();
-  const { data: osUpdatesByNode } = useOsUpdates();
   const checkOs = useCheckOsUpdatesNew();
   const downloadOs = useDownloadOsPackages();
   const uploadOs = useUploadOsPackage();
-  const { data: cachedPackages } = useOsCachedPackages();
-  const installOs = useInstallOsOnNode();
   const { data: osInstallJobs } = useOsInstallJobs();
   const startInstallJob = useStartOsInstallJob();
   const approveInstallJob = useApproveOsInstallJob();
   const cancelInstallJob = useCancelOsInstallJob();
+  const restartNodes = useRestartNodes();
 
   const [selectedPkgId, setSelectedPkgId] = useState<string | null>(null);
   const [scope, setScope] = useState("all");
@@ -157,70 +151,74 @@ export function UpgradesPage() {
   const [confirmStart, setConfirmStart] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const debInputRef = useRef<HTMLInputElement>(null);
-  const [osSelectedPkgs, setOsSelectedPkgs] = useState<Record<string, Set<string>>>({});
-  const [installResult, setInstallResult] = useState<{ hostname: string; result: OsInstallResult } | null>(null);
-  const [showInstallDialog, setShowInstallDialog] = useState(false);
-  const [installScope, setInstallScope] = useState("all");
-  const [installTargetNodes, setInstallTargetNodes] = useState<Set<string>>(new Set());
-  const [installStrategy, setInstallStrategy] = useState("rolling");
-  const [installRestart, setInstallRestart] = useState("none");
   const [expandedInstallJobId, setExpandedInstallJobId] = useState<string | null>(null);
 
   // Package inventory state
   const { data: packageInventory } = usePackageInventory();
   const collectInventory = useCollectInventory();
-  const installAll = useInstallAllUpdates();
   const [pkgSearch, setPkgSearch] = useState("");
   const [selectedPkgs, setSelectedPkgs] = useState<Set<string>>(new Set());
   const [expandedPkg, setExpandedPkg] = useState<string | null>(null);
-  const [showInstallAllDialog, setShowInstallAllDialog] = useState(false);
-  const [showPerNodeUpdates, setShowPerNodeUpdates] = useState(false);
   const [expandedNodeSearch, setExpandedNodeSearch] = useState("");
   const [showAllNodes, setShowAllNodes] = useState(false);
+
+  // Install preview state
+  const [showInstallPreview, setShowInstallPreview] = useState(false);
+  const [installStrategy, setInstallStrategy] = useState("rolling");
+
+  // System Nodes selection state (for restart)
+  const [selectedNodes, setSelectedNodes] = useState<Set<string>>(new Set());
 
   const nodes = status?.nodes ?? [];
   const packages = status?.packages ?? [];
   const selectedPkg = packages.find((p) => p.id === selectedPkgId) ?? null;
 
-  // Compute union of selected OS packages across all nodes for the install dialog
-  const installDialogPkgs = useMemo(() => {
-    const selected = new Set<string>();
-    for (const pkgSet of Object.values(osSelectedPkgs)) {
-      for (const p of pkgSet) selected.add(p);
-    }
-    if (selected.size > 0) return Array.from(selected);
-    // If nothing selected, use all packages from current OS updates
-    if (osUpdatesByNode) {
-      const all = new Set<string>();
-      for (const updates of Object.values(osUpdatesByNode)) {
-        for (const u of updates) all.add(u.package);
+  // Compute install plan from selected packages
+  const installPlan = useMemo(() => {
+    if (selectedPkgs.size === 0 || !packageInventory) return null;
+    const pkgItems = packageInventory.filter((p) => selectedPkgs.has(p.package_name));
+    // Build node→packages map (only nodes that need updates)
+    const nodeMap = new Map<string, { hostname: string; role: string; packages: string[] }>();
+    for (const pkg of pkgItems) {
+      for (const node of pkg.nodes) {
+        if (node.status === "installed") continue;
+        if (!nodeMap.has(node.hostname)) {
+          nodeMap.set(node.hostname, { hostname: node.hostname, role: node.role, packages: [] });
+        }
+        nodeMap.get(node.hostname)!.packages.push(pkg.package_name);
       }
-      return Array.from(all);
     }
-    return [];
-  }, [osSelectedPkgs, osUpdatesByNode]);
+    const rebootPkgs = pkgItems.filter((p) => p.requires_reboot).map((p) => p.package_name);
+    return {
+      packageNames: pkgItems.map((p) => p.package_name),
+      nodes: Array.from(nodeMap.values()).sort((a, b) => a.hostname.localeCompare(b.hostname)),
+      rebootPkgs,
+    };
+  }, [selectedPkgs, packageInventory]);
 
   function handleStartInstallJob() {
-    if (installDialogPkgs.length === 0) return;
+    if (!installPlan || installPlan.packageNames.length === 0) return;
     startInstallJob.mutate(
       {
-        package_names: installDialogPkgs,
-        scope: installScope === "select" ? "nodes" : installScope,
-        target_nodes: installScope === "select" ? Array.from(installTargetNodes) : undefined,
+        package_names: installPlan.packageNames,
+        scope: "all",
         strategy: installStrategy,
-        restart_policy: installRestart,
+        restart_policy: "none",
       },
       {
         onSuccess: () => {
-          setShowInstallDialog(false);
-          setInstallScope("all");
-          setInstallTargetNodes(new Set());
+          setShowInstallPreview(false);
           setInstallStrategy("rolling");
-          setInstallRestart("none");
+          setSelectedPkgs(new Set());
         },
       },
     );
   }
+
+  // Nodes that have reboot_required and are selected
+  const rebootableSelectedNodes = useMemo(() => {
+    return nodes.filter((n) => selectedNodes.has(n.hostname) && n.reboot_required);
+  }, [nodes, selectedNodes]);
 
   function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -250,10 +248,36 @@ export function UpgradesPage() {
       {/* ── System Status ─────────────────────────────────────────────────── */}
       <Card className="border-zinc-800 bg-zinc-900">
         <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Server className="h-4 w-4 text-zinc-400" />
-            System Nodes
-          </CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Server className="h-4 w-4 text-zinc-400" />
+              System Nodes
+            </CardTitle>
+            {rebootableSelectedNodes.length > 0 && (
+              <Button
+                size="sm"
+                onClick={() => {
+                  restartNodes.mutate(
+                    { node_hostnames: Array.from(selectedNodes).filter((h) => nodes.find((n) => n.hostname === h)?.reboot_required), strategy: "rolling" },
+                  );
+                }}
+                disabled={restartNodes.isPending}
+              >
+                {restartNodes.isPending ? (
+                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                ) : (
+                  <RefreshCw className="h-3 w-3 mr-1" />
+                )}
+                Rolling Restart Selected ({rebootableSelectedNodes.length})
+              </Button>
+            )}
+          </div>
+          {restartNodes.isError && (
+            <div className="mt-2 rounded-md bg-red-500/10 border border-red-500/30 p-2 text-xs text-red-400">
+              <AlertTriangle className="inline h-3 w-3 mr-1" />
+              {(restartNodes.error as Error)?.message ?? "Failed to restart nodes"}
+            </div>
+          )}
         </CardHeader>
         <CardContent>
           {statusLoading ? (
@@ -267,6 +291,20 @@ export function UpgradesPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-8">
+                      <input
+                        type="checkbox"
+                        checked={nodes.length > 0 && nodes.every((n) => selectedNodes.has(n.hostname))}
+                        onChange={() => {
+                          if (nodes.every((n) => selectedNodes.has(n.hostname))) {
+                            setSelectedNodes(new Set());
+                          } else {
+                            setSelectedNodes(new Set(nodes.map((n) => n.hostname)));
+                          }
+                        }}
+                        className="accent-brand-500"
+                      />
+                    </TableHead>
                     <TableHead>Hostname</TableHead>
                     <TableHead>Role</TableHead>
                     <TableHead>IP</TableHead>
@@ -280,7 +318,32 @@ export function UpgradesPage() {
                 <TableBody>
                   {nodes.map((node) => (
                     <TableRow key={node.id}>
-                      <TableCell className="font-mono text-xs">{node.hostname}</TableCell>
+                      <TableCell>
+                        <input
+                          type="checkbox"
+                          checked={selectedNodes.has(node.hostname)}
+                          onChange={() => {
+                            setSelectedNodes((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(node.hostname)) next.delete(node.hostname);
+                              else next.add(node.hostname);
+                              return next;
+                            });
+                          }}
+                          className="accent-brand-500"
+                        />
+                      </TableCell>
+                      <TableCell className="font-mono text-xs">
+                        <div className="flex items-center gap-1.5">
+                          {node.hostname}
+                          {node.reboot_required && (
+                            <Badge className="bg-amber-500/15 text-amber-300 border-amber-500/30 text-[10px]" title="Reboot required">
+                              <RefreshCw className="h-2.5 w-2.5 mr-0.5" />
+                              reboot
+                            </Badge>
+                          )}
+                        </div>
+                      </TableCell>
                       <TableCell>
                         <Badge className={node.role === "central"
                           ? "bg-brand-500/15 text-brand-400 border-brand-500/30 text-xs"
@@ -564,14 +627,6 @@ export function UpgradesPage() {
                 )}
                 Collect Inventory
               </Button>
-              <Button
-                size="sm"
-                onClick={() => setShowInstallAllDialog(true)}
-                disabled={!packageInventory || packageInventory.length === 0}
-              >
-                <Play className="h-3 w-3 mr-1" />
-                Install All + Restart
-              </Button>
             </div>
           </div>
         </CardHeader>
@@ -677,15 +732,22 @@ export function UpgradesPage() {
                                 <TableCell className="font-mono text-xs">{pkg.package_name}</TableCell>
                                 <TableCell className="font-mono text-xs">{pkg.new_version}</TableCell>
                                 <TableCell>
-                                  <Badge
-                                    className={
-                                      pkg.severity === "security"
-                                        ? "bg-red-500/15 text-red-400 border-red-500/30 text-[10px]"
-                                        : "bg-emerald-500/15 text-emerald-400 border-emerald-500/30 text-[10px]"
-                                    }
-                                  >
-                                    {pkg.severity}
-                                  </Badge>
+                                  <div className="flex items-center gap-1.5">
+                                    <Badge
+                                      className={
+                                        pkg.severity === "security"
+                                          ? "bg-red-500/15 text-red-400 border-red-500/30 text-[10px]"
+                                          : "bg-emerald-500/15 text-emerald-400 border-emerald-500/30 text-[10px]"
+                                      }
+                                    >
+                                      {pkg.severity}
+                                    </Badge>
+                                    {pkg.requires_reboot && (
+                                      <span title="Requires reboot after install">
+                                        <RefreshCw className="h-3 w-3 text-amber-400" />
+                                      </span>
+                                    )}
+                                  </div>
                                 </TableCell>
                                 <TableCell>
                                   <div className="flex items-center gap-2">
@@ -751,7 +813,7 @@ export function UpgradesPage() {
                     </Button>
                     <Button
                       size="sm"
-                      onClick={() => setShowInstallDialog(true)}
+                      onClick={() => setShowInstallPreview(true)}
                     >
                       <ListOrdered className="h-3 w-3 mr-1" />
                       Install Selected...
@@ -764,41 +826,100 @@ export function UpgradesPage() {
         </CardContent>
       </Card>
 
-      {/* ── Install All + Restart Confirm Dialog ───────────────────────── */}
-      {showInstallAllDialog && (
+      {/* ── Install Preview Dialog ─────────────────────────────────────── */}
+      {showInstallPreview && installPlan && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="w-full max-w-md rounded-lg border border-zinc-700 bg-zinc-900 p-6 shadow-xl">
-            <h3 className="text-base font-semibold text-zinc-100 mb-3">Confirm Install All + Restart</h3>
-            <p className="text-sm text-zinc-400 mb-5">
-              Install {packageInventory?.length ?? 0} package{(packageInventory?.length ?? 0) !== 1 ? "s" : ""} on
-              all {nodes.length} node{nodes.length !== 1 ? "s" : ""} with rolling restart?
-            </p>
-            {installAll.isError && (
-              <div className="mb-3 rounded-md bg-red-500/10 border border-red-500/30 p-2 text-xs text-red-400">
-                <AlertTriangle className="inline h-3 w-3 mr-1" />
-                {(installAll.error as Error)?.message ?? "Failed to start install"}
+          <div className="w-full max-w-2xl rounded-lg border border-zinc-700 bg-zinc-900 p-6 shadow-xl">
+            <h3 className="text-base font-semibold text-zinc-100 mb-4">Install Plan</h3>
+
+            {/* Package list */}
+            <div className="mb-4">
+              <p className="text-xs text-zinc-500 mb-1">
+                Packages ({installPlan.packageNames.length}):
+              </p>
+              <p className="text-sm text-zinc-200 font-mono">
+                {installPlan.packageNames.join(", ")}
+              </p>
+            </div>
+
+            {/* Nodes table */}
+            {installPlan.nodes.length > 0 ? (
+              <div className="mb-4 overflow-x-auto rounded-md border border-zinc-800">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Node</TableHead>
+                      <TableHead>Role</TableHead>
+                      <TableHead>Packages</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {installPlan.nodes.map((node) => (
+                      <TableRow key={node.hostname}>
+                        <TableCell className="font-mono text-xs">{node.hostname}</TableCell>
+                        <TableCell>
+                          <Badge className={node.role === "central"
+                            ? "bg-brand-500/15 text-brand-400 border-brand-500/30 text-[10px]"
+                            : "bg-zinc-500/15 text-zinc-400 border-zinc-500/30 text-[10px]"
+                          }>
+                            {node.role}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-xs text-zinc-300 font-mono">
+                          {node.packages.join(", ")}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            ) : (
+              <div className="mb-4 rounded-md bg-emerald-500/10 border border-emerald-500/30 p-3 text-sm text-emerald-400">
+                <CheckCircle2 className="inline h-4 w-4 mr-1" />
+                All selected packages are already installed on all nodes.
               </div>
             )}
+
+            {/* Reboot warning */}
+            {installPlan.rebootPkgs.length > 0 && (
+              <div className="mb-4 rounded-md bg-amber-500/15 border border-amber-500/30 p-3 text-sm text-amber-300">
+                <AlertTriangle className="inline h-4 w-4 mr-1" />
+                {installPlan.rebootPkgs.join(", ")} require{installPlan.rebootPkgs.length === 1 ? "s" : ""} a
+                reboot after installation. You can restart nodes after installation from the System Nodes section.
+              </div>
+            )}
+
+            {/* Strategy */}
+            <div className="mb-4 space-y-1">
+              <label className="text-xs text-zinc-400 font-medium">Strategy</label>
+              <Select value={installStrategy} onChange={(e) => setInstallStrategy(e.target.value)} className="w-48">
+                <option value="rolling">Rolling</option>
+                <option value="test_first">Test First</option>
+              </Select>
+            </div>
+
+            {startInstallJob.isError && (
+              <div className="mb-3 rounded-md bg-red-500/10 border border-red-500/30 p-2 text-xs text-red-400">
+                <AlertTriangle className="inline h-3 w-3 mr-1" />
+                {(startInstallJob.error as Error)?.message ?? "Failed to start install job"}
+              </div>
+            )}
+
             <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => setShowInstallAllDialog(false)}>
+              <Button variant="outline" size="sm" onClick={() => setShowInstallPreview(false)}>
                 Cancel
               </Button>
               <Button
                 size="sm"
-                onClick={() => {
-                  installAll.mutate(
-                    { strategy: "rolling", restart_policy: "rolling" },
-                    { onSuccess: () => setShowInstallAllDialog(false) },
-                  );
-                }}
-                disabled={installAll.isPending}
+                onClick={handleStartInstallJob}
+                disabled={startInstallJob.isPending || installPlan.nodes.length === 0}
               >
-                {installAll.isPending ? (
+                {startInstallJob.isPending ? (
                   <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
                 ) : (
                   <Play className="h-3.5 w-3.5 mr-1" />
                 )}
-                Confirm
+                Start Install
               </Button>
             </div>
           </div>
@@ -837,402 +958,6 @@ export function UpgradesPage() {
         </Card>
       )}
 
-      {/* ── Advanced: Per-Node Updates (collapsible) ──────────────────── */}
-      <Card className="border-zinc-800 bg-zinc-900">
-        <CardHeader className="pb-0">
-          <button
-            className="flex w-full items-center gap-2 text-left"
-            onClick={() => setShowPerNodeUpdates(!showPerNodeUpdates)}
-          >
-            {showPerNodeUpdates ? (
-              <ChevronDown className="h-4 w-4 text-zinc-500" />
-            ) : (
-              <ChevronRight className="h-4 w-4 text-zinc-500" />
-            )}
-            <CardTitle className="flex items-center gap-2 text-base text-zinc-400">
-              <HardDrive className="h-4 w-4 text-zinc-500" />
-              Advanced: Per-Node Updates
-            </CardTitle>
-          </button>
-        </CardHeader>
-        {showPerNodeUpdates && (
-          <CardContent className="pt-4">
-            <div className="flex gap-2 mb-4">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => checkOs.mutate()}
-                disabled={checkOs.isPending}
-              >
-                {checkOs.isPending ? (
-                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                ) : (
-                  <RefreshCw className="h-3 w-3 mr-1" />
-                )}
-                Check All Nodes
-              </Button>
-              <Button
-                size="sm"
-                onClick={() => setShowInstallDialog(true)}
-                disabled={installDialogPkgs.length === 0}
-              >
-                <ListOrdered className="h-3 w-3 mr-1" />
-                Install on Nodes...
-              </Button>
-            </div>
-
-            {/* Per-node update cards */}
-            {osUpdatesByNode && Object.keys(osUpdatesByNode).length > 0 ? (
-              <div className="space-y-4">
-                {Object.entries(osUpdatesByNode).map(([hostname, updates]) => {
-                  const selected = osSelectedPkgs[hostname] ?? new Set<string>();
-                  const allSelected = updates.length > 0 && selected.size === updates.length;
-                  const togglePkg = (pkgName: string) => {
-                    setOsSelectedPkgs((prev) => {
-                      const s = new Set(prev[hostname] ?? []);
-                      if (s.has(pkgName)) s.delete(pkgName);
-                      else s.add(pkgName);
-                      return { ...prev, [hostname]: s };
-                    });
-                  };
-                  const toggleAll = () => {
-                    setOsSelectedPkgs((prev) => {
-                      if (allSelected) return { ...prev, [hostname]: new Set<string>() };
-                      return { ...prev, [hostname]: new Set(updates.map((u) => u.package)) };
-                    });
-                  };
-                  return (
-                    <div key={hostname} className="border border-zinc-800 rounded-lg p-3">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          <Server className="h-3.5 w-3.5 text-zinc-500" />
-                          <span className="text-sm font-medium">{hostname}</span>
-                          <Badge variant="default" className="text-[10px]">
-                            {updates.length} updates
-                          </Badge>
-                        </div>
-                        <div className="flex gap-1.5">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-6 text-[10px]"
-                            onClick={() => {
-                              const names = Array.from(selected);
-                              if (names.length > 0) downloadOs.mutate(names);
-                            }}
-                            disabled={selected.size === 0 || downloadOs.isPending}
-                          >
-                            {downloadOs.isPending ? (
-                              <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                            ) : null}
-                            Download Selected
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="default"
-                            className="h-6 text-[10px]"
-                            onClick={() => {
-                              const names = Array.from(selected);
-                              if (names.length === 0) return;
-                              installOs.mutate(
-                                { node_hostname: hostname, package_names: names },
-                                {
-                                  onSuccess: (res) =>
-                                    setInstallResult({ hostname, result: res.data }),
-                                },
-                              );
-                            }}
-                            disabled={selected.size === 0 || installOs.isPending}
-                          >
-                            {installOs.isPending ? (
-                              <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                            ) : null}
-                            Install Selected
-                          </Button>
-                        </div>
-                      </div>
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead className="w-8">
-                              <input
-                                type="checkbox"
-                                checked={allSelected}
-                                onChange={toggleAll}
-                                className="accent-brand-500"
-                              />
-                            </TableHead>
-                            <TableHead>Package</TableHead>
-                            <TableHead>Current</TableHead>
-                            <TableHead>New</TableHead>
-                            <TableHead>Severity</TableHead>
-                            <TableHead>Status</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {updates.map((u) => (
-                            <TableRow key={u.id}>
-                              <TableCell>
-                                <input
-                                  type="checkbox"
-                                  checked={selected.has(u.package)}
-                                  onChange={() => togglePkg(u.package)}
-                                  className="accent-brand-500"
-                                />
-                              </TableCell>
-                              <TableCell className="font-mono text-xs">{u.package}</TableCell>
-                              <TableCell className="text-xs text-zinc-500">{u.current}</TableCell>
-                              <TableCell className="text-xs">{u.new}</TableCell>
-                              <TableCell>
-                                <Badge
-                                  variant={u.severity === "security" ? "destructive" : "default"}
-                                  className="text-[10px]"
-                                >
-                                  {u.severity}
-                                </Badge>
-                              </TableCell>
-                              <TableCell>
-                                {u.is_downloaded && (
-                                  <Badge className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 text-[10px]">
-                                    cached
-                                  </Badge>
-                                )}
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="text-sm text-zinc-500 py-4 text-center">
-                No OS updates detected. Click "Check All Nodes" to scan.
-              </p>
-            )}
-          </CardContent>
-        )}
-      </Card>
-
-      {/* ── Cached Packages ────────────────────────────────────────────── */}
-      <Card className="border-zinc-800 bg-zinc-900">
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Package className="h-4 w-4 text-zinc-400" />
-            Cached Packages
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {cachedPackages && cachedPackages.length > 0 ? (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Package</TableHead>
-                  <TableHead>Version</TableHead>
-                  <TableHead>Arch</TableHead>
-                  <TableHead>Filename</TableHead>
-                  <TableHead>Size</TableHead>
-                  <TableHead>Source</TableHead>
-                  <TableHead>Added</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {cachedPackages.map((pkg) => (
-                  <TableRow key={pkg.id}>
-                    <TableCell className="font-mono text-xs">{pkg.package}</TableCell>
-                    <TableCell className="text-xs">{pkg.version}</TableCell>
-                    <TableCell className="text-xs text-zinc-500">{pkg.architecture}</TableCell>
-                    <TableCell className="font-mono text-xs max-w-48 truncate">{pkg.filename}</TableCell>
-                    <TableCell className="text-xs">{formatBytes(pkg.file_size)}</TableCell>
-                    <TableCell className="text-xs text-zinc-500">{pkg.source}</TableCell>
-                    <TableCell className="text-xs text-zinc-400">{timeAgo(pkg.created_at)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          ) : (
-            <p className="text-xs text-zinc-600 py-4 text-center">No cached OS packages.</p>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* ── Install Job Dialog ──────────────────────────────────────────── */}
-      {showInstallDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="w-full max-w-lg rounded-lg border border-zinc-700 bg-zinc-900 p-6 shadow-xl">
-            <h3 className="text-base font-semibold text-zinc-100 mb-4">Install Packages on Nodes</h3>
-
-            <div className="space-y-4">
-              {/* Scope */}
-              <div className="space-y-1">
-                <label className="text-xs text-zinc-400 font-medium">Scope</label>
-                <Select
-                  value={installScope}
-                  onChange={(e) => {
-                    setInstallScope(e.target.value);
-                    setInstallTargetNodes(new Set());
-                  }}
-                  className="w-full"
-                >
-                  <option value="all">All Nodes</option>
-                  <option value="central">Central Nodes</option>
-                  <option value="collectors">Collector Nodes</option>
-                  <option value="select">Select Nodes...</option>
-                </Select>
-              </div>
-
-              {/* Node selection */}
-              {installScope === "select" && (
-                <div className="space-y-1.5 rounded-md border border-zinc-800 bg-zinc-800/30 p-3">
-                  <label className="text-xs text-zinc-400 font-medium">Target Nodes</label>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {nodes.map((node) => (
-                      <label
-                        key={node.id}
-                        className="flex items-center gap-2 text-xs text-zinc-300 cursor-pointer hover:text-zinc-100"
-                      >
-                        <input
-                          type="checkbox"
-                          className="accent-brand-500"
-                          checked={installTargetNodes.has(node.hostname)}
-                          onChange={() => {
-                            setInstallTargetNodes((prev) => {
-                              const next = new Set(prev);
-                              if (next.has(node.hostname)) next.delete(node.hostname);
-                              else next.add(node.hostname);
-                              return next;
-                            });
-                          }}
-                        />
-                        <span className="font-mono">{node.hostname}</span>
-                        <Badge className={node.role === "central"
-                          ? "bg-brand-500/15 text-brand-400 border-brand-500/30 text-[10px]"
-                          : "bg-zinc-500/15 text-zinc-400 border-zinc-500/30 text-[10px]"
-                        }>
-                          {node.role}
-                        </Badge>
-                      </label>
-                    ))}
-                  </div>
-                  {installTargetNodes.size === 0 && (
-                    <p className="text-[10px] text-zinc-600 mt-1">Select at least one node</p>
-                  )}
-                </div>
-              )}
-
-              {/* Strategy */}
-              <div className="space-y-1">
-                <label className="text-xs text-zinc-400 font-medium">Strategy</label>
-                <Select value={installStrategy} onChange={(e) => setInstallStrategy(e.target.value)} className="w-full">
-                  <option value="rolling">Rolling</option>
-                  <option value="test_first">Test First</option>
-                </Select>
-              </div>
-
-              {/* Restart Policy */}
-              <div className="space-y-1">
-                <label className="text-xs text-zinc-400 font-medium">Restart</label>
-                <Select value={installRestart} onChange={(e) => setInstallRestart(e.target.value)} className="w-full">
-                  <option value="none">No Restart</option>
-                  <option value="rolling">Rolling Restart</option>
-                </Select>
-              </div>
-
-              {/* Packages summary */}
-              <div className="space-y-1">
-                <label className="text-xs text-zinc-400 font-medium">Packages ({installDialogPkgs.length})</label>
-                <div className="rounded-md border border-zinc-800 bg-zinc-800/30 p-2 max-h-28 overflow-y-auto">
-                  <p className="text-xs text-zinc-300 font-mono whitespace-pre-wrap">
-                    {installDialogPkgs.join(", ")}
-                  </p>
-                </div>
-              </div>
-
-              {/* Confirmation summary */}
-              <div className="rounded-md border border-zinc-700 bg-zinc-800/50 p-3 text-xs text-zinc-400">
-                <span className="font-medium text-zinc-300">Summary: </span>
-                Install {installDialogPkgs.length} package(s) on{" "}
-                <span className="text-zinc-200">
-                  {installScope === "select"
-                    ? `${installTargetNodes.size} selected node(s)`
-                    : installScope === "all"
-                      ? "all nodes"
-                      : `${installScope} nodes`}
-                </span>
-                {" "}using <span className="text-zinc-200">{installStrategy.replace(/_/g, " ")}</span> strategy
-                {installRestart !== "none" && <> with <span className="text-zinc-200">{installRestart} restart</span></>}
-              </div>
-
-              {startInstallJob.isError && (
-                <div className="rounded-md bg-red-500/10 border border-red-500/30 p-2 text-xs text-red-400">
-                  <AlertTriangle className="inline h-3 w-3 mr-1" />
-                  {(startInstallJob.error as Error)?.message ?? "Failed to start install job"}
-                </div>
-              )}
-            </div>
-
-            <div className="mt-5 flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => setShowInstallDialog(false)}>
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                onClick={handleStartInstallJob}
-                disabled={
-                  startInstallJob.isPending ||
-                  installDialogPkgs.length === 0 ||
-                  (installScope === "select" && installTargetNodes.size === 0)
-                }
-              >
-                {startInstallJob.isPending ? (
-                  <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
-                ) : (
-                  <Play className="h-3.5 w-3.5 mr-1" />
-                )}
-                Start Install Job
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Install Result Dialog ────────────────────────────────────────── */}
-      {installResult && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="w-full max-w-2xl rounded-lg border border-zinc-700 bg-zinc-900 p-6 shadow-xl">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-base font-semibold text-zinc-100">
-                Install Result — {installResult.hostname}
-              </h3>
-              {installResult.result.success ? (
-                <Badge className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 text-xs">
-                  Success
-                </Badge>
-              ) : (
-                <Badge className="bg-red-500/15 text-red-400 border-red-500/30 text-xs">
-                  Failed (exit {installResult.result.returncode})
-                </Badge>
-              )}
-            </div>
-            {installResult.result.error && (
-              <div className="mb-3 rounded-md bg-red-500/10 border border-red-500/30 p-2 text-xs text-red-400">
-                {installResult.result.error}
-              </div>
-            )}
-            <div className="rounded-md bg-zinc-950 border border-zinc-800 p-3 max-h-72 overflow-y-auto">
-              <pre className="text-[11px] text-zinc-400 whitespace-pre-wrap font-mono">
-                {installResult.result.output || "(no output)"}
-              </pre>
-            </div>
-            <div className="mt-4 flex justify-end">
-              <Button variant="outline" size="sm" onClick={() => setInstallResult(null)}>
-                Close
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
