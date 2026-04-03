@@ -735,8 +735,8 @@ class StatsHandler(BaseHTTPRequestHandler):
                 tar_result = subprocess.run(
                     ["chroot", "/host_root", "bash", "-c",
                      f"mkdir -p /opt/monctl/os-packages && "
-                     f"tar czf {archive_path} -C /var/cache/apt/archives/ "
-                     f"--wildcards '*.deb' 2>&1"],
+                     f"cd /var/cache/apt/archives && "
+                     f"tar czf {archive_path} *.deb 2>&1"],
                     capture_output=True, text=True, timeout=120,
                 )
                 # Count .deb files
