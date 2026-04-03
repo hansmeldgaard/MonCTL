@@ -575,14 +575,51 @@ class StatsHandler(BaseHTTPRequestHandler):
                     return
             pkg_str = " ".join(packages)
             proxy_env = f"http_proxy={proxy_url} https_proxy={proxy_url} " if proxy_url else ""
+            deb_dir = "/host_root/opt/monctl/os-packages"
             try:
+                # Resolve dependencies: find all packages needed (including deps)
+                deps_result = subprocess.run(
+                    ["chroot", "/host_root", "bash", "-c",
+                     f"apt-cache depends --recurse --no-recommends --no-suggests "
+                     f"--no-conflicts --no-breaks --no-replaces --no-enhances "
+                     f"{pkg_str} 2>/dev/null | grep '^\\w' | sort -u"],
+                    capture_output=True, text=True, timeout=30,
+                )
+                all_pkgs = [p.strip() for p in deps_result.stdout.strip().splitlines() if p.strip()]
+                # Filter to only packages that have upgradable versions
+                # (avoid downloading already-installed packages)
+                if all_pkgs:
+                    check = subprocess.run(
+                        ["chroot", "/host_root", "bash", "-c",
+                         f"apt list --upgradable 2>/dev/null | grep -oP '^[^/]+'"],
+                        capture_output=True, text=True, timeout=30,
+                    )
+                    upgradable = set(check.stdout.strip().splitlines())
+                    # Keep original packages + any deps that are upgradable or not installed
+                    # Include all deps: upgradable + not-installed-anywhere
+                    # Central may have deps installed that workers don't, so
+                    # download everything in the dep tree that is either
+                    # upgradable or version-specific (contains version numbers)
+                    download_pkgs = set(packages)
+                    for p in all_pkgs:
+                        if p in upgradable:
+                            download_pkgs.add(p)
+                        # Version-specific packages (e.g. linux-image-6.8.0-107-generic)
+                        # are likely needed by workers even if central has them
+                        elif any(c.isdigit() for c in p):
+                            download_pkgs.add(p)
+                    dl_str = " ".join(sorted(download_pkgs))
+                else:
+                    dl_str = pkg_str
+
+                # Download packages
                 result = subprocess.run(
                     ["chroot", "/host_root", "bash", "-c",
-                     f"mkdir -p /opt/monctl/os-packages && cd /opt/monctl/os-packages && {proxy_env}apt-get download {pkg_str} 2>&1"],
+                     f"mkdir -p /opt/monctl/os-packages && cd /opt/monctl/os-packages && "
+                     f"{proxy_env}apt-get download {dl_str} 2>&1"],
                     capture_output=True, text=True, timeout=300,
                 )
                 # List .deb files in the directory
-                deb_dir = "/host_root/opt/monctl/os-packages"
                 downloaded = []
                 if os.path.isdir(deb_dir):
                     for fn in os.listdir(deb_dir):
@@ -596,6 +633,7 @@ class StatsHandler(BaseHTTPRequestHandler):
                     "downloaded": downloaded,
                     "output": result.stdout,
                     "success": result.returncode == 0,
+                    "resolved_packages": dl_str.split(),
                 })
             except subprocess.TimeoutExpired:
                 self._json_response(500, {"downloaded": [], "output": "", "success": False})
