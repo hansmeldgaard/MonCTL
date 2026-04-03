@@ -830,10 +830,13 @@ export function UpgradesPage() {
 
       {/* ── Install Preview Dialog ─────────────────────────────────────── */}
       {showInstallPreview && installPlan && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="w-full max-w-2xl rounded-lg border border-zinc-700 bg-zinc-900 p-6 shadow-xl">
-            <h3 className="text-base font-semibold text-zinc-100 mb-4">Install Plan</h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-8">
+          <div className="w-full max-w-4xl max-h-[85vh] flex flex-col rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl">
+            <div className="p-6 pb-0">
+              <h3 className="text-base font-semibold text-zinc-100 mb-4">Install Plan</h3>
+            </div>
 
+            <div className="flex-1 overflow-y-auto px-6 pb-2">
             {/* Package list */}
             <div className="mb-4">
               <p className="text-xs text-zinc-500 mb-1">
@@ -900,6 +903,9 @@ export function UpgradesPage() {
               </Select>
             </div>
 
+            </div>{/* end scrollable area */}
+
+            <div className="p-6 pt-3 border-t border-zinc-800">
             {startInstallJob.isError && (
               <div className="mb-3 rounded-md bg-red-500/10 border border-red-500/30 p-2 text-xs text-red-400">
                 <AlertTriangle className="inline h-3 w-3 mr-1" />
@@ -924,6 +930,7 @@ export function UpgradesPage() {
                 Start Install
               </Button>
             </div>
+            </div>{/* end footer */}
           </div>
         </div>
       )}
