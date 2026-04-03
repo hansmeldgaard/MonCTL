@@ -3135,8 +3135,18 @@ export function useDownloadOsPackages() {
     mutationFn: (packageNames: string[]) =>
       apiPost("/upgrades/prepare-archive", { package_names: packageNames }),
     onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["archive-status"] });
       qc.invalidateQueries({ queryKey: ["package-inventory"] });
     },
+  });
+}
+
+export function useArchiveStatus() {
+  return useQuery({
+    queryKey: ["archive-status"],
+    queryFn: () => apiGet<{ archive_status: string }>("/upgrades/archive-status"),
+    select: (res) => res.data.archive_status,
+    refetchInterval: 5000,
   });
 }
 

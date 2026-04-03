@@ -1214,16 +1214,16 @@ async def trigger_inventory_collection(
 @router.post("/prepare-archive")
 async def prepare_package_archive(
     request_body: DownloadOsPackagesRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_admin),
 ):
     """Prepare an apt cache archive with packages + all dependencies on a central node.
 
-    This replaces the old individual .deb download flow. The archive contains all .deb
-    files needed to install the requested packages on any node, including dependencies.
-    Workers fetch this archive and install from their local apt cache.
+    Runs as a background task to avoid HAProxy timeout. Check progress via Redis key.
     """
     from monctl_central.upgrades.os_service import prepare_archive, _get_network_mode
+    from monctl_central.cache import _redis
 
     network_mode, proxy_url = await _get_network_mode(db)
     if network_mode == "offline":
@@ -1238,19 +1238,39 @@ async def prepare_package_archive(
         raise HTTPException(status_code=404, detail="No central nodes registered")
 
     proxy = proxy_url if network_mode == "proxy" else ""
-    archive_result = await prepare_archive(node.node_ip, request_body.package_names, proxy)
 
-    if not archive_result.get("success"):
-        raise HTTPException(status_code=500, detail=f"Archive preparation failed: {archive_result.get('output', '')[:500]}")
+    async def _prepare():
+        if _redis:
+            await _redis.set("monctl:archive_status", "preparing", ex=600)
+        try:
+            archive_result = await prepare_archive(node.node_ip, request_body.package_names, proxy)
+            if _redis:
+                if archive_result.get("success"):
+                    await _redis.set("monctl:archive_status", "ready", ex=3600)
+                else:
+                    await _redis.set("monctl:archive_status", f"failed: {archive_result.get('output', '')[:200]}", ex=600)
+        except Exception as exc:
+            if _redis:
+                await _redis.set("monctl:archive_status", f"failed: {exc}", ex=600)
+            logger.error("archive_preparation_failed", error=str(exc))
 
+    background_tasks.add_task(_prepare)
     return {
         "status": "success",
-        "data": {
-            "archive_size": archive_result.get("archive_size", 0),
-            "deb_count": archive_result.get("deb_count", 0),
-            "prepared_on": node.node_hostname,
-        },
+        "data": {"message": "Archive preparation started", "node": node.node_hostname},
     }
+
+
+@router.get("/archive-status")
+async def get_archive_status(
+    auth: dict = Depends(require_admin),
+):
+    """Check archive preparation status."""
+    from monctl_central.cache import _redis
+    status_val = "unknown"
+    if _redis:
+        status_val = await _redis.get("monctl:archive_status") or "none"
+    return {"status": "success", "data": {"archive_status": status_val}}
 
 
 @router.post("/os-install-all")

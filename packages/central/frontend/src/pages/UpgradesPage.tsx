@@ -43,6 +43,7 @@ import {
   useCancelUpgradeJob,
   useCheckOsUpdatesNew,
   useDownloadOsPackages,
+  useArchiveStatus,
   useUploadOsPackage,
   useOsInstallJobs,
   useStartOsInstallJob,
@@ -138,6 +139,7 @@ export function UpgradesPage() {
   const cancelMutation = useCancelUpgradeJob();
   const checkOs = useCheckOsUpdatesNew();
   const downloadOs = useDownloadOsPackages();
+  const { data: archiveStatus } = useArchiveStatus();
   const uploadOs = useUploadOsPackage();
   const { data: osInstallJobs } = useOsInstallJobs();
   const startInstallJob = useStartOsInstallJob();
@@ -658,9 +660,9 @@ export function UpgradesPage() {
                 variant="outline"
                 size="sm"
                 onClick={() => downloadOs.mutate(Array.from(selectedPkgs))}
-                disabled={downloadOs.isPending}
+                disabled={downloadOs.isPending || archiveStatus === "preparing"}
               >
-                {downloadOs.isPending ? (
+                {downloadOs.isPending || archiveStatus === "preparing" ? (
                   <>
                     <Loader2 className="h-3 w-3 animate-spin mr-1" />
                     Preparing archive...
@@ -672,16 +674,16 @@ export function UpgradesPage() {
                   </>
                 )}
               </Button>
-              {downloadOs.isSuccess && (
+              {archiveStatus === "ready" && (
                 <span className="text-xs text-emerald-400">
                   <CheckCircle2 className="inline h-3 w-3 mr-1" />
                   Archive ready
                 </span>
               )}
-              {downloadOs.isError && (
+              {archiveStatus && archiveStatus.startsWith("failed") && (
                 <span className="text-xs text-red-400">
                   <AlertTriangle className="inline h-3 w-3 mr-1" />
-                  {(downloadOs.error as Error)?.message || "Download failed"}
+                  {archiveStatus}
                 </span>
               )}
               <Button
