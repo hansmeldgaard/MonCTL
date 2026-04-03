@@ -48,6 +48,7 @@ import {
   useStartOsInstallJob,
   useApproveOsInstallJob,
   useCancelOsInstallJob,
+  useDeleteOsInstallJob,
   usePackageInventory,
   useCollectInventory,
   useRestartNodes,
@@ -142,6 +143,7 @@ export function UpgradesPage() {
   const startInstallJob = useStartOsInstallJob();
   const approveInstallJob = useApproveOsInstallJob();
   const cancelInstallJob = useCancelOsInstallJob();
+  const deleteInstallJob = useDeleteOsInstallJob();
   const restartNodes = useRestartNodes();
 
   const [selectedPkgId, setSelectedPkgId] = useState<string | null>(null);
@@ -949,6 +951,7 @@ export function UpgradesPage() {
                   onToggle={() => setExpandedInstallJobId(expandedInstallJobId === job.id ? null : job.id)}
                   onApprove={() => approveInstallJob.mutate(job.id)}
                   onCancel={() => cancelInstallJob.mutate(job.id)}
+                  onDelete={() => deleteInstallJob.mutate(job.id)}
                   approving={approveInstallJob.isPending}
                   cancelling={cancelInstallJob.isPending}
                 />
@@ -1240,6 +1243,7 @@ function OsInstallJobCard({
   onToggle,
   onApprove,
   onCancel,
+  onDelete,
   approving,
   cancelling,
 }: {
@@ -1248,6 +1252,7 @@ function OsInstallJobCard({
   onToggle: () => void;
   onApprove: () => void;
   onCancel: () => void;
+  onDelete: () => void;
   approving: boolean;
   cancelling: boolean;
 }) {
@@ -1322,6 +1327,16 @@ function OsInstallJobCard({
             >
               <XCircle className="h-3.5 w-3.5 mr-1" />
               Cancel
+            </Button>
+          )}
+          {!isActive && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs text-zinc-500 hover:text-red-400"
+              onClick={(e) => { e.stopPropagation(); onDelete(); }}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
             </Button>
           )}
         </div>

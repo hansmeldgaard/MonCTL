@@ -3215,6 +3215,14 @@ export function useCancelOsInstallJob() {
   });
 }
 
+export function useDeleteOsInstallJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => apiDelete(`/upgrades/os-install-jobs/${jobId}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["os-install-jobs"] }),
+  });
+}
+
 export function usePackageInventory() {
   return useQuery({
     queryKey: ["package-inventory"],

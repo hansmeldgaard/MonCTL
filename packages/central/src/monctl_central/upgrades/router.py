@@ -1011,6 +1011,29 @@ async def cancel_os_install_job(
     return {"status": "success", "data": _fmt_os_job(job)}
 
 
+@router.delete("/os-install-jobs/{job_id}")
+async def delete_os_install_job(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_admin),
+):
+    """Delete a completed, failed, or cancelled OS install job."""
+    from sqlalchemy.orm import selectinload
+
+    job = await db.get(
+        OsInstallJob, uuid.UUID(job_id),
+        options=[selectinload(OsInstallJob.steps)],
+    )
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status in ("pending", "running", "awaiting_approval"):
+        raise HTTPException(status_code=409, detail="Cannot delete an active job")
+
+    await db.delete(job)
+    await db.commit()
+    return {"status": "success", "data": {"message": "Job deleted"}}
+
+
 @router.post("/os-restart-nodes")
 async def restart_nodes(
     background_tasks: BackgroundTasks,
