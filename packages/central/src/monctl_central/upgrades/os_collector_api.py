@@ -40,32 +40,58 @@ async def list_available_os_packages(
 
 @router.get("/archive")
 async def download_archive(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_collector_auth),
 ):
     """Serve the prepared apt cache archive (tar.gz of .deb files)."""
     import httpx
+    from starlette.responses import StreamingResponse
 
-    # Proxy to the local sidecar which has the file
-    # (the archive is prepared on a central node's host filesystem)
+    # Try local sidecar first
     try:
         async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.get("http://127.0.0.1:9100/os/archive")
-            if resp.status_code == 200:
-                from starlette.responses import Response
-                return Response(
-                    content=resp.content,
+            if resp.status_code == 200 and len(resp.content) > 100:
+                return StreamingResponse(
+                    iter([resp.content]),
                     media_type="application/gzip",
                     headers={"Content-Disposition": 'attachment; filename="apt-archive.tar.gz"'},
                 )
     except Exception:
         pass
 
-    # If local sidecar doesn't have it, try peer centrals
+    # Local doesn't have it — try peer centrals via their sidecars
+    if request.headers.get("x-no-proxy"):
+        raise HTTPException(status_code=404, detail="No archive on this node")
+
     from monctl_central.storage.models import SystemVersion
-    from sqlalchemy import select as _select
-    from monctl_central.dependencies import get_db
-    # Simplified: just return 404 — the archive should be prepared first
-    raise HTTPException(status_code=404, detail="No archive prepared. Use 'Download Selected' first.")
+    nodes = (await db.execute(
+        select(SystemVersion).where(SystemVersion.node_role == "central")
+    )).scalars().all()
+
+    for node in nodes:
+        try:
+            async with httpx.AsyncClient(timeout=120) as client:
+                resp = await client.get(
+                    f"http://{node.node_ip}:9100/os/archive",
+                )
+                if resp.status_code == 200 and len(resp.content) > 100:
+                    # Cache locally for next request
+                    import os as _os
+                    archive_dir = "/host_root/opt/monctl/os-packages" if _os.path.exists("/host_root") else "/data/upgrades/os-packages"
+                    _os.makedirs(archive_dir, exist_ok=True)
+                    with open(f"{archive_dir}/apt-archive.tar.gz", "wb") as f:
+                        f.write(resp.content)
+                    return StreamingResponse(
+                        iter([resp.content]),
+                        media_type="application/gzip",
+                        headers={"Content-Disposition": 'attachment; filename="apt-archive.tar.gz"'},
+                    )
+        except Exception:
+            continue
+
+    raise HTTPException(status_code=404, detail="No archive prepared on any central node")
 
 
 @router.get("/download/{filename}")
