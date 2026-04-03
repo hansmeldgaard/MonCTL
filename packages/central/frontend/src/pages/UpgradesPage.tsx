@@ -647,6 +647,52 @@ export function UpgradesPage() {
               Upload failed: {(uploadOs.error as Error)?.message ?? "Unknown error"}
             </div>
           )}
+          {/* Selected actions bar — at top for easy access */}
+          {selectedPkgs.size > 0 && (
+            <div className="mb-3 flex items-center gap-3 rounded-lg border border-brand-500/30 bg-brand-500/5 px-4 py-2.5">
+              <span className="text-sm text-zinc-300 font-medium">
+                {selectedPkgs.size} package{selectedPkgs.size !== 1 ? "s" : ""} selected
+              </span>
+              <div className="flex-1" />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => downloadOs.mutate(Array.from(selectedPkgs))}
+                disabled={downloadOs.isPending}
+              >
+                {downloadOs.isPending ? (
+                  <>
+                    <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                    Preparing archive...
+                  </>
+                ) : (
+                  <>
+                    <Download className="h-3 w-3 mr-1" />
+                    Download Selected
+                  </>
+                )}
+              </Button>
+              {downloadOs.isSuccess && (
+                <span className="text-xs text-emerald-400">
+                  <CheckCircle2 className="inline h-3 w-3 mr-1" />
+                  Archive ready
+                </span>
+              )}
+              {downloadOs.isError && (
+                <span className="text-xs text-red-400">
+                  <AlertTriangle className="inline h-3 w-3 mr-1" />
+                  {(downloadOs.error as Error)?.message || "Download failed"}
+                </span>
+              )}
+              <Button
+                size="sm"
+                onClick={() => setShowInstallPreview(true)}
+              >
+                <ListOrdered className="h-3 w-3 mr-1" />
+                Install Selected...
+              </Button>
+            </div>
+          )}
 
           {/* Search */}
           <div className="relative mb-4">
@@ -806,52 +852,6 @@ export function UpgradesPage() {
                   </div>
                 )}
 
-                {/* Selected actions bar */}
-                {selectedPkgs.size > 0 && (
-                  <div className="mt-3 flex items-center gap-3 rounded-lg border border-zinc-700 bg-zinc-800/50 px-4 py-2.5">
-                    <span className="text-sm text-zinc-300">
-                      {selectedPkgs.size} package{selectedPkgs.size !== 1 ? "s" : ""} selected
-                    </span>
-                    <div className="flex-1" />
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => downloadOs.mutate(Array.from(selectedPkgs))}
-                      disabled={downloadOs.isPending}
-                    >
-                      {downloadOs.isPending ? (
-                        <>
-                          <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                          Preparing archive...
-                        </>
-                      ) : (
-                        <>
-                          <Download className="h-3 w-3 mr-1" />
-                          Download Selected
-                        </>
-                      )}
-                    </Button>
-                    {downloadOs.isSuccess && (
-                      <span className="text-xs text-emerald-400">
-                        <CheckCircle2 className="inline h-3 w-3 mr-1" />
-                        Archive ready
-                      </span>
-                    )}
-                    {downloadOs.isError && (
-                      <span className="text-xs text-red-400">
-                        <AlertTriangle className="inline h-3 w-3 mr-1" />
-                        {(downloadOs.error as Error)?.message || "Download failed"}
-                      </span>
-                    )}
-                    <Button
-                      size="sm"
-                      onClick={() => setShowInstallPreview(true)}
-                    >
-                      <ListOrdered className="h-3 w-3 mr-1" />
-                      Install Selected...
-                    </Button>
-                  </div>
-                )}
                 {completedPackageCount > 0 && (
                   <p className="mt-3 text-xs text-zinc-500 text-center">
                     <CheckCircle2 className="inline h-3 w-3 mr-1 text-emerald-500" />

@@ -1405,6 +1405,20 @@ class NodePackage(Base):
     collected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
 
 
+class OsInstallAudit(Base):
+    """Permanent audit log of OS package installations."""
+    __tablename__ = "os_install_audit"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    node_hostname: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    node_role: Mapped[str] = mapped_column(String(50), nullable=False)
+    package_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    action: Mapped[str] = mapped_column(String(50), nullable=False, server_default="'install'")
+    job_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    installed_by: Mapped[str] = mapped_column(String(200), nullable=False, server_default="'system'")
+    installed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
+
+
 class AnalyticsDashboard(Base):
     """A user-created analytics dashboard with SQL-based widgets."""
     __tablename__ = "analytics_dashboards"

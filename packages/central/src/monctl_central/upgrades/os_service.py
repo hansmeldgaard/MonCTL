@@ -361,6 +361,21 @@ async def _run_steps(db: AsyncSession, job: OsInstallJob) -> None:
                         .values(is_installed=True)
                     )
 
+                # Write audit log entry
+                try:
+                    from monctl_central.storage.models import OsInstallAudit
+                    for pkg in job.package_names:
+                        db.add(OsInstallAudit(
+                            node_hostname=step.node_hostname,
+                            node_role=step.node_role,
+                            package_name=pkg,
+                            action="install",
+                            job_id=job.id,
+                            installed_by=job.started_by or "system",
+                        ))
+                except Exception:
+                    pass  # Don't fail install if audit logging fails
+
             elif step.action == "reboot":
                 # Current node: mark job completed before rebooting
                 is_current = step.node_hostname == current
