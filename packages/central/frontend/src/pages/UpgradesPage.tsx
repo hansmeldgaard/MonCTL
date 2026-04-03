@@ -818,12 +818,29 @@ export function UpgradesPage() {
                       disabled={downloadOs.isPending}
                     >
                       {downloadOs.isPending ? (
-                        <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                        <>
+                          <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                          Preparing archive...
+                        </>
                       ) : (
-                        <Download className="h-3 w-3 mr-1" />
+                        <>
+                          <Download className="h-3 w-3 mr-1" />
+                          Download Selected
+                        </>
                       )}
-                      Download Selected
                     </Button>
+                    {downloadOs.isSuccess && (
+                      <span className="text-xs text-emerald-400">
+                        <CheckCircle2 className="inline h-3 w-3 mr-1" />
+                        Archive ready
+                      </span>
+                    )}
+                    {downloadOs.isError && (
+                      <span className="text-xs text-red-400">
+                        <AlertTriangle className="inline h-3 w-3 mr-1" />
+                        {(downloadOs.error as Error)?.message || "Download failed"}
+                      </span>
+                    )}
                     <Button
                       size="sm"
                       onClick={() => setShowInstallPreview(true)}
