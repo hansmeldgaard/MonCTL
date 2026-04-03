@@ -1207,6 +1207,48 @@ async def trigger_inventory_collection(
     return {"status": "success", "data": {"message": "Inventory collection started"}}
 
 
+@router.post("/prepare-archive")
+async def prepare_package_archive(
+    request_body: DownloadOsPackagesRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_admin),
+):
+    """Prepare an apt cache archive with packages + all dependencies on a central node.
+
+    This replaces the old individual .deb download flow. The archive contains all .deb
+    files needed to install the requested packages on any node, including dependencies.
+    Workers fetch this archive and install from their local apt cache.
+    """
+    from monctl_central.upgrades.os_service import prepare_archive, _get_network_mode
+
+    network_mode, proxy_url = await _get_network_mode(db)
+    if network_mode == "offline":
+        raise HTTPException(status_code=400, detail="Cannot download in offline mode. Upload .deb files manually.")
+
+    # Find a central node to prepare the archive on
+    result = await db.execute(
+        select(SystemVersion).where(SystemVersion.node_role == "central").limit(1)
+    )
+    node = result.scalar_one_or_none()
+    if not node:
+        raise HTTPException(status_code=404, detail="No central nodes registered")
+
+    proxy = proxy_url if network_mode == "proxy" else ""
+    archive_result = await prepare_archive(node.node_ip, request_body.package_names, proxy)
+
+    if not archive_result.get("success"):
+        raise HTTPException(status_code=500, detail=f"Archive preparation failed: {archive_result.get('output', '')[:500]}")
+
+    return {
+        "status": "success",
+        "data": {
+            "archive_size": archive_result.get("archive_size", 0),
+            "deb_count": archive_result.get("deb_count", 0),
+            "prepared_on": node.node_hostname,
+        },
+    }
+
+
 @router.post("/os-install-all")
 async def install_all_updates(
     background_tasks: BackgroundTasks,

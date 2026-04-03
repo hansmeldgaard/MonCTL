@@ -3133,10 +3133,9 @@ export function useDownloadOsPackages() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (packageNames: string[]) =>
-      apiPost("/upgrades/os-download", { package_names: packageNames }),
+      apiPost("/upgrades/prepare-archive", { package_names: packageNames }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["os-updates"] });
-      qc.invalidateQueries({ queryKey: ["os-cached-packages"] });
+      qc.invalidateQueries({ queryKey: ["package-inventory"] });
     },
   });
 }

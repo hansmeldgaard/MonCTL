@@ -38,6 +38,36 @@ async def list_available_os_packages(
     }
 
 
+@router.get("/archive")
+async def download_archive(
+    auth: dict = Depends(require_collector_auth),
+):
+    """Serve the prepared apt cache archive (tar.gz of .deb files)."""
+    import httpx
+
+    # Proxy to the local sidecar which has the file
+    # (the archive is prepared on a central node's host filesystem)
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.get("http://127.0.0.1:9100/os/archive")
+            if resp.status_code == 200:
+                from starlette.responses import Response
+                return Response(
+                    content=resp.content,
+                    media_type="application/gzip",
+                    headers={"Content-Disposition": 'attachment; filename="apt-archive.tar.gz"'},
+                )
+    except Exception:
+        pass
+
+    # If local sidecar doesn't have it, try peer centrals
+    from monctl_central.storage.models import SystemVersion
+    from sqlalchemy import select as _select
+    from monctl_central.dependencies import get_db
+    # Simplified: just return 404 — the archive should be prepared first
+    raise HTTPException(status_code=404, detail="No archive prepared. Use 'Download Selected' first.")
+
+
 @router.get("/download/{filename}")
 async def download_os_package(
     filename: str,

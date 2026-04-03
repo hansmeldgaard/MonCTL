@@ -453,6 +453,25 @@ class StatsHandler(BaseHTTPRequestHandler):
                 "packages": packages,
             })
 
+        elif path == "/os/archive":
+            # Serve the prepared apt cache archive
+            archive_path = "/host_root/opt/monctl/os-packages/apt-archive.tar.gz"
+            if not os.path.isfile(archive_path):
+                self._json_response(404, {"error": "No archive prepared. Run POST /os/prepare-archive first."})
+                return
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/gzip")
+                file_size = os.path.getsize(archive_path)
+                self.send_header("Content-Length", str(file_size))
+                self.send_header("Content-Disposition", 'attachment; filename="apt-archive.tar.gz"')
+                self.end_headers()
+                with open(archive_path, "rb") as f:
+                    while chunk := f.read(65536):
+                        self.wfile.write(chunk)
+            except BrokenPipeError:
+                pass
+
         elif path == "/os/installed":
             try:
                 result = subprocess.run(
@@ -674,6 +693,105 @@ class StatsHandler(BaseHTTPRequestHandler):
                 "errors": errors,
                 "success": len(fetched) == len(filenames),
             })
+
+        elif path == "/os/prepare-archive":
+            # Prepare apt cache archive with packages + all dependencies
+            packages = payload.get("packages", [])
+            proxy_url = payload.get("proxy_url", "")
+            if not packages:
+                self._json_response(400, {"error": "packages list required"})
+                return
+            for pkg in packages:
+                if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9.+\-:]*$', pkg):
+                    self._json_response(400, {"error": f"invalid package name: {pkg}"})
+                    return
+            pkg_str = " ".join(packages)
+            proxy_env = f"http_proxy={proxy_url} https_proxy={proxy_url} " if proxy_url else ""
+            try:
+                # Step 1: Download packages + dependencies to apt cache
+                result = subprocess.run(
+                    ["chroot", "/host_root", "bash", "-c",
+                     f"{proxy_env}DEBIAN_FRONTEND=noninteractive "
+                     f"apt-get install --download-only -y {pkg_str} 2>&1"],
+                    capture_output=True, text=True, timeout=600,
+                )
+                # Step 2: Create tar of all .deb files in apt cache
+                archive_path = "/opt/monctl/os-packages/apt-archive.tar.gz"
+                tar_result = subprocess.run(
+                    ["chroot", "/host_root", "bash", "-c",
+                     f"mkdir -p /opt/monctl/os-packages && "
+                     f"tar czf {archive_path} -C /var/cache/apt/archives/ "
+                     f"--wildcards '*.deb' 2>&1"],
+                    capture_output=True, text=True, timeout=120,
+                )
+                # Count .deb files
+                count_result = subprocess.run(
+                    ["chroot", "/host_root", "bash", "-c",
+                     "ls /var/cache/apt/archives/*.deb 2>/dev/null | wc -l"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                deb_count = int(count_result.stdout.strip() or "0")
+                archive_size = 0
+                host_archive = f"/host_root{archive_path}"
+                if os.path.isfile(host_archive):
+                    archive_size = os.path.getsize(host_archive)
+                self._json_response(200, {
+                    "output": result.stdout[-500:] if len(result.stdout) > 500 else result.stdout,
+                    "success": result.returncode == 0 and tar_result.returncode == 0,
+                    "archive_path": archive_path,
+                    "archive_size": archive_size,
+                    "deb_count": deb_count,
+                })
+            except subprocess.TimeoutExpired:
+                self._json_response(500, {"output": "Timeout", "success": False})
+
+        elif path == "/os/install-from-archive":
+            # Fetch archive from central, unpack to apt cache, install
+            central_url = payload.get("central_url", "")
+            api_key = payload.get("api_key", "")
+            packages = payload.get("packages", [])
+            if not central_url or not packages:
+                self._json_response(400, {"error": "central_url and packages required"})
+                return
+            pkg_str = " ".join(packages)
+            try:
+                # Step 1: Fetch archive from central
+                fetch_result = subprocess.run(
+                    ["chroot", "/host_root", "bash", "-c",
+                     f"mkdir -p /tmp && curl -sfk "
+                     f"-H 'Authorization: Bearer {api_key}' "
+                     f"-o /tmp/apt-archive.tar.gz "
+                     f"'{central_url}/api/v1/os-packages/archive' 2>&1"],
+                    capture_output=True, text=True, timeout=300,
+                )
+                if fetch_result.returncode != 0:
+                    self._json_response(200, {
+                        "output": f"Failed to fetch archive: {fetch_result.stderr}",
+                        "returncode": fetch_result.returncode,
+                        "success": False,
+                    })
+                    return
+                # Step 2: Unpack to apt cache
+                unpack_result = subprocess.run(
+                    ["chroot", "/host_root", "bash", "-c",
+                     "tar xzf /tmp/apt-archive.tar.gz -C /var/cache/apt/archives/ 2>&1 && "
+                     "rm -f /tmp/apt-archive.tar.gz"],
+                    capture_output=True, text=True, timeout=120,
+                )
+                # Step 3: Install packages (apt finds deps in local cache)
+                install_result = subprocess.run(
+                    ["chroot", "/host_root", "bash", "-c",
+                     f"DEBIAN_FRONTEND=noninteractive "
+                     f"apt-get install -y {pkg_str} 2>&1"],
+                    capture_output=True, text=True, timeout=600,
+                )
+                self._json_response(200, {
+                    "output": install_result.stdout,
+                    "returncode": install_result.returncode,
+                    "success": install_result.returncode == 0,
+                })
+            except subprocess.TimeoutExpired:
+                self._json_response(500, {"output": "Timeout", "returncode": -1, "success": False})
 
         elif path == "/os/reboot":
             delay = payload.get("delay_seconds", 3)

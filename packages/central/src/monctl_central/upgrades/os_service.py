@@ -125,55 +125,42 @@ def compute_file_hash(path: Path) -> str:
     return h.hexdigest()
 
 
-async def fetch_debs_on_node(
-    node_ip: str, central_url: str, api_key: str, filenames: list[str],
-) -> dict:
-    """Tell a node's sidecar to download .deb files from central."""
-    url = f"http://{node_ip}:{SIDECAR_PORT}/os/fetch-debs"
-    async with httpx.AsyncClient(timeout=300) as client:
+async def prepare_archive(central_node_ip: str, package_names: list[str], proxy_url: str = "") -> dict:
+    """Tell a central node's sidecar to prepare an apt cache archive with packages + deps."""
+    url = f"http://{central_node_ip}:{SIDECAR_PORT}/os/prepare-archive"
+    async with httpx.AsyncClient(timeout=660) as client:
         resp = await client.post(url, json={
-            "central_url": central_url,
-            "api_key": api_key,
-            "filenames": filenames,
+            "packages": package_names,
+            "proxy_url": proxy_url,
         })
         resp.raise_for_status()
         return resp.json()
 
 
-async def install_via_deb(
+async def install_via_archive(
     node_ip: str, package_names: list[str], db: AsyncSession,
 ) -> dict:
-    """Install packages on a node via .deb distribution from central cache.
+    """Install packages on a node via apt cache archive from central.
 
     Used for collectors (no internet) and central nodes in offline mode.
-    1. Look up .deb filenames from OsCachedPackage
-    2. Tell sidecar to fetch .debs from central VIP
-    3. Tell sidecar to install via dpkg -i
+    1. Find a central node that has a prepared archive
+    2. Tell worker sidecar to fetch archive, unpack to apt cache, apt-get install
     """
-    from monctl_central.config import settings as _settings
-    from monctl_central.storage.models import OsCachedPackage
-
-    # Find cached .deb files for requested packages
-    stmt = select(OsCachedPackage).where(OsCachedPackage.package_name.in_(package_names))
-    cached = (await db.execute(stmt)).scalars().all()
-    filenames = [c.filename for c in cached]
-    if not filenames:
-        raise RuntimeError(f"No cached .deb files for packages: {', '.join(package_names)}")
-
-    # Determine central URL and API key
     import os as _os
+
     central_url = f"https://{_os.environ.get('MONCTL_VIP_ADDRESS', '10.145.210.40')}"
     api_key = _os.environ.get("MONCTL_COLLECTOR_API_KEY", "")
 
-    # Step 1: Sidecar downloads .debs from central
-    fetch_result = await fetch_debs_on_node(node_ip, central_url, api_key, filenames)
-    if not fetch_result.get("success"):
-        errors = fetch_result.get("errors", [])
-        raise RuntimeError(f"Failed to fetch .deb files: {errors}")
-
-    # Step 2: Install via dpkg -i
-    result = await install_deb_files_on_node(node_ip, "/opt/monctl/os-packages", filenames)
-    return result
+    # Call worker sidecar to fetch archive from central + install
+    url = f"http://{node_ip}:{SIDECAR_PORT}/os/install-from-archive"
+    async with httpx.AsyncClient(timeout=660) as client:
+        resp = await client.post(url, json={
+            "central_url": central_url,
+            "api_key": api_key,
+            "packages": package_names,
+        })
+        resp.raise_for_status()
+        return resp.json()
 
 
 # ---------------------------------------------------------------------------
@@ -349,7 +336,7 @@ async def _run_steps(db: AsyncSession, job: OsInstallJob) -> None:
                 if step.node_role == "central" and network_mode != "offline":
                     result = await install_packages_on_node(step.node_ip, job.package_names)
                 else:
-                    result = await install_via_deb(step.node_ip, job.package_names, db)
+                    result = await install_via_archive(step.node_ip, job.package_names, db)
                 step.output_log = result.get("output", "")
                 if not result.get("success", False):
                     raise RuntimeError(
