@@ -260,7 +260,7 @@ class Device(Base):
     tenant: Mapped["Tenant | None"] = relationship(foreign_keys=[tenant_id])
     collector_group: Mapped["CollectorGroup | None"] = relationship(back_populates="devices", foreign_keys=[collector_group_id])
     device_type: Mapped["DeviceType | None"] = relationship(foreign_keys=[device_type_id])
-    assignments: Mapped[list["AppAssignment"]] = relationship(back_populates="device")
+    assignments: Mapped[list["AppAssignment"]] = relationship(back_populates="device", cascade="all, delete-orphan")
 
 
 class Credential(Base):
@@ -374,7 +374,7 @@ class AppAssignment(Base):
         UUID(as_uuid=True), ForeignKey("collector_clusters.id"), nullable=True
     )
     device_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("devices.id"), nullable=True
+        UUID(as_uuid=True), ForeignKey("devices.id", ondelete="CASCADE"), nullable=True
     )
     config: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
     schedule_type: Mapped[str] = mapped_column(String(20), nullable=False)
