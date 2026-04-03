@@ -352,6 +352,7 @@ async def reject_collector(
 async def heartbeat(
     collector_id: str,
     request: HeartbeatRequest,
+    raw_request: Request,
     db: AsyncSession = Depends(get_db),
     api_key: dict = Depends(require_collector_key),
 ) -> HeartbeatResponse:
@@ -395,12 +396,25 @@ async def heartbeat(
             select(SystemVersion).where(SystemVersion.node_hostname == collector.hostname)
         )).scalar_one_or_none()
         if sv is None:
+            # Use X-Forwarded-For (from HAProxy) or client IP for real node IP
+            real_ip = (
+                raw_request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+                or str(raw_request.client.host if raw_request.client else "")
+            )
             sv = SystemVersion(
                 node_hostname=collector.hostname,
                 node_role="collector",
-                node_ip=(collector.ip_addresses[0] if collector.ip_addresses else ""),
+                node_ip=real_ip,
             )
             db.add(sv)
+        # Update node_ip if it's a Docker bridge IP (172.x)
+        if sv.node_ip.startswith("172."):
+            real_ip = (
+                raw_request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+                or str(raw_request.client.host if raw_request.client else "")
+            )
+            if real_ip and not real_ip.startswith("172."):
+                sv.node_ip = real_ip
         sv.monctl_version = request.system_stats.get("monctl_version")
         os_info = request.system_stats.get("os_info", {})
         if isinstance(os_info, dict):
