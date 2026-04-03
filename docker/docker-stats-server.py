@@ -16,6 +16,7 @@ import time
 from collections import deque
 from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
 from urllib.parse import urlparse, parse_qs
 
 import ssl
@@ -1034,6 +1035,9 @@ if __name__ == "__main__":
     if PUSH_URL:
         threading.Thread(target=_push_loop, daemon=True).start()
 
-    server = HTTPServer(("0.0.0.0", 9100), StatsHandler)
+    class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+        daemon_threads = True
+
+    server = ThreadedHTTPServer(("0.0.0.0", 9100), StatsHandler)
     print("Listening on :9100")
     server.serve_forever()
