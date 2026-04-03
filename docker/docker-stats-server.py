@@ -618,10 +618,10 @@ class StatsHandler(BaseHTTPRequestHandler):
                 try:
                     url = f"{central_url}/api/v1/os-packages/download/{fn}"
                     result = subprocess.run(
-                        ["chroot", "/host_root", "bash", "-c",
-                         f"mkdir -p {deb_dir} && curl -sfk "
-                         f"-H 'Authorization: Bearer {api_key}' "
-                         f"-o {deb_dir}/{fn} '{url}'"],
+                        ["chroot", "/host_root", "curl", "-fk",
+                         "-H", f"Authorization: Bearer {api_key}",
+                         "-o", f"{deb_dir}/{fn}",
+                         "--create-dirs", url],
                         capture_output=True, text=True, timeout=120,
                     )
                     if result.returncode == 0:

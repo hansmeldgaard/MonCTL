@@ -161,8 +161,9 @@ async def install_via_deb(
         raise RuntimeError(f"No cached .deb files for packages: {', '.join(package_names)}")
 
     # Determine central URL and API key
-    central_url = f"https://{_settings.vip_address}" if hasattr(_settings, "vip_address") and _settings.vip_address else "https://10.145.210.40"
-    api_key = _settings.collector_api_key or ""
+    import os as _os
+    central_url = f"https://{_os.environ.get('MONCTL_VIP_ADDRESS', '10.145.210.40')}"
+    api_key = _os.environ.get("MONCTL_COLLECTOR_API_KEY", "")
 
     # Step 1: Sidecar downloads .debs from central
     fetch_result = await fetch_debs_on_node(node_ip, central_url, api_key, filenames)
