@@ -81,18 +81,19 @@ async def download_os_package(
         select(SystemVersion).where(SystemVersion.node_role == "central")
     )).scalars().all()
     for node in nodes:
-        peer_url = f"https://{node.node_ip}:8443/api/v1/os-packages/download/{filename}"
+        peer_url = f"http://{node.node_ip}:8443/api/v1/os-packages/download/{quote(pkg.filename, safe='')}"
         try:
-            async with httpx.AsyncClient(verify=False, timeout=60) as client:
+            async with httpx.AsyncClient(timeout=60) as client:
                 resp = await client.get(peer_url, headers={
                     "Authorization": f"Bearer {api_key}",
                     "X-No-Proxy": "1",
                 })
                 if resp.status_code == 200:
-                    file_path.parent.mkdir(parents=True, exist_ok=True)
-                    file_path.write_bytes(resp.content)
-                    logger.info("os_package_fetched_from_peer", filename=filename, peer=node.node_hostname)
-                    return FileResponse(path=str(file_path), filename=filename, media_type="application/octet-stream")
+                    save_path = os_dir / pkg.filename
+                    save_path.parent.mkdir(parents=True, exist_ok=True)
+                    save_path.write_bytes(resp.content)
+                    logger.info("os_package_fetched_from_peer", filename=pkg.filename, peer=node.node_hostname)
+                    return FileResponse(path=str(save_path), filename=pkg.filename, media_type="application/octet-stream")
         except Exception:
             continue
     raise HTTPException(status_code=404, detail="File not found on any central node")
