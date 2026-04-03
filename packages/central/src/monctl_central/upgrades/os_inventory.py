@@ -93,6 +93,10 @@ async def collect_all_inventory(session_factory) -> dict[str, int]:
                     )
                 )).scalar_one_or_none()
                 if sv:
+                    # Update last_reported_at
+                    from monctl_common.utils import utc_now
+                    sv.last_reported_at = utc_now()
+
                     # Update OS/kernel info from sidecar /system
                     docker_info = system_info.get("docker", {})
                     if docker_info:
