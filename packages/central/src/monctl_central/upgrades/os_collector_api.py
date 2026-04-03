@@ -5,7 +5,7 @@ Mounted at /api/v1/os-packages/.
 from __future__ import annotations
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from pathlib import Path
@@ -41,18 +41,61 @@ async def list_available_os_packages(
 @router.get("/download/{filename}")
 async def download_os_package(
     filename: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_collector_auth),
 ):
-    pkg = (await db.execute(
-        select(OsCachedPackage).where(OsCachedPackage.filename == filename)
-    )).scalar_one_or_none()
+    from urllib.parse import quote, unquote
+
+    # Try both URL-encoded and decoded variants of the filename
+    # (apt names files with %3a but FastAPI decodes %3a to : in the path)
+    candidates = list({filename, quote(filename, safe=""), unquote(filename)})
+
+    pkg = None
+    for candidate in candidates:
+        pkg = (await db.execute(
+            select(OsCachedPackage).where(OsCachedPackage.filename == candidate)
+        )).scalar_one_or_none()
+        if pkg:
+            break
     if not pkg:
         raise HTTPException(status_code=404, detail="Package not found")
-    file_path = Path(settings.upgrade_storage_dir) / "os-packages" / filename
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="File not found on disk")
-    return FileResponse(path=str(file_path), filename=filename, media_type="application/octet-stream")
+
+    # Try finding the file with any filename variant
+    os_dir = Path(settings.upgrade_storage_dir) / "os-packages"
+    for candidate in candidates:
+        file_path = os_dir / candidate
+        if file_path.exists():
+            return FileResponse(path=str(file_path), filename=pkg.filename, media_type="application/octet-stream")
+
+    # File not on this central node — try to fetch from a peer
+    # X-No-Proxy header prevents infinite recursion between central nodes
+    if request.headers.get("x-no-proxy"):
+        raise HTTPException(status_code=404, detail="File not found on this node")
+
+    import os as _os
+    import httpx
+    from monctl_central.storage.models import SystemVersion
+    api_key = _os.environ.get("MONCTL_COLLECTOR_API_KEY", "")
+    nodes = (await db.execute(
+        select(SystemVersion).where(SystemVersion.node_role == "central")
+    )).scalars().all()
+    for node in nodes:
+        peer_url = f"https://{node.node_ip}:8443/api/v1/os-packages/download/{filename}"
+        try:
+            async with httpx.AsyncClient(verify=False, timeout=60) as client:
+                resp = await client.get(peer_url, headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "X-No-Proxy": "1",
+                })
+                if resp.status_code == 200:
+                    file_path.parent.mkdir(parents=True, exist_ok=True)
+                    file_path.write_bytes(resp.content)
+                    logger.info("os_package_fetched_from_peer", filename=filename, peer=node.node_hostname)
+                    return FileResponse(path=str(file_path), filename=filename, media_type="application/octet-stream")
+        except Exception:
+            continue
+    raise HTTPException(status_code=404, detail="File not found on any central node")
 
 
 class OsInstallReportRequest(BaseModel):

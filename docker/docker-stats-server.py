@@ -616,12 +616,13 @@ class StatsHandler(BaseHTTPRequestHandler):
             errors = []
             for fn in filenames:
                 try:
-                    url = f"{central_url}/api/v1/os-packages/download/{fn}"
+                    from urllib.parse import quote
+                    url = f"{central_url}/api/v1/os-packages/download/{quote(fn, safe='')}"
                     result = subprocess.run(
                         ["chroot", "/host_root", "curl", "-fk",
                          "-H", f"Authorization: Bearer {api_key}",
                          "-o", f"{deb_dir}/{fn}",
-                         "--create-dirs", url],
+                         "--create-dirs", "--path-as-is", url],
                         capture_output=True, text=True, timeout=120,
                     )
                     if result.returncode == 0:
