@@ -14,20 +14,20 @@ class StartUpgradeRequest(BaseModel):
 
 
 class DownloadOsUpdatesRequest(BaseModel):
-    package_names: list[str] = Field(min_length=1, max_length=100)
+    package_names: list[str] = Field(min_length=1, max_length=2000)
 
 
 class DownloadOsPackagesRequest(BaseModel):
-    package_names: list[str] = Field(min_length=1, max_length=100)
+    package_names: list[str] = Field(min_length=1, max_length=2000)
 
 
 class InstallOsOnNodeRequest(BaseModel):
     node_hostname: str = Field(min_length=1, max_length=200)
-    package_names: list[str] = Field(min_length=1, max_length=100)
+    package_names: list[str] = Field(min_length=1, max_length=2000)
 
 
 class StartOsInstallJobRequest(BaseModel):
-    package_names: list[str] = Field(min_length=1, max_length=100)
+    package_names: list[str] = Field(min_length=1, max_length=2000)
     scope: str = Field(pattern="^(central|collectors|all|nodes)$")
     target_nodes: list[str] | None = None
     strategy: str = Field(default="rolling", pattern="^(rolling|test_first)$")
