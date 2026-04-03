@@ -705,16 +705,30 @@ class StatsHandler(BaseHTTPRequestHandler):
                 if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9.+\-:]*$', pkg):
                     self._json_response(400, {"error": f"invalid package name: {pkg}"})
                     return
-            pkg_str = " ".join(packages)
             proxy_env = f"http_proxy={proxy_url} https_proxy={proxy_url} " if proxy_url else ""
             try:
-                # Step 1: Download packages + dependencies to apt cache
+                # Step 1: Try downloading all packages at once
+                pkg_str = " ".join(packages)
                 result = subprocess.run(
                     ["chroot", "/host_root", "bash", "-c",
                      f"{proxy_env}DEBIAN_FRONTEND=noninteractive "
                      f"apt-get install --download-only -y {pkg_str} 2>&1"],
                     capture_output=True, text=True, timeout=600,
                 )
+                skipped = []
+                if result.returncode != 0:
+                    # Batch failed (likely dependency conflicts) — try each package individually
+                    skipped = []
+                    for pkg in packages:
+                        r = subprocess.run(
+                            ["chroot", "/host_root", "bash", "-c",
+                             f"{proxy_env}DEBIAN_FRONTEND=noninteractive "
+                             f"apt-get install --download-only -y {pkg} 2>&1"],
+                            capture_output=True, text=True, timeout=120,
+                        )
+                        if r.returncode != 0:
+                            skipped.append(pkg)
+
                 # Step 2: Create tar of all .deb files in apt cache
                 archive_path = "/opt/monctl/os-packages/apt-archive.tar.gz"
                 tar_result = subprocess.run(
@@ -736,11 +750,14 @@ class StatsHandler(BaseHTTPRequestHandler):
                 if os.path.isfile(host_archive):
                     archive_size = os.path.getsize(host_archive)
                 self._json_response(200, {
-                    "output": result.stdout[-500:] if len(result.stdout) > 500 else result.stdout,
-                    "success": result.returncode == 0 and tar_result.returncode == 0,
+                    "output": f"Downloaded {deb_count} packages" + (
+                        f", skipped {len(skipped)}: {', '.join(skipped[:10])}" if skipped else ""
+                    ),
+                    "success": tar_result.returncode == 0 and deb_count > 0,
                     "archive_path": archive_path,
                     "archive_size": archive_size,
                     "deb_count": deb_count,
+                    "skipped": skipped,
                 })
             except subprocess.TimeoutExpired:
                 self._json_response(500, {"output": "Timeout", "success": False})
