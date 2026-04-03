@@ -156,7 +156,9 @@ export function UpgradesPage() {
   const [expandedInstallJobId, setExpandedInstallJobId] = useState<string | null>(null);
 
   // Package inventory state
-  const { data: packageInventory } = usePackageInventory();
+  const { data: pkgInvData } = usePackageInventory();
+  const packageInventory = pkgInvData?.packages;
+  const completedPackageCount = pkgInvData?.completedCount ?? 0;
   const collectInventory = useCollectInventory();
   const [pkgSearch, setPkgSearch] = useState("");
   const [selectedPkgs, setSelectedPkgs] = useState<Set<string>>(new Set());
@@ -849,6 +851,12 @@ export function UpgradesPage() {
                       Install Selected...
                     </Button>
                   </div>
+                )}
+                {completedPackageCount > 0 && (
+                  <p className="mt-3 text-xs text-zinc-500 text-center">
+                    <CheckCircle2 className="inline h-3 w-3 mr-1 text-emerald-500" />
+                    {completedPackageCount} package{completedPackageCount !== 1 ? "s" : ""} fully installed on all nodes
+                  </p>
                 )}
               </>
             );

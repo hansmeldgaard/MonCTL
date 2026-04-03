@@ -308,6 +308,13 @@ async def execute_os_install_job(session_factory, job_id: UUID) -> None:
             await db.commit()
             logger.error("os_install_job_failed", job_id=str(job_id), error=str(exc))
 
+        # Refresh inventory after job completes to update progress counts
+        try:
+            from monctl_central.upgrades.os_inventory import collect_all_inventory
+            await collect_all_inventory(session_factory)
+        except Exception:
+            logger.warning("post_install_inventory_collection_failed", exc_info=True)
+
 
 async def _run_steps(db: AsyncSession, job: OsInstallJob) -> None:
     """Run all pending steps in order. Handles test_first pause and fail-fast."""

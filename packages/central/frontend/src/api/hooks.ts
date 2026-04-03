@@ -3226,7 +3226,10 @@ export function usePackageInventory() {
   return useQuery({
     queryKey: ["package-inventory"],
     queryFn: () => apiGet<PackageInventoryItem[]>("/upgrades/package-inventory"),
-    select: (res) => res.data,
+    select: (res) => ({
+      packages: res.data,
+      completedCount: (res as any).meta?.completed_count ?? 0,
+    }),
     refetchInterval: 30_000,
   });
 }

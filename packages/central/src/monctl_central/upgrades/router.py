@@ -1191,7 +1191,11 @@ async def get_package_inventory(
             "nodes": nodes_status,
         })
 
-    return {"status": "success", "data": data}
+    # Split into pending (has nodes to update) and completed (all nodes current)
+    pending = [p for p in data if p["installed_count"] < p["total_nodes"]]
+    completed = [p for p in data if p["installed_count"] >= p["total_nodes"]]
+
+    return {"status": "success", "data": pending, "meta": {"completed_count": len(completed)}}
 
 
 @router.post("/collect-inventory")
