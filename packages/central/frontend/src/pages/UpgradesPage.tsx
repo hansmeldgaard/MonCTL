@@ -765,11 +765,22 @@ export function UpgradesPage() {
                                   </div>
                                 </TableCell>
                                 <TableCell>
-                                  {isExpanded ? (
-                                    <ChevronDown className="h-4 w-4 text-zinc-500" />
-                                  ) : (
-                                    <ChevronRight className="h-4 w-4 text-zinc-500" />
-                                  )}
+                                  <div className="flex items-center gap-2">
+                                    {pkg.downloaded ? (
+                                      <span title="Package cached on central" className="text-emerald-400">
+                                        <Download className="h-3 w-3" />
+                                      </span>
+                                    ) : (
+                                      <span title="Not downloaded yet" className="text-zinc-600">
+                                        <Download className="h-3 w-3" />
+                                      </span>
+                                    )}
+                                    {isExpanded ? (
+                                      <ChevronDown className="h-4 w-4 text-zinc-500" />
+                                    ) : (
+                                      <ChevronRight className="h-4 w-4 text-zinc-500" />
+                                    )}
+                                  </div>
                                 </TableCell>
                               </TableRow>
                               {isExpanded && (

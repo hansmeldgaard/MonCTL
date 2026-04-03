@@ -1107,47 +1107,66 @@ async def get_package_inventory(
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_admin),
 ):
-    """Package-centric view: cached packages with per-node rollout status."""
-    cached_result = await db.execute(
-        select(OsCachedPackage).order_by(OsCachedPackage.package_name)
+    """Package-centric view: all known updates with download + rollout status."""
+    # Get all known updates (from scanning central nodes)
+    updates_result = await db.execute(
+        select(
+            OsAvailableUpdate.package_name,
+            OsAvailableUpdate.new_version,
+            OsAvailableUpdate.severity,
+        )
+        .where(OsAvailableUpdate.is_installed == False)  # noqa: E712
+        .distinct(OsAvailableUpdate.package_name)
+        .order_by(OsAvailableUpdate.package_name)
     )
-    cached_pkgs = cached_result.scalars().all()
+    known_updates = {row[0]: {"version": row[1], "severity": row[2]} for row in updates_result}
 
-    if not cached_pkgs:
+    # Get cached .deb files
+    cached_result = await db.execute(select(OsCachedPackage))
+    cached_map: dict[str, OsCachedPackage] = {}
+    for c in cached_result.scalars().all():
+        cached_map[c.package_name] = c
+
+    # Merge: all unique packages (from updates + cached)
+    all_pkg_names = sorted(set(known_updates.keys()) | set(cached_map.keys()))
+    if not all_pkg_names:
         return {"status": "success", "data": []}
 
     nodes_result = await db.execute(select(SystemVersion).order_by(SystemVersion.node_hostname))
     all_nodes = list(nodes_result.scalars().all())
 
-    pkg_names = [c.package_name for c in cached_pkgs]
+    # Get node inventory for these packages
     inv_result = await db.execute(
-        select(NodePackage).where(NodePackage.package_name.in_(pkg_names))
+        select(NodePackage).where(NodePackage.package_name.in_(all_pkg_names))
     )
-    inventory = inv_result.scalars().all()
-
-    # (hostname, package_name) → installed_version
     inv_map: dict[tuple[str, str], str] = {}
-    for inv in inventory:
+    for inv in inv_result.scalars().all():
         inv_map[(inv.node_hostname, inv.package_name)] = inv.installed_version
 
-    # Severity from OsAvailableUpdate
-    sev_result = await db.execute(
-        select(
-            OsAvailableUpdate.package_name,
-            OsAvailableUpdate.severity,
-        )
-        .where(OsAvailableUpdate.package_name.in_(pkg_names))
-        .distinct(OsAvailableUpdate.package_name)
-    )
-    severity_map = {row[0]: row[1] for row in sev_result}
-
     data = []
-    for cached in cached_pkgs:
+    for pkg_name in all_pkg_names:
+        update_info = known_updates.get(pkg_name)
+        cached = cached_map.get(pkg_name)
+
+        # Determine version and severity
+        new_version = ""
+        if cached:
+            new_version = cached.version
+        elif update_info:
+            new_version = update_info["version"]
+
+        severity = "normal"
+        if update_info:
+            severity = update_info["severity"]
+
+        downloaded = pkg_name in cached_map
+        requires_reboot = pkg_name.startswith("linux-")
+
         nodes_status = []
         installed_count = 0
         for node in all_nodes:
-            installed_ver = inv_map.get((node.node_hostname, cached.package_name), "")
-            if installed_ver == cached.version:
+            installed_ver = inv_map.get((node.node_hostname, pkg_name), "")
+            if installed_ver and new_version and installed_ver == new_version:
                 node_status = "installed"
                 installed_count += 1
             elif installed_ver:
@@ -1161,15 +1180,12 @@ async def get_package_inventory(
                 "status": node_status,
             })
 
-        # Kernel packages require reboot after install
-        requires_reboot = cached.package_name.startswith("linux-")
-
         data.append({
-            "package_name": cached.package_name,
-            "new_version": cached.version,
-            "severity": severity_map.get(cached.package_name, "normal"),
+            "package_name": pkg_name,
+            "new_version": new_version,
+            "severity": severity,
             "requires_reboot": requires_reboot,
-            "downloaded": True,
+            "downloaded": downloaded,
             "total_nodes": len(all_nodes),
             "installed_count": installed_count,
             "nodes": nodes_status,
