@@ -2235,6 +2235,83 @@ class ClickHouseClient:
         data = [[r.get(col) for col in _ALERT_LOG_INSERT_COLUMNS] for r in records]
         client.insert("alert_log", data, column_names=_ALERT_LOG_INSERT_COLUMNS)
 
+    # ------------------------------------------------------------------
+    # Audit mutation log
+    # ------------------------------------------------------------------
+
+    def insert_audit_mutations(self, rows: list[dict]) -> None:
+        """Batch insert audit mutation rows."""
+        if not rows:
+            return
+        client = self._get_client()
+        data = [[r.get(col) for col in _AUDIT_MUTATIONS_INSERT_COLUMNS] for r in rows]
+        client.insert("audit_mutations", data, column_names=_AUDIT_MUTATIONS_INSERT_COLUMNS)
+
+    def query_audit_mutations(
+        self,
+        *,
+        user_id: str | None = None,
+        username: str | None = None,
+        resource_type: str | None = None,
+        resource_id: str | None = None,
+        action: str | None = None,
+        ip_address: str | None = None,
+        from_ts: str | None = None,
+        to_ts: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[dict], int]:
+        """Query audit mutation log. Returns (rows, total_count)."""
+        client = self._get_client()
+
+        wheres: list[str] = []
+        params: dict[str, Any] = {}
+        if user_id:
+            wheres.append("user_id = {user_id:String}")
+            params["user_id"] = user_id
+        if username:
+            wheres.append("username = {username:String}")
+            params["username"] = username
+        if resource_type:
+            wheres.append("resource_type = {resource_type:String}")
+            params["resource_type"] = resource_type
+        if resource_id:
+            wheres.append("resource_id = {resource_id:String}")
+            params["resource_id"] = resource_id
+        if action:
+            wheres.append("action = {action:String}")
+            params["action"] = action
+        if ip_address:
+            wheres.append("ip_address = {ip_address:String}")
+            params["ip_address"] = ip_address
+        if from_ts:
+            wheres.append("timestamp >= {from_ts:DateTime64(3)}")
+            params["from_ts"] = from_ts
+        if to_ts:
+            wheres.append("timestamp <= {to_ts:DateTime64(3)}")
+            params["to_ts"] = to_ts
+
+        where_sql = ("WHERE " + " AND ".join(wheres)) if wheres else ""
+
+        count_sql = f"SELECT count() FROM audit_mutations {where_sql}"
+        total_rows = client.query(count_sql, parameters=params)
+        total = int(total_rows.first_row[0]) if total_rows.result_rows else 0
+
+        params["limit"] = int(limit)
+        params["offset"] = int(offset)
+        sql = (
+            "SELECT timestamp, request_id, user_id, username, auth_type, tenant_id, "
+            "ip_address, user_agent, method, path, resource_type, resource_id, action, "
+            "status_code, old_values, new_values, changed_fields, duration_ms, error_message "
+            f"FROM audit_mutations {where_sql} "
+            "ORDER BY timestamp DESC "
+            "LIMIT {limit:UInt32} OFFSET {offset:UInt32}"
+        )
+        result = client.query(sql, parameters=params)
+        cols = result.column_names
+        rows = [dict(zip(cols, r, strict=False)) for r in result.result_rows]
+        return rows, total
+
     def _build_alert_log_filters(
         self,
         *,
