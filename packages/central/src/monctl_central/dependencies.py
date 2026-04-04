@@ -286,6 +286,7 @@ async def require_auth(
     # 1. Try JWT cookie first
     user = await _get_user_from_cookie(request, db)
     if user:
+        _populate_audit_context(user)
         return user
 
     # 2. Try Bearer API key
@@ -293,6 +294,7 @@ async def require_auth(
         try:
             api_key = await _validate_api_key(credentials.credentials)
             if api_key["key_type"] in ("management", "user"):
+                _populate_audit_context(api_key)
                 return api_key
         except HTTPException:
             pass  # Fall through to the 401 below
@@ -301,6 +303,23 @@ async def require_auth(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Authentication required (JWT cookie or management API key)",
     )
+
+
+def _populate_audit_context(auth: dict) -> None:
+    """Copy authenticated user info into the request-scoped AuditContext."""
+    try:
+        from monctl_central.audit.context import get_context
+        ctx = get_context()
+        if ctx is None:
+            return
+        ctx.user_id = str(auth.get("user_id") or "")
+        ctx.username = auth.get("username") or ""
+        ctx.auth_type = auth.get("auth_type") or "cookie"
+        tenants = auth.get("tenant_ids")
+        if tenants and len(tenants) == 1:
+            ctx.tenant_id = tenants[0]
+    except Exception:
+        pass
 
 
 async def require_admin(auth: dict = Depends(require_auth)) -> dict:

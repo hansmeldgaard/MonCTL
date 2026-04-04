@@ -9,6 +9,8 @@ import type {
   AppDetail,
   AppSummary,
   Assignment,
+  AuditLoginEvent,
+  AuditMutation,
   Collector,
   CollectorGroup,
   ConfigKeysResponse,
@@ -3649,5 +3651,68 @@ export function useAutomationRun(runId: string) {
     queryFn: () => apiGet<AutomationRun>(`/automations/runs/${runId}`),
     select: (res) => res.data,
     enabled: !!runId,
+  });
+}
+
+// ── Audit log ────────────────────────────────────────────────────
+
+export interface AuditLoginFilters {
+  user_id?: string;
+  username?: string;
+  event_type?: string;
+  ip_address?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export function useAuditLogins(filters: AuditLoginFilters = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(filters)) {
+    if (v !== undefined && v !== "") qs.set(k, String(v));
+  }
+  const q = qs.toString();
+  return useQuery({
+    queryKey: ["audit-logins", q],
+    queryFn: () => apiGet<AuditLoginEvent[]>(`/audit/logins${q ? `?${q}` : ""}`),
+    placeholderData: keepPreviousData,
+  });
+}
+
+export interface AuditMutationFilters {
+  user_id?: string;
+  username?: string;
+  resource_type?: string;
+  resource_id?: string;
+  action?: string;
+  ip_address?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export function useAuditMutations(filters: AuditMutationFilters = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(filters)) {
+    if (v !== undefined && v !== "") qs.set(k, String(v));
+  }
+  const q = qs.toString();
+  return useQuery({
+    queryKey: ["audit-mutations", q],
+    queryFn: () => apiGet<AuditMutation[]>(`/audit/mutations${q ? `?${q}` : ""}`),
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useResourceHistory(resourceType: string | undefined, resourceId: string | undefined, limit = 100) {
+  return useQuery({
+    queryKey: ["audit-resource-history", resourceType, resourceId, limit],
+    queryFn: () =>
+      apiGet<AuditMutation[]>(
+        `/audit/resources/${resourceType}/${resourceId}/history?limit=${limit}`,
+      ),
+    enabled: !!resourceType && !!resourceId,
   });
 }

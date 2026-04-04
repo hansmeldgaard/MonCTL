@@ -43,6 +43,7 @@ from monctl_central.logs.router import router as logs_router
 from monctl_central.analytics.router import router as analytics_router
 from monctl_central.analytics.dashboards import router as analytics_dashboards_router
 from monctl_central.automations.router import router as automations_router
+from monctl_central.audit.router import router as audit_router
 
 api_router = APIRouter()
 
@@ -85,3 +86,4 @@ api_router.include_router(logs_router, tags=["logs"])
 api_router.include_router(analytics_router, prefix="/analytics", tags=["analytics"])
 api_router.include_router(analytics_dashboards_router, prefix="/analytics", tags=["analytics"])
 api_router.include_router(automations_router, prefix="/automations", tags=["automations"])
+api_router.include_router(audit_router, prefix="/audit", tags=["audit"])

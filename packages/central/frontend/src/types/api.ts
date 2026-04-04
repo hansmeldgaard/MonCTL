@@ -3,6 +3,50 @@
 export interface ApiResponse<T> {
   status: string;
   data: T;
+  meta?: {
+    limit?: number;
+    offset?: number;
+    count?: number;
+    total?: number;
+  };
+}
+
+// ── Audit log ─────────────────────────────────────────────
+
+export interface AuditLoginEvent {
+  id: string;
+  timestamp: string | null;
+  event_type: string;
+  user_id: string | null;
+  username: string;
+  ip_address: string | null;
+  user_agent: string | null;
+  auth_type: string;
+  failure_reason: string | null;
+  request_id: string | null;
+  tenant_id: string | null;
+}
+
+export interface AuditMutation {
+  timestamp: string;
+  request_id: string;
+  user_id: string;
+  username: string;
+  auth_type: string;
+  tenant_id: string;
+  ip_address: string;
+  user_agent: string;
+  method: string;
+  path: string;
+  resource_type: string;
+  resource_id: string;
+  action: string;
+  status_code: number;
+  old_values: string;
+  new_values: string;
+  changed_fields: string[];
+  duration_ms: number;
+  error_message: string;
 }
 
 // ── Auth ──────────────────────────────────────────────────

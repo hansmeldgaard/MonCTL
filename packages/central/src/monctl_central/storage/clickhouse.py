@@ -1033,7 +1033,7 @@ CREATE TABLE IF NOT EXISTS rba_runs ON CLUSTER '{cluster}'
     completed_steps    UInt8         DEFAULT 0,
     failed_step        UInt8         DEFAULT 0,
     step_results       String        DEFAULT '[]',
-    shared_data        String        DEFAULT '{}',
+    shared_data        String        DEFAULT '{{}}',
     started_at         DateTime64(3, 'UTC'),
     finished_at        DateTime64(3, 'UTC') DEFAULT toDateTime64(0, 3),
     duration_ms        UInt32        DEFAULT 0,
@@ -1137,7 +1137,7 @@ CREATE TABLE IF NOT EXISTS eligibility_results ON CLUSTER '{cluster}'
     device_address     String        DEFAULT '',
     eligible           UInt8         DEFAULT 2,
     already_assigned   UInt8         DEFAULT 0,
-    oid_results        String        DEFAULT '{}',
+    oid_results        String        DEFAULT '{{}}',
     reason             String        DEFAULT '',
     probed_at          DateTime64(3, 'UTC')
 )

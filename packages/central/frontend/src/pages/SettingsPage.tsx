@@ -6,6 +6,7 @@ import {
   Activity,
   AlertTriangle,
   Building2,
+  ScrollText,
   Copy,
   Cpu,
   Database,
@@ -58,6 +59,7 @@ import { SnmpOidsPage } from "@/pages/SnmpOidsPage.tsx";
 import { UsersPage } from "@/pages/UsersPage.tsx";
 import { TenantsPage } from "@/pages/TenantsPage.tsx";
 import { RolesPage } from "@/pages/RolesPage.tsx";
+import { AuditLogPage } from "@/pages/AuditLogPage.tsx";
 
 const TABS = [
   { key: "profile", label: "Profile", icon: User, adminOnly: false },
@@ -70,6 +72,7 @@ const TABS = [
   { key: "roles", label: "Roles", icon: ShieldCheck, adminOnly: true },
   { key: "users", label: "Users", icon: Users, adminOnly: true },
   { key: "tenants", label: "Tenants", icon: Building2, adminOnly: true },
+  { key: "audit", label: "Audit Log", icon: ScrollText, adminOnly: true },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
@@ -1275,6 +1278,7 @@ export function SettingsPage() {
       case "roles": return <RolesPage />;
       case "users": return <UsersPage />;
       case "tenants": return <TenantsPage />;
+      case "audit": return <AuditLogPage />;
       default: return <ProfileTab />;
     }
   }

@@ -985,6 +985,33 @@ class SchedulerRunner:
                 utc_now().isoformat(),
             )
 
+        # Cleanup audit_login_events (PostgreSQL). ClickHouse audit_mutations
+        # has its own TTL set in the table DDL.
+        try:
+            from sqlalchemy import text as _sa_text
+            from monctl_central.storage.models import SystemSetting
+
+            login_days = 730  # default: 2 years
+            async with self._session_factory() as session:
+                setting = await session.get(SystemSetting, "audit_logins_retention_days")
+                if setting and setting.value:
+                    try:
+                        login_days = int(setting.value)
+                    except ValueError:
+                        pass
+                result = await session.execute(
+                    _sa_text(
+                        "DELETE FROM audit_login_events "
+                        "WHERE timestamp < now() - (:days || ' days')::interval"
+                    ),
+                    {"days": login_days},
+                )
+                await session.commit()
+                logger.info("audit_login_events_cleanup rows=%s days=%s",
+                            result.rowcount, login_days)
+        except Exception:
+            logger.debug("audit_login_events_cleanup_failed", exc_info=True)
+
     async def _cleanup_app_cache(self) -> None:
         """Delete expired app_cache entries based on TTL."""
         from sqlalchemy import text as sa_text

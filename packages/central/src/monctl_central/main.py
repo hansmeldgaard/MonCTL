@@ -718,6 +718,17 @@ class SshConnector:
         except Exception:
             logger.warning("scheduler_start_failed", exc_info=True)
 
+    # Start audit buffer (batched ClickHouse insert for mutation audit)
+    try:
+        from monctl_central.audit.buffer import audit_buffer
+        from monctl_central.audit.db_events import install_listeners as install_audit_listeners
+
+        install_audit_listeners()
+        audit_buffer.start()
+        logger.info("audit_buffer_started")
+    except Exception:
+        logger.warning("audit_buffer_start_failed", exc_info=True)
+
     yield
 
     # Shutdown
@@ -735,6 +746,12 @@ class SshConnector:
 
     if ch_buffer:
         await ch_buffer.stop()
+
+    try:
+        from monctl_central.audit.buffer import audit_buffer
+        await audit_buffer.stop()
+    except Exception:
+        logger.warning("audit_buffer_stop_failed", exc_info=True)
 
     from monctl_central.cache import close_redis
     await close_redis()
@@ -812,6 +829,11 @@ app = FastAPI(
 from fastapi.exceptions import RequestValidationError  # noqa: E402
 from monctl_central.validation import validation_exception_handler  # noqa: E402
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
+
+# Audit middleware — populates request-scoped AuditContext and flushes
+# mutation rows buffered during the request to ClickHouse.
+from monctl_central.audit.middleware import AuditContextMiddleware  # noqa: E402
+app.add_middleware(AuditContextMiddleware)
 
 
 @app.get("/v1/health", tags=["system"])

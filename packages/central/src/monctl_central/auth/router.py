@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from monctl_central.audit.login_events import record_login_event
 from monctl_central.auth.service import (
     create_access_token,
     create_refresh_token,
@@ -58,16 +59,48 @@ async def login(
     result = await db.execute(stmt)
     user = result.scalar_one_or_none()
 
-    if user is None or not verify_password(request.password, user.password_hash):
+    if user is None:
+        await record_login_event(
+            db,
+            event_type="login_failed",
+            username=request.username,
+            failure_reason="user_not_found",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password",
+        )
+    if not verify_password(request.password, user.password_hash):
+        await record_login_event(
+            db,
+            event_type="login_failed",
+            username=request.username,
+            user_id=user.id,
+            failure_reason="invalid_password",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
         )
     if not user.is_active:
+        await record_login_event(
+            db,
+            event_type="login_failed",
+            username=request.username,
+            user_id=user.id,
+            failure_reason="user_inactive",
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is disabled",
         )
+
+    await record_login_event(
+        db,
+        event_type="login_success",
+        username=user.username,
+        user_id=user.id,
+    )
 
     access = create_access_token(str(user.id), user.username, user.role)
     refresh = create_refresh_token(str(user.id))
@@ -106,8 +139,33 @@ async def login(
 
 
 @router.post("/logout")
-async def logout(response: Response):
+async def logout(
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
     """Clear authentication cookies."""
+    # Best-effort: identify the user from the existing access_token cookie
+    username = ""
+    user_id: uuid.UUID | None = None
+    token = request.cookies.get("access_token")
+    if token:
+        try:
+            payload = decode_token(token)
+            username = payload.get("username", "") or ""
+            sub = payload.get("sub")
+            if sub:
+                user_id = uuid.UUID(sub)
+        except Exception:
+            pass
+
+    await record_login_event(
+        db,
+        event_type="logout",
+        username=username,
+        user_id=user_id,
+    )
+
     response.delete_cookie("access_token", path="/")
     response.delete_cookie("refresh_token", path="/v1/auth")
     return {"status": "success"}
@@ -122,14 +180,32 @@ async def refresh(
     """Use the refresh token cookie to issue a new access token."""
     token = request.cookies.get("refresh_token")
     if not token:
+        await record_login_event(
+            db,
+            event_type="token_refresh_failed",
+            username="",
+            failure_reason="no_refresh_token",
+        )
         raise HTTPException(status_code=401, detail="No refresh token")
 
     try:
         payload = decode_token(token)
     except Exception:
+        await record_login_event(
+            db,
+            event_type="token_refresh_failed",
+            username="",
+            failure_reason="invalid_refresh_token",
+        )
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
     if payload.get("type") != "refresh":
+        await record_login_event(
+            db,
+            event_type="token_refresh_failed",
+            username="",
+            failure_reason="invalid_token_type",
+        )
         raise HTTPException(status_code=401, detail="Invalid token type")
 
     user_id = payload["sub"]
@@ -138,7 +214,21 @@ async def refresh(
     user = result.scalar_one_or_none()
 
     if user is None or not user.is_active:
+        await record_login_event(
+            db,
+            event_type="token_refresh_failed",
+            username="",
+            user_id=uuid.UUID(user_id) if user_id else None,
+            failure_reason="user_not_found_or_inactive",
+        )
         raise HTTPException(status_code=401, detail="User not found or disabled")
+
+    await record_login_event(
+        db,
+        event_type="token_refresh",
+        username=user.username,
+        user_id=user.id,
+    )
 
     access = create_access_token(str(user.id), user.username, user.role)
     response.set_cookie(
