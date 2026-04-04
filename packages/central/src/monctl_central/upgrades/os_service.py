@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import os
 import socket
 from datetime import datetime, timezone
-from pathlib import Path
 from uuid import UUID
 
 import httpx
@@ -54,33 +52,6 @@ async def install_packages_on_node(node_ip: str, package_names: list[str]) -> di
         return resp.json()
 
 
-async def install_deb_files_on_node(node_ip: str, deb_dir: str, filenames: list[str]) -> dict:
-    """Tell a node's sidecar to install .deb files via dpkg -i."""
-    url = f"http://{node_ip}:{SIDECAR_PORT}/os/install-deb"
-    async with httpx.AsyncClient(timeout=600) as client:
-        resp = await client.post(url, json={"deb_dir": deb_dir, "filenames": filenames})
-        resp.raise_for_status()
-        return resp.json()
-
-
-async def download_packages_via_sidecar(node_ip: str, package_names: list[str]) -> dict:
-    """Tell a node's sidecar to apt-get download packages."""
-    url = f"http://{node_ip}:{SIDECAR_PORT}/os/download"
-    async with httpx.AsyncClient(timeout=300) as client:
-        resp = await client.post(url, json={"packages": package_names})
-        resp.raise_for_status()
-        return resp.json()
-
-
-async def fetch_deb_from_sidecar(node_ip: str, filename: str) -> bytes:
-    """Download a .deb file from a node's sidecar."""
-    url = f"http://{node_ip}:{SIDECAR_PORT}/os/packages/{filename}"
-    async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.get(url)
-        resp.raise_for_status()
-        return resp.content
-
-
 async def reboot_node(node_ip: str) -> dict:
     """Tell a node's sidecar to reboot the host."""
     url = f"http://{node_ip}:{SIDECAR_PORT}/os/reboot"
@@ -99,88 +70,73 @@ async def check_reboot_required(node_ip: str) -> dict:
         return resp.json()
 
 
-async def wait_for_node_recovery(node_ip: str, timeout: int = 300) -> bool:
-    """Poll sidecar /health until it responds or timeout."""
-    url = f"http://{node_ip}:{SIDECAR_PORT}/health"
+async def get_node_uptime(node_ip: str) -> float | None:
+    """Return the current uptime in seconds via sidecar /system, or None on error."""
+    try:
+        async with httpx.AsyncClient(timeout=SIDECAR_TIMEOUT) as client:
+            resp = await client.get(f"http://{node_ip}:{SIDECAR_PORT}/system")
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get("uptime_seconds")
+    except Exception:
+        return None
+    return None
+
+
+async def wait_for_node_recovery(
+    node_ip: str, timeout: int = 300, pre_reboot_uptime: float | None = None,
+) -> bool:
+    """Wait for a node to reboot and come back healthy.
+
+    Verifies the reboot actually happened by comparing uptime:
+      - If pre_reboot_uptime is provided, we wait until uptime decreases
+        (i.e., the node rebooted).
+      - Otherwise we wait until uptime is small (< 5 minutes), suggesting
+        a recent reboot.
+      - Finally we wait for /health to respond 200 to confirm the new sidecar
+        is up and stable.
+    """
     deadline = asyncio.get_event_loop().time() + timeout
-    # Wait a bit for the node to actually go down first
-    await asyncio.sleep(10)
+
+    # Step 1: Wait for the reboot to actually happen (uptime must reset)
+    await asyncio.sleep(15)  # initial grace period — kernel shutdown + reboot
+    rebooted = False
+    while asyncio.get_event_loop().time() < deadline:
+        uptime = await get_node_uptime(node_ip)
+        if uptime is not None:
+            if pre_reboot_uptime is not None:
+                # Reboot confirmed when uptime is less than before (clock reset)
+                if uptime < pre_reboot_uptime:
+                    rebooted = True
+                    break
+            else:
+                # No baseline — accept uptime < 5 min as "freshly rebooted"
+                if uptime < 300:
+                    rebooted = True
+                    break
+        # uptime unchanged or unreachable — keep waiting
+        await asyncio.sleep(5)
+
+    if not rebooted:
+        return False
+
+    # Step 2: Node has rebooted — wait for sidecar health to stabilize
+    health_url = f"http://{node_ip}:{SIDECAR_PORT}/health"
+    stable_count = 0
     while asyncio.get_event_loop().time() < deadline:
         try:
             async with httpx.AsyncClient(timeout=5) as client:
-                resp = await client.get(url)
+                resp = await client.get(health_url)
                 if resp.status_code == 200:
-                    return True
+                    stable_count += 1
+                    if stable_count >= 3:  # 3 consecutive OK = stable
+                        return True
+                else:
+                    stable_count = 0
         except Exception:
-            pass
-        await asyncio.sleep(5)
+            stable_count = 0
+        await asyncio.sleep(3)
     return False
-
-
-def compute_file_hash(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        while chunk := f.read(8192):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-async def prepare_archive(central_node_ip: str, package_names: list[str], proxy_url: str = "") -> dict:
-    """Tell a central node's sidecar to prepare an apt cache archive with packages + deps."""
-    url = f"http://{central_node_ip}:{SIDECAR_PORT}/os/prepare-archive"
-    async with httpx.AsyncClient(timeout=660) as client:
-        resp = await client.post(url, json={
-            "packages": package_names,
-            "proxy_url": proxy_url,
-        })
-        resp.raise_for_status()
-        return resp.json()
-
-
-async def install_via_archive(
-    node_ip: str, package_names: list[str], db: AsyncSession,
-) -> dict:
-    """Install packages on a node via apt cache archive from central.
-
-    Used for collectors (no internet) and central nodes in offline mode.
-    1. Find a central node that has a prepared archive
-    2. Tell worker sidecar to fetch archive, unpack to apt cache, apt-get install
-    """
-    import os as _os
-
-    central_url = f"https://{_os.environ.get('MONCTL_VIP_ADDRESS', '10.145.210.40')}"
-    api_key = _os.environ.get("MONCTL_COLLECTOR_API_KEY", "")
-
-    # Call worker sidecar to fetch archive from central + install
-    url = f"http://{node_ip}:{SIDECAR_PORT}/os/install-from-archive"
-    async with httpx.AsyncClient(timeout=660) as client:
-        resp = await client.post(url, json={
-            "central_url": central_url,
-            "api_key": api_key,
-            "packages": package_names,
-        })
-        resp.raise_for_status()
-        return resp.json()
-
-
-# ---------------------------------------------------------------------------
-# Network mode helper (reuse pattern from python_modules)
-# ---------------------------------------------------------------------------
-
-async def _get_network_mode(db: AsyncSession) -> tuple[str, str]:
-    """Return (network_mode, proxy_url) from system settings."""
-    from monctl_central.storage.models import SystemSetting
-
-    mode = "direct"
-    proxy_url = ""
-    for key in ("pypi_network_mode", "pypi_proxy_url"):
-        row = await db.get(SystemSetting, key)
-        if row:
-            if key == "pypi_network_mode":
-                mode = row.value
-            else:
-                proxy_url = row.value
-    return mode, proxy_url
 
 
 # ---------------------------------------------------------------------------
@@ -317,40 +273,96 @@ async def execute_os_install_job(session_factory, job_id: UUID) -> None:
 
 
 async def _run_steps(db: AsyncSession, job: OsInstallJob) -> None:
-    """Run all pending steps in order. Handles test_first pause and fail-fast."""
+    """Run all pending steps in order. Handles test_first pause and fail-fast.
+
+    Central node steps are executed directly via sidecar.
+    Collector node steps are marked 'awaiting_collector' — collectors pull and
+    execute them via the /api/v1/os-packages/my-tasks polling endpoint.
+    """
     steps = sorted(job.steps, key=lambda s: s.step_order)
     failed = False
     current = _current_hostname()
 
-    for i, step in enumerate(steps):
-        if step.status != "pending":
-            continue
+    # Defer the current node's reboot to the very end — it must run LAST because
+    # rebooting the executor's node kills the executor. If we're running as
+    # advance_collector_job on whichever central received a step-result POST
+    # (HAProxy routes via source hash), this ensures we process all OTHER nodes
+    # first and only reboot self as the final step.
+    def _pick_next_pending(steps_list: list, current_host: str, i_start: int) -> int | None:
+        """Return index of next pending step, preferring non-current nodes."""
+        # First pass: skip current node's reboot/health_check steps
+        for j in range(i_start, len(steps_list)):
+            s = steps_list[j]
+            if s.status != "pending":
+                continue
+            if s.action in ("reboot", "health_check") and s.node_hostname == current_host:
+                continue
+            return j
+        # Second pass: only current node steps left
+        for j in range(i_start, len(steps_list)):
+            s = steps_list[j]
+            if s.status == "pending":
+                return j
+        return None
+
+    i = 0
+    while True:
+        idx = _pick_next_pending(steps, current, i)
+        if idx is None:
+            break
+        step = steps[idx]
+        i = idx  # allow backtracking if new pending steps appear — not expected here
 
         if failed and job.strategy in ("rolling", "test_first"):
             step.status = "skipped"
             await db.commit()
+            i += 1
             continue
 
+        # ── Collector steps: delegate to collector pull-loop ──────────
+        if step.node_role != "central":
+            step.status = "awaiting_collector"
+            step.started_at = datetime.now(timezone.utc)
+            await db.commit()
+            logger.info(
+                "os_step_awaiting_collector",
+                job_id=str(job.id),
+                step_id=str(step.id),
+                node=step.node_hostname,
+                action=step.action,
+            )
+            # For rolling/test_first: pause and let the collector complete
+            # before advancing to the next step.  The advance_collector_job()
+            # function will resume the job when the collector reports back.
+            if job.strategy in ("rolling", "test_first"):
+                return
+            # For all_at_once: mark all remaining collector steps and continue
+            i += 1
+            continue
+
+        # ── Central steps: execute directly via sidecar ───────────────
         step.status = "running"
         step.started_at = datetime.now(timezone.utc)
         await db.commit()
 
         try:
             if step.action == "install":
-                network_mode, proxy_url = await _get_network_mode(db)
-                # Central with internet: apt-get install
-                # Collectors or offline mode: .deb distribution from central cache
-                if step.node_role == "central" and network_mode != "offline":
-                    result = await install_packages_on_node(step.node_ip, job.package_names)
-                else:
-                    result = await install_via_archive(step.node_ip, job.package_names, db)
+                # apt-get install via local sidecar — dependencies resolved via
+                # central apt-cache proxy (see nginx-apt-cache on central:18080)
+                result = await install_packages_on_node(step.node_ip, job.package_names)
                 step.output_log = result.get("output", "")
-                if not result.get("success", False):
+                # Treat partial success (some installed, some failed) as success
+                # Only fail if nothing was installed at all and there were real errors
+                failed_pkgs = result.get("failed", [])
+                installed_pkgs = result.get("installed", [])
+                skipped_pkgs = result.get("skipped", [])
+                if not result.get("success", False) and not installed_pkgs and not skipped_pkgs:
                     raise RuntimeError(
                         f"Install failed (rc={result.get('returncode')}): "
                         f"{result.get('output', '')[:500]}"
                     )
-                # Mark packages as installed for this node
+                if failed_pkgs:
+                    step.output_log += f"\nWarning: {len(failed_pkgs)} package(s) failed: {', '.join(failed_pkgs)}"
                 for pkg in job.package_names:
                     await db.execute(
                         sql_update(OsAvailableUpdate)
@@ -361,7 +373,6 @@ async def _run_steps(db: AsyncSession, job: OsInstallJob) -> None:
                         .values(is_installed=True)
                     )
 
-                # Write audit log entry
                 try:
                     from monctl_central.storage.models import OsInstallAudit
                     for pkg in job.package_names:
@@ -374,32 +385,59 @@ async def _run_steps(db: AsyncSession, job: OsInstallJob) -> None:
                             installed_by=job.started_by or "system",
                         ))
                 except Exception:
-                    pass  # Don't fail install if audit logging fails
+                    pass
 
             elif step.action == "reboot":
-                # Current node: mark job completed before rebooting
                 is_current = step.node_hostname == current
                 if is_current:
+                    # This is the executor's own reboot — we picked it because
+                    # no other steps remain. Mark the associated health_check as
+                    # completed (we're alive now), mark reboot as completed, and
+                    # fire the reboot. The process dies shortly after.
                     step.status = "completed"
                     step.completed_at = datetime.now(timezone.utc)
-                    step.output_log = "Reboot initiated (current node — job marked complete)"
-                    # Skip remaining health_check step for current node
-                    for remaining in steps[i + 1:]:
-                        if remaining.status == "pending":
-                            remaining.status = "skipped"
-                            remaining.output_log = "Skipped (current node reboot)"
+                    step.output_log = "Reboot initiated (current node — final step)"
+                    # Mark the matching health_check step for this node as completed too
+                    for hc in steps:
+                        if (hc.node_hostname == current
+                            and hc.action == "health_check"
+                            and hc.status == "pending"):
+                            hc.status = "completed"
+                            hc.completed_at = datetime.now(timezone.utc)
+                            hc.output_log = "Skipped (own reboot)"
                     job.status = "completed"
                     job.completed_at = datetime.now(timezone.utc)
                     await db.commit()
-                    # Fire and forget — we'll be killed by the reboot
                     await reboot_node(step.node_ip)
                     return
 
+                # Record uptime BEFORE reboot so health_check can verify the node
+                # actually rebooted. Encode pre-uptime in output_log for the
+                # health_check step to read (survives DB commits/refreshes).
+                pre_uptime = await get_node_uptime(step.node_ip)
                 await reboot_node(step.node_ip)
-                step.output_log = "Reboot command sent"
+                if pre_uptime is not None:
+                    step.output_log = f"Reboot command sent (pre-uptime={pre_uptime:.0f}s) [pre_uptime={pre_uptime}]"
+                else:
+                    step.output_log = "Reboot command sent"
 
             elif step.action == "health_check":
-                ok = await wait_for_node_recovery(step.node_ip, timeout=300)
+                # Look up the matching reboot step for this node and parse
+                # the pre-reboot uptime from its output_log
+                pre_uptime = None
+                for prior in steps:
+                    if (prior.node_hostname == step.node_hostname
+                        and prior.action == "reboot"
+                        and prior.status == "completed"
+                        and prior.output_log):
+                        import re as _re
+                        m = _re.search(r"\[pre_uptime=([0-9.]+)\]", prior.output_log)
+                        if m:
+                            pre_uptime = float(m.group(1))
+                        break
+                ok = await wait_for_node_recovery(
+                    step.node_ip, timeout=300, pre_reboot_uptime=pre_uptime,
+                )
                 if not ok:
                     raise RuntimeError(f"Node {step.node_hostname} did not recover within 5 minutes")
                 step.output_log = "Node recovered successfully"
@@ -428,7 +466,6 @@ async def _run_steps(db: AsyncSession, job: OsInstallJob) -> None:
             and step.is_test_node
             and not failed
         ):
-            # Check if next step is a non-test step
             next_steps = [s for s in steps[i + 1:] if s.status == "pending"]
             if next_steps and not next_steps[0].is_test_node:
                 job.status = "awaiting_approval"
@@ -436,7 +473,14 @@ async def _run_steps(db: AsyncSession, job: OsInstallJob) -> None:
                 logger.info("os_install_job_awaiting_approval", job_id=str(job.id))
                 return
 
-    # Determine final job status
+        i += 1
+
+    # Determine final job status — but only if no steps are still awaiting collectors
+    still_waiting = any(s.status == "awaiting_collector" for s in steps)
+    if still_waiting:
+        # Job stays "running" — advance_collector_job will finalize
+        return
+
     all_done = all(s.status in ("completed", "skipped") for s in steps)
     any_failed = any(s.status == "failed" for s in steps)
     job.status = "completed" if (all_done and not any_failed) else "failed"
@@ -445,6 +489,111 @@ async def _run_steps(db: AsyncSession, job: OsInstallJob) -> None:
         failed_nodes = [s.node_hostname for s in steps if s.status == "failed"]
         job.error_message = f"Failed on: {', '.join(set(failed_nodes))}"
     await db.commit()
+
+
+async def advance_collector_job(session_factory, job_id: UUID) -> None:
+    """Called when a collector reports a step result. Advances the job to the next step.
+
+    For rolling/test_first strategies, this activates the next pending step.
+    For all_at_once, it checks if all collector steps are done and finalizes.
+    """
+    async with session_factory() as db:
+        job = await db.get(OsInstallJob, job_id, options=[selectinload(OsInstallJob.steps)])
+        if not job or job.status not in ("running",):
+            return
+
+        steps = sorted(job.steps, key=lambda s: s.step_order)
+
+        # Check for test_first pause
+        if job.strategy == "test_first":
+            completed_test = [
+                s for s in steps
+                if s.is_test_node and s.status == "completed"
+            ]
+            pending_non_test = [
+                s for s in steps
+                if not s.is_test_node and s.status == "pending"
+            ]
+            if completed_test and pending_non_test:
+                job.status = "awaiting_approval"
+                await db.commit()
+                logger.info("os_install_job_awaiting_approval", job_id=str(job_id))
+                return
+
+        # For rolling: activate the next pending collector step
+        if job.strategy in ("rolling", "test_first"):
+            # Check if any step failed → fail-fast
+            any_failed = any(s.status == "failed" for s in steps)
+            if any_failed:
+                for s in steps:
+                    if s.status in ("pending", "awaiting_collector"):
+                        s.status = "skipped"
+                job.status = "failed"
+                failed_nodes = [s.node_hostname for s in steps if s.status == "failed"]
+                job.error_message = f"Failed on: {', '.join(set(failed_nodes))}"
+                job.completed_at = datetime.now(timezone.utc)
+                await db.commit()
+                return
+
+            # Find next pending step and activate it
+            for s in steps:
+                if s.status != "pending":
+                    continue
+                if s.node_role != "central":
+                    # Collector step: mark awaiting_collector
+                    s.status = "awaiting_collector"
+                    s.started_at = datetime.now(timezone.utc)
+                    await db.commit()
+                    logger.info(
+                        "os_step_awaiting_collector",
+                        job_id=str(job_id),
+                        step_id=str(s.id),
+                        node=s.node_hostname,
+                    )
+                    return
+                else:
+                    # Central step: execute directly via _run_steps
+                    # Re-run the step executor which handles central steps
+                    await db.commit()
+                    await _run_steps(db, job)
+                    # After _run_steps returns, check if job finished
+                    await db.refresh(job, ["steps"])
+                    still_active = any(
+                        st.status in ("pending", "awaiting_collector", "running")
+                        for st in job.steps
+                    )
+                    if not still_active:
+                        any_f = any(st.status == "failed" for st in job.steps)
+                        job.status = "completed" if not any_f else "failed"
+                        job.completed_at = datetime.now(timezone.utc)
+                        if any_f:
+                            fn = [st.node_hostname for st in job.steps if st.status == "failed"]
+                            job.error_message = f"Failed on: {', '.join(set(fn))}"
+                        await db.commit()
+                        try:
+                            from monctl_central.upgrades.os_inventory import collect_all_inventory
+                            await collect_all_inventory(session_factory)
+                        except Exception:
+                            logger.warning("post_install_inventory_collection_failed", exc_info=True)
+                    return
+
+        # Check if all steps are terminal
+        still_active = any(s.status in ("pending", "awaiting_collector", "running") for s in steps)
+        if not still_active:
+            any_failed = any(s.status == "failed" for s in steps)
+            job.status = "completed" if not any_failed else "failed"
+            job.completed_at = datetime.now(timezone.utc)
+            if any_failed:
+                failed_nodes = [s.node_hostname for s in steps if s.status == "failed"]
+                job.error_message = f"Failed on: {', '.join(set(failed_nodes))}"
+            await db.commit()
+
+            # Refresh inventory after job completes
+            try:
+                from monctl_central.upgrades.os_inventory import collect_all_inventory
+                await collect_all_inventory(session_factory)
+            except Exception:
+                logger.warning("post_install_inventory_collection_failed", exc_info=True)
 
 
 async def resume_os_install_job(session_factory, job_id: UUID) -> None:

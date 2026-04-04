@@ -26,6 +26,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.t
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Select } from "@/components/ui/select.tsx";
+import { ClearableInput } from "@/components/ui/clearable-input.tsx";
 import {
   Table,
   TableBody,
@@ -42,9 +43,7 @@ import {
   useUpgradeJobs,
   useCancelUpgradeJob,
   useCheckOsUpdatesNew,
-  useDownloadOsPackages,
-  useArchiveStatus,
-  useUploadOsPackage,
+  useAptCacheStatus,
   useOsInstallJobs,
   useStartOsInstallJob,
   useApproveOsInstallJob,
@@ -138,9 +137,7 @@ export function UpgradesPage() {
   const startMutation = useStartUpgrade();
   const cancelMutation = useCancelUpgradeJob();
   const checkOs = useCheckOsUpdatesNew();
-  const downloadOs = useDownloadOsPackages();
-  const { data: archiveStatus } = useArchiveStatus();
-  const uploadOs = useUploadOsPackage();
+  const { data: aptCacheStatus } = useAptCacheStatus();
   const { data: osInstallJobs } = useOsInstallJobs();
   const startInstallJob = useStartOsInstallJob();
   const approveInstallJob = useApproveOsInstallJob();
@@ -154,7 +151,6 @@ export function UpgradesPage() {
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
   const [confirmStart, setConfirmStart] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const debInputRef = useRef<HTMLInputElement>(null);
   const [expandedInstallJobId, setExpandedInstallJobId] = useState<string | null>(null);
 
   // Package inventory state
@@ -175,7 +171,80 @@ export function UpgradesPage() {
   // System Nodes selection state (for restart)
   const [selectedNodes, setSelectedNodes] = useState<Set<string>>(new Set());
 
-  const nodes = status?.nodes ?? [];
+  // System Nodes filter / sort state
+  const [nodeFilterHostname, setNodeFilterHostname] = useState("");
+  const [nodeFilterRole, setNodeFilterRole] = useState("");
+  const [nodeFilterGroup, setNodeFilterGroup] = useState("");
+  const [nodeFilterIp, setNodeFilterIp] = useState("");
+  const [nodeFilterOs, setNodeFilterOs] = useState("");
+  const [nodeSort, setNodeSort] = useState<{ col: string; dir: "asc" | "desc" }>({
+    col: "hostname",
+    dir: "asc",
+  });
+
+  const allNodes = status?.nodes ?? [];
+  const nodes = useMemo(() => {
+    let filtered = allNodes;
+    if (nodeFilterHostname)
+      filtered = filtered.filter((n) =>
+        n.hostname.toLowerCase().includes(nodeFilterHostname.toLowerCase()),
+      );
+    if (nodeFilterRole)
+      filtered = filtered.filter((n) =>
+        n.role.toLowerCase().includes(nodeFilterRole.toLowerCase()),
+      );
+    if (nodeFilterGroup)
+      filtered = filtered.filter((n) =>
+        (n.group_name || "").toLowerCase().includes(nodeFilterGroup.toLowerCase()),
+      );
+    if (nodeFilterIp)
+      filtered = filtered.filter((n) => n.ip.includes(nodeFilterIp));
+    if (nodeFilterOs)
+      filtered = filtered.filter((n) =>
+        (n.os_version || "").toLowerCase().includes(nodeFilterOs.toLowerCase()),
+      );
+    const sorted = [...filtered].sort((a, b) => {
+      const col = nodeSort.col;
+      const av = (a as any)[col] ?? "";
+      const bv = (b as any)[col] ?? "";
+      const cmp = String(av).localeCompare(String(bv));
+      return nodeSort.dir === "asc" ? cmp : -cmp;
+    });
+    return sorted;
+  }, [allNodes, nodeFilterHostname, nodeFilterRole, nodeFilterGroup, nodeFilterIp, nodeFilterOs, nodeSort]);
+
+  const handleNodeSort = (col: string) => {
+    setNodeSort((prev) =>
+      prev.col === col
+        ? { col, dir: prev.dir === "asc" ? "desc" : "asc" }
+        : { col, dir: "asc" },
+    );
+  };
+
+  const nodeSortIcon = (col: string) => {
+    if (nodeSort.col !== col) return <span className="text-zinc-600">↕</span>;
+    return <span className="text-brand-400">{nodeSort.dir === "asc" ? "↑" : "↓"}</span>;
+  };
+
+  // Bulk actions — select all filtered nodes, or all of a specific group
+  const selectAllFiltered = () => {
+    setSelectedNodes(new Set(nodes.map((n) => n.hostname)));
+  };
+  const selectGroup = (groupName: string) => {
+    setSelectedNodes(
+      new Set(allNodes.filter((n) => n.group_name === groupName).map((n) => n.hostname)),
+    );
+  };
+
+  // Unique group names for quick-select dropdown
+  const availableGroups = useMemo(() => {
+    const set = new Set<string>();
+    allNodes.forEach((n) => {
+      if (n.group_name) set.add(n.group_name);
+    });
+    return Array.from(set).sort();
+  }, [allNodes]);
+
   const packages = status?.packages ?? [];
   const selectedPkg = packages.find((p) => p.id === selectedPkgId) ?? null;
 
@@ -251,32 +320,96 @@ export function UpgradesPage() {
         </div>
       </div>
 
+      {/* ── Apt Cache Status ──────────────────────────────────────────────── */}
+      {aptCacheStatus && (
+        <Card className="border-zinc-800 bg-zinc-900">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Package className="h-4 w-4 text-zinc-400" />
+              Apt Cache
+              <Badge className="bg-zinc-500/15 text-zinc-300 border-zinc-500/30 text-[10px] ml-2">
+                {aptCacheStatus.mode}
+              </Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-wrap gap-2">
+              {aptCacheStatus.nodes.map((n) => (
+                <div
+                  key={n.hostname}
+                  className={`flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs ${
+                    n.healthy
+                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                      : "border-red-500/30 bg-red-500/10 text-red-300"
+                  }`}
+                >
+                  {n.healthy ? (
+                    <CheckCircle2 className="h-3 w-3" />
+                  ) : (
+                    <XCircle className="h-3 w-3" />
+                  )}
+                  <span className="font-mono">{n.hostname}</span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* ── System Status ─────────────────────────────────────────────────── */}
       <Card className="border-zinc-800 bg-zinc-900">
         <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
             <CardTitle className="flex items-center gap-2 text-base">
               <Server className="h-4 w-4 text-zinc-400" />
               System Nodes
             </CardTitle>
-            {rebootableSelectedNodes.length > 0 && (
-              <Button
-                size="sm"
-                onClick={() => {
-                  restartNodes.mutate(
-                    { node_hostnames: Array.from(selectedNodes).filter((h) => nodes.find((n) => n.hostname === h)?.reboot_required), strategy: "rolling" },
-                  );
-                }}
-                disabled={restartNodes.isPending}
-              >
-                {restartNodes.isPending ? (
-                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                ) : (
-                  <RefreshCw className="h-3 w-3 mr-1" />
-                )}
-                Rolling Restart Selected ({rebootableSelectedNodes.length})
+            <div className="flex items-center gap-2">
+              {availableGroups.length > 0 && (
+                <Select
+                  value=""
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      selectGroup(e.target.value);
+                    }
+                  }}
+                  className="h-8 text-xs w-48"
+                >
+                  <option value="">Select group…</option>
+                  {availableGroups.map((g) => (
+                    <option key={g} value={g}>
+                      {g} ({allNodes.filter((n) => n.group_name === g).length})
+                    </option>
+                  ))}
+                </Select>
+              )}
+              <Button variant="outline" size="sm" onClick={selectAllFiltered}>
+                Select Filtered ({nodes.length})
               </Button>
-            )}
+              {selectedNodes.size > 0 && (
+                <Button variant="outline" size="sm" onClick={() => setSelectedNodes(new Set())}>
+                  Clear ({selectedNodes.size})
+                </Button>
+              )}
+              {rebootableSelectedNodes.length > 0 && (
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    restartNodes.mutate(
+                      { node_hostnames: Array.from(selectedNodes).filter((h) => allNodes.find((n) => n.hostname === h)?.reboot_required), strategy: "rolling" },
+                    );
+                  }}
+                  disabled={restartNodes.isPending}
+                >
+                  {restartNodes.isPending ? (
+                    <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                  ) : (
+                    <RefreshCw className="h-3 w-3 mr-1" />
+                  )}
+                  Rolling Restart Selected ({rebootableSelectedNodes.length})
+                </Button>
+              )}
+            </div>
           </div>
           {restartNodes.isError && (
             <div className="mt-2 rounded-md bg-red-500/10 border border-red-500/30 p-2 text-xs text-red-400">
@@ -311,14 +444,106 @@ export function UpgradesPage() {
                         className="accent-brand-500"
                       />
                     </TableHead>
-                    <TableHead>Hostname</TableHead>
-                    <TableHead>Role</TableHead>
-                    <TableHead>IP</TableHead>
-                    <TableHead>MonCTL Version</TableHead>
-                    <TableHead>OS</TableHead>
-                    <TableHead>Kernel</TableHead>
+                    <TableHead>
+                      <div
+                        className="flex items-center gap-1 cursor-pointer select-none"
+                        onClick={() => handleNodeSort("hostname")}
+                      >
+                        Hostname {nodeSortIcon("hostname")}
+                      </div>
+                      <ClearableInput
+                        placeholder="Filter…"
+                        value={nodeFilterHostname}
+                        onChange={(e) => setNodeFilterHostname(e.target.value)}
+                        onClear={() => setNodeFilterHostname("")}
+                        className="mt-1 h-6 text-xs"
+                      />
+                    </TableHead>
+                    <TableHead>
+                      <div
+                        className="flex items-center gap-1 cursor-pointer select-none"
+                        onClick={() => handleNodeSort("role")}
+                      >
+                        Role {nodeSortIcon("role")}
+                      </div>
+                      <ClearableInput
+                        placeholder="Filter…"
+                        value={nodeFilterRole}
+                        onChange={(e) => setNodeFilterRole(e.target.value)}
+                        onClear={() => setNodeFilterRole("")}
+                        className="mt-1 h-6 text-xs"
+                      />
+                    </TableHead>
+                    <TableHead>
+                      <div
+                        className="flex items-center gap-1 cursor-pointer select-none"
+                        onClick={() => handleNodeSort("group_name")}
+                      >
+                        Group {nodeSortIcon("group_name")}
+                      </div>
+                      <ClearableInput
+                        placeholder="Filter…"
+                        value={nodeFilterGroup}
+                        onChange={(e) => setNodeFilterGroup(e.target.value)}
+                        onClear={() => setNodeFilterGroup("")}
+                        className="mt-1 h-6 text-xs"
+                      />
+                    </TableHead>
+                    <TableHead>
+                      <div
+                        className="flex items-center gap-1 cursor-pointer select-none"
+                        onClick={() => handleNodeSort("ip")}
+                      >
+                        IP {nodeSortIcon("ip")}
+                      </div>
+                      <ClearableInput
+                        placeholder="Filter…"
+                        value={nodeFilterIp}
+                        onChange={(e) => setNodeFilterIp(e.target.value)}
+                        onClear={() => setNodeFilterIp("")}
+                        className="mt-1 h-6 text-xs"
+                      />
+                    </TableHead>
+                    <TableHead>
+                      <div
+                        className="flex items-center gap-1 cursor-pointer select-none"
+                        onClick={() => handleNodeSort("monctl_version")}
+                      >
+                        MonCTL {nodeSortIcon("monctl_version")}
+                      </div>
+                    </TableHead>
+                    <TableHead>
+                      <div
+                        className="flex items-center gap-1 cursor-pointer select-none"
+                        onClick={() => handleNodeSort("os_version")}
+                      >
+                        OS {nodeSortIcon("os_version")}
+                      </div>
+                      <ClearableInput
+                        placeholder="Filter…"
+                        value={nodeFilterOs}
+                        onChange={(e) => setNodeFilterOs(e.target.value)}
+                        onClear={() => setNodeFilterOs("")}
+                        className="mt-1 h-6 text-xs"
+                      />
+                    </TableHead>
+                    <TableHead>
+                      <div
+                        className="flex items-center gap-1 cursor-pointer select-none"
+                        onClick={() => handleNodeSort("kernel_version")}
+                      >
+                        Kernel {nodeSortIcon("kernel_version")}
+                      </div>
+                    </TableHead>
                     <TableHead>Python</TableHead>
-                    <TableHead>Last Reported</TableHead>
+                    <TableHead>
+                      <div
+                        className="flex items-center gap-1 cursor-pointer select-none"
+                        onClick={() => handleNodeSort("last_reported_at")}
+                      >
+                        Last Reported {nodeSortIcon("last_reported_at")}
+                      </div>
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -357,6 +582,20 @@ export function UpgradesPage() {
                         }>
                           {node.role}
                         </Badge>
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        {node.group_name ? (
+                          <button
+                            type="button"
+                            onClick={() => selectGroup(node.group_name!)}
+                            className="text-zinc-300 hover:text-brand-400 underline-offset-2 hover:underline"
+                            title={`Select all nodes in ${node.group_name}`}
+                          >
+                            {node.group_name}
+                          </button>
+                        ) : (
+                          <span className="text-zinc-600">—</span>
+                        )}
                       </TableCell>
                       <TableCell className="font-mono text-xs">{node.ip || "\u2014"}</TableCell>
                       <TableCell className="font-mono text-xs">{node.monctl_version || "\u2014"}</TableCell>
@@ -583,17 +822,6 @@ export function UpgradesPage() {
               OS Package Manager
             </CardTitle>
             <div className="flex gap-2">
-              <input
-                ref={debInputRef}
-                type="file"
-                accept=".deb"
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) uploadOs.mutate(file);
-                  if (debInputRef.current) debInputRef.current.value = "";
-                }}
-              />
               <Button
                 variant="outline"
                 size="sm"
@@ -606,19 +834,6 @@ export function UpgradesPage() {
                   <RefreshCw className="h-3 w-3 mr-1" />
                 )}
                 Scan for Updates
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => debInputRef.current?.click()}
-                disabled={uploadOs.isPending}
-              >
-                {uploadOs.isPending ? (
-                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                ) : (
-                  <Upload className="h-3 w-3 mr-1" />
-                )}
-                Upload .deb
               </Button>
               <Button
                 variant="outline"
@@ -643,12 +858,6 @@ export function UpgradesPage() {
               Check failed: {(checkOs.error as Error)?.message ?? "Unknown error"}
             </div>
           )}
-          {uploadOs.isError && (
-            <div className="mb-3 rounded-md bg-red-500/10 border border-red-500/30 p-3 text-sm text-red-400">
-              <AlertTriangle className="inline h-4 w-4 mr-1" />
-              Upload failed: {(uploadOs.error as Error)?.message ?? "Unknown error"}
-            </div>
-          )}
           {/* Selected actions bar — at top for easy access */}
           {selectedPkgs.size > 0 && (
             <div className="mb-3 flex items-center gap-3 rounded-lg border border-brand-500/30 bg-brand-500/5 px-4 py-2.5">
@@ -656,36 +865,6 @@ export function UpgradesPage() {
                 {selectedPkgs.size} package{selectedPkgs.size !== 1 ? "s" : ""} selected
               </span>
               <div className="flex-1" />
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => downloadOs.mutate(Array.from(selectedPkgs))}
-                disabled={downloadOs.isPending || archiveStatus === "preparing"}
-              >
-                {downloadOs.isPending || archiveStatus === "preparing" ? (
-                  <>
-                    <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                    Preparing archive...
-                  </>
-                ) : (
-                  <>
-                    <Download className="h-3 w-3 mr-1" />
-                    Download Selected
-                  </>
-                )}
-              </Button>
-              {archiveStatus === "ready" && (
-                <span className="text-xs text-emerald-400">
-                  <CheckCircle2 className="inline h-3 w-3 mr-1" />
-                  Archive ready
-                </span>
-              )}
-              {archiveStatus && archiveStatus.startsWith("failed") && (
-                <span className="text-xs text-red-400">
-                  <AlertTriangle className="inline h-3 w-3 mr-1" />
-                  {archiveStatus}
-                </span>
-              )}
               <Button
                 size="sm"
                 onClick={() => setShowInstallPreview(true)}

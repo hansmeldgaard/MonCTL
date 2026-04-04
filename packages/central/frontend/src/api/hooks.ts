@@ -83,7 +83,6 @@ import type {
   OsPackageInfo,
   OsUpdateByNode,
   OsCheckResult,
-  OsCachedPkg,
   OsInstallResult,
   OsInstallJob,
   PackageInventoryItem,
@@ -3129,44 +3128,14 @@ export function useCheckOsUpdatesNew() {
   });
 }
 
-export function useDownloadOsPackages() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (packageNames: string[]) =>
-      apiPost("/upgrades/prepare-archive", { package_names: packageNames }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["archive-status"] });
-      qc.invalidateQueries({ queryKey: ["package-inventory"] });
-    },
-  });
-}
-
-export function useArchiveStatus() {
+export function useAptCacheStatus() {
   return useQuery({
-    queryKey: ["archive-status"],
-    queryFn: () => apiGet<{ archive_status: string }>("/upgrades/archive-status"),
-    select: (res) => res.data.archive_status,
-    refetchInterval: 5000,
-  });
-}
-
-export function useUploadOsPackage() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (file: File) => {
-      const fd = new FormData();
-      fd.append("file", file);
-      return apiPostFormData("/upgrades/os-upload", fd);
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["os-cached-packages"] }),
-  });
-}
-
-export function useOsCachedPackages() {
-  return useQuery({
-    queryKey: ["os-cached-packages"],
-    queryFn: () => apiGet<OsCachedPkg[]>("/upgrades/os-packages"),
+    queryKey: ["apt-cache-status"],
+    queryFn: () => apiGet<{ mode: string; nodes: Array<{ hostname: string; healthy: boolean; cache_size_mb?: number }> }>(
+      "/upgrades/apt-cache-status"
+    ),
     select: (r) => r.data,
+    refetchInterval: 30000,
   });
 }
 

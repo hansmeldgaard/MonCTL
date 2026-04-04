@@ -38,6 +38,7 @@ from monctl_collector.jobs.scheduler import JobScheduler
 from monctl_collector.cache.app_cache_sync import AppCacheSyncLoop
 from monctl_collector.peer.server import CollectorPeerServicer, start_server
 from monctl_collector.upgrade_agent import UpgradeAgent
+from monctl_collector.os_update_agent import OsUpdateAgent
 from monctl_collector.central.ws_client import WebSocketClient
 from monctl_collector.central.ws_handlers import (
     init_handlers,
@@ -136,6 +137,16 @@ async def run(cfg: CollectorConfig) -> None:
         check_interval=60,
     )
     await upgrade_agent.start()
+
+    # OS update agent (polls central for pending OS install tasks)
+    os_update_agent = OsUpdateAgent(
+        central_url=cfg.central.url,
+        api_key=cfg.central.api_key,
+        hostname=node_id,
+        verify_ssl=cfg.central.verify_ssl,
+        poll_interval=30,
+    )
+    await os_update_agent.start()
 
     # ── WebSocket command channel ─────────────────────────────────────────────
     sidecar_url = os.environ.get("MONCTL_DOCKER_STATS_URL", "http://monctl-docker-stats:9100")

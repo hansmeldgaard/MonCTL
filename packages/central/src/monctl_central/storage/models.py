@@ -1326,22 +1326,6 @@ class OsAvailableUpdate(Base):
     checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
 
 
-class OsCachedPackage(Base):
-    """A .deb package file cached on central for distribution."""
-    __tablename__ = "os_cached_packages"
-    __table_args__ = (UniqueConstraint("filename", name="uq_os_cached_filename"),)
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    package_name: Mapped[str] = mapped_column(String(200), nullable=False)
-    version: Mapped[str] = mapped_column(String(100), nullable=False)
-    architecture: Mapped[str] = mapped_column(String(50), nullable=False, server_default="'amd64'")
-    filename: Mapped[str] = mapped_column(String(500), nullable=False)
-    file_size: Mapped[int] = mapped_column(Integer, nullable=False)
-    sha256_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    source: Mapped[str] = mapped_column(String(50), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
-
-
 class OsInstallJob(Base):
     """A multi-node OS package installation job."""
     __tablename__ = "os_install_jobs"
@@ -1417,6 +1401,36 @@ class OsInstallAudit(Base):
     job_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     installed_by: Mapped[str] = mapped_column(String(200), nullable=False, server_default="'system'")
     installed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
+
+
+class AuditLoginEvent(Base):
+    """Authentication audit log — login/logout/refresh/password events."""
+    __tablename__ = "audit_login_events"
+    __table_args__ = (
+        Index("ix_audit_login_events_timestamp", "timestamp"),
+        Index("ix_audit_login_events_user_ts", "user_id", "timestamp"),
+        Index("ix_audit_login_events_type_ts", "event_type", "timestamp"),
+        Index("ix_audit_login_events_ip_ts", "ip_address", "timestamp"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default="now()"
+    )
+    event_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    # user_id is nullable: failed logins can have unknown users
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    username: Mapped[str] = mapped_column(String(255), nullable=False, server_default="''")
+    ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
+    auth_type: Mapped[str] = mapped_column(String(20), nullable=False, server_default="'cookie'")
+    failure_reason: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    request_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="SET NULL"), nullable=True
+    )
 
 
 class AnalyticsDashboard(Base):

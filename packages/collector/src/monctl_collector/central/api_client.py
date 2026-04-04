@@ -218,7 +218,24 @@ class CentralAPIClient:
 
         Returns True on success.
         """
+        import os
         import platform
+
+        # Check reboot-required via local sidecar (non-blocking, best-effort)
+        reboot_required = False
+        sidecar_url = os.environ.get(
+            "MONCTL_DOCKER_STATS_URL", "http://monctl-docker-stats:9100"
+        )
+        try:
+            async with self._session.get(
+                f"{sidecar_url}/os/reboot-required",
+                timeout=aiohttp.ClientTimeout(total=3),
+            ) as resp:
+                if resp.status == 200:
+                    reboot_data = await resp.json()
+                    reboot_required = reboot_data.get("reboot_required", False)
+        except Exception:
+            pass
 
         payload = {
             "node_id": node_id,
@@ -233,6 +250,7 @@ class CentralAPIClient:
             "system_resources": system_resources,
             "system_stats": {
                 "monctl_version": "0.1.0",
+                "reboot_required": reboot_required,
                 "os_info": {
                     "os_version": f"{platform.system()} {platform.release()}",
                     "kernel_version": platform.release(),

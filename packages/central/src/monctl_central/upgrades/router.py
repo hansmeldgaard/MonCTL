@@ -13,6 +13,7 @@ from pathlib import Path
 
 import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
+from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select, update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -21,38 +22,24 @@ import httpx
 from monctl_central.config import settings
 from monctl_central.dependencies import get_db, get_session_factory, require_admin, require_auth
 from monctl_central.storage.models import (
-    Collector,
     NodePackage,
     OsAvailableUpdate,
-    OsCachedPackage,
     OsInstallJob,
     OsInstallJobStep,
-    OsUpdatePackage,
     SystemVersion,
     UpgradeJob,
     UpgradeJobStep,
     UpgradePackage,
 )
 from monctl_central.upgrades.bundle_parser import parse_bundle
-from monctl_central.upgrades.os_updates import (
-    check_os_updates_via_ssh,
-    compute_file_hash as compute_file_hash_ssh,
-    download_os_packages_via_ssh,
-)
 from monctl_central.upgrades.os_service import (
     check_node_updates,
-    check_reboot_required,
     create_os_install_job,
     execute_os_install_job,
     resume_os_install_job,
     install_packages_on_node,
-    fetch_deb_from_sidecar,
-    compute_file_hash,
-    download_packages_via_sidecar,
 )
 from monctl_central.upgrades.schemas import (
-    DownloadOsPackagesRequest,
-    DownloadOsUpdatesRequest,
     InstallOsOnNodeRequest,
     StartOsInstallJobRequest,
     StartUpgradeRequest,
@@ -67,7 +54,7 @@ logger = structlog.get_logger()
 # Format helpers
 # ---------------------------------------------------------------------------
 
-def _fmt_version(v: SystemVersion) -> dict:
+def _fmt_version(v: SystemVersion, group_name: str | None = None) -> dict:
     return {
         "id": str(v.id),
         "hostname": v.node_hostname,
@@ -79,6 +66,7 @@ def _fmt_version(v: SystemVersion) -> dict:
         "kernel_version": v.kernel_version,
         "python_version": v.python_version,
         "reboot_required": v.reboot_required,
+        "group_name": group_name,
         "last_reported_at": v.last_reported_at.isoformat() if v.last_reported_at else None,
     }
 
@@ -132,22 +120,6 @@ def _fmt_job(j: UpgradeJob) -> dict:
     }
 
 
-def _fmt_os_pkg(p: OsUpdatePackage) -> dict:
-    return {
-        "id": str(p.id),
-        "package_name": p.package_name,
-        "version": p.version,
-        "architecture": p.architecture,
-        "filename": p.filename,
-        "file_size": p.file_size,
-        "sha256_hash": p.sha256_hash,
-        "severity": p.severity,
-        "source": p.source,
-        "is_downloaded": p.is_downloaded,
-        "created_at": p.created_at.isoformat() if p.created_at else None,
-    }
-
-
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -158,9 +130,39 @@ async def get_upgrade_status(
     auth: dict = Depends(require_admin),
 ):
     """System version info + available packages."""
+    from monctl_central.storage.models import Collector, CollectorGroup
+
     # System versions
     result = await db.execute(select(SystemVersion).order_by(SystemVersion.node_hostname))
-    versions = [_fmt_version(v) for v in result.scalars().all()]
+    sv_list = list(result.scalars().all())
+
+    # Look up collector group by IP (SystemVersion.node_ip matches Collector.ip_addresses)
+    # since Collector.hostname (e.g. "collector-01") differs from SystemVersion.node_hostname
+    # (e.g. "worker1", set by sidecar inventory).
+    collector_rows = (await db.execute(
+        select(Collector.hostname, Collector.ip_addresses, CollectorGroup.name)
+        .outerjoin(CollectorGroup, Collector.group_id == CollectorGroup.id)
+    )).all()
+    group_by_ip: dict[str, str] = {}
+    group_by_name: dict[str, str] = {}
+    for hostname, ip_addresses, group_name in collector_rows:
+        if not group_name:
+            continue
+        group_by_name[hostname] = group_name
+        if ip_addresses:
+            ips = ip_addresses if isinstance(ip_addresses, list) else (
+                list(ip_addresses.values()) if isinstance(ip_addresses, dict) else []
+            )
+            for ip in ips:
+                group_by_ip[ip] = group_name
+
+    def _resolve_group(sv: SystemVersion) -> str | None:
+        return (
+            group_by_name.get(sv.node_hostname)
+            or group_by_ip.get(sv.node_ip)
+        )
+
+    versions = [_fmt_version(v, group_name=_resolve_group(v)) for v in sv_list]
 
     # Available packages
     result = await db.execute(select(UpgradePackage).order_by(UpgradePackage.created_at.desc()))
@@ -389,119 +391,54 @@ async def cancel_job(
     return {"status": "success", "data": _fmt_job(job)}
 
 
-@router.post("/os/check")
-async def check_os_updates(
-    db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_admin),
-):
-    """Check OS updates on all known nodes via SSH."""
-    # Gather all node IPs
-    result = await db.execute(select(SystemVersion))
-    nodes = result.scalars().all()
+# ---------------------------------------------------------------------------
+# Sidecar-based OS update endpoints
+# ---------------------------------------------------------------------------
 
-    all_updates = {}
-    for node in nodes:
-        updates = await check_os_updates_via_ssh(node.node_ip)
-        all_updates[node.node_hostname] = [
-            {
-                "package_name": u.package_name,
-                "current_version": u.current_version,
-                "new_version": u.new_version,
-                "severity": u.severity,
-                "architecture": u.architecture,
+@router.get("/apt-cache-status")
+async def get_apt_cache_status(
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Report nginx apt-cache health on each central node + current mode."""
+    from monctl_central.storage.models import SystemSetting
+
+    # Query all central nodes
+    result = await db.execute(
+        select(SystemVersion).where(SystemVersion.node_role == "central")
+    )
+    nodes = list(result.scalars().all())
+
+    async def _probe(node: SystemVersion) -> dict:
+        try:
+            async with httpx.AsyncClient(timeout=3) as client:
+                resp = await client.get(f"http://{node.node_ip}:18080/health")
+                return {
+                    "hostname": node.node_hostname,
+                    "ip": node.node_ip,
+                    "healthy": resp.status_code == 200,
+                }
+        except Exception:
+            return {
+                "hostname": node.node_hostname,
+                "ip": node.node_ip,
+                "healthy": False,
             }
-            for u in updates
-        ]
 
-    return {"status": "success", "data": all_updates}
+    results = await asyncio.gather(*[_probe(n) for n in nodes])
 
+    # Get apt_cache_mode from SystemSetting
+    mode_row = await db.get(SystemSetting, "apt_cache_mode")
+    mode = mode_row.value if mode_row else "direct"
 
-@router.post("/os/download")
-async def download_os_updates(
-    request: DownloadOsUpdatesRequest,
-    db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_admin),
-):
-    """Download OS packages via SSH from the first available central node."""
-    os_dir = Path(settings.upgrade_storage_dir) / "os-packages"
-    os_dir.mkdir(parents=True, exist_ok=True)
+    return {
+        "status": "success",
+        "data": {
+            "mode": mode,
+            "nodes": results,
+        },
+    }
 
-    # Use the first central node to download packages
-    result = await db.execute(
-        select(SystemVersion).where(SystemVersion.node_role == "central").limit(1)
-    )
-    node = result.scalar_one_or_none()
-    if not node:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No central nodes registered",
-        )
-
-    downloaded = await download_os_packages_via_ssh(node.node_ip, request.package_names, os_dir)
-
-    saved = []
-    for path in downloaded:
-        file_hash = compute_file_hash(path)
-        file_size = path.stat().st_size
-        filename = path.name
-
-        # Parse package name and version from .deb filename
-        parts = filename.replace(".deb", "").split("_")
-        pkg_name = parts[0] if parts else filename
-        pkg_version = parts[1] if len(parts) > 1 else "unknown"
-        arch = parts[2] if len(parts) > 2 else "amd64"
-
-        # Upsert into DB
-        existing = (await db.execute(
-            select(OsUpdatePackage).where(
-                OsUpdatePackage.package_name == pkg_name,
-                OsUpdatePackage.version == pkg_version,
-                OsUpdatePackage.architecture == arch,
-            )
-        )).scalar_one_or_none()
-
-        if existing:
-            existing.filename = filename
-            existing.file_size = file_size
-            existing.sha256_hash = file_hash
-            existing.is_downloaded = True
-        else:
-            pkg = OsUpdatePackage(
-                package_name=pkg_name,
-                version=pkg_version,
-                architecture=arch,
-                filename=filename,
-                file_size=file_size,
-                sha256_hash=file_hash,
-                severity="normal",
-                source=node.node_hostname,
-                is_downloaded=True,
-            )
-            db.add(pkg)
-
-        saved.append({"filename": filename, "size": file_size, "sha256": file_hash})
-
-    await db.flush()
-
-    return {"status": "success", "data": saved}
-
-
-@router.get("/os/packages")
-async def list_os_packages(
-    db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_admin),
-):
-    """List cached OS packages."""
-    result = await db.execute(
-        select(OsUpdatePackage).order_by(OsUpdatePackage.package_name, OsUpdatePackage.version)
-    )
-    packages = result.scalars().all()
-    return {"status": "success", "data": [_fmt_os_pkg(p) for p in packages]}
-
-
-# ---------------------------------------------------------------------------
-# New sidecar-based OS update endpoints
-# ---------------------------------------------------------------------------
 
 @router.get("/badge")
 async def get_upgrade_badge(
@@ -530,14 +467,20 @@ async def check_os_updates_sidecar(
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_admin),
 ):
-    """Check all nodes for OS updates via their sidecars (parallel)."""
-    result = await db.execute(select(SystemVersion))
+    """Check central nodes for OS updates via their sidecars (parallel).
+
+    Only checks central nodes directly — collectors pull updates from central
+    and don't expose sidecars. Available updates on central nodes are representative
+    since all nodes run the same OS.
+    """
+    result = await db.execute(
+        select(SystemVersion).where(SystemVersion.node_role == "central")
+    )
     nodes = result.scalars().all()
 
     # Deduplicate by node_ip (stale entries may exist with different hostnames)
     seen_ips: dict[str, SystemVersion] = {}
     for node in nodes:
-        # Prefer entries with real hostnames over container IDs
         if node.node_ip not in seen_ips or not seen_ips[node.node_ip].node_hostname.startswith(
             ("central", "worker")
         ):
@@ -625,180 +568,17 @@ async def list_os_updates(
     return {"status": "success", "data": grouped}
 
 
-@router.post("/os-download")
-async def download_os_packages(
-    request: DownloadOsPackagesRequest,
-    db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_admin),
-):
-    """Download .deb packages on a central node via sidecar."""
-    # Find first central node
-    result = await db.execute(
-        select(SystemVersion).where(SystemVersion.node_role == "central").limit(1)
-    )
-    node = result.scalar_one_or_none()
-    if not node:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No central nodes registered")
-
-    # Tell sidecar to download packages
-    dl_result = await download_packages_via_sidecar(node.node_ip, request.package_names)
-    # Sidecar returns {"downloaded": [{"filename": "...", "size": ...}], ...}
-    raw_files = dl_result.get("files") or dl_result.get("downloaded", [])
-    filenames = [
-        f["filename"] if isinstance(f, dict) else f
-        for f in raw_files
-    ]
-
-    os_dir = Path(settings.upgrade_storage_dir) / "os-packages"
-    os_dir.mkdir(parents=True, exist_ok=True)
-
-    saved = []
-    for fname in filenames:
-        # Fetch each .deb from sidecar
-        deb_data = await fetch_deb_from_sidecar(node.node_ip, fname)
-        file_path = os_dir / fname
-        file_path.write_bytes(deb_data)
-
-        file_hash = compute_file_hash(file_path)
-        file_size = file_path.stat().st_size
-
-        # Parse package info from filename
-        parts = fname.replace(".deb", "").split("_")
-        pkg_name = parts[0] if parts else fname
-        pkg_version = parts[1] if len(parts) > 1 else "unknown"
-        arch = parts[2] if len(parts) > 2 else "amd64"
-
-        # Upsert OsCachedPackage
-        existing = (await db.execute(
-            select(OsCachedPackage).where(OsCachedPackage.filename == fname)
-        )).scalar_one_or_none()
-
-        if existing:
-            existing.file_size = file_size
-            existing.sha256_hash = file_hash
-        else:
-            db.add(OsCachedPackage(
-                package_name=pkg_name,
-                version=pkg_version,
-                architecture=arch,
-                filename=fname,
-                file_size=file_size,
-                sha256_hash=file_hash,
-                source=node.node_hostname,
-            ))
-
-        # Mark as downloaded in OsAvailableUpdate
-        await db.execute(
-            sql_update(OsAvailableUpdate)
-            .where(OsAvailableUpdate.package_name == pkg_name)
-            .values(is_downloaded=True)
-        )
-
-        saved.append({"filename": fname, "size": file_size, "sha256": file_hash})
-
-    await db.flush()
-    return {"status": "success", "data": saved}
-
-
-@router.post("/os-upload")
-async def upload_os_package(
-    file: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_admin),
-):
-    """Upload a .deb file for OS package distribution."""
-    if not file.filename or not file.filename.endswith(".deb"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="File must be a .deb package",
-        )
-
-    os_dir = Path(settings.upgrade_storage_dir) / "os-packages"
-    os_dir.mkdir(parents=True, exist_ok=True)
-
-    file_path = os_dir / file.filename
-    with open(file_path, "wb") as f:
-        while chunk := await file.read(8192):
-            f.write(chunk)
-
-    file_hash = compute_file_hash(file_path)
-    file_size = file_path.stat().st_size
-
-    parts = file.filename.replace(".deb", "").split("_")
-    pkg_name = parts[0] if parts else file.filename
-    pkg_version = parts[1] if len(parts) > 1 else "unknown"
-    arch = parts[2] if len(parts) > 2 else "amd64"
-
-    existing = (await db.execute(
-        select(OsCachedPackage).where(OsCachedPackage.filename == file.filename)
-    )).scalar_one_or_none()
-
-    if existing:
-        existing.file_size = file_size
-        existing.sha256_hash = file_hash
-        existing.source = "upload"
-    else:
-        db.add(OsCachedPackage(
-            package_name=pkg_name,
-            version=pkg_version,
-            architecture=arch,
-            filename=file.filename,
-            file_size=file_size,
-            sha256_hash=file_hash,
-            source="upload",
-        ))
-
-    await db.flush()
-
-    return {
-        "status": "success",
-        "data": {
-            "filename": file.filename,
-            "size": file_size,
-            "sha256": file_hash,
-            "package_name": pkg_name,
-            "version": pkg_version,
-        },
-    }
-
-
-@router.get("/os-packages")
-async def list_cached_os_packages(
-    db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_admin),
-):
-    """List all cached .deb packages from OsCachedPackage table."""
-    result = await db.execute(
-        select(OsCachedPackage).order_by(OsCachedPackage.package_name)
-    )
-    pkgs = result.scalars().all()
-    return {
-        "status": "success",
-        "data": [
-            {
-                "id": str(p.id),
-                "package_name": p.package_name,
-                "version": p.version,
-                "architecture": p.architecture,
-                "filename": p.filename,
-                "file_size": p.file_size,
-                "sha256_hash": p.sha256_hash,
-                "source": p.source,
-                "created_at": p.created_at.isoformat() if p.created_at else None,
-            }
-            for p in pkgs
-        ],
-    }
-
-
 @router.post("/os-install")
 async def install_os_on_node(
     request: InstallOsOnNodeRequest,
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_admin),
 ):
-    """Install packages on a specific node via sidecar."""
-    # Lookup node IP from SystemVersion
+    """Install packages on a specific central node via sidecar.
+
+    For collector nodes, use the install job endpoint instead — collectors
+    pull updates from central and don't expose sidecars.
+    """
     result = await db.execute(
         select(SystemVersion).where(SystemVersion.node_hostname == request.node_hostname)
     )
@@ -807,6 +587,11 @@ async def install_os_on_node(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Node '{request.node_hostname}' not found",
+        )
+    if node.node_role != "central":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Direct install only works for central nodes. Use an install job for collectors.",
         )
 
     install_result = await install_packages_on_node(node.node_ip, request.package_names)
@@ -1034,16 +819,22 @@ async def delete_os_install_job(
     return {"status": "success", "data": {"message": "Job deleted"}}
 
 
+class RestartNodesRequest(BaseModel):
+    node_hostnames: list[str] = Field(default_factory=list)
+    strategy: str = Field(default="rolling", pattern="^(rolling|all_at_once)$")
+
+
 @router.post("/os-restart-nodes")
 async def restart_nodes(
+    request: RestartNodesRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     session_factory=Depends(get_session_factory),
     auth: dict = Depends(require_admin),
-    node_hostnames: list[str] = [],
-    strategy: str = "rolling",
 ):
     """Rolling restart of specific nodes (reboot + health check only)."""
+    node_hostnames = request.node_hostnames
+    strategy = request.strategy
     if not node_hostnames:
         raise HTTPException(status_code=400, detail="node_hostnames required")
 
@@ -1121,14 +912,8 @@ async def get_package_inventory(
     )
     known_updates = {row[0]: {"version": row[1], "severity": row[2]} for row in updates_result}
 
-    # Get cached .deb files
-    cached_result = await db.execute(select(OsCachedPackage))
-    cached_map: dict[str, OsCachedPackage] = {}
-    for c in cached_result.scalars().all():
-        cached_map[c.package_name] = c
-
-    # Merge: all unique packages (from updates + cached)
-    all_pkg_names = sorted(set(known_updates.keys()) | set(cached_map.keys()))
+    # Merge: all unique packages (from updates detected on nodes)
+    all_pkg_names = sorted(known_updates.keys())
     if not all_pkg_names:
         return {"status": "success", "data": []}
 
@@ -1146,20 +931,11 @@ async def get_package_inventory(
     data = []
     for pkg_name in all_pkg_names:
         update_info = known_updates.get(pkg_name)
-        cached = cached_map.get(pkg_name)
 
-        # Determine version and severity
-        new_version = ""
-        if cached:
-            new_version = cached.version
-        elif update_info:
-            new_version = update_info["version"]
-
-        severity = "normal"
-        if update_info:
-            severity = update_info["severity"]
-
-        downloaded = pkg_name in cached_map
+        new_version = update_info["version"] if update_info else ""
+        severity = update_info["severity"] if update_info else "normal"
+        # With apt-proxy, packages are always available through central's nginx cache
+        downloaded = True
         requires_reboot = pkg_name.startswith("linux-")
 
         nodes_status = []
@@ -1211,67 +987,6 @@ async def trigger_inventory_collection(
     return {"status": "success", "data": {"message": "Inventory collection started"}}
 
 
-@router.post("/prepare-archive")
-async def prepare_package_archive(
-    request_body: DownloadOsPackagesRequest,
-    background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_admin),
-):
-    """Prepare an apt cache archive with packages + all dependencies on a central node.
-
-    Runs as a background task to avoid HAProxy timeout. Check progress via Redis key.
-    """
-    from monctl_central.upgrades.os_service import prepare_archive, _get_network_mode
-    from monctl_central.cache import _redis
-
-    network_mode, proxy_url = await _get_network_mode(db)
-    if network_mode == "offline":
-        raise HTTPException(status_code=400, detail="Cannot download in offline mode. Upload .deb files manually.")
-
-    # Find a central node to prepare the archive on
-    result = await db.execute(
-        select(SystemVersion).where(SystemVersion.node_role == "central").limit(1)
-    )
-    node = result.scalar_one_or_none()
-    if not node:
-        raise HTTPException(status_code=404, detail="No central nodes registered")
-
-    proxy = proxy_url if network_mode == "proxy" else ""
-
-    async def _prepare():
-        if _redis:
-            await _redis.set("monctl:archive_status", "preparing", ex=600)
-        try:
-            archive_result = await prepare_archive(node.node_ip, request_body.package_names, proxy)
-            if _redis:
-                if archive_result.get("success"):
-                    await _redis.set("monctl:archive_status", "ready", ex=3600)
-                else:
-                    await _redis.set("monctl:archive_status", f"failed: {archive_result.get('output', '')[:200]}", ex=600)
-        except Exception as exc:
-            if _redis:
-                await _redis.set("monctl:archive_status", f"failed: {exc}", ex=600)
-            logger.error("archive_preparation_failed", error=str(exc))
-
-    background_tasks.add_task(_prepare)
-    return {
-        "status": "success",
-        "data": {"message": "Archive preparation started", "node": node.node_hostname},
-    }
-
-
-@router.get("/archive-status")
-async def get_archive_status(
-    auth: dict = Depends(require_admin),
-):
-    """Check archive preparation status."""
-    from monctl_central.cache import _redis
-    status_val = "unknown"
-    if _redis:
-        status_val = await _redis.get("monctl:archive_status") or "none"
-    return {"status": "success", "data": {"archive_status": status_val}}
-
 
 @router.post("/os-install-all")
 async def install_all_updates(
@@ -1294,12 +1009,17 @@ async def install_all_updates(
             detail="Another OS install job is already active",
         )
 
-    result = await db.execute(select(OsCachedPackage.package_name).distinct())
+    # With apt-proxy, install all packages from OsAvailableUpdate (detected updates across nodes)
+    result = await db.execute(
+        select(OsAvailableUpdate.package_name).where(
+            OsAvailableUpdate.is_installed == False  # noqa: E712
+        ).distinct()
+    )
     package_names = [row[0] for row in result]
     if not package_names:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No cached packages available. Download packages first.",
+            detail="No pending updates. Scan for updates first.",
         )
 
     job = await create_os_install_job(

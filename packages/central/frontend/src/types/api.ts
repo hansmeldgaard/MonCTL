@@ -1473,6 +1473,7 @@ export interface SystemVersionNode {
   kernel_version: string | null;
   python_version: string | null;
   reboot_required: boolean;
+  group_name: string | null;
   last_reported_at: string | null;
 }
 

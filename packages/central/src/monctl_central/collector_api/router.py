@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
 from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1853,11 +1853,13 @@ class HeartbeatRequest(BaseModel):
     queue_stats: dict | None = None
     job_costs: dict[str, float] | None = None  # {assignment_id: avg_execution_time_seconds}
     system_resources: dict | None = None  # cpu_load, cpu_count, memory_total_mb, memory_used_mb, disk_*
+    system_stats: dict | None = None  # monctl_version, os_info
 
 
 @router.post("/heartbeat", tags=["collector-api"])
 async def collector_heartbeat(
     request: HeartbeatRequest,
+    raw_request: Request,
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
@@ -1893,6 +1895,21 @@ async def collector_heartbeat(
         collector.worker_count = request.worker_count
         collector.deadline_miss_rate = request.deadline_miss_rate
         collector.load_updated_at = utc_now()
+
+        # Stamp Collector.ip_addresses with the real host IP (from X-Forwarded-For
+        # via HAProxy). Docker bridge IPs are not useful for matching to
+        # SystemVersion entries, which use the real host IP.
+        real_ip = raw_request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        if real_ip:
+            existing_ips = collector.ip_addresses or []
+            if isinstance(existing_ips, dict):
+                existing_ips = list(existing_ips.values())
+            if not isinstance(existing_ips, list):
+                existing_ips = []
+            if real_ip not in existing_ips:
+                existing_ips = [real_ip] + [ip for ip in existing_ips if ip != real_ip]
+                collector.ip_addresses = existing_ips
+
         await db.flush()
 
         # Persist per-assignment execution times for cost-aware rebalancing
@@ -1909,6 +1926,41 @@ async def collector_heartbeat(
                     .where(AppAssignment.id == aid)
                     .values(avg_execution_time=avg_time)
                 )
+            await db.flush()
+
+    # Update SystemVersion for this collector (if an entry exists).
+    # SystemVersion entries for collectors are created by the sidecar inventory
+    # system using real host IPs. The heartbeat only updates existing entries
+    # with OS/version info — it does NOT create new ones (to avoid duplicates
+    # when the container hostname differs from the host-level hostname).
+    if collector is not None and request.system_stats:
+        from monctl_central.storage.models import SystemVersion
+
+        # Match by hostname first, then fall back to IP resolution
+        sv = (await db.execute(
+            select(SystemVersion).where(SystemVersion.node_hostname == collector.hostname)
+        )).scalars().first()
+
+        # If not found by hostname, try matching via real IP (X-Forwarded-For)
+        if not sv:
+            real_ip = raw_request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+            if real_ip:
+                sv = (await db.execute(
+                    select(SystemVersion).where(
+                        SystemVersion.node_ip == real_ip,
+                        SystemVersion.node_role == "collector",
+                    )
+                )).scalars().first()
+
+        if sv:
+            os_info = request.system_stats.get("os_info") or {}
+            sv.monctl_version = request.system_stats.get("monctl_version") or sv.monctl_version
+            sv.os_version = os_info.get("os_version") or sv.os_version
+            sv.kernel_version = os_info.get("kernel_version") or sv.kernel_version
+            sv.python_version = os_info.get("python_version") or sv.python_version
+            if "reboot_required" in request.system_stats:
+                sv.reboot_required = request.system_stats["reboot_required"]
+            sv.last_reported_at = utc_now()
             await db.flush()
 
     return {

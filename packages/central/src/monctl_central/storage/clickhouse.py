@@ -943,6 +943,76 @@ TTL toDateTime(timestamp) + INTERVAL 7 DAY
 SETTINGS index_granularity = 8192
 """
 
+_AUDIT_MUTATIONS_DDL = """
+CREATE TABLE IF NOT EXISTS audit_mutations ON CLUSTER '{cluster}'
+(
+    timestamp          DateTime64(3, 'UTC'),
+    request_id         String        DEFAULT '',
+    user_id            String        DEFAULT '',
+    username           String        DEFAULT '',
+    auth_type          LowCardinality(String) DEFAULT 'cookie',
+    tenant_id          String        DEFAULT '',
+    ip_address         String        DEFAULT '',
+    user_agent         String        DEFAULT '',
+    method             LowCardinality(String) DEFAULT '',
+    path               String        DEFAULT '',
+    resource_type      LowCardinality(String),
+    resource_id        String        DEFAULT '',
+    action             LowCardinality(String),
+    status_code        UInt16        DEFAULT 0,
+    old_values         String        DEFAULT '{{}}',
+    new_values         String        DEFAULT '{{}}',
+    changed_fields     Array(String) DEFAULT [],
+    duration_ms        UInt32        DEFAULT 0,
+    error_message      String        DEFAULT ''
+)
+ENGINE = ReplicatedMergeTree(
+    '/clickhouse/tables/{{shard}}/audit_mutations', '{{replica}}'
+)
+PARTITION BY toYYYYMM(timestamp)
+ORDER BY (resource_type, timestamp, resource_id)
+TTL toDateTime(timestamp) + INTERVAL 365 DAY
+SETTINGS index_granularity = 8192
+"""
+
+_AUDIT_MUTATIONS_DDL_LOCAL = """
+CREATE TABLE IF NOT EXISTS audit_mutations
+(
+    timestamp          DateTime64(3, 'UTC'),
+    request_id         String        DEFAULT '',
+    user_id            String        DEFAULT '',
+    username           String        DEFAULT '',
+    auth_type          LowCardinality(String) DEFAULT 'cookie',
+    tenant_id          String        DEFAULT '',
+    ip_address         String        DEFAULT '',
+    user_agent         String        DEFAULT '',
+    method             LowCardinality(String) DEFAULT '',
+    path               String        DEFAULT '',
+    resource_type      LowCardinality(String),
+    resource_id        String        DEFAULT '',
+    action             LowCardinality(String),
+    status_code        UInt16        DEFAULT 0,
+    old_values         String        DEFAULT '{}',
+    new_values         String        DEFAULT '{}',
+    changed_fields     Array(String) DEFAULT [],
+    duration_ms        UInt32        DEFAULT 0,
+    error_message      String        DEFAULT ''
+)
+ENGINE = MergeTree()
+PARTITION BY toYYYYMM(timestamp)
+ORDER BY (resource_type, timestamp, resource_id)
+TTL toDateTime(timestamp) + INTERVAL 365 DAY
+SETTINGS index_granularity = 8192
+"""
+
+_AUDIT_MUTATIONS_INSERT_COLUMNS = [
+    "timestamp", "request_id", "user_id", "username", "auth_type",
+    "tenant_id", "ip_address", "user_agent", "method", "path",
+    "resource_type", "resource_id", "action", "status_code",
+    "old_values", "new_values", "changed_fields", "duration_ms", "error_message",
+]
+
+
 _RBA_RUNS_DDL = """
 CREATE TABLE IF NOT EXISTS rba_runs ON CLUSTER '{cluster}'
 (
@@ -1340,6 +1410,7 @@ class ClickHouseClient:
                 _RBA_RUNS_DDL,
                 _ELIGIBILITY_RUNS_DDL,
                 _ELIGIBILITY_RESULTS_DDL,
+                _AUDIT_MUTATIONS_DDL,
             ]:
                 client.command(ddl.format(cluster=self._cluster_name))
             for mv_ddl in [
@@ -1368,6 +1439,7 @@ class ClickHouseClient:
                 _RBA_RUNS_DDL_LOCAL,
                 _ELIGIBILITY_RUNS_DDL_LOCAL,
                 _ELIGIBILITY_RESULTS_DDL_LOCAL,
+                _AUDIT_MUTATIONS_DDL_LOCAL,
             ]:
                 client.command(ddl)
             for mv_ddl in [
