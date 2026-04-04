@@ -165,6 +165,17 @@ packages/
 - `logs` ClickHouse table uses `toDateTime(timestamp)` wrapper in TTL (required for ClickHouse 24.3 DateTime64).
 - `log_level_filter` on Collector model controls minimum shipped level.
 
+### Audit Log
+- **Two stores**: `audit_login_events` (PostgreSQL — auth events, ACID, queryable by user) and `audit_mutations` (ClickHouse — high-volume mutation history, 365d TTL).
+- **Capture mechanism**: `AuditContextMiddleware` populates a request-scoped `contextvars.ContextVar` with user/IP/request_id. A SQLAlchemy `before_flush` event listener walks `session.new/dirty/deleted`, extracts old values from `attrs.history`, and stashes rows on the context. The middleware forwards them to an async batch buffer on response completion. No per-endpoint decorators.
+- **Whitelist, not blacklist**: Only tablenames listed in `audit/resource_map.py::TABLE_TO_RESOURCE` are audited. Adding a new audited table requires updating that map.
+- **Redaction**: `audit/diff.py` redacts fields whose names contain `password`, `api_key`, `token`, `secret`, `jwt_secret`, `credential_value`, `private_key`. Applied before JSON serialization.
+- **Login event gotcha**: Failed logins raise HTTPException which triggers `get_db()` rollback — so `record_login_event()` uses its **own** session that commits immediately, not the request session. Otherwise login failures would never be logged.
+- **Non-blocking**: If ClickHouse is down, audit rows are dropped with a warning. PG login events are critical and block the login response (rare enough that it's fine).
+- **Permission**: `audit:view` (admins bypass). UI lives under Settings → Audit Log.
+- **Request ID**: Every response has `X-Request-Id` header — matches the `request_id` column in audit rows for end-to-end correlation.
+- **ClickHouse cluster DDL gotcha**: Any DDL in the `ON CLUSTER` path uses `.format(cluster=...)`, so literal `{}` in DEFAULT clauses (e.g. `'{}'` for empty JSON) must be escaped to `'{{}}'`. Otherwise Python raises `IndexError: Replacement index 0` before the SQL reaches ClickHouse.
+
 ### System Health
 - **Overall status excludes alerts** — only infrastructure subsystems (postgresql, clickhouse, redis, scheduler, collectors, etc.) count. Alerts reflect monitored devices, not platform health.
 - **Scheduler leader election**: Redis SETNX with 30s TTL, renewed every 10s. Only `role=all` or `role=scheduler` instances participate. **Gotcha**: Do not reuse `role` as a variable name in `main.py` lifespan — it shadows `settings.role` and breaks the scheduler check.
