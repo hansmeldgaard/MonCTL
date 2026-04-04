@@ -258,6 +258,11 @@ class PollEngine:
 
         async with sem:
             connectors: dict = {}
+            # Tracks where a failure occurred, so the catch-all can classify it.
+            # Values: "setup" (app/cred load), "connect" (connector handshake),
+            # "poll" (inside app.poll()). Defaults to "poll" — if the exception
+            # fires after connectors are ready it's almost certainly app-side.
+            fail_phase = "setup"
             try:
                 # Ensure app is loaded (may trigger download + venv create)
                 cls = await self._apps.ensure_app(
@@ -285,8 +290,10 @@ class PollEngine:
                         settings=binding.settings,
                         credential=conn_cred,
                     )
+                    fail_phase = "connect"
                     await connector.connect(job.device_host or "")
                     connectors[binding.alias] = connector
+                fail_phase = "poll"
 
                 # Build app cache accessor via gRPC to cache-node
                 cache_client = await self._pool.get(self._cache_address)
@@ -326,19 +333,35 @@ class PollEngine:
                         pass
                     raise  # re-raise TimeoutError
 
+                # Auto-fill error_category for apps that return an error result
+                # without classifying it. Most uploaded apps catch connector
+                # exceptions and build their own PollResult with error_message
+                # only — default those to "device" since that is overwhelmingly
+                # the real cause (target timeout / unreachable).
+                if result is not None and result.status != "ok" and not result.error_category:
+                    result.error_category = "device"
+
             except asyncio.TimeoutError:
                 execution_ms = int((time.time() - start) * 1000)
                 result = _error_result(job, self._worker_id, "timeout", execution_ms, error_category="device")
             except Exception as exc:  # noqa: BLE001
                 execution_ms = int((time.time() - start) * 1000)
+                # Classify based on where the failure occurred:
+                #   setup   → config (missing app, credential, or connector code)
+                #   connect → device (target unreachable or auth handshake failed)
+                #   poll    → app    (crash inside app.poll() after setup succeeded)
+                category = {"setup": "config", "connect": "device", "poll": "app"}[fail_phase]
                 result = _error_result(
                     job, self._worker_id,
                     f"{type(exc).__name__}: {exc}",
                     execution_ms,
+                    error_category=category,
                 )
                 logger.warning(
                     "job_execution_error",
                     job_id=job.job_id,
+                    phase=fail_phase,
+                    category=category,
                     error=str(exc),
                     tb=traceback.format_exc(),
                 )
