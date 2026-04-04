@@ -43,8 +43,31 @@ services:
       start_period: 15s
     restart: unless-stopped
 
+  # ── Apt reverse-proxy cache (exposed via HAProxy /apt/*) ───────────────────
+  apt-cache:
+    image: nginx:1.27-alpine
+    container_name: monctl-apt-cache
+    ports:
+      - "18080:18080"
+    volumes:
+      - ./nginx-apt-cache.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx-apt-mode.sh:/docker-entrypoint.d/10-apt-mode.sh:ro
+      - apt_cache_data:/var/cache/nginx/apt
+      - apt_mirror_data:/srv/apt-mirror:ro
+    environment:
+      APT_CACHE_MODE: ${APT_CACHE_MODE:-direct}
+      CORP_PROXY_URL: ${CORP_PROXY_URL:-}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:18080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
 volumes:
   upgrades_data:
+  apt_cache_data:
+  apt_mirror_data:
   tls_certs:
     name: monctl_tls_certs
     external: true

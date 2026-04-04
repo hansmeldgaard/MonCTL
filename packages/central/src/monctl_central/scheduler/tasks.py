@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 
 from monctl_central.config import parse_node_list, settings
@@ -52,6 +53,9 @@ class SchedulerRunner:
 
     async def _run(self) -> None:
         cycle = 0
+        # One-shot at startup: configure apt source on this central node (so
+        # `apt-get install` via sidecar uses the local apt-cache proxy).
+        asyncio.create_task(self._setup_local_apt_source())
         while True:
             await asyncio.sleep(30)
             cycle += 1
@@ -1000,6 +1004,41 @@ class SchedulerRunner:
         except Exception:
             logger.exception("app_cache_cleanup_error")
 
+    async def _setup_local_apt_source(self) -> None:
+        """One-shot: configure /etc/apt/sources.list.d/monctl.list on this central node.
+
+        Runs once at scheduler startup — calls the local docker-stats sidecar's
+        /os/setup-apt-source endpoint. Idempotent: does nothing if already configured.
+        """
+        await asyncio.sleep(15)  # Let central fully start
+        try:
+            import httpx
+            # Central's docker-stats sidecar is accessible via the host IP on port 9100
+            node_ip = os.environ.get("MONCTL_NODE_IP", "127.0.0.1")
+            sidecar_url = os.environ.get("MONCTL_DOCKER_STATS_URL", f"http://{node_ip}:9100")
+            async with httpx.AsyncClient(timeout=5) as client:
+                resp = await client.get(f"{sidecar_url}/os/apt-source-status")
+                if resp.status_code == 200 and resp.json().get("configured"):
+                    logger.info("central_apt_source_already_configured")
+                    return
+
+            # Use VIP from env or fall back to a sensible default
+            central_vip = os.environ.get("MONCTL_VIP_ADDRESS", "10.145.210.40")
+            async with httpx.AsyncClient(timeout=180) as client:
+                resp = await client.post(
+                    f"{sidecar_url}/os/setup-apt-source",
+                    json={"central_vip": central_vip, "distro": "noble",
+                          "components": "main restricted universe multiverse"},
+                )
+                result = resp.json() if resp.status_code == 200 else {"success": False}
+                if result.get("success"):
+                    logger.info("central_apt_source_configured")
+                else:
+                    logger.warning("central_apt_source_setup_failed",
+                                   output=(result.get("output") or "")[:500])
+        except Exception:
+            logger.exception("central_apt_source_setup_error")
+
     async def _check_os_updates(self) -> None:
         """Check all nodes for OS updates via sidecars (runs daily)."""
         now = datetime.now(timezone.utc)
@@ -1021,8 +1060,12 @@ class SchedulerRunner:
                     self._last_os_check = now
                     return
 
-                # Query all nodes
-                result = await session.execute(select(SystemVersion))
+                # Only scan central nodes — collectors self-scan and report via
+                # POST /api/v1/os-packages/report-updates (workers are offline,
+                # central cannot reach their sidecars)
+                result = await session.execute(
+                    select(SystemVersion).where(SystemVersion.node_role == "central")
+                )
                 nodes = result.scalars().all()
 
                 if not nodes:
