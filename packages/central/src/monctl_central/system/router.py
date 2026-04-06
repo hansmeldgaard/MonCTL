@@ -1595,6 +1595,7 @@ async def _check_docker_infrastructure() -> dict:
             stats_data["host"]["mem_total_bytes"] = host_info.get("mem_total_bytes")
             stats_data["host"]["mem_available_bytes"] = host_info.get("mem_available_bytes")
             stats_data["host"]["uptime_seconds"] = host_info.get("uptime_seconds")
+            stats_data["host"]["ntp"] = host_info.get("ntp")
             stats_data["docker_version"] = system_data.get("docker", {}).get("version")
 
         return {"label": host["label"], "status": "ok", "source": "sidecar", "data": stats_data}
@@ -1630,6 +1631,7 @@ async def _check_docker_infrastructure() -> dict:
                 stats["host"]["mem_total_bytes"] = host_info.get("mem_total_bytes")
                 stats["host"]["mem_available_bytes"] = host_info.get("mem_available_bytes")
                 stats["host"]["uptime_seconds"] = host_info.get("uptime_seconds")
+                stats["host"]["ntp"] = host_info.get("ntp")
                 stats["docker_version"] = system.get("docker", {}).get("version")
             worker_results.append({
                 "label": label, "status": "ok", "source": "push", "data": stats,
@@ -1671,6 +1673,10 @@ async def _check_docker_infrastructure() -> dict:
                     status = "degraded"
                 if c.get("status") == "restarting" and status == "healthy":
                     status = "degraded"
+            # NTP out of sync degrades docker infrastructure status
+            ntp = host["data"].get("host", {}).get("ntp")
+            if ntp and not ntp.get("synchronized") and status == "healthy":
+                status = "degraded"
 
     return {
         "status": status,

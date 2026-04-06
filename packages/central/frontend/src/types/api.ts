@@ -1349,6 +1349,7 @@ export interface DockerSystemInfo {
     swap_total_bytes: number | null;
     swap_free_bytes: number | null;
     uptime_seconds: number | null;
+    ntp?: { synchronized: boolean; server: string | null; offset_ms: number | null };
     disk_total_bytes: number | null;
     disk_used_bytes: number | null;
     disk_free_bytes: number | null;
