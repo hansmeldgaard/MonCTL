@@ -134,6 +134,8 @@ packages/
 - Unpinned assignments use consistent hashing via `CollectorGroup.weight_snapshot` JSONB.
 - `weight_snapshot = NULL` → equal weights fallback. Set to NULL on collector DOWN/approve/group-change.
 - Rebalancer runs every 5 min. Threshold: 1.5x imbalance ratio, 15% weight change hysteresis.
+- **Weight updates use EMA blending** (alpha=0.3) to prevent oscillation. Pure inverse-proportional weights (`1/cost`) flip the entire distribution instead of equalising it. The EMA gradually converges over 5-7 cycles.
+- **Minimum weight floor is 0.3** (both in rebalancer and `/jobs` endpoint). Lower values (e.g. 0.05) create extreme vnode ratios (20:1) that cause flip-flopping.
 
 ### Interface Monitoring
 - **Rate calculation is central-side** (not collector). Previous counters cached in Redis.

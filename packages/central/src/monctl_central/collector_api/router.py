@@ -304,7 +304,7 @@ async def get_jobs(
             snapshot = group_obj.weight_snapshot if group_obj else None
             if snapshot and set(snapshot.keys()) == active_hostnames:
                 # Enforce minimum weight to prevent starvation
-                weights = {h: max(w, 0.05) for h, w in snapshot.items()}
+                weights = {h: max(w, 0.3) for h, w in snapshot.items()}
             else:
                 # Topology changed or no snapshot — use equal weights
                 weights = {c.hostname: 1.0 for c in group_collectors}
@@ -1599,21 +1599,7 @@ async def submit_results(
                     "config_value": val_str,
                     "config_hash": _hashlib.md5(val_str.encode()).hexdigest(),
                 })
-            # Suppress unchanged non-volatile keys
-            _volatile = set(enrichment.get("volatile_keys") or [])
-            _config_rows = _filter_config_rows(
-                _config_rows,
-                device_id=device_id_resolved,
-                app_id=enrichment.get("app_id", str(assignment_id)),
-                volatile_keys=_volatile,
-                ch=ch,
-            )
             ch_rows.extend(_config_rows)
-            if _config_rows:
-                _invalidate_config_hash_cache(
-                    device_id_resolved,
-                    enrichment.get("app_id", str(assignment_id)),
-                )
 
             # Process discovery results if this is the snmp_discovery app
             if enrichment.get("app_name") == "snmp_discovery" and r.config_data and device_id_resolved:
@@ -1627,34 +1613,6 @@ async def submit_results(
                 except Exception as _disc_exc:
                     logger.warning("discovery_processing_failed",
                                    device_id=device_id_resolved, error=str(_disc_exc))
-
-            # Also insert an availability_latency row for status tracking
-            ch_rows.append({
-                "_target_table": "availability_latency",
-                "assignment_id": str(assignment_id),
-                "collector_id": collector_uuid,
-                "app_id": enrichment.get("app_id", str(assignment_id)),
-                "device_id": device_id_resolved,
-                "state": state,
-                "output": f"{len(r.config_data)} config keys collected",
-                "error_message": r.error_message or "",
-                "error_category": r.error_category,
-                "rtt_ms": 0.0,
-                "response_time_ms": (r.execution_time_ms or 0) / 1.0,
-                "reachable": 1 if r.reachable else 0,
-                "status_code": 0,
-                "metric_names": ["config_key_count"],
-                "metric_values": [float(len(r.config_data))],
-                "executed_at": executed_at,
-                "execution_time": (r.execution_time_ms / 1000.0) if r.execution_time_ms else 0.0,
-                "started_at": started_at_dt,
-                "collector_name": request.collector_node,
-                "device_name": enrichment.get("device_name", ""),
-                "app_name": enrichment.get("app_name", ""),
-                "role": enrichment.get("role", ""),
-                "tenant_id": enrichment.get("tenant_id", "00000000-0000-0000-0000-000000000000"),
-                "tenant_name": enrichment.get("tenant_name", ""),
-            })
         else:
             row = {
                 "_target_table": target_table,
@@ -1719,74 +1677,6 @@ async def submit_results(
 
 
 # ---------------------------------------------------------------------------
-# Config suppression: only write changed keys + volatile keys
-# ---------------------------------------------------------------------------
-
-import time as _time
-
-_config_hash_cache: dict[tuple[str, str], tuple[float, dict]] = {}
-_CONFIG_HASH_CACHE_TTL = 60.0
-
-
-def _get_cached_config_hashes(ch, device_id: str, app_id: str) -> dict[tuple[str, str, str], str]:
-    cache_key = (device_id, app_id)
-    now = _time.monotonic()
-    cached = _config_hash_cache.get(cache_key)
-    if cached and (now - cached[0]) < _CONFIG_HASH_CACHE_TTL:
-        return cached[1]
-    hashes = ch.get_config_hashes(device_id, app_id)
-    _config_hash_cache[cache_key] = (now, hashes)
-    return hashes
-
-
-def _invalidate_config_hash_cache(device_id: str, app_id: str) -> None:
-    _config_hash_cache.pop((device_id, app_id), None)
-
-
-def _filter_config_rows(
-    config_rows: list[dict],
-    device_id: str,
-    app_id: str,
-    volatile_keys: set[str],
-    ch,
-) -> list[dict]:
-    """Suppress unchanged non-volatile config keys.
-
-    Volatile keys are always written (they change every cycle and must be
-    available in config_latest for display templates), but are excluded from
-    the hash-based change detection so they don't generate changelog entries.
-    """
-    if not config_rows:
-        return []
-
-    # Separate volatile and stable rows
-    volatile_rows: list[dict] = []
-    stable_rows: list[dict] = []
-    for row in config_rows:
-        if volatile_keys and row.get("config_key", "") in volatile_keys:
-            volatile_rows.append(row)
-        else:
-            stable_rows.append(row)
-
-    existing_hashes = _get_cached_config_hashes(ch, device_id, app_id)
-
-    # First-ever poll — write everything
-    if not existing_hashes:
-        return stable_rows + volatile_rows
-
-    # Only write stable rows that have actually changed
-    filtered = []
-    for row in stable_rows:
-        lookup = (row.get("component_type", ""), row.get("component", ""), row.get("config_key", ""))
-        existing_hash = existing_hashes.get(lookup)
-        if existing_hash is None or existing_hash != row.get("config_hash", ""):
-            filtered.append(row)
-
-    # Always include volatile rows
-    filtered.extend(volatile_rows)
-    return filtered
-
-
 async def _enrich_assignment(db: AsyncSession, assignment_id: str) -> dict:
     """Resolve denormalized fields for a given assignment_id, with Redis caching."""
     from monctl_central.cache import get_or_load_enrichment
@@ -1806,21 +1696,6 @@ async def _enrich_assignment(db: AsyncSession, assignment_id: str) -> dict:
             if row is None:
                 return {}
             assignment, app, device, tenant = row.AppAssignment, row.App, row.Device, row.Tenant
-            # Resolve volatile_keys from the assigned app version (or latest)
-            version_volatile_keys: list[str] = []
-            from monctl_central.storage.models import AppVersion
-            if assignment.app_version_id:
-                ver = await db.get(AppVersion, assignment.app_version_id)
-                if ver and ver.volatile_keys:
-                    version_volatile_keys = ver.volatile_keys
-            else:
-                latest_ver = (await db.execute(
-                    select(AppVersion)
-                    .where(AppVersion.app_id == app.id, AppVersion.is_latest == True)
-                )).scalar_one_or_none()
-                if latest_ver and latest_ver.volatile_keys:
-                    version_volatile_keys = latest_ver.volatile_keys
-
             return {
                 "app_id": str(app.id),
                 "app_name": app.name,
@@ -1830,7 +1705,6 @@ async def _enrich_assignment(db: AsyncSession, assignment_id: str) -> dict:
                 "role": assignment.role or "",
                 "tenant_id": str(device.tenant_id) if device and device.tenant_id else "00000000-0000-0000-0000-000000000000",
                 "tenant_name": tenant.name if tenant else "",
-                "volatile_keys": version_volatile_keys,
             }
         except Exception:
             return {}

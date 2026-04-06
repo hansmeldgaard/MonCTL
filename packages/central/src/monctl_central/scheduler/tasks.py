@@ -545,6 +545,12 @@ class SchedulerRunner:
                 self._last_hourly_rollup = now
             except Exception:
                 logger.exception("hourly_rollup_error")
+                self._last_hourly_rollup = now  # avoid retry storm
+
+            try:
+                await self._config_dedup()
+            except Exception:
+                logger.exception("config_dedup_error")
 
         # Daily rollup + cleanup — run after 00:15 UTC, once per day
         if now.hour == 0 and now.minute >= 15 and (
@@ -822,6 +828,50 @@ class SchedulerRunner:
             await _redis.set(
                 "monctl:scheduler:last_avail_daily_rollup", utc_now().isoformat()
             )
+
+    async def _config_dedup(self) -> None:
+        """Remove duplicate config rows where the value hasn't changed.
+
+        For each (device_id, component_type, component, config_key), keep only:
+        - The most recent row (always kept — represents current state)
+        - Rows where config_hash differs from the next row's hash (change points)
+
+        This keeps the config table lean while preserving change history.
+        Only processes data older than 2 hours to avoid interfering with
+        in-flight writes.
+        """
+        if self._ch is None:
+            return
+        # Delete config rows that are NOT the latest per key AND have the same
+        # hash as the latest row for that key.  This removes "no-change" entries
+        # while preserving actual change-point history.
+        sql = """
+        ALTER TABLE config DELETE WHERE
+            executed_at < now() - INTERVAL 2 HOUR
+            AND (device_id, component_type, component, config_key, executed_at) IN (
+                SELECT device_id, component_type, component, config_key, executed_at
+                FROM config
+                WHERE executed_at < now() - INTERVAL 2 HOUR
+                AND (device_id, component_type, component, config_key, config_hash) IN (
+                    SELECT device_id, component_type, component, config_key,
+                           argMax(config_hash, executed_at) AS latest_hash
+                    FROM config
+                    GROUP BY device_id, component_type, component, config_key
+                )
+                AND (device_id, component_type, component, config_key, executed_at) NOT IN (
+                    SELECT device_id, component_type, component, config_key,
+                           max(executed_at)
+                    FROM config
+                    GROUP BY device_id, component_type, component, config_key
+                )
+            )
+        """
+        try:
+            client = self._ch._get_client()
+            await asyncio.to_thread(client.command, sql)
+            logger.info("config_dedup_complete")
+        except Exception:
+            logger.exception("config_dedup_error")
 
     async def _retention_cleanup(self) -> None:
         """Delete data older than configured retention periods.
@@ -1281,16 +1331,30 @@ class SchedulerRunner:
             group.weight_snapshot_topology = len(collectors)
             return
 
-        # Compute new weights inversely proportional to current cost
-        new_weights: dict[str, float] = {}
+        # Compute target weights inversely proportional to current cost
+        target_weights: dict[str, float] = {}
         for hostname, cost in cost_per_collector.items():
-            # Inverse: high cost → low weight → fewer jobs
-            new_weights[hostname] = 1.0 / max(cost, 0.001)
+            target_weights[hostname] = 1.0 / max(cost, 0.001)
 
-        # Normalize so max = 1.0, with a floor of 0.05 to prevent starvation
+        # Normalize targets so max = 1.0
+        max_tw = max(target_weights.values())
+        if max_tw > 0:
+            target_weights = {h: w / max_tw for h, w in target_weights.items()}
+
+        # EMA blend: move current weights toward target gradually to prevent
+        # oscillation (aggressive inverse weights flip the distribution instead
+        # of equalising it).
+        alpha = 0.3
+        new_weights: dict[str, float] = {}
+        for hostname in active_hostnames:
+            cur = current_weights.get(hostname, 1.0)
+            tgt = target_weights.get(hostname, 1.0)
+            new_weights[hostname] = alpha * tgt + (1 - alpha) * cur
+
+        # Normalize so max = 1.0, with a floor of 0.3 to prevent starvation
         max_w = max(new_weights.values())
         if max_w > 0:
-            new_weights = {h: max(0.05, round(w / max_w, 4)) for h, w in new_weights.items()}
+            new_weights = {h: max(0.3, round(w / max_w, 4)) for h, w in new_weights.items()}
 
         # Hysteresis: only apply if any weight changed by more than 15%
         significant_change = False
