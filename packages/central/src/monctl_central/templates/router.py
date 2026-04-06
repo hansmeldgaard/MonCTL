@@ -601,6 +601,56 @@ async def auto_apply_templates(
     }
 
 
+@router.post("/auto-apply-all")
+async def auto_apply_all_templates(
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_permission("template", "edit")),
+):
+    """Apply templates to all devices matching the auto-apply scope setting.
+
+    Reads template_auto_apply_scope from SystemSettings and applies templates
+    to matching enabled devices. Also updates template_auto_apply_last_run.
+    """
+    from monctl_central.storage.models import SystemSetting
+
+    scope_setting = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == "template_auto_apply_scope")
+    )).scalar_one_or_none()
+    scope = scope_setting.value if scope_setting and scope_setting.value in ("all", "has_type") else "has_type"
+
+    stmt = select(Device).where(Device.is_enabled == True)  # noqa: E712
+    if scope == "has_type":
+        stmt = stmt.where(Device.device_type_id.isnot(None))
+    devices = (await db.execute(stmt)).scalars().all()
+
+    results = await resolve_templates_for_devices(devices, db)
+    applied = 0
+    for result in results:
+        config = result.get("resolved_config")
+        if not config:
+            continue
+        device = await db.get(Device, uuid.UUID(result["device_id"]))
+        if device is None:
+            continue
+        await apply_config_to_device(device, config, db)
+        applied += 1
+
+    await db.flush()
+
+    now = utc_now()
+    last_run = await db.get(SystemSetting, "template_auto_apply_last_run")
+    if last_run is None:
+        last_run = SystemSetting(key="template_auto_apply_last_run", updated_at=now)
+        db.add(last_run)
+    last_run.value = now.isoformat()
+    last_run.updated_at = now
+
+    return {
+        "status": "success",
+        "data": {"applied": applied, "total": len(devices), "scope": scope},
+    }
+
+
 # ---------------------------------------------------------------------------
 # Routes — PARAMETERIZED paths (must come after static paths)
 # ---------------------------------------------------------------------------

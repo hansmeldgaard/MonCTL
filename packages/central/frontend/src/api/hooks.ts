@@ -2209,6 +2209,16 @@ export function useUpdateSystemSettings() {
   });
 }
 
+export function useTriggerTemplateAutoApplyAll() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiPost<{ applied: number; total: number; scope: string }>("/templates/auto-apply-all", {}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["system-settings"] });
+    },
+  });
+}
+
 // ── TLS Certificates ─────────────────────────────────────
 
 export function useTlsCertificate() {

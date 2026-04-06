@@ -38,6 +38,7 @@ class SchedulerRunner:
         self._last_os_check: datetime | None = None
         self._last_inventory_collect: datetime | None = None
         self._last_eligibility_scan: datetime | None = None
+        self._last_template_auto_apply: datetime | None = None
 
     async def start(self) -> asyncio.Task:
         self._task = asyncio.create_task(self._run())
@@ -87,6 +88,9 @@ class SchedulerRunner:
                 asyncio.create_task(self._check_os_updates())
                 # Package inventory collection (every 6h) — fire-and-forget
                 asyncio.create_task(self._collect_package_inventory())
+                # Template auto-apply (interval-based, configurable)
+                if cycle % 10 == 7:
+                    await self._run_template_auto_apply()
                 # Nightly eligibility scan (daily, configurable time)
                 await self._run_eligibility_scan()
                 # Finalize completed eligibility runs (every cycle)
@@ -834,7 +838,7 @@ class SchedulerRunner:
 
         For each (device_id, component_type, component, config_key), keep only:
         - The most recent row (always kept — represents current state)
-        - Rows where config_hash differs from the next row's hash (change points)
+        - Rows where config_hash differs from the latest hash (change points)
 
         This keeps the config table lean while preserving change history.
         Only processes data older than 2 hours to avoid interfering with
@@ -842,16 +846,16 @@ class SchedulerRunner:
         """
         if self._ch is None:
             return
-        # Delete config rows that are NOT the latest per key AND have the same
-        # hash as the latest row for that key.  This removes "no-change" entries
-        # while preserving actual change-point history.
-        sql = """
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=2)).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        sql = f"""
         ALTER TABLE config DELETE WHERE
-            executed_at < now() - INTERVAL 2 HOUR
+            executed_at < '{cutoff}'
             AND (device_id, component_type, component, config_key, executed_at) IN (
                 SELECT device_id, component_type, component, config_key, executed_at
                 FROM config
-                WHERE executed_at < now() - INTERVAL 2 HOUR
+                WHERE executed_at < '{cutoff}'
                 AND (device_id, component_type, component, config_key, config_hash) IN (
                     SELECT device_id, component_type, component, config_key,
                            argMax(config_hash, executed_at) AS latest_hash
@@ -868,7 +872,11 @@ class SchedulerRunner:
         """
         try:
             client = self._ch._get_client()
-            await asyncio.to_thread(client.command, sql)
+            await asyncio.to_thread(
+                client.command,
+                sql,
+                settings={"allow_nondeterministic_mutations": 1},
+            )
             logger.info("config_dedup_complete")
         except Exception:
             logger.exception("config_dedup_error")
@@ -1457,6 +1465,93 @@ class SchedulerRunner:
                 })
         except Exception:
             logger.exception("finalize_eligibility_runs_error")
+
+    async def _run_template_auto_apply(self) -> None:
+        """Apply templates to devices on a configurable interval.
+
+        Reads three SystemSettings:
+        - template_auto_apply_enabled  ("true"/"false")
+        - template_auto_apply_interval_hours  (int)
+        - template_auto_apply_scope  ("has_type" | "all")
+        Stores the last run timestamp in template_auto_apply_last_run.
+        """
+        now = datetime.now(timezone.utc)
+
+        try:
+            async with self._session_factory() as session:
+                from monctl_central.storage.models import Device, SystemSetting
+
+                enabled = (await session.execute(
+                    select(SystemSetting).where(SystemSetting.key == "template_auto_apply_enabled")
+                )).scalar_one_or_none()
+                if not enabled or enabled.value != "true":
+                    return
+
+                interval_hours = 24
+                iv = (await session.execute(
+                    select(SystemSetting).where(SystemSetting.key == "template_auto_apply_interval_hours")
+                )).scalar_one_or_none()
+                if iv and iv.value:
+                    try:
+                        interval_hours = max(1, int(iv.value))
+                    except ValueError:
+                        pass
+
+                if self._last_template_auto_apply is not None:
+                    elapsed = (now - self._last_template_auto_apply).total_seconds()
+                    if elapsed < interval_hours * 3600:
+                        return
+
+                scope_setting = (await session.execute(
+                    select(SystemSetting).where(SystemSetting.key == "template_auto_apply_scope")
+                )).scalar_one_or_none()
+                scope = scope_setting.value if scope_setting and scope_setting.value in ("all", "has_type") else "has_type"
+
+                self._last_template_auto_apply = now
+                logger.info("template_auto_apply_starting scope=%s interval_hours=%d", scope, interval_hours)
+
+                stmt = select(Device).where(Device.is_enabled == True)  # noqa: E712
+                if scope == "has_type":
+                    stmt = stmt.where(Device.device_type_id.isnot(None))
+                devices = (await session.execute(stmt)).scalars().all()
+
+                if not devices:
+                    logger.info("template_auto_apply_no_devices scope=%s", scope)
+                    return
+
+                from monctl_central.templates.resolver import resolve_templates_for_devices
+                from monctl_central.templates.router import apply_config_to_device
+
+                results = await resolve_templates_for_devices(devices, session)
+                applied = 0
+                for result in results:
+                    config = result.get("resolved_config")
+                    if not config:
+                        continue
+                    import uuid as _uuid
+                    device = await session.get(Device, _uuid.UUID(result["device_id"]))
+                    if device is None:
+                        continue
+                    await apply_config_to_device(device, config, session)
+                    applied += 1
+
+                await session.flush()
+
+                last_run = await session.get(SystemSetting, "template_auto_apply_last_run")
+                if last_run is None:
+                    last_run = SystemSetting(key="template_auto_apply_last_run", updated_at=now)
+                    session.add(last_run)
+                last_run.value = now.isoformat()
+                last_run.updated_at = now
+
+                await session.commit()
+                logger.info(
+                    "template_auto_apply_complete applied=%d total=%d scope=%s",
+                    applied, len(devices), scope,
+                )
+
+        except Exception:
+            logger.exception("template_auto_apply_error")
 
     async def _run_eligibility_scan(self) -> None:
         """Run once daily at configurable time (system setting eligibility_scan_time)."""

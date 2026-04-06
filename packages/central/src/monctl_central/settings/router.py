@@ -35,6 +35,9 @@ _DEFAULTS = {
     "grafana_url": "",
     "metabase_url": "",
     "log_retention_days": "7",
+    "template_auto_apply_enabled": "false",
+    "template_auto_apply_interval_hours": "24",
+    "template_auto_apply_scope": "has_type",
 }
 
 

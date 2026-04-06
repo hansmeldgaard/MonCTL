@@ -17,7 +17,9 @@ import {
   Loader2,
   Lock,
   Network,
+  Play,
   Plus,
+  RefreshCw,
   Shield,
   ShieldCheck,
   Trash2,
@@ -38,6 +40,7 @@ import { useTablePreferences, PAGE_SIZE_OPTIONS } from "@/hooks/useTablePreferen
 import {
   useSystemSettings,
   useUpdateSystemSettings,
+  useTriggerTemplateAutoApplyAll,
   useTlsCertificate,
   useGenerateTlsCert,
   useUploadTlsCert,
@@ -66,6 +69,7 @@ const TABS = [
   { key: "api-keys", label: "API Keys", icon: KeyRound, adminOnly: false, resource: "api_key" as const },
   { key: "collectors", label: "Collectors", icon: Cpu, adminOnly: true },
   { key: "snmp-oids", label: "SNMP OIDs", icon: Network, adminOnly: true },
+  { key: "automations", label: "Automations", icon: RefreshCw, adminOnly: true },
   { key: "data-retention", label: "Data Retention", icon: Database, adminOnly: true },
   { key: "network", label: "Network", icon: Globe, adminOnly: true },
   { key: "tls", label: "TLS / HTTPS", icon: Shield, adminOnly: true },
@@ -702,6 +706,155 @@ function RetentionTriple({
   );
 }
 
+function AutomationsTab() {
+  const { data: settings, isLoading } = useSystemSettings();
+  const updateSettings = useUpdateSystemSettings();
+  const runNow = useTriggerTemplateAutoApplyAll();
+  const [enabled, setEnabled] = useState("false");
+  const [intervalHours, setIntervalHours] = useState("24");
+  const [scope, setScope] = useState("has_type");
+  const [saved, setSaved] = useState(false);
+  const [runResult, setRunResult] = useState<{ applied: number; total: number } | null>(null);
+
+  useEffect(() => {
+    if (settings) {
+      setEnabled(settings.template_auto_apply_enabled ?? "false");
+      setIntervalHours(settings.template_auto_apply_interval_hours ?? "24");
+      setScope(settings.template_auto_apply_scope ?? "has_type");
+    }
+  }, [settings]);
+
+  const modified = settings && (
+    enabled !== (settings.template_auto_apply_enabled ?? "false") ||
+    intervalHours !== (settings.template_auto_apply_interval_hours ?? "24") ||
+    scope !== (settings.template_auto_apply_scope ?? "has_type")
+  );
+
+  async function handleSave() {
+    await updateSettings.mutateAsync({
+      settings: {
+        template_auto_apply_enabled: enabled,
+        template_auto_apply_interval_hours: intervalHours,
+        template_auto_apply_scope: scope,
+      },
+    });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  }
+
+  async function handleRunNow() {
+    const res = await runNow.mutateAsync();
+    setRunResult(res.data);
+    setTimeout(() => setRunResult(null), 5000);
+  }
+
+  const lastRun = settings?.template_auto_apply_last_run;
+
+  if (isLoading) return <div className="flex h-32 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-zinc-500" /></div>;
+
+  return (
+    <div className="space-y-6 max-w-2xl">
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm text-zinc-300 flex items-center gap-2">
+            <RefreshCw className="h-4 w-4 text-brand-400" />
+            Template Auto-Apply
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <p className="text-xs text-zinc-500">
+            Automatically re-apply device type and category templates to matching devices on a schedule.
+            Useful for keeping monitoring assignments in sync after template changes.
+          </p>
+
+          <div className="space-y-4">
+            {/* Enable */}
+            <div className="flex items-center justify-between">
+              <div>
+                <Label className="text-sm text-zinc-300">Enabled</Label>
+                <p className="text-xs text-zinc-500 mt-0.5">Run auto-apply on the configured schedule</p>
+              </div>
+              <Select value={enabled} onChange={e => setEnabled(e.target.value)} className="w-24 h-8 text-sm">
+                <option value="true">Yes</option>
+                <option value="false">No</option>
+              </Select>
+            </div>
+
+            {/* Interval */}
+            <div className="flex items-center justify-between">
+              <div>
+                <Label className="text-sm text-zinc-300">Run every</Label>
+                <p className="text-xs text-zinc-500 mt-0.5">How often to apply templates automatically</p>
+              </div>
+              <Select value={intervalHours} onChange={e => setIntervalHours(e.target.value)} className="w-32 h-8 text-sm">
+                <option value="1">1 hour</option>
+                <option value="2">2 hours</option>
+                <option value="4">4 hours</option>
+                <option value="6">6 hours</option>
+                <option value="12">12 hours</option>
+                <option value="24">24 hours</option>
+                <option value="48">48 hours</option>
+                <option value="168">1 week</option>
+              </Select>
+            </div>
+
+            {/* Scope */}
+            <div className="flex items-center justify-between">
+              <div>
+                <Label className="text-sm text-zinc-300">Apply to</Label>
+                <p className="text-xs text-zinc-500 mt-0.5">Which devices to include in each run</p>
+              </div>
+              <Select value={scope} onChange={e => setScope(e.target.value)} className="w-52 h-8 text-sm">
+                <option value="has_type">Devices with device type</option>
+                <option value="all">All enabled devices</option>
+              </Select>
+            </div>
+
+            {/* Last run */}
+            {lastRun && (
+              <div className="flex items-center justify-between text-xs text-zinc-500">
+                <span>Last run</span>
+                <span className="text-zinc-400">{timeAgo(lastRun)}</span>
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3 pt-1 border-t border-zinc-800">
+            <Button
+              size="sm"
+              disabled={!modified || updateSettings.isPending}
+              onClick={handleSave}
+            >
+              {updateSettings.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
+              Save
+            </Button>
+            {saved && <span className="text-xs text-emerald-400">Saved</span>}
+            <div className="ml-auto flex items-center gap-2">
+              {runResult && (
+                <span className="text-xs text-emerald-400">
+                  Applied to {runResult.applied} / {runResult.total} devices
+                </span>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={runNow.isPending}
+                onClick={handleRunNow}
+                title="Run auto-apply now using current scope setting"
+              >
+                {runNow.isPending
+                  ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+                  : <Play className="h-3.5 w-3.5 mr-1.5" />}
+                Run Now
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 function DataRetentionTab() {
   const { data: settings, isLoading } = useSystemSettings();
   const updateSettings = useUpdateSystemSettings();
@@ -1272,6 +1425,7 @@ export function SettingsPage() {
       case "api-keys": return <ApiKeysTab />;
       case "collectors": return <CollectorsPage />;
       case "snmp-oids": return <SnmpOidsPage />;
+      case "automations": return <AutomationsTab />;
       case "data-retention": return <DataRetentionTab />;
       case "network": return <NetworkTab />;
       case "tls": return <TlsTab />;
