@@ -35,7 +35,8 @@ import {
   TableRow,
 } from "@/components/ui/table.tsx";
 import { useSystemHealth, useDockerOverview, usePatroniSwitchover, useCollectorErrors, useLogs } from "@/api/hooks.ts";
-import { timeAgo, formatBytes, formatUptime, formatNumber } from "@/lib/utils.ts";
+import { timeAgo, formatBytes, formatUptime, formatNumber, formatLogTimestamp } from "@/lib/utils.ts";
+import { useTimezone } from "@/hooks/useTimezone.ts";
 import type { SubsystemStatus, CollectorHealthDetail, DockerOverviewHost, DockerContainerStats } from "@/types/api.ts";
 import { AlertTriangle } from "lucide-react";
 
@@ -629,6 +630,7 @@ function CollectorSortHead({
 function CollectorErrorPanel({ collectorName }: { collectorName: string }) {
   const { data: errors, isLoading } = useCollectorErrors(collectorName);
   const [showLogs, setShowLogs] = useState(false);
+  const timezone = useTimezone();
   const logsQuery = useLogs(
     { collector_name: collectorName, level: "ERROR", page_size: 50, sort_dir: "desc" },
     showLogs,
@@ -712,7 +714,7 @@ function CollectorErrorPanel({ collectorName }: { collectorName: string }) {
               <div className="text-xs text-zinc-500">No error logs found.</div>
             ) : logEntries.map((entry, i) => (
               <div key={i} className="text-[11px] font-mono leading-tight">
-                <span className="text-zinc-600">{entry.timestamp.replace("T", " ").slice(0, 19)}</span>
+                <span className="text-zinc-600">{formatLogTimestamp(entry.timestamp, timezone)}</span>
                 {" "}
                 <span className="text-zinc-500">[{entry.container_name}]</span>
                 {" "}
@@ -1435,7 +1437,8 @@ function DockerInfraTab() {
               const memPct = hostMem?.mem_total_bytes && hostMem.mem_available_bytes != null
                 ? Math.round(((hostMem.mem_total_bytes - hostMem.mem_available_bytes) / hostMem.mem_total_bytes) * 100)
                 : null;
-              const hasProblems = (h.unhealthy_count ?? 0) > 0 || h.error;
+              const ntpUnsync = h.data?.host?.ntp && !h.data.host.ntp.synchronized;
+              const hasProblems = (h.unhealthy_count ?? 0) > 0 || h.error || ntpUnsync;
               const mapped = dockerStatusMap(h.status);
 
               return (
@@ -1559,6 +1562,15 @@ function DockerHostRows({
                       <DetailRow label="Load Avg" value={`${hostInfo.load_avg["1m"]} / ${hostInfo.load_avg["5m"]} / ${hostInfo.load_avg["15m"]}`} />
                     )}
                     {hostInfo?.uptime_seconds != null && <DetailRow label="Uptime" value={formatUptime(hostInfo.uptime_seconds)} />}
+                    {hostInfo?.ntp && (
+                      <DetailRow label="NTP" value={
+                        <span className={hostInfo.ntp.synchronized ? "text-emerald-400" : "text-red-400"}>
+                          {hostInfo.ntp.synchronized ? "Synchronized" : "Not synchronized"}
+                          {hostInfo.ntp.server && <span className="text-zinc-500 ml-1">· {hostInfo.ntp.server}</span>}
+                          {hostInfo.ntp.offset_ms != null && <span className="text-zinc-500 ml-1">· {Math.abs(hostInfo.ntp.offset_ms) < 1 ? `${(hostInfo.ntp.offset_ms * 1000).toFixed(0)}µs` : `${hostInfo.ntp.offset_ms.toFixed(1)}ms`} offset</span>}
+                        </span>
+                      } />
+                    )}
                     {hostInfo?.swap_total_bytes != null && hostInfo.swap_free_bytes != null && (
                       <DetailRow label="Swap" value={`${formatBytes(hostInfo.swap_total_bytes - hostInfo.swap_free_bytes)} / ${formatBytes(hostInfo.swap_total_bytes)}`} />
                     )}

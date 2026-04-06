@@ -74,6 +74,13 @@ export function formatChartDateTime(ts: number, timezone = "UTC"): string {
     d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: timezone });
 }
 
+export function formatLogTimestamp(ts: string, timezone = "UTC"): string {
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return ts.replace("T", " ").slice(0, 19);
+  return d.toLocaleDateString("sv-SE", { timeZone: timezone }) + " " +
+    d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: timezone });
+}
+
 export function formatNumber(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;

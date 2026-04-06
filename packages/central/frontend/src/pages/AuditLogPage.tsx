@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useAuditLogins, useAuditMutations } from "@/api/hooks.ts";
 import type { AuditLoginEvent, AuditMutation } from "@/types/api.ts";
-import { cn } from "@/lib/utils.ts";
+import { cn, formatLogTimestamp } from "@/lib/utils.ts";
+import { useTimezone } from "@/hooks/useTimezone.ts";
 
 type View = "logins" | "mutations";
 
@@ -49,7 +50,7 @@ function ActionBadge({ action }: { action: string }) {
   );
 }
 
-function LoginsTable({ rows }: { rows: AuditLoginEvent[] }) {
+function LoginsTable({ rows, timezone }: { rows: AuditLoginEvent[]; timezone: string }) {
   if (!rows.length) {
     return <div className="text-sm text-zinc-500 py-8 text-center">No login events.</div>;
   }
@@ -70,7 +71,7 @@ function LoginsTable({ rows }: { rows: AuditLoginEvent[] }) {
           {rows.map((r) => (
             <tr key={r.id} className="border-b border-zinc-900 hover:bg-zinc-900/40">
               <td className="py-2 px-3 text-zinc-400 font-mono text-xs whitespace-nowrap">
-                {r.timestamp ? new Date(r.timestamp).toLocaleString() : "—"}
+                {r.timestamp ? formatLogTimestamp(r.timestamp, timezone) : "—"}
               </td>
               <td className="py-2 px-3"><EventBadge type={r.event_type} /></td>
               <td className="py-2 px-3 text-zinc-200">{r.username || "—"}</td>
@@ -85,7 +86,7 @@ function LoginsTable({ rows }: { rows: AuditLoginEvent[] }) {
   );
 }
 
-function MutationDetailModal({ row, onClose }: { row: AuditMutation; onClose: () => void }) {
+function MutationDetailModal({ row, onClose, timezone }: { row: AuditMutation; onClose: () => void; timezone: string }) {
   let oldPretty = "";
   let newPretty = "";
   try { oldPretty = JSON.stringify(JSON.parse(row.old_values || "{}"), null, 2); }
@@ -108,7 +109,7 @@ function MutationDetailModal({ row, onClose }: { row: AuditMutation; onClose: ()
               <span className="font-mono text-xs">{row.resource_id}</span>
             </div>
             <div className="text-xs text-zinc-500 mt-1">
-              {new Date(row.timestamp).toLocaleString()} · {row.username || "system"} · {row.ip_address}
+              {formatLogTimestamp(row.timestamp, timezone)} · {row.username || "system"} · {row.ip_address}
             </div>
           </div>
           <button onClick={onClose} className="text-zinc-500 hover:text-zinc-200 px-2">✕</button>
@@ -148,7 +149,7 @@ function MutationDetailModal({ row, onClose }: { row: AuditMutation; onClose: ()
   );
 }
 
-function MutationsTable({ rows }: { rows: AuditMutation[] }) {
+function MutationsTable({ rows, timezone }: { rows: AuditMutation[]; timezone: string }) {
   const [selected, setSelected] = useState<AuditMutation | null>(null);
 
   if (!rows.length) {
@@ -177,7 +178,7 @@ function MutationsTable({ rows }: { rows: AuditMutation[] }) {
                 className="border-b border-zinc-900 hover:bg-zinc-900/40 cursor-pointer"
               >
                 <td className="py-2 px-3 text-zinc-400 font-mono text-xs whitespace-nowrap">
-                  {new Date(r.timestamp).toLocaleString()}
+                  {formatLogTimestamp(r.timestamp, timezone)}
                 </td>
                 <td className="py-2 px-3"><ActionBadge action={r.action} /></td>
                 <td className="py-2 px-3 text-zinc-200">
@@ -196,12 +197,13 @@ function MutationsTable({ rows }: { rows: AuditMutation[] }) {
           </tbody>
         </table>
       </div>
-      {selected && <MutationDetailModal row={selected} onClose={() => setSelected(null)} />}
+      {selected && <MutationDetailModal row={selected} onClose={() => setSelected(null)} timezone={timezone} />}
     </>
   );
 }
 
 export function AuditLogPage() {
+  const timezone = useTimezone();
   const [view, setView] = useState<View>("logins");
   const [eventType, setEventType] = useState("");
   const [username, setUsername] = useState("");
@@ -314,10 +316,10 @@ export function AuditLogPage() {
         {view === "logins"
           ? loginsQuery.isLoading
             ? <div className="p-8 text-center text-zinc-500">Loading…</div>
-            : <LoginsTable rows={loginRows} />
+            : <LoginsTable rows={loginRows} timezone={timezone} />
           : mutationsQuery.isLoading
             ? <div className="p-8 text-center text-zinc-500">Loading…</div>
-            : <MutationsTable rows={mutationRows} />}
+            : <MutationsTable rows={mutationRows} timezone={timezone} />}
       </div>
     </div>
   );
