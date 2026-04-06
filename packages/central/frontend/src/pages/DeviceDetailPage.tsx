@@ -939,66 +939,6 @@ function OverviewTab({ deviceId }: { deviceId: string }) {
         </CardContent>
       </Card>
 
-      {/* Current Checks */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Monitor className="h-4 w-4" />
-            Current Checks
-            {deviceResults && (
-              <Badge variant="default" className="ml-auto text-xs">
-                {deviceResults.checks.length}
-              </Badge>
-            )}
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {!deviceResults || deviceResults.checks.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 text-zinc-500">
-              <p className="text-sm">No checks configured. Add apps on the Settings tab.</p>
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>State</TableHead>
-                  <TableHead>App</TableHead>
-                  <TableHead>Output</TableHead>
-                  <TableHead>Latency</TableHead>
-                  <TableHead>Executed</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {deviceResults.checks.map((check) => (
-                  <TableRow key={check.assignment_id}>
-                    <TableCell>
-                      <StatusBadge state={check.state_name} />
-                    </TableCell>
-                    <TableCell className="font-medium text-zinc-200">{check.app_name}</TableCell>
-                    <TableCell
-                      className="max-w-[280px] truncate text-zinc-400 text-sm"
-                      title={check.output}
-                    >
-                      {check.output || "—"}
-                    </TableCell>
-                    <TableCell className="text-zinc-400 text-sm font-mono">
-                      {check.rtt_ms != null
-                        ? `${check.rtt_ms}ms`
-                        : check.response_time_ms != null
-                          ? `${check.response_time_ms}ms`
-                          : "—"}
-                    </TableCell>
-                    <TableCell className="text-zinc-500 text-sm">
-                      {timeAgo(check.executed_at)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-
       {/* Events placeholder */}
       <Card>
         <CardHeader>
@@ -3975,13 +3915,19 @@ function useSort(defaultField: string, defaultDir: SortDir = "desc") {
   return { sortBy, sortDir, toggle };
 }
 
-// ── Tab 5: History ───────────────────────────────────────
+// ── Tab: Checks (Live + History) ─────────────────────────
 
-function HistoryTab({ deviceId }: { deviceId: string }) {
+function ChecksTab({ deviceId }: { deviceId: string }) {
   const tz = useTimezone();
+  const [mode, setMode] = useState<"live" | "history">("live");
+
+  // Live mode data
+  const { data: deviceResults, isLoading: liveLoading } = useDeviceResults(deviceId);
+
+  // History mode data + state
   const [range, setRange] = useState<TimeRangeValue>({ type: "preset", preset: "24h" });
   const { fromTs: from } = useMemo(() => rangeToTimestamps(range), [range]);
-  const { data: history, isLoading } = useDeviceHistory(deviceId, from, null, 500);
+  const { data: history, isLoading: histLoading } = useDeviceHistory(deviceId, from, null, 500);
   const { sortBy, sortDir, toggle: onSort } = useSort("executed_at");
   const [filterApp, setFilterApp] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
@@ -3989,30 +3935,22 @@ function HistoryTab({ deviceId }: { deviceId: string }) {
 
   const records = history ?? [];
 
-  // Unique values for filter dropdowns
   const appNames = useMemo(() => [...new Set(records.map((r) => r.app_name).filter(Boolean))].sort(), [records]);
   const statuses = useMemo(() => [...new Set(records.map((r) => r.state_name).filter(Boolean))].sort(), [records]);
   const collectors = useMemo(() => [...new Set(records.map((r) => r.collector_name).filter(Boolean))].sort(), [records]);
 
-  // Filter + sort
   const filtered = useMemo(() => {
     let data = records;
     if (filterApp) data = data.filter((r) => r.app_name === filterApp);
     if (filterStatus) data = data.filter((r) => r.state_name === filterStatus);
     if (filterCollector) data = data.filter((r) => r.collector_name === filterCollector);
-
     return [...data].sort((a, b) => {
       let cmp = 0;
       switch (sortBy) {
         case "app_name": cmp = (a.app_name ?? "").localeCompare(b.app_name ?? ""); break;
         case "started_at": cmp = (a.started_at ?? "").localeCompare(b.started_at ?? ""); break;
         case "executed_at": cmp = a.executed_at.localeCompare(b.executed_at); break;
-        case "duration": {
-          const da = a.execution_time_ms ?? 0;
-          const db = b.execution_time_ms ?? 0;
-          cmp = da - db;
-          break;
-        }
+        case "duration": cmp = (a.execution_time_ms ?? 0) - (b.execution_time_ms ?? 0); break;
         case "collector": cmp = (a.collector_name ?? "").localeCompare(b.collector_name ?? ""); break;
         case "status": cmp = (a.state_name ?? "").localeCompare(b.state_name ?? ""); break;
       }
@@ -4020,91 +3958,161 @@ function HistoryTab({ deviceId }: { deviceId: string }) {
     });
   }, [records, filterApp, filterStatus, filterCollector, sortBy, sortDir]);
 
-  if (isLoading) {
-    return (
-      <div className="flex justify-center py-12">
-        <Loader2 className="h-6 w-6 animate-spin text-zinc-500" />
-      </div>
-    );
-  }
-
   return (
     <Card>
       <CardHeader>
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-2">
             <Activity className="h-4 w-4" />
-            Job Execution History
-            <span className="text-zinc-500 font-normal text-xs ml-1">
-              ({filtered.length}{filtered.length !== records.length ? ` of ${records.length}` : ""} results)
-            </span>
+            Checks
+            {mode === "live" && deviceResults && (
+              <Badge variant="default" className="ml-1 text-xs">{deviceResults.checks.length}</Badge>
+            )}
+            {mode === "history" && (
+              <span className="text-zinc-500 font-normal text-xs ml-1">
+                ({filtered.length}{filtered.length !== records.length ? ` of ${records.length}` : ""} results)
+              </span>
+            )}
           </CardTitle>
-          <TimeRangePicker value={range} onChange={setRange} timezone={tz} />
+          <div className="flex items-center gap-2">
+            {/* Mode toggle */}
+            <div className="flex rounded-md border border-zinc-700 overflow-hidden text-xs">
+              <button
+                onClick={() => setMode("live")}
+                className={`px-3 py-1.5 transition-colors ${mode === "live" ? "bg-zinc-700 text-zinc-100" : "text-zinc-400 hover:text-zinc-200"}`}
+              >
+                Live
+              </button>
+              <button
+                onClick={() => setMode("history")}
+                className={`px-3 py-1.5 transition-colors ${mode === "history" ? "bg-zinc-700 text-zinc-100" : "text-zinc-400 hover:text-zinc-200"}`}
+              >
+                History
+              </button>
+            </div>
+            {mode === "history" && (
+              <TimeRangePicker value={range} onChange={setRange} timezone={tz} />
+            )}
+          </div>
         </div>
-        {/* Filters */}
-        <div className="flex items-center gap-2 pt-2">
-          <Select value={filterApp} onChange={(e) => setFilterApp(e.target.value)} className="w-40 text-xs">
-            <option value="">All Apps</option>
-            {appNames.map((n) => <option key={n} value={n!}>{n}</option>)}
-          </Select>
-          <Select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="w-36 text-xs">
-            <option value="">All Statuses</option>
-            {statuses.map((s) => <option key={s} value={s!}>{s}</option>)}
-          </Select>
-          <Select value={filterCollector} onChange={(e) => setFilterCollector(e.target.value)} className="w-40 text-xs">
-            <option value="">All Collectors</option>
-            {collectors.map((c) => <option key={c} value={c!}>{c}</option>)}
-          </Select>
-          {(filterApp || filterStatus || filterCollector) && (
-            <Button variant="ghost" size="sm" onClick={() => { setFilterApp(""); setFilterStatus(""); setFilterCollector(""); }}>
-              <X className="h-3 w-3" /> Clear
-            </Button>
-          )}
-        </div>
+        {/* History filters */}
+        {mode === "history" && (
+          <div className="flex items-center gap-2 pt-2">
+            <Select value={filterApp} onChange={(e) => setFilterApp(e.target.value)} className="w-40 text-xs">
+              <option value="">All Apps</option>
+              {appNames.map((n) => <option key={n} value={n!}>{n}</option>)}
+            </Select>
+            <Select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="w-36 text-xs">
+              <option value="">All Statuses</option>
+              {statuses.map((s) => <option key={s} value={s!}>{s}</option>)}
+            </Select>
+            <Select value={filterCollector} onChange={(e) => setFilterCollector(e.target.value)} className="w-40 text-xs">
+              <option value="">All Collectors</option>
+              {collectors.map((c) => <option key={c} value={c!}>{c}</option>)}
+            </Select>
+            {(filterApp || filterStatus || filterCollector) && (
+              <Button variant="ghost" size="sm" onClick={() => { setFilterApp(""); setFilterStatus(""); setFilterCollector(""); }}>
+                <X className="h-3 w-3" /> Clear
+              </Button>
+            )}
+          </div>
+        )}
       </CardHeader>
       <CardContent>
-        {filtered.length === 0 ? (
-          <p className="text-sm text-zinc-500 py-8 text-center">No results match the current filters.</p>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <SortableHead label="App" field="app_name" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-                <SortableHead label="Started" field="started_at" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-                <SortableHead label="Completed" field="executed_at" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-                <SortableHead label="Duration" field="duration" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-                <SortableHead label="Collector" field="collector" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-                <SortableHead label="Status" field="status" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filtered.map((r, i) => {
-                const startedAt = r.started_at ? new Date(r.started_at) : null;
-                const executedAt = new Date(r.executed_at);
-                const durationMs = r.execution_time_ms ?? (startedAt ? executedAt.getTime() - startedAt.getTime() : null);
-                return (
-                  <TableRow key={`${r.assignment_id}-${i}`}>
-                    <TableCell className="font-medium text-zinc-200">{r.app_name ?? "—"}</TableCell>
-                    <TableCell className="text-zinc-400 text-xs">
-                      {startedAt ? formatDate(startedAt.toISOString(), tz) : "—"}
+        {mode === "live" ? (
+          liveLoading ? (
+            <div className="flex justify-center py-12">
+              <Loader2 className="h-6 w-6 animate-spin text-zinc-500" />
+            </div>
+          ) : !deviceResults || deviceResults.checks.length === 0 ? (
+            <p className="text-sm text-zinc-500 py-8 text-center">No checks configured. Add apps on the Settings tab.</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>State</TableHead>
+                  <TableHead>App</TableHead>
+                  <TableHead>Output</TableHead>
+                  <TableHead>Latency</TableHead>
+                  <TableHead>Duration</TableHead>
+                  <TableHead>Collector</TableHead>
+                  <TableHead>Executed</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {deviceResults.checks.map((check) => (
+                  <TableRow key={check.assignment_id}>
+                    <TableCell><StatusBadge state={check.state_name} /></TableCell>
+                    <TableCell className="font-medium text-zinc-200">{check.app_name}</TableCell>
+                    <TableCell className="max-w-[240px] truncate text-zinc-400 text-sm" title={check.output}>
+                      {check.output || "—"}
                     </TableCell>
-                    <TableCell className="text-zinc-400 text-xs">
-                      {formatDate(r.executed_at, tz)}
+                    <TableCell className="text-zinc-400 text-sm font-mono">
+                      {check.rtt_ms != null
+                        ? `${check.rtt_ms}ms`
+                        : check.response_time_ms != null
+                          ? `${check.response_time_ms}ms`
+                          : "—"}
                     </TableCell>
                     <TableCell className="font-mono text-xs text-zinc-300">
-                      {durationMs != null ? `${Math.round(durationMs)}ms` : "—"}
+                      {check.execution_time_ms != null ? `${Math.round(check.execution_time_ms)}ms` : "—"}
                     </TableCell>
-                    <TableCell className="text-zinc-400 text-sm">
-                      {r.collector_name ?? "—"}
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge state={r.state_name} />
-                    </TableCell>
+                    <TableCell className="text-zinc-400 text-sm">{check.collector_name ?? "—"}</TableCell>
+                    <TableCell className="text-zinc-500 text-sm">{timeAgo(check.executed_at)}</TableCell>
                   </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
+                ))}
+              </TableBody>
+            </Table>
+          )
+        ) : (
+          histLoading ? (
+            <div className="flex justify-center py-12">
+              <Loader2 className="h-6 w-6 animate-spin text-zinc-500" />
+            </div>
+          ) : filtered.length === 0 ? (
+            <p className="text-sm text-zinc-500 py-8 text-center">No results match the current filters.</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <SortableHead label="Status" field="status" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+                  <SortableHead label="App" field="app_name" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+                  <TableHead>Output</TableHead>
+                  <TableHead>Latency</TableHead>
+                  <SortableHead label="Duration" field="duration" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+                  <SortableHead label="Started" field="started_at" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+                  <SortableHead label="Completed" field="executed_at" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+                  <SortableHead label="Collector" field="collector" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filtered.map((r, i) => {
+                  const startedAt = r.started_at ? new Date(r.started_at) : null;
+                  const executedAt = new Date(r.executed_at);
+                  const durationMs = r.execution_time_ms ?? (startedAt ? executedAt.getTime() - startedAt.getTime() : null);
+                  const latency = r.rtt_ms != null ? `${r.rtt_ms}ms` : r.response_time_ms != null ? `${r.response_time_ms}ms` : "—";
+                  return (
+                    <TableRow key={`${r.assignment_id}-${i}`}>
+                      <TableCell><StatusBadge state={r.state_name} /></TableCell>
+                      <TableCell className="font-medium text-zinc-200">{r.app_name ?? "—"}</TableCell>
+                      <TableCell className="max-w-[200px] truncate text-zinc-400 text-sm" title={r.output ?? ""}>
+                        {r.output || "—"}
+                      </TableCell>
+                      <TableCell className="text-zinc-400 text-sm font-mono">{latency}</TableCell>
+                      <TableCell className="font-mono text-xs text-zinc-300">
+                        {durationMs != null ? `${Math.round(durationMs)}ms` : "—"}
+                      </TableCell>
+                      <TableCell className="text-zinc-400 text-xs">
+                        {startedAt ? formatDate(startedAt.toISOString(), tz) : "—"}
+                      </TableCell>
+                      <TableCell className="text-zinc-400 text-xs">{formatDate(r.executed_at, tz)}</TableCell>
+                      <TableCell className="text-zinc-400 text-sm">{r.collector_name ?? "—"}</TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          )
         )}
       </CardContent>
     </Card>
@@ -4941,10 +4949,10 @@ export function DeviceDetailPage() {
               Settings
             </span>
           </TabTrigger>
-          <TabTrigger value="history">
+          <TabTrigger value="checks">
             <span className="flex items-center gap-1.5">
-              <Clock className="h-3.5 w-3.5" />
-              History
+              <Activity className="h-3.5 w-3.5" />
+              Checks
             </span>
           </TabTrigger>
         </TabsList>
@@ -4979,8 +4987,8 @@ export function DeviceDetailPage() {
         <TabsContent value="settings">
           <SettingsTab deviceId={deviceId} />
         </TabsContent>
-        <TabsContent value="history">
-          <HistoryTab deviceId={deviceId} />
+        <TabsContent value="checks">
+          <ChecksTab deviceId={deviceId} />
         </TabsContent>
       </Tabs>
     </div>

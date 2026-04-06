@@ -324,14 +324,16 @@ function LatencyTooltip({
   active,
   payload,
   label,
+  timezone,
 }: {
   active?: boolean;
   payload?: { name: string; value: number; color: string; payload?: { ts?: number } }[];
   label?: string;
+  timezone?: string;
 }) {
   if (!active || !payload?.length) return null;
   const ts = payload[0]?.payload?.ts;
-  const timeLabel = ts ? formatChartDateTime(ts) : label;
+  const timeLabel = ts ? formatChartDateTime(ts, timezone) : label;
   return (
     <div className="rounded-lg border border-zinc-700 bg-zinc-900 p-3 text-xs shadow-xl">
       <p className="mb-1.5 font-medium text-zinc-400">{timeLabel}</p>
@@ -354,7 +356,7 @@ function LatencyTooltip({
  * Each bucket is a colored segment: green = UP, red = DOWN, gray = no data.
  * Mouse hover shows a floating tooltip with time + status.
  */
-function StatusStrip({ data }: { data: ChartPoint[] }) {
+function StatusStrip({ data, timezone }: { data: ChartPoint[]; timezone?: string }) {
   const stripRef = useRef<HTMLDivElement>(null);
   const [hovered, setHovered] = useState<{
     idx: number;
@@ -439,7 +441,7 @@ function StatusStrip({ data }: { data: ChartPoint[] }) {
           className="pointer-events-none fixed z-50 rounded border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-xs shadow-xl"
           style={{ left: hovered.x + 14, top: hovered.y - 10 }}
         >
-          <div className="text-zinc-400">{hoveredPt.ts ? formatChartDateTime(hoveredPt.ts) : hoveredPt.time}</div>
+          <div className="text-zinc-400">{hoveredPt.ts ? formatChartDateTime(hoveredPt.ts, timezone) : hoveredPt.time}</div>
           <div
             className="mt-0.5 font-semibold"
             style={{
@@ -529,7 +531,7 @@ export function AvailabilityChart({ results, fromTs, toTs, timezone = "UTC", onZ
             No data
           </span>
         </div>
-        <StatusStrip data={data} />
+        <StatusStrip data={data} timezone={timezone} />
       </div>
 
       {/* Latency line chart — only shown when latency data is present */}
@@ -568,7 +570,7 @@ export function AvailabilityChart({ results, fromTs, toTs, timezone = "UTC", onZ
                   tickFormatter={(v: number) => `${v}ms`}
                   width={48}
                 />
-                <Tooltip content={<LatencyTooltip />} isAnimationActive={false} />
+                <Tooltip content={<LatencyTooltip timezone={timezone} />} isAnimationActive={false} />
                 <Legend
                   wrapperStyle={{ fontSize: 11, color: "#a1a1aa", paddingTop: 8 }}
                 />
