@@ -119,7 +119,7 @@ import {
 } from "@/api/hooks.ts";
 import { apiGet } from "@/api/client.ts";
 import { useAuth } from "@/hooks/useAuth.tsx";
-import type { Device as DeviceModel, DeviceAssignment, DeviceThresholdRow, ConfigDiffEntry, AlertLogEntry, MonitoringEvent, ResolvedTemplateResult, InterfaceRule } from "@/types/api.ts";
+import type { Device as DeviceModel, DeviceAssignment, DeviceThresholdRow, ConfigDiffEntry, AlertLogEntry, MonitoringEvent, ResolvedTemplateResult, InterfaceRule, InterfaceRecord } from "@/types/api.ts";
 import { useListState } from "@/hooks/useListState.ts";
 import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
 import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
@@ -1473,7 +1473,6 @@ function ConfigurationTab({ deviceId }: { deviceId: string }) {
                 {selectedAppData.lastCollected && (() => {
                   const ageSec = (Date.now() - new Date(selectedAppData.lastCollected).getTime()) / 1000;
                   const interval = selectedAppData.intervalSeconds;
-                  // green = within 1.5x interval, yellow = within 2.5x, red = beyond
                   const missedPolls = interval ? ageSec / interval : 0;
                   const statusColor = !interval ? "bg-zinc-700 text-zinc-300"
                     : missedPolls <= 1.5 ? "bg-emerald-900/60 text-emerald-400 border border-emerald-700/50"
@@ -2117,13 +2116,39 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
     [hasInterfacePoller, metaMap],
   );
 
-  // Filter out orphaned ClickHouse rows (interface_id not in metadata).
-  // This happens when metadata is recreated with a new UUID — the old
-  // ClickHouse rows reference a stale interface_id that no longer exists in PG.
-  const validInterfaces = useMemo(() => {
-    if (!metadata?.length) return interfaces ?? [];
-    const metaIds = new Set(metadata.map(m => m.id));
-    return (interfaces ?? []).filter(i => metaIds.has(i.interface_id));
+  // Build the interface list from metadata (PostgreSQL) as the primary source,
+  // enriched with ClickHouse data where available. This ensures all discovered
+  // interfaces are visible even if they haven't been polled yet (e.g. newly
+  // discovered interfaces or those with polling_enabled=false).
+  const validInterfaces = useMemo((): InterfaceRecord[] => {
+    const chMap = new Map<string, InterfaceRecord>();
+    for (const iface of interfaces ?? []) {
+      chMap.set(iface.interface_id, iface);
+    }
+    return (metadata ?? []).map(meta => {
+      const ch = chMap.get(meta.id);
+      if (ch) return ch;
+      // Metadata-only — synthesize a placeholder row with no polling data
+      return {
+        interface_id: meta.id,
+        if_index: meta.current_if_index,
+        if_name: meta.if_name,
+        if_alias: meta.if_alias || "",
+        if_speed_mbps: meta.if_speed_mbps || 0,
+        if_admin_status: "",
+        if_oper_status: "unknown",
+        in_octets: 0, out_octets: 0,
+        in_errors: 0, out_errors: 0,
+        in_discards: 0, out_discards: 0,
+        in_unicast_pkts: 0, out_unicast_pkts: 0,
+        in_rate_bps: 0, out_rate_bps: 0,
+        in_utilization_pct: 0, out_utilization_pct: 0,
+        poll_interval_sec: 0, counter_bits: 64, state: 3,
+        executed_at: "",
+        assignment_id: "", collector_id: "", app_id: "", device_id: meta.device_id,
+        collector_name: "", device_name: "", app_name: "", tenant_id: "",
+      } satisfies InterfaceRecord;
+    });
   }, [interfaces, metadata]);
 
   // Dynamic filter options
@@ -2137,7 +2162,7 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
     let data = validInterfaces;
     // Status badge filter
     if (statusFilter === "up") data = data.filter(i => i.if_oper_status === "up" && !isUnmonitored(i));
-    else if (statusFilter === "down") data = data.filter(i => i.if_oper_status !== "up" && !isUnmonitored(i));
+    else if (statusFilter === "down") data = data.filter(i => i.if_oper_status !== "up" && i.if_oper_status !== "unknown" && !isUnmonitored(i));
     else if (statusFilter === "unmonitored") data = data.filter(i => isUnmonitored(i));
     // Column filters
     if (filterName) data = data.filter(i => matchesTextFilter(i.if_name, filterName));
@@ -2267,7 +2292,7 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
     return <div className="flex h-64 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-brand-500" /></div>;
   }
 
-  if (!interfaces?.length) {
+  if (!interfaces?.length && !metadata?.length) {
     return (
       <Card><CardContent className="py-12">
         <div className="flex flex-col items-center justify-center text-zinc-500">
@@ -2525,7 +2550,7 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
                   <TableCell className="font-mono text-xs">
                     <span className={iface.out_errors > 0 ? "text-amber-400" : "text-zinc-600"}>{iface.out_errors.toLocaleString()}</span>
                   </TableCell>
-                  <TableCell className="text-zinc-500 text-xs">{timeAgo(iface.executed_at)}</TableCell>
+                  <TableCell className="text-zinc-500 text-xs">{iface.executed_at ? timeAgo(iface.executed_at) : "—"}</TableCell>
                   <TableCell className="text-center" onClick={e => e.stopPropagation()}>
                     <div className="flex items-center gap-1 justify-center">
                       <InterfaceToggleCell
