@@ -77,26 +77,26 @@ export function InterfaceToggleCell({
       {/* Expanded: popover */}
       {open && (
         <div
-          className="absolute right-0 top-full mt-1 z-50 bg-zinc-900 border border-zinc-700 rounded-lg shadow-lg p-2 min-w-[140px]"
+          className="absolute right-0 top-full mt-1 z-50 bg-zinc-700 border border-zinc-600 rounded-lg shadow-xl p-2 min-w-[140px]"
           onMouseEnter={cancelClose}
           onMouseLeave={scheduleClose}
           onClick={(e) => e.stopPropagation()}
         >
           {toggleItems.map((item, i) => (
             <div key={item.label}>
-              {i === 2 && <div className="border-t border-zinc-700 my-1" />}
+              {i === 2 && <div className="border-t border-zinc-600 my-1" />}
               <button
-                className="flex items-center gap-2 w-full px-2 py-1 rounded text-xs hover:bg-zinc-800 transition-colors cursor-pointer"
+                className="flex items-center gap-2 w-full px-2 py-1 rounded text-xs hover:bg-zinc-600 transition-colors cursor-pointer"
                 onClick={(e) => { e.stopPropagation(); item.onToggle(); }}
               >
                 <div
                   className={`h-3 w-3 rounded border transition-colors ${
                     item.active
                       ? `${item.color} border-transparent`
-                      : "bg-transparent border-zinc-600"
+                      : "bg-transparent border-zinc-400"
                   }`}
                 />
-                <span className={item.active ? "text-zinc-200" : "text-zinc-500"}>
+                <span className={item.active ? "text-zinc-100" : "text-zinc-300"}>
                   {item.label}
                 </span>
               </button>

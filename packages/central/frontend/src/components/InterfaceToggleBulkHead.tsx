@@ -77,19 +77,19 @@ export function InterfaceToggleBulkHead({
 
       {open && hasSelection && (
         <div
-          className="absolute right-0 top-full mt-1 z-50 bg-zinc-900 border border-zinc-700 rounded-lg shadow-lg p-2 min-w-[180px] text-left"
+          className="absolute right-0 top-full mt-1 z-50 bg-zinc-700 border border-zinc-600 rounded-lg shadow-xl p-2 min-w-[180px] text-left"
           onMouseEnter={cancelClose}
           onMouseLeave={scheduleClose}
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="text-[10px] text-zinc-500 px-2 pb-1">
+          <div className="text-[10px] text-zinc-400 px-2 pb-1">
             Bulk ({activeSelectedCount} selected)
           </div>
           {ITEMS.map((item, i) => (
             <div key={item.label}>
-              {i === 2 && <div className="border-t border-zinc-700 my-1" />}
+              {i === 2 && <div className="border-t border-zinc-600 my-1" />}
               <button
-                className="flex items-center gap-2 w-full px-2 py-1 rounded text-xs hover:bg-zinc-800 transition-colors cursor-pointer"
+                className="flex items-center gap-2 w-full px-2 py-1 rounded text-xs hover:bg-zinc-600 transition-colors cursor-pointer"
                 onClick={(e) => { e.stopPropagation(); handleToggle(item.field); }}
               >
                 <input
