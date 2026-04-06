@@ -36,7 +36,8 @@ import {
   useLogFilters,
   useLogsTail,
 } from "@/api/hooks.ts";
-import { formatBytes, formatUptime, timeAgo } from "@/lib/utils.ts";
+import { formatBytes, formatUptime, timeAgo, formatLogTimestamp } from "@/lib/utils.ts";
+import { useTimezone } from "@/hooks/useTimezone.ts";
 import type {
   DockerSystemInfo,
   DockerEvent,
@@ -508,7 +509,7 @@ function InlineLogViewer({ hostLabel, container }: { hostLabel: string; containe
       <CardContent>
         <div ref={scrollRef} className="bg-zinc-950 rounded p-3 font-mono text-xs text-zinc-300 max-h-64 overflow-auto whitespace-pre-wrap">
           {logs.data?.data?.lines?.length ? (
-            logs.data.data.lines.map((line, i) => <div key={i}>{line}</div>)
+            logs.data.data.lines.map((line: string | { timestamp?: string; message?: string }, i: number) => <div key={i}>{typeof line === 'object' ? line.message ?? '' : line}</div>)
           ) : (
             <span className="text-zinc-600">No log lines available</span>
           )}
@@ -522,6 +523,7 @@ function InlineLogViewer({ hostLabel, container }: { hostLabel: string; containe
 
 function LogsTab({ hostLabel }: { hostLabel: string }) {
   const filters = useLogFilters();
+  const timezone = useTimezone();
 
   const [collector, setCollector] = useState("");
   const [container, setContainer] = useState("");
@@ -657,7 +659,7 @@ function LogsTab({ hostLabel }: { hostLabel: string }) {
             {entries.map((entry, i) => (
               <TableRow key={`${entry.timestamp}-${i}`} className="hover:bg-zinc-800/50">
                 <TableCell className="font-mono text-xs text-zinc-500 whitespace-nowrap">
-                  {new Date(entry.timestamp).toLocaleString()}
+                  {formatLogTimestamp(entry.timestamp, timezone)}
                 </TableCell>
                 <TableCell>
                   <span className={`text-xs font-medium ${levelColors[entry.level] ?? "text-zinc-400"}`}>

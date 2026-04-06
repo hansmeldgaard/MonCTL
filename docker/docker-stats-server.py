@@ -71,7 +71,15 @@ def _log_collector():
         try:
             for line in container.logs(stream=True, follow=True, tail=50, timestamps=True):
                 decoded = line.decode("utf-8", errors="replace").rstrip("\n")
-                buf.append(decoded)
+                # Docker timestamps=True format: "2026-04-04T17:11:55.242448430Z message"
+                # Split into structured {timestamp, message} for the log shipper
+                z_pos = decoded.find('Z ', 19, 40)
+                if z_pos > 0 and decoded[4] == '-' and decoded[10] == 'T':
+                    ts = decoded[:z_pos + 1]
+                    msg = decoded[z_pos + 2:]
+                    buf.append({"timestamp": ts, "message": msg})
+                else:
+                    buf.append(decoded)
         except Exception:
             pass  # container stopped or removed
 
@@ -116,6 +124,47 @@ def _event_listener():
                     _event_buffer.append(entry)
         except Exception:
             time.sleep(5)
+
+
+# ── NTP status ───────────────────────────────────────────────────────────────
+
+def _collect_ntp_status() -> dict:
+    """Check NTP synchronization status from the host filesystem.
+
+    Uses /run/systemd/timesync/synchronized (exists only when synced)
+    and /etc/systemd/timesyncd.conf for the configured server.
+    """
+    result: dict = {"synchronized": False, "server": None, "offset_ms": None}
+
+    # Check sync status — file exists only when timesyncd has synced
+    result["synchronized"] = os.path.isfile("/host_root/run/systemd/timesync/synchronized")
+
+    # Read configured NTP server from timesyncd.conf
+    try:
+        with open("/host_root/etc/systemd/timesyncd.conf") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("NTP="):
+                    result["server"] = line.split("=", 1)[1].strip()
+                    break
+                elif line.startswith("FallbackNTP=") and not result["server"]:
+                    result["server"] = line.split("=", 1)[1].strip().split()[0]
+    except Exception:
+        pass
+
+    # Also check chrony if installed (some hosts may use chrony instead)
+    if not result["server"]:
+        try:
+            with open("/host_root/etc/chrony/chrony.conf") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("server ") or line.startswith("pool "):
+                        result["server"] = line.split()[1]
+                        break
+        except Exception:
+            pass
+
+    return result
 
 
 # ── Stats collection ─────────────────────────────────────────────────────────
@@ -366,6 +415,8 @@ class StatsHandler(BaseHTTPRequestHandler):
 
             disk = shutil.disk_usage("/host_root") if os.path.exists("/host_root") else None
 
+            ntp = _collect_ntp_status()
+
             self._json_response(200, {
                 "hostname": HOSTNAME,
                 "docker": {
@@ -389,6 +440,7 @@ class StatsHandler(BaseHTTPRequestHandler):
                     "swap_total_bytes": mem.get("SwapTotal"),
                     "swap_free_bytes": mem.get("SwapFree"),
                     "uptime_seconds": uptime_seconds,
+                    "ntp": ntp,
                     "disk_total_bytes": disk.total if disk else None,
                     "disk_used_bytes": disk.used if disk else None,
                     "disk_free_bytes": disk.free if disk else None,
@@ -708,6 +760,7 @@ def _build_system_payload() -> dict:
         pass
 
     disk = shutil.disk_usage("/host_root") if os.path.exists("/host_root") else None
+    ntp = _collect_ntp_status()
 
     return {
         "hostname": HOSTNAME,
@@ -732,6 +785,7 @@ def _build_system_payload() -> dict:
             "swap_total_bytes": mem.get("SwapTotal"),
             "swap_free_bytes": mem.get("SwapFree"),
             "uptime_seconds": uptime_seconds,
+            "ntp": ntp,
             "disk_total_bytes": disk.total if disk else None,
             "disk_used_bytes": disk.used if disk else None,
             "disk_free_bytes": disk.free if disk else None,
@@ -816,7 +870,7 @@ def _push_loop():
             system = _build_system_payload()
 
             # Logs: only new lines since last push
-            logs: dict[str, list[str]] = {}
+            logs: dict[str, list] = {}
             with _log_lock:
                 for name, buf in _log_buffers.items():
                     current_len = len(buf)

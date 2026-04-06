@@ -704,7 +704,7 @@ async def get_docker_push_events(
         return []
 
 
-async def append_docker_push_logs(label: str, logs: dict[str, list[str]]) -> None:
+async def append_docker_push_logs(label: str, logs: dict[str, list]) -> None:
     """Store log lines per container. Replaces previous buffer each push."""
     if _redis is None or not logs:
         return

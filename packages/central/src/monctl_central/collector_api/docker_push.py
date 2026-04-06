@@ -46,7 +46,7 @@ class DockerStatsPush(BaseModel):
     timestamp: float
     stats: dict | None = None
     system: dict | None = None
-    logs: dict[str, list[str]] | None = None
+    logs: dict[str, list] | None = None
     events: list[dict] | None = None
     images: dict | None = None
 
@@ -81,17 +81,24 @@ async def push_docker_stats(
             rows = []
             for container_name, lines in payload.logs.items():
                 for line in lines:
+                    # Lines can be plain strings or dicts with timestamp/message
+                    if isinstance(line, dict):
+                        msg = line.get("message", "")
+                        ts = line.get("timestamp", now)
+                    else:
+                        msg = str(line)
+                        ts = now
                     rows.append({
-                        "timestamp": now,
+                        "timestamp": ts,
                         "collector_id": "00000000-0000-0000-0000-000000000000",
                         "collector_name": label,
                         "host_label": label,
                         "source_type": "docker",
                         "container_name": container_name,
                         "image_name": "",
-                        "level": _detect_level(line),
-                        "stream": "stdout",
-                        "message": line,
+                        "level": _detect_level(msg),
+                        "stream": line.get("stream", "stdout") if isinstance(line, dict) else "stdout",
+                        "message": msg,
                     })
             if rows:
                 ch.insert("logs", rows, column_names=[

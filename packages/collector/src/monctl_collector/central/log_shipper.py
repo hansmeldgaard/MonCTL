@@ -136,17 +136,7 @@ class LogShipper:
                             new_lines.append(line)
 
                 for line in new_lines:
-                    if isinstance(line, str):
-                        entries.append({
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                            "source_type": "docker",
-                            "container_name": name,
-                            "image_name": container.get("image", ""),
-                            "level": self._detect_level(line),
-                            "stream": "stdout",
-                            "message": line,
-                        })
-                    else:
+                    if isinstance(line, dict):
                         entries.append({
                             "timestamp": line.get(
                                 "timestamp", datetime.now(timezone.utc).isoformat()
@@ -157,6 +147,24 @@ class LogShipper:
                             "level": self._detect_level(line.get("message", "")),
                             "stream": line.get("stream", "stdout"),
                             "message": line.get("message", str(line)),
+                        })
+                    else:
+                        # Raw string — parse Docker timestamp prefix if present
+                        # Format: "2026-04-04T17:11:55.242448430Z message"
+                        ts = datetime.now(timezone.utc).isoformat()
+                        msg = line
+                        z_pos = line.find('Z ', 19, 40) if len(line) > 20 else -1
+                        if z_pos > 0 and line[4] == '-' and line[10] == 'T':
+                            ts = line[:z_pos + 1]
+                            msg = line[z_pos + 2:]
+                        entries.append({
+                            "timestamp": ts,
+                            "source_type": "docker",
+                            "container_name": name,
+                            "image_name": container.get("image", ""),
+                            "level": self._detect_level(msg),
+                            "stream": "stdout",
+                            "message": msg,
                         })
 
                 if new_lines:
