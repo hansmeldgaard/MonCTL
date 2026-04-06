@@ -1101,6 +1101,21 @@ async def create_assignment(
                        f"Use PUT /assignments/{{id}} to update it.",
             )
 
+    # Enforce at most one assignment per role per device
+    if request.role and request.device_id:
+        role_conflict = (await db.execute(
+            select(AppAssignment).where(
+                AppAssignment.device_id == uuid.UUID(request.device_id),
+                AppAssignment.role == request.role,
+            )
+        )).scalar_one_or_none()
+        if role_conflict:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"A '{request.role}' assignment already exists for this device "
+                       f"(assignment {role_conflict.id}). Remove it first or update it.",
+            )
+
     assignment = AppAssignment(
         app_id=uuid.UUID(request.app_id),
         app_version_id=uuid.UUID(request.app_version_id),
