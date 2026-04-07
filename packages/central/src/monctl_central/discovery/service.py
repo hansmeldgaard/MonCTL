@@ -75,7 +75,13 @@ async def process_discovery_result(
             metadata[key] = val
     metadata["discovered_at"] = datetime.now(timezone.utc).isoformat()
 
-    changes: dict[str, str] = {"metadata": "updated"}
+    # Auto-rename: if device was bulk-imported (name == address), rename to sysName
+    sys_name_val = (config_data.get("sys_name") or "").strip()
+    if sys_name_val and device.name == device.address and len(sys_name_val) <= 255:
+        changes: dict[str, str] = {"metadata": "updated", "name": f"{device.name} → {sys_name_val}"}
+        device.name = sys_name_val
+    else:
+        changes: dict[str, str] = {"metadata": "updated"}
 
     # 2. Match sysObjectID against device types
     match_result = None

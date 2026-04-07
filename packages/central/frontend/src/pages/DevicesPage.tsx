@@ -39,6 +39,7 @@ import { ListChecks } from "lucide-react";
 import type { DeviceBulkPatchRequest } from "@/types/api.ts";
 import { useTablePreferences, PAGE_SIZE_OPTIONS } from "@/hooks/useTablePreferences.ts";
 import { AddDeviceDialog } from "@/components/AddDeviceDialog.tsx";
+import { BulkImportDevicesDialog } from "@/components/BulkImportDevicesDialog.tsx";
 import { ApplyTemplateDialog } from "@/components/ApplyTemplateDialog.tsx";
 import { DeviceIcon, categoryIconUrl } from "@/components/DeviceIcon.tsx";
 
@@ -117,8 +118,9 @@ export function DevicesPage() {
   const [selectedTenantId, setSelectedTenantId] = useState("");
   const autoApplyTemplates = useAutoApplyTemplates();
 
-  // ── Add dialog ──────────────────────────────────────────
+  // ── Add / Import dialogs ────────────────────────────────
   const [addOpen, setAddOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   // ── Infinite scroll state ───────────────────────────────
   const [infinitePages, setInfinitePages] = useState(1);
@@ -437,10 +439,16 @@ export function DevicesPage() {
         </Button>
 
         {canCreate("device") && (
+          <>
+          <Button size="sm" variant="secondary" onClick={() => setImportOpen(true)} className="gap-1.5">
+            <FolderInput className="h-4 w-4" />
+            Import
+          </Button>
           <Button size="sm" onClick={() => setAddOpen(true)} className="gap-1.5">
             <Plus className="h-4 w-4" />
             Add Device
           </Button>
+          </>
         )}
       </div>
 
@@ -907,6 +915,9 @@ export function DevicesPage() {
 
       {/* Add Device Dialog */}
       <AddDeviceDialog open={addOpen} onClose={() => setAddOpen(false)} />
+
+      {/* Bulk Import Dialog */}
+      <BulkImportDevicesDialog open={importOpen} onClose={() => setImportOpen(false)} />
 
       {/* Apply Template Dialog */}
       <ApplyTemplateDialog

@@ -337,6 +337,39 @@ class DeviceBulkPatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class BulkImportDevicesRequest(BaseModel):
+    addresses: list[str] = Field(min_length=1, max_length=500)
+    tenant_id: str | None = None
+    collector_group_id: str | None = None
+    credentials: dict[str, str] = Field(default_factory=dict)
+    labels: dict[str, str] = Field(default_factory=dict)
+    device_category: str = Field(default="host", max_length=64)
+
+    @field_validator("addresses")
+    @classmethod
+    def check_addresses(cls, v: list[str]) -> list[str]:
+        errors: list[str] = []
+        seen: set[str] = set()
+        validated: list[str] = []
+        for raw in v:
+            addr = raw.strip()
+            if not addr or addr in seen:
+                continue
+            seen.add(addr)
+            try:
+                validated.append(validate_address(addr))
+            except ValueError as e:
+                errors.append(str(e))
+        if errors:
+            raise ValueError(errors)
+        return validated
+
+    @field_validator("labels")
+    @classmethod
+    def check_labels(cls, v: dict[str, str]) -> dict[str, str]:
+        return validate_labels(v)
+
+
 @router.post("/bulk-patch")
 async def bulk_patch_devices(
     body: DeviceBulkPatchRequest,
@@ -401,6 +434,73 @@ async def bulk_patch_devices(
     return {
         "status": "success",
         "data": {"updated": len(visible_ids), "skipped": skipped},
+    }
+
+
+@router.post("/bulk-import", status_code=status.HTTP_201_CREATED)
+async def bulk_import_devices(
+    request: BulkImportDevicesRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_permission("device", "create")),
+):
+    """Import multiple devices from a list of IP addresses.
+
+    Devices are created immediately with the IP as their initial name. If an
+    SNMP credential is provided and a collector group is set, SNMP discovery
+    is queued for each device. Discovery will auto-rename the device to sysName
+    once it completes (if the name still equals the address).
+    """
+    tenant_id_uuid = uuid.UUID(request.tenant_id) if request.tenant_id else None
+    cgroup_id_uuid = uuid.UUID(request.collector_group_id) if request.collector_group_id else None
+
+    devices_to_create = [
+        Device(
+            name=addr,
+            address=addr,
+            device_category=request.device_category,
+            tenant_id=tenant_id_uuid,
+            collector_group_id=cgroup_id_uuid,
+            credentials=request.credentials,
+            labels=request.labels,
+            metadata_={},
+        )
+        for addr in request.addresses
+    ]
+
+    db.add_all(devices_to_create)
+    await _auto_register_label_keys(request.labels, db)
+    await db.flush()
+
+    device_ids = [d.id for d in devices_to_create]
+    stmt = (
+        select(Device)
+        .options(
+            selectinload(Device.tenant),
+            selectinload(Device.collector_group),
+            selectinload(Device.device_type),
+        )
+        .where(Device.id.in_(device_ids))
+    )
+    created_devices = (await db.execute(stmt)).scalars().all()
+
+    has_snmp = any("snmp" in k.lower() for k in request.credentials)
+    discovery_queued = 0
+    if has_snmp and cgroup_id_uuid:
+        from monctl_central.cache import set_discovery_flag
+        for device in created_devices:
+            try:
+                await set_discovery_flag(str(device.id))
+                discovery_queued += 1
+            except Exception:
+                pass
+
+    return {
+        "status": "success",
+        "data": {
+            "created": len(created_devices),
+            "discovery_queued": discovery_queued,
+            "devices": [_format_device(d) for d in created_devices],
+        },
     }
 
 

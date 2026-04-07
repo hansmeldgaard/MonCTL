@@ -933,6 +933,27 @@ export function useCreateDevice() {
   });
 }
 
+export function useBulkImportDevices() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: {
+      addresses: string[];
+      tenant_id?: string;
+      collector_group_id?: string;
+      credentials?: Record<string, string>;
+      labels?: Record<string, string>;
+      device_category?: string;
+    }) =>
+      apiPost<{ created: number; discovery_queued: number; devices: Device[] }>(
+        "/devices/bulk-import",
+        data
+      ),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["devices"] });
+    },
+  });
+}
+
 export function useDeleteDevice() {
   const qc = useQueryClient();
   return useMutation({
