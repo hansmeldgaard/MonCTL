@@ -116,6 +116,7 @@ packages/
 - **All apps are BasePoller subclasses** with `class Poller(BasePoller)` and `async def poll() -> PollResult`. No legacy script (stdin/stdout) execution.
 - **Built-in packs** (`packs/`) are auto-imported at startup if not already present. Uses "skip" resolution (creates missing apps, never overwrites existing).
 - **`snmp_discovery` is special**: One-shot (`interval=0`), injected into job lists when Redis discovery flag is set. Looked up by name, not ID.
+- **Auto-rename on discovery**: `discovery/service.py` renames a device to `sysName` if `device.name == device.address` at discovery time. This is how bulk-imported devices (created via `POST /devices/bulk-import` with IP as temporary name) get their hostnames automatically. Manually named devices are never affected.
 - **`apps/` directory** contains reference source for SNMP apps only. Not used at runtime — packs are the single source of truth.
 - **Error categories**: All apps MUST set `error_category` on error PollResults: `"device"` (unreachable/timeout), `"config"` (missing connector/credential), `"app"` (bug/crash). Empty string = no error.
 
