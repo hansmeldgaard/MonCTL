@@ -61,7 +61,7 @@ export interface AuthUser {
   table_page_size: number;
   table_scroll_mode: "paginated" | "infinite";
   idle_timeout_minutes: number;
-  iface_status_filter: "all" | "up" | "down" | "unmonitored";
+  iface_status_filter: "all" | "up" | "down" | "monitored" | "unmonitored";
   iface_traffic_unit: "auto" | "kbps" | "mbps" | "gbps" | "pct";
   iface_chart_metric: "traffic" | "errors" | "discards";
   iface_time_range: "1h" | "6h" | "24h" | "7d" | "30d";
