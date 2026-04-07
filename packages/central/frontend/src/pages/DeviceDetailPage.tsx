@@ -2579,7 +2579,21 @@ function InterfaceRulesCard({ deviceId }: { deviceId: string }) {
   const [draft, setDraft] = useState<InterfaceRule[]>([]);
   const [evalResult, setEvalResult] = useState<{ matched: number; changed: number; total: number } | null>(null);
 
-  const startEdit = () => { setDraft(rules && rules.length > 0 ? JSON.parse(JSON.stringify(rules)) : [emptyRule()]); setEditing(true); setEvalResult(null); };
+  const startEdit = () => {
+    const base: InterfaceRule[] = rules && rules.length > 0 ? JSON.parse(JSON.stringify(rules)) : [emptyRule()];
+    // Normalize settings so all fields are explicit — prevents checkbox ?? fallback from hiding missing values
+    const normalized = base.map((r) => ({
+      ...r,
+      settings: {
+        polling_enabled: r.settings.polling_enabled ?? true,
+        alerting_enabled: r.settings.alerting_enabled ?? true,
+        poll_metrics: r.settings.poll_metrics ?? "all",
+      },
+    }));
+    setDraft(normalized);
+    setEditing(true);
+    setEvalResult(null);
+  };
   const cancel = () => { setEditing(false); setEvalResult(null); };
 
   const save = () => {
