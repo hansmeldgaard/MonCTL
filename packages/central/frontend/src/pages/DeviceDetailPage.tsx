@@ -2046,9 +2046,9 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
 
   // Build metadata lookup
   const metaMap = useMemo(() => {
-    const m = new Map<string, { polling_enabled: boolean; alerting_enabled: boolean; poll_metrics: string; rules_managed: boolean }>();
+    const m = new Map<string, { polling_enabled: boolean; alerting_enabled: boolean; poll_metrics: string; rules_managed: boolean; if_alias: string }>();
     for (const meta of metadata ?? []) {
-      m.set(meta.id, { polling_enabled: meta.polling_enabled, alerting_enabled: meta.alerting_enabled, poll_metrics: meta.poll_metrics ?? "all", rules_managed: meta.rules_managed });
+      m.set(meta.id, { polling_enabled: meta.polling_enabled, alerting_enabled: meta.alerting_enabled, poll_metrics: meta.poll_metrics ?? "all", rules_managed: meta.rules_managed, if_alias: meta.if_alias ?? "" });
     }
     return m;
   }, [metadata]);
@@ -2485,7 +2485,7 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
                       )}
                     </span>
                   </TableCell>
-                  <TableCell className="text-zinc-400 text-sm">{iface.if_alias || "\u2014"}</TableCell>
+                  <TableCell className="text-zinc-400 text-sm">{(meta?.if_alias || iface.if_alias) || "\u2014"}</TableCell>
                   <TableCell className="text-zinc-300 text-sm">{formatSpeed(iface.if_speed_mbps)}</TableCell>
                   <TableCell className="font-mono text-xs text-cyan-400">
                     {iface.in_rate_bps > 0 ? formatTraffic(iface.in_rate_bps, trafficUnit, iface.if_speed_mbps) : "\u2014"}
