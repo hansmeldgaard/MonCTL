@@ -412,16 +412,16 @@ async def device_interfaces_latest(
     if not check_tenant_access(auth, device.tenant_id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-    # Get valid interface_ids from metadata to filter out orphaned ClickHouse rows.
-    # Orphans occur when metadata is recreated (new UUID) but old ClickHouse rows
-    # still reference the previous interface_id.
+    # Load metadata from PostgreSQL — authoritative source for static interface fields.
     from sqlalchemy import select
-    valid_ids_result = await db.execute(
-        select(InterfaceMetadata.id).where(
+    meta_rows = (await db.execute(
+        select(InterfaceMetadata).where(
             InterfaceMetadata.device_id == uuid.UUID(device_id),
         )
-    )
-    valid_ids = {str(row[0]) for row in valid_ids_result.all()}
+    )).scalars().all()
+    valid_ids = {str(m.id) for m in meta_rows}
+    # Map interface_id -> metadata for merging into ClickHouse rows
+    meta_by_id = {str(m.id): m for m in meta_rows}
 
     ch = get_clickhouse()
     try:
@@ -432,8 +432,17 @@ async def device_interfaces_latest(
         else:
             raise
 
-    data = [_format_interface_row(r) for r in rows
-            if str(r.get("interface_id", "")) in valid_ids]
+    def _merge_meta(row: dict) -> dict:
+        formatted = _format_interface_row(row)
+        meta = meta_by_id.get(formatted["interface_id"])
+        if meta:
+            # PostgreSQL metadata is authoritative for static fields
+            formatted["if_name"] = meta.if_name
+            formatted["if_alias"] = meta.if_alias or ""
+            formatted["if_speed_mbps"] = meta.if_speed_mbps
+        return formatted
+
+    data = [_merge_meta(r) for r in rows if str(r.get("interface_id", "")) in valid_ids]
     return {
         "status": "success",
         "data": data,
