@@ -1974,7 +1974,7 @@ function matchesTextFilter(value: string, filter: string): boolean {
 
 const MAX_CHART_INTERFACES = 8;
 
-type IfaceStatusFilter = "all" | "up" | "down" | "unmonitored";
+type IfaceStatusFilter = "all" | "up" | "down" | "monitored";
 
 function InterfacesTab({ deviceId }: { deviceId: string }) {
   const { user } = useAuth();
@@ -2025,9 +2025,12 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
     (user?.iface_chart_metric as ChartMetric) ?? "traffic"
   );
   const [chartMode, setChartMode] = useState<ChartMode>("overlaid");
-  const [statusFilter, setStatusFilter] = useState<IfaceStatusFilter>(
-    (user?.iface_status_filter as IfaceStatusFilter) ?? "all"
-  );
+  const [statusFilter, setStatusFilter] = useState<IfaceStatusFilter>(() => {
+    const saved = user?.iface_status_filter;
+    // "unmonitored" was renamed to "monitored" — treat old saved value as "all"
+    if (saved === "unmonitored" || !["all", "up", "down", "monitored"].includes(saved ?? "")) return "all";
+    return (saved as IfaceStatusFilter) ?? "all";
+  });
   const [filterName, setFilterName] = useState("");
   const [filterAlias, setFilterAlias] = useState("");
   const [filterOperStatus, setFilterOperStatus] = useState<string>("");
@@ -2112,7 +2115,7 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
     // Status badge filter
     if (statusFilter === "up") data = data.filter(i => i.if_oper_status === "up" && !isUnmonitored(i));
     else if (statusFilter === "down") data = data.filter(i => i.if_oper_status !== "up" && i.if_oper_status !== "unknown" && !isUnmonitored(i));
-    else if (statusFilter === "unmonitored") data = data.filter(i => isUnmonitored(i));
+    else if (statusFilter === "monitored") data = data.filter(i => !isUnmonitored(i));
     // Column filters
     if (filterName) data = data.filter(i => matchesTextFilter(i.if_name, filterName));
     if (filterAlias) data = data.filter(i => matchesTextFilter(i.if_alias || "", filterAlias));
@@ -2255,7 +2258,7 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
 
   const upCount = validInterfaces.filter(i => i.if_oper_status === "up" && !isUnmonitored(i)).length;
   const downCount = validInterfaces.filter(i => i.if_oper_status !== "up" && !isUnmonitored(i)).length;
-  const unmonitoredCount = validInterfaces.filter(isUnmonitored).length;
+  const monitoredCount = validInterfaces.filter(i => !isUnmonitored(i)).length;
 
   const handleStatusFilter = (next: IfaceStatusFilter) => {
     setStatusFilter(next);
@@ -2287,7 +2290,7 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
             { value: "all" as const, count: validInterfaces.length, label: "all", cls: "bg-zinc-700 text-zinc-200 border-zinc-600" },
             { value: "up" as const, count: upCount, label: "up", cls: "bg-green-900/60 text-green-400 border-green-700" },
             { value: "down" as const, count: downCount, label: "down", cls: "bg-red-900/60 text-red-400 border-red-700" },
-            { value: "unmonitored" as const, count: unmonitoredCount, label: "unmonitored", cls: "bg-zinc-800 text-zinc-400 border-zinc-600" },
+            { value: "monitored" as const, count: monitoredCount, label: "monitored", cls: "bg-brand-900/60 text-brand-400 border-brand-700" },
           ]).map(({ value, count, label, cls }) => (
             <button
               key={value}
@@ -2526,8 +2529,8 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
               {sorted.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={12} className="text-center py-8 text-zinc-500 text-sm">
-                    {statusFilter === "unmonitored"
-                      ? "No unmonitored interfaces."
+                    {statusFilter === "monitored"
+                      ? "No monitored interfaces."
                       : statusFilter === "up"
                       ? "No interfaces are currently up."
                       : statusFilter === "down"
