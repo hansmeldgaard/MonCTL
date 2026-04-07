@@ -1280,13 +1280,14 @@ function ConfigurationTab({ deviceId }: { deviceId: string }) {
 
   // Group by app_id for sidebar and current view
   const configApps = useMemo(() => {
-    const apps = new Map<string, { appName: string; data: Record<string, string>; lastCollected: string | null; intervalSeconds: number | null }>();
-    // Build a map of app_id -> interval from assignments
-    const intervalByAppId = new Map<string, number>();
+    const apps = new Map<string, { appName: string; data: Record<string, string>; lastCollected: string | null; intervalSeconds: number | null; scheduleHuman: string | null }>();
+    // Build a map of app_id -> schedule info from assignments
+    const scheduleByAppId = new Map<string, { intervalSeconds: number | null; scheduleHuman: string }>();
     for (const a of (assignments ?? [])) {
-      if (a.schedule_type === "interval") {
-        intervalByAppId.set(a.app.id, Number(a.schedule_value));
-      }
+      scheduleByAppId.set(a.app.id, {
+        intervalSeconds: a.schedule_type === "interval" ? Number(a.schedule_value) : null,
+        scheduleHuman: a.schedule_human ?? (a.schedule_type === "interval" ? `every ${a.schedule_value}s` : a.schedule_value),
+      });
     }
     for (const row of (configRows ?? [])) {
       const appId = String(row.app_id ?? "unknown");
@@ -1295,7 +1296,8 @@ function ConfigurationTab({ deviceId }: { deviceId: string }) {
       const appName = String(row.app_name ?? appId);
       const executedAt = String(row.executed_at ?? "");
       if (!apps.has(appId)) {
-        apps.set(appId, { appName, data: {}, lastCollected: null, intervalSeconds: intervalByAppId.get(appId) ?? null });
+        const sched = scheduleByAppId.get(appId);
+        apps.set(appId, { appName, data: {}, lastCollected: null, intervalSeconds: sched?.intervalSeconds ?? null, scheduleHuman: sched?.scheduleHuman ?? null });
       }
       const entry = apps.get(appId)!;
       if (!(key in entry.data)) {
@@ -1419,11 +1421,18 @@ function ConfigurationTab({ deviceId }: { deviceId: string }) {
                     : missedPolls <= 2.5 ? "bg-amber-900/60 text-amber-400 border border-amber-700/50"
                     : "bg-red-900/60 text-red-400 border border-red-700/50";
                   return (
-                    <span
-                      className={`ml-auto text-xs font-medium px-2 py-0.5 rounded ${statusColor}`}
-                      title={`Last polled: ${formatDate(selectedAppData.lastCollected, tz)}${interval ? ` · Interval: ${interval}s` : ""}`}
-                    >
-                      {timeAgo(selectedAppData.lastCollected)}
+                    <span className="ml-auto flex items-center gap-2">
+                      <span
+                        className={`text-xs font-medium px-2 py-0.5 rounded ${statusColor}`}
+                        title={`Last polled: ${formatDate(selectedAppData.lastCollected, tz)}`}
+                      >
+                        {timeAgo(selectedAppData.lastCollected)}
+                      </span>
+                      {selectedAppData.scheduleHuman && (
+                        <span className="text-xs text-zinc-500 font-normal">
+                          ↻ {selectedAppData.scheduleHuman}
+                        </span>
+                      )}
                     </span>
                   );
                 })()}
@@ -2559,7 +2568,7 @@ const METRICS_OPTIONS = [
 ];
 
 function emptyRule(): InterfaceRule {
-  return { name: "", match: { if_alias: { pattern: "*", type: "glob" } }, settings: { polling_enabled: true }, priority: 10 };
+  return { name: "", match: { if_alias: { pattern: "*", type: "glob" } }, settings: { polling_enabled: true, alerting_enabled: true, poll_metrics: "all" }, priority: 10 };
 }
 
 function InterfaceRulesCard({ deviceId }: { deviceId: string }) {
