@@ -1763,6 +1763,30 @@ class ClickHouseClient:
             else:
                 raise
 
+    def delete_devices_data(self, device_ids: list[str]) -> None:
+        """Delete all ClickHouse data for the given device IDs across all tables."""
+        ids_sql = ", ".join(f"'{did}'" for did in device_ids)
+        tables = [
+            "availability_latency",
+            "availability_latency_hourly",
+            "availability_latency_daily",
+            "availability_latency_latest",
+            "performance",
+            "performance_hourly",
+            "performance_daily",
+            "performance_latest",
+            "interface",
+            "interface_hourly",
+            "interface_daily",
+            "interface_latest",
+            "config",
+            "config_latest",
+            "alert_log",
+            "events",
+        ]
+        for table in tables:
+            self.execute_cleanup(f"ALTER TABLE {table} DELETE WHERE device_id IN ({ids_sql})")
+
     def query_for_alert(self, sql: str, params: dict[str, Any] | None = None) -> list[dict]:
         """Execute an arbitrary read query for alert evaluation."""
         try:

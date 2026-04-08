@@ -11,7 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 
 import sqlalchemy as sa
-from monctl_central.dependencies import apply_tenant_filter, check_tenant_access, get_db, require_permission
+from monctl_central.dependencies import apply_tenant_filter, check_tenant_access, get_clickhouse, get_db, require_permission
+from monctl_central.storage.clickhouse import ClickHouseClient
 from sqlalchemy.orm import selectinload
 from monctl_central.storage.models import Credential, CollectorGroup, Device, DeviceType, InterfaceMetadata, LabelKey, Tenant, Collector
 from monctl_common.utils import utc_now
@@ -1090,6 +1091,7 @@ async def preview_interface_rules(
 async def delete_device(
     device_id: str,
     db: AsyncSession = Depends(get_db),
+    ch: ClickHouseClient = Depends(get_clickhouse),
     auth: dict = Depends(require_permission("device", "delete")),
 ):
     """Delete a device."""
@@ -1099,6 +1101,7 @@ async def delete_device(
     if not check_tenant_access(auth, device.tenant_id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     await db.delete(device)
+    ch.delete_devices_data([device_id])
 
 
 class BulkDeleteRequest(BaseModel):
@@ -1109,16 +1112,19 @@ class BulkDeleteRequest(BaseModel):
 async def bulk_delete_devices(
     request: BulkDeleteRequest,
     db: AsyncSession = Depends(get_db),
+    ch: ClickHouseClient = Depends(get_clickhouse),
     auth: dict = Depends(require_permission("device", "delete")),
 ):
     """Bulk delete devices."""
-    deleted = 0
+    deleted_ids: list[str] = []
     for did in request.device_ids:
         device = await db.get(Device, uuid.UUID(did))
         if device and check_tenant_access(auth, device.tenant_id):
             await db.delete(device)
-            deleted += 1
-    return {"status": "success", "data": {"deleted": deleted}}
+            deleted_ids.append(did)
+    if deleted_ids:
+        ch.delete_devices_data(deleted_ids)
+    return {"status": "success", "data": {"deleted": len(deleted_ids)}}
 
 
 # ── Device Thresholds ────────────────────────────────────
