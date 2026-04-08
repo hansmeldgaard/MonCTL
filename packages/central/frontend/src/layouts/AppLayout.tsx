@@ -24,7 +24,7 @@ export function AppLayout() {
 
   // Redirect to user's default page when landing on "/"
   const defaultPage = user?.default_page;
-  if (defaultPage && defaultPage !== "/devices" && location.pathname === "/") {
+  if (location.pathname === "/" && defaultPage) {
     return <Navigate to={defaultPage} replace />;
   }
 

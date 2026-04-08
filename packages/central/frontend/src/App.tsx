@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import { AppLayout } from "@/layouts/AppLayout.tsx";
 import { LoginPage } from "@/pages/LoginPage.tsx";
 import { DevicesPage } from "@/pages/DevicesPage.tsx";
@@ -26,6 +26,23 @@ import { DeviceTypesPage } from "@/pages/DiscoveryRulesPage.tsx";
 import { AutomationsPage } from "@/pages/AutomationsPage.tsx";
 import { CredentialsPage } from "@/pages/CredentialsPage.tsx";
 import { LabelKeysPage } from "@/pages/LabelKeysPage.tsx";
+
+function NotFoundPage() {
+  const navigate = useNavigate();
+  return (
+    <div className="flex flex-col items-center justify-center h-full gap-4 text-zinc-400">
+      <p className="text-6xl font-bold text-zinc-700">404</p>
+      <p className="text-lg">Page not found</p>
+      <button
+        type="button"
+        className="mt-2 rounded-md bg-zinc-800 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer"
+        onClick={() => navigate(-1)}
+      >
+        Go back
+      </button>
+    </div>
+  );
+}
 
 export function App() {
   return (
@@ -58,6 +75,7 @@ export function App() {
         <Route path="device-types" element={<DeviceTypesPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="settings/:tab" element={<SettingsPage />} />
+        <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>
   );
