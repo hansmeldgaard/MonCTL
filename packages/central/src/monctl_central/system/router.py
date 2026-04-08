@@ -2002,12 +2002,12 @@ async def patroni_switchover(
     leader = body.get("leader")
     candidate = body.get("candidate")
     if not leader or not candidate:
-        return {"status": "error", "message": "Both 'leader' and 'candidate' are required."}
+        raise HTTPException(status_code=400, detail="Both 'leader' and 'candidate' are required.")
 
     # Resolve leader IP from Patroni cluster
     patroni_nodes = parse_node_list(settings.patroni_nodes)
     if not patroni_nodes:
-        return {"status": "error", "message": "MONCTL_PATRONI_NODES not configured"}
+        raise HTTPException(status_code=500, detail="MONCTL_PATRONI_NODES not configured")
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             # Find the leader node's Patroni API
@@ -2027,7 +2027,7 @@ async def patroni_switchover(
                     continue
 
             if not leader_ip:
-                return {"status": "error", "message": "Could not find Patroni leader."}
+                raise HTTPException(status_code=503, detail="Could not find Patroni leader.")
 
             # Execute switchover via Patroni REST API
             resp = await client.post(
@@ -2037,7 +2037,9 @@ async def patroni_switchover(
             if resp.status_code == 200:
                 return {"status": "success", "data": {"message": f"Switchover initiated: {leader} → {candidate}"}}
             else:
-                return {"status": "error", "message": f"Patroni returned {resp.status_code}: {resp.text}"}
+                raise HTTPException(status_code=502, detail=f"Patroni returned {resp.status_code}: {resp.text}")
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("patroni_switchover_failed")
-        return {"status": "error", "message": str(exc)}
+        raise HTTPException(status_code=500, detail=str(exc))

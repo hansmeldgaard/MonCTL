@@ -6,7 +6,7 @@ import math
 from datetime import datetime, timezone
 
 import structlog
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from monctl_central.dependencies import require_permission, require_collector_auth, get_clickhouse
@@ -68,7 +68,7 @@ async def ingest_logs(
         ])
     except Exception as exc:
         logger.error("log_ingest_error", error=str(exc), count=len(rows))
-        return {"status": "error", "data": {"ok": False, "error": str(exc)}}
+        raise HTTPException(status_code=500, detail=str(exc))
 
     return {"status": "success", "data": {"ok": True, "ingested": len(rows)}}
 
