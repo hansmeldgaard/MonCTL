@@ -983,6 +983,13 @@ class SchedulerRunner:
             "availability_latency": [], "interface": [],
         }
 
+        # ClickHouse ALTER DELETE forbids non-deterministic functions like now() — use literals
+        def _ts_cutoff(days: int) -> str:
+            return (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+
+        def _day_cutoff(days: int) -> str:
+            return (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+
         for override in overrides:
             table = override.data_type
             if table not in override_exclusions:
@@ -990,11 +997,12 @@ class SchedulerRunner:
             ts_col = "hour" if table == "interface_hourly" else (
                 "day" if table == "interface_daily" else "executed_at"
             )
+            cutoff = _day_cutoff(override.retention_days) if ts_col in ("hour", "day") else _ts_cutoff(override.retention_days)
             try:
                 self._ch.execute_cleanup(
                     f"ALTER TABLE {table} DELETE WHERE "
                     f"device_id = '{override.device_id}' AND app_id = '{override.app_id}' "
-                    f"AND {ts_col} < now() - INTERVAL {override.retention_days} DAY"
+                    f"AND {ts_col} < '{cutoff}'"
                 )
             except Exception:
                 logger.debug("Override cleanup failed: %s/%s", override.device_id, override.app_id)
@@ -1008,16 +1016,16 @@ class SchedulerRunner:
             return f" AND NOT ({' OR '.join(conds)})" if conds else ""
 
         cleanup_sqls = [
-            f"ALTER TABLE interface DELETE WHERE executed_at < now() - INTERVAL {raw_days} DAY{_exclude_clause('interface')}",
-            f"ALTER TABLE interface_hourly DELETE WHERE hour < now() - INTERVAL {hourly_days} DAY",
-            f"ALTER TABLE interface_daily DELETE WHERE day < today() - INTERVAL {daily_days} DAY",
-            f"ALTER TABLE config DELETE WHERE executed_at < now() - INTERVAL {config_days} DAY{_exclude_clause('config')}",
-            f"ALTER TABLE performance DELETE WHERE executed_at < now() - INTERVAL {perf_days} DAY{_exclude_clause('performance')}",
-            f"ALTER TABLE performance_hourly DELETE WHERE hour < now() - INTERVAL {perf_hourly_days} DAY",
-            f"ALTER TABLE performance_daily DELETE WHERE day < today() - INTERVAL {perf_daily_days} DAY",
-            f"ALTER TABLE availability_latency DELETE WHERE executed_at < now() - INTERVAL {avail_days} DAY{_exclude_clause('availability_latency')}",
-            f"ALTER TABLE availability_latency_hourly DELETE WHERE hour < now() - INTERVAL {avail_hourly_days} DAY",
-            f"ALTER TABLE availability_latency_daily DELETE WHERE day < today() - INTERVAL {avail_daily_days} DAY",
+            f"ALTER TABLE interface DELETE WHERE executed_at < '{_ts_cutoff(raw_days)}'{_exclude_clause('interface')}",
+            f"ALTER TABLE interface_hourly DELETE WHERE hour < '{_ts_cutoff(hourly_days)}'",
+            f"ALTER TABLE interface_daily DELETE WHERE day < '{_day_cutoff(daily_days)}'",
+            f"ALTER TABLE config DELETE WHERE executed_at < '{_ts_cutoff(config_days)}'{_exclude_clause('config')}",
+            f"ALTER TABLE performance DELETE WHERE executed_at < '{_ts_cutoff(perf_days)}'{_exclude_clause('performance')}",
+            f"ALTER TABLE performance_hourly DELETE WHERE hour < '{_ts_cutoff(perf_hourly_days)}'",
+            f"ALTER TABLE performance_daily DELETE WHERE day < '{_day_cutoff(perf_daily_days)}'",
+            f"ALTER TABLE availability_latency DELETE WHERE executed_at < '{_ts_cutoff(avail_days)}'{_exclude_clause('availability_latency')}",
+            f"ALTER TABLE availability_latency_hourly DELETE WHERE hour < '{_ts_cutoff(avail_hourly_days)}'",
+            f"ALTER TABLE availability_latency_daily DELETE WHERE day < '{_day_cutoff(avail_daily_days)}'",
         ]
 
         for sql in cleanup_sqls:

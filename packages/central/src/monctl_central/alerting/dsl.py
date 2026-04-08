@@ -1005,6 +1005,15 @@ class _Compiler:
         if func == "rate":
             return self._rate_to_sql(metric)
 
+        # ClickHouse has no last() — use argMax(..., executed_at) instead
+        if func == "last":
+            if self.target_table == "performance":
+                metric_ref = f"metric_values[indexOf(metric_names, '{metric}')]"
+                self._where_extras.append(f"has(metric_names, '{metric}')")
+            else:
+                metric_ref = metric
+            return f"argMax({metric_ref}, executed_at)"
+
         if self.target_table == "performance":
             expr = f"{func}(metric_values[indexOf(metric_names, '{metric}')])"
             self._where_extras.append(f"has(metric_names, '{metric}')")
@@ -1017,7 +1026,7 @@ class _Compiler:
         """Compile rate(metric) to SQL."""
         # Interface table: use pre-computed _rate column if available
         if self.target_table == "interface" and metric in _INTERFACE_RATE_COLUMNS:
-            return f"last({metric}_rate)"
+            return f"argMax({metric}_rate, executed_at)"
 
         # Fallback: (max - min) / time_delta with div/0 safety
         if self.target_table == "performance":
@@ -1044,10 +1053,12 @@ class _Compiler:
         where_parts: list[str] = []
         self._build_config_where(ast, where_parts)
 
+        group_by_str = ", ".join(group_by + ["config_value"])
         sql = (
             f"SELECT {', '.join(select_cols)} "
             f"FROM config_latest FINAL "
-            f"WHERE {' AND '.join(where_parts)}"
+            f"WHERE {' AND '.join(where_parts)} "
+            f"GROUP BY {group_by_str}"
         )
         return CompiledQuery(sql=sql, params=self.params, threshold_params=[])
 
