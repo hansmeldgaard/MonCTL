@@ -57,6 +57,7 @@ class JobProfile:
     max_execution_time: float = 0.0
     execution_count: int = 0
     error_count: int = 0
+    last_error_time: float = 0.0       # Unix timestamp of most recent error
     last_run: float = 0.0              # Unix timestamp
     next_deadline: float = 0.0        # Unix timestamp
     status: str = "idle"

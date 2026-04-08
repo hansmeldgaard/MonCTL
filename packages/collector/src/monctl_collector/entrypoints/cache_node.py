@@ -410,8 +410,8 @@ def _get_queue_stats(scheduler: JobScheduler) -> dict | None:
         for profile in scheduler._profiles.values():
             if profile.next_deadline > 0 and profile.next_deadline < now:
                 overdue += 1
-            if profile.error_count > 0 and profile.last_run > one_hour_ago:
-                errored_last_hour += profile.error_count
+            if profile.last_error_time > one_hour_ago:
+                errored_last_hour += 1
             if profile.last_execution_time > 0:
                 exec_times.append(profile.last_execution_time * 1000)
 

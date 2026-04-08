@@ -251,6 +251,7 @@ class JobScheduler:
         )
         if error:
             profile.error_count += 1
+            profile.last_error_time = time.time()
 
         # Persist asynchronously (don't await in a sync method)
         asyncio.create_task(
@@ -349,6 +350,7 @@ def _row_to_profile(job_id: str, row: dict) -> JobProfile:
         max_execution_time=row.get("max_execution_time", 0.0),
         execution_count=row.get("execution_count", 0),
         error_count=row.get("error_count", 0),
+        last_error_time=row.get("last_error_time", 0.0),
         last_run=row.get("last_run", 0.0),
         is_heavy=bool(row.get("is_heavy", 0)),
     )

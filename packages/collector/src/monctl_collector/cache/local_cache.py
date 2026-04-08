@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS job_profiles (
     max_execution_time  REAL DEFAULT 0.0,
     execution_count     INTEGER DEFAULT 0,
     error_count         INTEGER DEFAULT 0,
+    last_error_time     REAL DEFAULT 0.0,
     last_run            REAL DEFAULT 0.0,
     is_heavy            INTEGER DEFAULT 0
 );
@@ -134,6 +135,17 @@ class LocalCache:
         self._db.row_factory = aiosqlite.Row
         await self._db.executescript(_SCHEMA)
         await self._db.commit()
+        await self._migrate()
+
+    async def _migrate(self) -> None:
+        """Apply schema migrations for columns added after initial release."""
+        try:
+            await self._db.execute(
+                "ALTER TABLE job_profiles ADD COLUMN last_error_time REAL DEFAULT 0.0"
+            )
+            await self._db.commit()
+        except Exception:
+            pass  # Column already exists
 
     async def close(self) -> None:
         if self._db:
@@ -316,20 +328,21 @@ class LocalCache:
         await self._db.execute(
             """INSERT INTO job_profiles
                (job_id, avg_execution_time, last_execution_time, max_execution_time,
-                execution_count, error_count, last_run, is_heavy)
-               VALUES (?,?,?,?,?,?,?,?)
+                execution_count, error_count, last_error_time, last_run, is_heavy)
+               VALUES (?,?,?,?,?,?,?,?,?)
                ON CONFLICT(job_id) DO UPDATE SET
                  avg_execution_time=excluded.avg_execution_time,
                  last_execution_time=excluded.last_execution_time,
                  max_execution_time=excluded.max_execution_time,
                  execution_count=excluded.execution_count,
                  error_count=excluded.error_count,
+                 last_error_time=excluded.last_error_time,
                  last_run=excluded.last_run,
                  is_heavy=excluded.is_heavy""",
             (
                 p.job_id, p.avg_execution_time, p.last_execution_time,
                 p.max_execution_time, p.execution_count, p.error_count,
-                p.last_run, int(p.is_heavy),
+                p.last_error_time, p.last_run, int(p.is_heavy),
             ),
         )
         await self._db.commit()

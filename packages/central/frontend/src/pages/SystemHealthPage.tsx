@@ -979,9 +979,9 @@ function CollectorsSection({ sub }: { sub: { status: SubsystemStatus; details: R
                                 <DetailRow label="Overdue" value={
                                   <span className={c.queue_stats.jobs_overdue > 0 ? "text-amber-400" : ""}>{c.queue_stats.jobs_overdue}</span>
                                 } tip="Jobs that missed their scheduled execution time. Non-zero indicates the collector is falling behind." />
-                                <DetailRow label="Errors (1h)" value={
+                                <DetailRow label="Erroring jobs (1h)" value={
                                   <span className={c.queue_stats.jobs_errored_last_hour > 5 ? "text-red-400" : ""}>{c.queue_stats.jobs_errored_last_hour}</span>
-                                } />
+                                } tip="Number of distinct jobs that had at least one error in the last hour." />
                                 <DetailRow label="Avg exec" value={`${c.queue_stats.avg_execution_ms.toFixed(0)}ms`} tip="Average job execution time across all recent jobs." />
                                 <DetailRow label="Max exec" value={`${c.queue_stats.max_execution_ms.toFixed(0)}ms`} />
                               </>
