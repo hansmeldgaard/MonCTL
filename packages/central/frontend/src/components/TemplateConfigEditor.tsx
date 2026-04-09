@@ -1,8 +1,16 @@
 import { useState, useMemo } from "react";
-import { Plus, Trash2, ChevronDown, ChevronRight, AlertTriangle, X } from "lucide-react";
+import {
+  Plus,
+  Trash2,
+  ChevronDown,
+  ChevronRight,
+  AlertTriangle,
+  X,
+} from "lucide-react";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { Select } from "@/components/ui/select.tsx";
+import { IntervalInput, formatInterval } from "@/components/IntervalInput";
 import { SearchableSelect } from "@/components/ui/searchable-select.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
@@ -30,16 +38,26 @@ interface TemplateConfigEditorProps {
   disabled?: boolean;
 }
 
-export function TemplateConfigEditor({ value, onChange, disabled }: TemplateConfigEditorProps) {
+export function TemplateConfigEditor({
+  value,
+  onChange,
+  disabled,
+}: TemplateConfigEditorProps) {
   const [mode, setMode] = useState<"visual" | "json">("visual");
   const [jsonText, setJsonText] = useState("");
   const [jsonError, setJsonError] = useState<string | null>(null);
 
   // Section enable state — auto-enabled if data exists
   const [monEnabled, setMonEnabled] = useState(!!value.monitoring);
-  const [appsEnabled, setAppsEnabled] = useState(!!(value.apps && value.apps.length > 0));
-  const [credEnabled, setCredEnabled] = useState(!!(value.credentials && Object.keys(value.credentials).length > 0));
-  const [cgEnabled, setCgEnabled] = useState(!!value.default_collector_group_id);
+  const [appsEnabled, setAppsEnabled] = useState(
+    !!(value.apps && value.apps.length > 0),
+  );
+  const [credEnabled, setCredEnabled] = useState(
+    !!(value.credentials && Object.keys(value.credentials).length > 0),
+  );
+  const [cgEnabled, setCgEnabled] = useState(
+    !!value.default_collector_group_id,
+  );
   const [labelsEnabled, setLabelsEnabled] = useState(
     !!(value.labels && Object.keys(value.labels).length > 0),
   );
@@ -62,12 +80,20 @@ export function TemplateConfigEditor({ value, onChange, disabled }: TemplateConf
       // Sync enable states
       setMonEnabled(!!parsed.monitoring);
       setAppsEnabled(!!(parsed.apps && parsed.apps.length > 0));
-      setCredEnabled(!!(parsed.credentials && Object.keys(parsed.credentials).length > 0));
+      setCredEnabled(
+        !!(parsed.credentials && Object.keys(parsed.credentials).length > 0),
+      );
       setCgEnabled(!!parsed.default_collector_group_id);
-      setLabelsEnabled(!!(parsed.labels && Object.keys(parsed.labels).length > 0));
-      setIfRulesEnabled(!!(parsed.interface_rules && parsed.interface_rules.length > 0));
+      setLabelsEnabled(
+        !!(parsed.labels && Object.keys(parsed.labels).length > 0),
+      );
+      setIfRulesEnabled(
+        !!(parsed.interface_rules && parsed.interface_rules.length > 0),
+      );
     } catch {
-      setJsonError("Invalid JSON — fix errors before switching to Visual mode.");
+      setJsonError(
+        "Invalid JSON — fix errors before switching to Visual mode.",
+      );
     }
   }
 
@@ -93,7 +119,9 @@ export function TemplateConfigEditor({ value, onChange, disabled }: TemplateConf
     <div className="space-y-3">
       {/* Mode toggle */}
       <div className="flex items-center justify-between">
-        <Label className="text-sm font-medium text-zinc-300">Template Configuration</Label>
+        <Label className="text-sm font-medium text-zinc-300">
+          Template Configuration
+        </Label>
         <div className="flex items-center gap-1 rounded-md border border-zinc-700 p-0.5">
           <button
             type="button"
@@ -138,10 +166,16 @@ export function TemplateConfigEditor({ value, onChange, disabled }: TemplateConf
           <SectionHeader
             label="Monitoring"
             enabled={monEnabled}
-            onToggle={() => toggleSection("monitoring", monEnabled, setMonEnabled)}
+            onToggle={() =>
+              toggleSection("monitoring", monEnabled, setMonEnabled)
+            }
             count={
               monEnabled
-                ? [value.monitoring?.availability, value.monitoring?.latency, value.monitoring?.interface].filter(Boolean).length
+                ? [
+                    value.monitoring?.availability,
+                    value.monitoring?.latency,
+                    value.monitoring?.interface,
+                  ].filter(Boolean).length
                 : 0
             }
           />
@@ -176,7 +210,9 @@ export function TemplateConfigEditor({ value, onChange, disabled }: TemplateConf
           <SectionHeader
             label="Default Credentials"
             enabled={credEnabled}
-            onToggle={() => toggleSection("credentials", credEnabled, setCredEnabled)}
+            onToggle={() =>
+              toggleSection("credentials", credEnabled, setCredEnabled)
+            }
           />
           {credEnabled && (
             <div className="ml-6">
@@ -192,7 +228,13 @@ export function TemplateConfigEditor({ value, onChange, disabled }: TemplateConf
           <SectionHeader
             label="Collector Group"
             enabled={cgEnabled}
-            onToggle={() => toggleSection("default_collector_group_id", cgEnabled, setCgEnabled)}
+            onToggle={() =>
+              toggleSection(
+                "default_collector_group_id",
+                cgEnabled,
+                setCgEnabled,
+              )
+            }
           />
           {cgEnabled && (
             <div className="ml-6">
@@ -208,7 +250,9 @@ export function TemplateConfigEditor({ value, onChange, disabled }: TemplateConf
           <SectionHeader
             label="Labels"
             enabled={labelsEnabled}
-            onToggle={() => toggleSection("labels", labelsEnabled, setLabelsEnabled)}
+            onToggle={() =>
+              toggleSection("labels", labelsEnabled, setLabelsEnabled)
+            }
             count={labelsEnabled ? Object.keys(value.labels || {}).length : 0}
           />
           {labelsEnabled && (
@@ -216,11 +260,14 @@ export function TemplateConfigEditor({ value, onChange, disabled }: TemplateConf
               <LabelEditor
                 labels={value.labels || {}}
                 onChange={(labels) =>
-                  update({ labels: Object.keys(labels).length > 0 ? labels : undefined })
+                  update({
+                    labels: Object.keys(labels).length > 0 ? labels : undefined,
+                  })
                 }
               />
               <p className="mt-1 text-xs text-zinc-500">
-                Merged with existing device labels when applied. Existing keys are overwritten.
+                Merged with existing device labels when applied. Existing keys
+                are overwritten.
               </p>
             </div>
           )}
@@ -229,18 +276,29 @@ export function TemplateConfigEditor({ value, onChange, disabled }: TemplateConf
           <SectionHeader
             label="Interface Rules"
             enabled={ifRulesEnabled}
-            onToggle={() => toggleSection("interface_rules", ifRulesEnabled, setIfRulesEnabled)}
+            onToggle={() =>
+              toggleSection(
+                "interface_rules",
+                ifRulesEnabled,
+                setIfRulesEnabled,
+              )
+            }
             count={ifRulesEnabled ? (value.interface_rules?.length ?? 0) : 0}
           />
           {ifRulesEnabled && (
             <div className="ml-6">
               <InterfaceRulesSection
                 rules={value.interface_rules || []}
-                onChange={(rules) => update({ interface_rules: rules.length > 0 ? rules : undefined })}
+                onChange={(rules) =>
+                  update({
+                    interface_rules: rules.length > 0 ? rules : undefined,
+                  })
+                }
                 disabled={disabled}
               />
               <p className="mt-1 text-xs text-zinc-500">
-                Auto-configure interface monitoring based on name, alias, description, or speed when discovered.
+                Auto-configure interface monitoring based on name, alias,
+                description, or speed when discovered.
               </p>
             </div>
           )}
@@ -407,13 +465,16 @@ function MonitoringRoleRow({
   const { data: appDetail } = useAppDetail(appId);
   const hasSchema =
     appDetail?.config_schema &&
-    (appDetail.config_schema as { properties?: Record<string, unknown> }).properties &&
+    (appDetail.config_schema as { properties?: Record<string, unknown> })
+      .properties &&
     Object.keys(
-      (appDetail.config_schema as { properties: Record<string, unknown> }).properties,
+      (appDetail.config_schema as { properties: Record<string, unknown> })
+        .properties,
     ).length > 0;
 
   // Determine connector type for credential filtering
-  const connectorNames = selectedApp?.connector_bindings?.map((b) => b.connector_name) ?? [];
+  const connectorNames =
+    selectedApp?.connector_bindings?.map((b) => b.connector_name) ?? [];
   const needsCredential = connectorNames.length > 0;
   const filteredCredentials = (credentials ?? []).filter((c) => {
     if (connectorNames.length === 0) return true;
@@ -427,12 +488,18 @@ function MonitoringRoleRow({
     } else {
       const defaultApp = apps[0]?.name ?? "";
       const defaultInterval = role === "interface" ? 300 : 60;
-      onChange({ app_name: defaultApp, config: {}, interval_seconds: defaultInterval });
+      onChange({
+        app_name: defaultApp,
+        config: {},
+        interval_seconds: defaultInterval,
+      });
     }
   }
 
   return (
-    <div className={`rounded-md border p-3 ${enabled ? "border-zinc-700" : "border-zinc-800 opacity-50"}`}>
+    <div
+      className={`rounded-md border p-3 ${enabled ? "border-zinc-700" : "border-zinc-800 opacity-50"}`}
+    >
       <div className="flex items-center gap-2">
         <input
           type="checkbox"
@@ -447,17 +514,27 @@ function MonitoringRoleRow({
           <div className="grid grid-cols-[1fr_130px] gap-2">
             <SearchableSelect
               value={check.app_name}
-              onChange={(val) => onChange({ ...check, app_name: val, config: {} })}
+              onChange={(val) =>
+                onChange({ ...check, app_name: val, config: {} })
+              }
               options={[
                 { value: "", label: "-- Select app --" },
-                ...apps.map((a) => ({ value: a.name, label: a.description || a.name })),
+                ...apps.map((a) => ({
+                  value: a.name,
+                  label: a.description || a.name,
+                })),
               ]}
               placeholder="-- Select app --"
               disabled={disabled}
             />
             <Select
               value={String(check.interval_seconds)}
-              onChange={(e) => onChange({ ...check, interval_seconds: parseInt(e.target.value, 10) })}
+              onChange={(e) =>
+                onChange({
+                  ...check,
+                  interval_seconds: parseInt(e.target.value, 10),
+                })
+              }
               disabled={disabled}
             >
               {intervals.map((i) => (
@@ -472,11 +549,18 @@ function MonitoringRoleRow({
               <Label className="text-xs text-zinc-400">Credential</Label>
               <Select
                 value={check.credential_id ?? ""}
-                onChange={(e) => onChange({ ...check, credential_id: e.target.value || undefined })}
+                onChange={(e) =>
+                  onChange({
+                    ...check,
+                    credential_id: e.target.value || undefined,
+                  })
+                }
                 disabled={disabled}
               >
                 <option value="">-- Device default --</option>
-                <option value="device_default">Device default (explicit)</option>
+                <option value="device_default">
+                  Device default (explicit)
+                </option>
                 {filteredCredentials.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name} ({c.credential_type})
@@ -489,7 +573,9 @@ function MonitoringRoleRow({
             <SchemaConfigFields
               schema={appDetail!.config_schema}
               config={check.config}
-              onChange={(newConfig) => onChange({ ...check, config: newConfig })}
+              onChange={(newConfig) =>
+                onChange({ ...check, config: newConfig })
+              }
               prefix={`mon-${role}`}
               disabled={disabled}
             />
@@ -514,7 +600,12 @@ function AppListSection({
   function addApp() {
     onChange([
       ...apps,
-      { app_name: "", schedule_type: "interval", schedule_value: "60", config: {} },
+      {
+        app_name: "",
+        schedule_type: "interval",
+        schedule_value: "60",
+        config: {},
+      },
     ]);
   }
 
@@ -540,7 +631,13 @@ function AppListSection({
           disabled={disabled}
         />
       ))}
-      <Button type="button" variant="secondary" size="sm" onClick={addApp} className="gap-1.5">
+      <Button
+        type="button"
+        variant="secondary"
+        size="sm"
+        onClick={addApp}
+        className="gap-1.5"
+      >
         <Plus className="h-3.5 w-3.5" /> Add App
       </Button>
     </div>
@@ -567,12 +664,15 @@ function TemplateAppCard({
   const { data: appDetail } = useAppDetail(appId);
   const hasSchema =
     appDetail?.config_schema &&
-    (appDetail.config_schema as { properties?: Record<string, unknown> }).properties &&
+    (appDetail.config_schema as { properties?: Record<string, unknown> })
+      .properties &&
     Object.keys(
-      (appDetail.config_schema as { properties: Record<string, unknown> }).properties,
+      (appDetail.config_schema as { properties: Record<string, unknown> })
+        .properties,
     ).length > 0;
   const [expanded, setExpanded] = useState(!entry.app_name);
-  const appNotFound = entry.app_name && !allApps.find((a) => a.name === entry.app_name);
+  const appNotFound =
+    entry.app_name && !allApps.find((a) => a.name === entry.app_name);
 
   return (
     <div className="rounded-md border border-zinc-700 p-3 space-y-2">
@@ -597,7 +697,9 @@ function TemplateAppCard({
           )}
           {entry.app_name && !expanded && (
             <span className="text-xs text-zinc-500">
-              {entry.schedule_type} / {entry.schedule_value}s
+              {entry.schedule_type === "interval"
+                ? `every ${formatInterval(Number(entry.schedule_value))}`
+                : entry.schedule_value}
               {entry.role ? ` / ${entry.role}` : ""}
             </span>
           )}
@@ -619,12 +721,16 @@ function TemplateAppCard({
             <Label className="text-xs text-zinc-400">App</Label>
             <SearchableSelect
               value={entry.app_name}
-              onChange={(val) => onChange({ ...entry, app_name: val, config: {} })}
+              onChange={(val) =>
+                onChange({ ...entry, app_name: val, config: {} })
+              }
               options={[
                 { value: "", label: "-- Select app --" },
                 ...allApps.map((a) => ({
                   value: a.name,
-                  label: a.description ? `${a.name} - ${a.description}` : a.name,
+                  label: a.description
+                    ? `${a.name} - ${a.description}`
+                    : a.name,
                 })),
               ]}
               placeholder="-- Select app --"
@@ -637,23 +743,35 @@ function TemplateAppCard({
               <Label className="text-xs text-zinc-400">Schedule Type</Label>
               <Select
                 value={entry.schedule_type}
-                onChange={(e) => onChange({ ...entry, schedule_type: e.target.value })}
+                onChange={(e) =>
+                  onChange({ ...entry, schedule_type: e.target.value })
+                }
                 disabled={disabled}
               >
-                <option value="interval">Interval (seconds)</option>
+                <option value="interval">Interval</option>
                 <option value="cron">Cron expression</option>
               </Select>
             </div>
             <div>
               <Label className="text-xs text-zinc-400">
-                {entry.schedule_type === "interval" ? "Interval (s)" : "Cron"}
+                {entry.schedule_type === "interval" ? "Interval" : "Cron"}
               </Label>
-              <Input
-                value={entry.schedule_value}
-                onChange={(e) => onChange({ ...entry, schedule_value: e.target.value })}
-                placeholder={entry.schedule_type === "interval" ? "60" : "*/5 * * * *"}
-                disabled={disabled}
-              />
+              {entry.schedule_type === "interval" ? (
+                <IntervalInput
+                  value={entry.schedule_value}
+                  onChange={(v) => onChange({ ...entry, schedule_value: v })}
+                  disabled={disabled}
+                />
+              ) : (
+                <Input
+                  value={entry.schedule_value}
+                  onChange={(e) =>
+                    onChange({ ...entry, schedule_value: e.target.value })
+                  }
+                  placeholder="*/5 * * * *"
+                  disabled={disabled}
+                />
+              )}
             </div>
           </div>
 
@@ -664,7 +782,9 @@ function TemplateAppCard({
               </Label>
               <Select
                 value={entry.role || ""}
-                onChange={(e) => onChange({ ...entry, role: e.target.value || undefined })}
+                onChange={(e) =>
+                  onChange({ ...entry, role: e.target.value || undefined })
+                }
                 disabled={disabled}
               >
                 <option value="">-- None --</option>
@@ -676,11 +796,18 @@ function TemplateAppCard({
               <Label className="text-xs text-zinc-400">Credential</Label>
               <Select
                 value={entry.credential_id ?? ""}
-                onChange={(e) => onChange({ ...entry, credential_id: e.target.value || undefined })}
+                onChange={(e) =>
+                  onChange({
+                    ...entry,
+                    credential_id: e.target.value || undefined,
+                  })
+                }
                 disabled={disabled}
               >
                 <option value="">-- Device default --</option>
-                <option value="device_default">Device default (explicit)</option>
+                <option value="device_default">
+                  Device default (explicit)
+                </option>
                 {(credentials ?? []).map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name} ({c.credential_type})
@@ -693,11 +820,15 @@ function TemplateAppCard({
           {/* Schema-driven config fields */}
           {entry.app_name && hasSchema ? (
             <div className="space-y-2 rounded-md border border-zinc-800 p-3">
-              <span className="text-xs font-medium text-zinc-400">App Configuration</span>
+              <span className="text-xs font-medium text-zinc-400">
+                App Configuration
+              </span>
               <SchemaConfigFields
                 schema={appDetail!.config_schema}
                 config={entry.config}
-                onChange={(newConfig) => onChange({ ...entry, config: newConfig })}
+                onChange={(newConfig) =>
+                  onChange({ ...entry, config: newConfig })
+                }
                 prefix={`tpl-app-${index}`}
                 disabled={disabled}
               />
@@ -758,7 +889,10 @@ function CredentialsSection({
     <div className="space-y-2">
       {Object.entries(creds).map(([ctype, credId]) => (
         <div key={ctype} className="flex items-center gap-2">
-          <Badge variant="default" className="text-xs min-w-[100px] justify-center">
+          <Badge
+            variant="default"
+            className="text-xs min-w-[100px] justify-center"
+          >
             {ctype}
           </Badge>
           <Select
@@ -771,7 +905,9 @@ function CredentialsSection({
             {(credsByType[ctype] ?? allCredentials ?? [])
               .filter((c) => c.credential_type === ctype)
               .map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
               ))}
           </Select>
           <button
@@ -801,12 +937,15 @@ function CredentialsSection({
         >
           <option value="">+ Add credential type...</option>
           {availableTypes.map((t) => (
-            <option key={t} value={t}>{t}</option>
+            <option key={t} value={t}>
+              {t}
+            </option>
           ))}
         </Select>
       )}
       <p className="text-xs text-zinc-500">
-        Per-type default credentials applied to the device when the template is applied.
+        Per-type default credentials applied to the device when the template is
+        applied.
       </p>
     </div>
   );
@@ -870,7 +1009,12 @@ const IF_METRICS = [
 ];
 
 function newRule(): InterfaceRule {
-  return { name: "", match: { if_alias: { pattern: "*", type: "glob" } }, settings: { polling_enabled: true }, priority: 10 };
+  return {
+    name: "",
+    match: { if_alias: { pattern: "*", type: "glob" } },
+    settings: { polling_enabled: true },
+    priority: 10,
+  };
 }
 
 function InterfaceRulesSection({
@@ -883,15 +1027,31 @@ function InterfaceRulesSection({
   disabled?: boolean;
 }) {
   const add = () => onChange([...rules, newRule()]);
-  const update = (i: number, r: InterfaceRule) => { const next = [...rules]; next[i] = r; onChange(next); };
+  const update = (i: number, r: InterfaceRule) => {
+    const next = [...rules];
+    next[i] = r;
+    onChange(next);
+  };
   const remove = (i: number) => onChange(rules.filter((_, idx) => idx !== i));
 
   return (
     <div className="space-y-2">
       {rules.map((rule, i) => (
-        <TemplateInterfaceRuleCard key={i} rule={rule} onChange={(r) => update(i, r)} onRemove={() => remove(i)} disabled={disabled} />
+        <TemplateInterfaceRuleCard
+          key={i}
+          rule={rule}
+          onChange={(r) => update(i, r)}
+          onRemove={() => remove(i)}
+          disabled={disabled}
+        />
       ))}
-      <Button type="button" variant="secondary" size="sm" onClick={add} className="gap-1.5">
+      <Button
+        type="button"
+        variant="secondary"
+        size="sm"
+        onClick={add}
+        className="gap-1.5"
+      >
         <Plus className="h-3.5 w-3.5" /> Add Rule
       </Button>
     </div>
@@ -923,9 +1083,15 @@ function TemplateInterfaceRuleCard({
   };
   const addMatchField = (field: string) => {
     if (field === "if_speed_mbps") {
-      onChange({ ...rule, match: { ...rule.match, if_speed_mbps: { op: "gte", value: 1000 } } });
+      onChange({
+        ...rule,
+        match: { ...rule.match, if_speed_mbps: { op: "gte", value: 1000 } },
+      });
     } else {
-      onChange({ ...rule, match: { ...rule.match, [field]: { pattern: "*", type: "glob" } } });
+      onChange({
+        ...rule,
+        match: { ...rule.match, [field]: { pattern: "*", type: "glob" } },
+      });
     }
   };
 
@@ -933,16 +1099,31 @@ function TemplateInterfaceRuleCard({
     <div className="rounded-md border border-zinc-700 p-3 space-y-2">
       {/* Summary row */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 cursor-pointer flex-1 min-w-0" onClick={() => setExpanded(!expanded)}>
-          {expanded ? <ChevronDown className="h-3.5 w-3.5 text-zinc-500 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 text-zinc-500 shrink-0" />}
-          <span className="text-sm text-zinc-200 truncate">{rule.name || "New rule"}</span>
+        <div
+          className="flex items-center gap-2 cursor-pointer flex-1 min-w-0"
+          onClick={() => setExpanded(!expanded)}
+        >
+          {expanded ? (
+            <ChevronDown className="h-3.5 w-3.5 text-zinc-500 shrink-0" />
+          ) : (
+            <ChevronRight className="h-3.5 w-3.5 text-zinc-500 shrink-0" />
+          )}
+          <span className="text-sm text-zinc-200 truncate">
+            {rule.name || "New rule"}
+          </span>
           {!expanded && (
             <span className="text-xs text-zinc-500">
-              prio {rule.priority} · {matchFields.length} condition{matchFields.length !== 1 ? "s" : ""}
+              prio {rule.priority} · {matchFields.length} condition
+              {matchFields.length !== 1 ? "s" : ""}
             </span>
           )}
         </div>
-        <button type="button" onClick={onRemove} className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer" title="Remove">
+        <button
+          type="button"
+          onClick={onRemove}
+          className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+          title="Remove"
+        >
           <Trash2 className="h-3.5 w-3.5" />
         </button>
       </div>
@@ -952,53 +1133,141 @@ function TemplateInterfaceRuleCard({
           <div className="grid grid-cols-[1fr_80px] gap-2">
             <div>
               <Label className="text-xs text-zinc-400">Rule Name</Label>
-              <Input value={rule.name} onChange={e => onChange({ ...rule, name: e.target.value })} placeholder="e.g. Uplinks - full monitoring" disabled={disabled} />
+              <Input
+                value={rule.name}
+                onChange={(e) => onChange({ ...rule, name: e.target.value })}
+                placeholder="e.g. Uplinks - full monitoring"
+                disabled={disabled}
+              />
             </div>
             <div>
               <Label className="text-xs text-zinc-400">Priority</Label>
-              <Input type="number" value={rule.priority} onChange={e => onChange({ ...rule, priority: parseInt(e.target.value, 10) || 0 })} min={0} disabled={disabled} />
+              <Input
+                type="number"
+                value={rule.priority}
+                onChange={(e) =>
+                  onChange({
+                    ...rule,
+                    priority: parseInt(e.target.value, 10) || 0,
+                  })
+                }
+                min={0}
+                disabled={disabled}
+              />
             </div>
           </div>
 
           {/* Match */}
           <div className="space-y-1.5 rounded-md border border-zinc-800 p-2">
-            <span className="text-xs font-medium text-zinc-400">Match Conditions</span>
+            <span className="text-xs font-medium text-zinc-400">
+              Match Conditions
+            </span>
             {matchFields.map((field) => {
-              const spec = (rule.match as Record<string, Record<string, unknown>>)[field];
+              const spec = (
+                rule.match as Record<string, Record<string, unknown>>
+              )[field];
               if (field === "if_speed_mbps") {
                 return (
                   <div key={field} className="flex items-center gap-1.5">
-                    <span className="text-xs text-zinc-400 w-24 shrink-0">{field}</span>
-                    <Select value={String(spec.op ?? "gte")} onChange={e => updateMatch(field, { ...spec, op: e.target.value })} disabled={disabled} className="w-16">
-                      {IF_NUM_OPS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    <span className="text-xs text-zinc-400 w-24 shrink-0">
+                      {field}
+                    </span>
+                    <Select
+                      value={String(spec.op ?? "gte")}
+                      onChange={(e) =>
+                        updateMatch(field, { ...spec, op: e.target.value })
+                      }
+                      disabled={disabled}
+                      className="w-16"
+                    >
+                      {IF_NUM_OPS.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
                     </Select>
-                    <Input type="number" value={spec.value as number ?? 0} onChange={e => updateMatch(field, { ...spec, value: parseInt(e.target.value, 10) || 0 })} className="w-24" disabled={disabled} />
+                    <Input
+                      type="number"
+                      value={(spec.value as number) ?? 0}
+                      onChange={(e) =>
+                        updateMatch(field, {
+                          ...spec,
+                          value: parseInt(e.target.value, 10) || 0,
+                        })
+                      }
+                      className="w-24"
+                      disabled={disabled}
+                    />
                     <span className="text-[10px] text-zinc-600">Mbps</span>
-                    <button type="button" onClick={() => removeMatchField(field)} className="text-zinc-600 hover:text-red-400 cursor-pointer"><X className="h-3 w-3" /></button>
+                    <button
+                      type="button"
+                      onClick={() => removeMatchField(field)}
+                      className="text-zinc-600 hover:text-red-400 cursor-pointer"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
                   </div>
                 );
               }
               return (
                 <div key={field} className="flex items-center gap-1.5">
-                  <span className="text-xs text-zinc-400 w-24 shrink-0">{field}</span>
-                  <Select value={String(spec.type ?? "glob")} onChange={e => updateMatch(field, { ...spec, type: e.target.value })} disabled={disabled} className="w-20">
-                    {IF_MATCH_TYPES.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  <span className="text-xs text-zinc-400 w-24 shrink-0">
+                    {field}
+                  </span>
+                  <Select
+                    value={String(spec.type ?? "glob")}
+                    onChange={(e) =>
+                      updateMatch(field, { ...spec, type: e.target.value })
+                    }
+                    disabled={disabled}
+                    className="w-20"
+                  >
+                    {IF_MATCH_TYPES.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
                   </Select>
-                  <Input value={String(spec.pattern ?? "")} onChange={e => updateMatch(field, { ...spec, pattern: e.target.value })} placeholder="Pattern..." disabled={disabled} className="flex-1" />
-                  <button type="button" onClick={() => removeMatchField(field)} className="text-zinc-600 hover:text-red-400 cursor-pointer"><X className="h-3 w-3" /></button>
+                  <Input
+                    value={String(spec.pattern ?? "")}
+                    onChange={(e) =>
+                      updateMatch(field, { ...spec, pattern: e.target.value })
+                    }
+                    placeholder="Pattern..."
+                    disabled={disabled}
+                    className="flex-1"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeMatchField(field)}
+                    className="text-zinc-600 hover:text-red-400 cursor-pointer"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
                 </div>
               );
             })}
             <div className="flex items-center gap-1 pt-1">
-              {["if_alias", "if_name", "if_descr"].filter(f => !(f in rule.match)).map(f => (
-                <button key={f} type="button" onClick={() => addMatchField(f)} disabled={disabled}
-                  className="text-[10px] text-zinc-600 hover:text-brand-400 border border-zinc-800 hover:border-brand-500/30 rounded px-1.5 py-0.5 cursor-pointer transition-colors">
-                  + {f}
-                </button>
-              ))}
+              {["if_alias", "if_name", "if_descr"]
+                .filter((f) => !(f in rule.match))
+                .map((f) => (
+                  <button
+                    key={f}
+                    type="button"
+                    onClick={() => addMatchField(f)}
+                    disabled={disabled}
+                    className="text-[10px] text-zinc-600 hover:text-brand-400 border border-zinc-800 hover:border-brand-500/30 rounded px-1.5 py-0.5 cursor-pointer transition-colors"
+                  >
+                    + {f}
+                  </button>
+                ))}
               {!hasSpeed && (
-                <button type="button" onClick={() => addMatchField("if_speed_mbps")} disabled={disabled}
-                  className="text-[10px] text-zinc-600 hover:text-brand-400 border border-zinc-800 hover:border-brand-500/30 rounded px-1.5 py-0.5 cursor-pointer transition-colors">
+                <button
+                  type="button"
+                  onClick={() => addMatchField("if_speed_mbps")}
+                  disabled={disabled}
+                  className="text-[10px] text-zinc-600 hover:text-brand-400 border border-zinc-800 hover:border-brand-500/30 rounded px-1.5 py-0.5 cursor-pointer transition-colors"
+                >
                   + if_speed_mbps
                 </button>
               )}
@@ -1007,26 +1276,67 @@ function TemplateInterfaceRuleCard({
 
           {/* Settings */}
           <div className="space-y-1.5 rounded-md border border-zinc-800 p-2">
-            <span className="text-xs font-medium text-zinc-400">Settings to Apply</span>
+            <span className="text-xs font-medium text-zinc-400">
+              Settings to Apply
+            </span>
             <div className="flex items-center gap-4 flex-wrap">
               <label className="flex items-center gap-1.5 text-xs cursor-pointer">
-                <input type="checkbox" checked={rule.settings.polling_enabled ?? true}
-                  onChange={e => onChange({ ...rule, settings: { ...rule.settings, polling_enabled: e.target.checked } })}
-                  disabled={disabled} className="accent-brand-500" />
+                <input
+                  type="checkbox"
+                  checked={rule.settings.polling_enabled ?? true}
+                  onChange={(e) =>
+                    onChange({
+                      ...rule,
+                      settings: {
+                        ...rule.settings,
+                        polling_enabled: e.target.checked,
+                      },
+                    })
+                  }
+                  disabled={disabled}
+                  className="accent-brand-500"
+                />
                 <span className="text-zinc-300">Polling</span>
               </label>
               <label className="flex items-center gap-1.5 text-xs cursor-pointer">
-                <input type="checkbox" checked={rule.settings.alerting_enabled ?? true}
-                  onChange={e => onChange({ ...rule, settings: { ...rule.settings, alerting_enabled: e.target.checked } })}
-                  disabled={disabled} className="accent-amber-500" />
+                <input
+                  type="checkbox"
+                  checked={rule.settings.alerting_enabled ?? true}
+                  onChange={(e) =>
+                    onChange({
+                      ...rule,
+                      settings: {
+                        ...rule.settings,
+                        alerting_enabled: e.target.checked,
+                      },
+                    })
+                  }
+                  disabled={disabled}
+                  className="accent-amber-500"
+                />
                 <span className="text-zinc-300">Alerting</span>
               </label>
               <div className="flex items-center gap-1.5">
                 <span className="text-xs text-zinc-400">Metrics:</span>
-                <Select value={rule.settings.poll_metrics ?? "all"}
-                  onChange={e => onChange({ ...rule, settings: { ...rule.settings, poll_metrics: e.target.value } })}
-                  disabled={disabled} className="w-44">
-                  {IF_METRICS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                <Select
+                  value={rule.settings.poll_metrics ?? "all"}
+                  onChange={(e) =>
+                    onChange({
+                      ...rule,
+                      settings: {
+                        ...rule.settings,
+                        poll_metrics: e.target.value,
+                      },
+                    })
+                  }
+                  disabled={disabled}
+                  className="w-44"
+                >
+                  {IF_METRICS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
                 </Select>
               </div>
             </div>

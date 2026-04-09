@@ -2,7 +2,13 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { ChevronDown, ListChecks, Loader2, Trash2 } from "lucide-react";
 import { CredentialCell } from "@/components/CredentialCell.tsx";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
+import { IntervalInput } from "@/components/IntervalInput";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
@@ -15,7 +21,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table.tsx";
-import { useAssignments, useAppDetail, useBulkUpdateAssignments, useBulkDeleteAssignments, useCredentials } from "@/api/hooks.ts";
+import {
+  useAssignments,
+  useAppDetail,
+  useBulkUpdateAssignments,
+  useBulkDeleteAssignments,
+  useCredentials,
+} from "@/api/hooks.ts";
 import { formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 import { usePermissions } from "@/hooks/usePermissions.ts";
@@ -45,9 +57,18 @@ export function AssignmentsPage() {
     defaultPageSize: pageSize,
     scrollMode,
   });
-  const { data: response, isLoading, isFetching } = useAssignments(listState.params);
+  const {
+    data: response,
+    isLoading,
+    isFetching,
+  } = useAssignments(listState.params);
   const assignments = response?.data ?? [];
-  const meta = (response as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
+  const meta = (response as any)?.meta ?? {
+    limit: 50,
+    offset: 0,
+    count: 0,
+    total: 0,
+  };
 
   // Selection
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -68,18 +89,31 @@ export function AssignmentsPage() {
 
   // Determine if all selected assignments belong to the same app
   const selectedApps = useMemo(() => {
-    if (selected.size === 0) return { singleApp: false, appId: null as string | null, appName: null as string | null };
-    const selectedAssignments = (assignments ?? []).filter((a: any) => selected.has(a.id));
+    if (selected.size === 0)
+      return {
+        singleApp: false,
+        appId: null as string | null,
+        appName: null as string | null,
+      };
+    const selectedAssignments = (assignments ?? []).filter((a: any) =>
+      selected.has(a.id),
+    );
     const uniqueAppIds = new Set(selectedAssignments.map((a: any) => a.app.id));
     if (uniqueAppIds.size === 1) {
       const first = selectedAssignments[0];
-      return { singleApp: true, appId: first.app.id as string, appName: first.app.name as string };
+      return {
+        singleApp: true,
+        appId: first.app.id as string,
+        appName: first.app.name as string,
+      };
     }
     return { singleApp: false, appId: null, appName: null };
   }, [selected, assignments]);
 
   // Fetch app versions when a single app is selected
-  const { data: bulkAppDetail } = useAppDetail(selectedApps.singleApp ? selectedApps.appId! : undefined);
+  const { data: bulkAppDetail } = useAppDetail(
+    selectedApps.singleApp ? selectedApps.appId! : undefined,
+  );
 
   // Close bulk popover on outside click
   useEffect(() => {
@@ -124,7 +158,8 @@ export function AssignmentsPage() {
       payload.schedule_value = bulkScheduleValue;
     }
     if (bulkCredentialId !== "") {
-      payload.credential_id = bulkCredentialId === "__clear__" ? "" : bulkCredentialId;
+      payload.credential_id =
+        bulkCredentialId === "__clear__" ? "" : bulkCredentialId;
     }
     if (bulkEnabled !== "") {
       payload.enabled = bulkEnabled === "true";
@@ -183,8 +218,8 @@ export function AssignmentsPage() {
                     <ChevronDown className="h-3 w-3" />
                   </Button>
                 )}
-                {canDelete("assignment") && (
-                  !confirmDelete ? (
+                {canDelete("assignment") &&
+                  (!confirmDelete ? (
                     <Button
                       variant="outline"
                       size="sm"
@@ -212,18 +247,23 @@ export function AssignmentsPage() {
                       }}
                       className="gap-1.5 text-red-400 border-red-500 hover:bg-red-500/20"
                     >
-                      {bulkDelete.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                      {bulkDelete.isPending ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-3.5 w-3.5" />
+                      )}
                       Confirm delete {selected.size}?
                     </Button>
-                  )
-                )}
+                  ))}
               </div>
 
               {bulkOpen && (
                 <div className="absolute top-9 right-0 z-20 w-64 rounded-md border border-zinc-700 bg-zinc-900 p-3 space-y-3 shadow-lg">
                   {/* Schedule */}
                   <div>
-                    <label className="text-xs text-zinc-500 block mb-1">Schedule</label>
+                    <label className="text-xs text-zinc-500 block mb-1">
+                      Schedule
+                    </label>
                     <div className="flex gap-1.5">
                       <Select
                         value={bulkScheduleType}
@@ -234,11 +274,18 @@ export function AssignmentsPage() {
                         <option value="interval">Interval</option>
                         <option value="cron">Cron</option>
                       </Select>
-                      {bulkScheduleType && (
+                      {bulkScheduleType === "interval" && (
+                        <IntervalInput
+                          value={bulkScheduleValue || "60"}
+                          onChange={setBulkScheduleValue}
+                          className="flex-1"
+                        />
+                      )}
+                      {bulkScheduleType === "cron" && (
                         <Input
                           value={bulkScheduleValue}
                           onChange={(e) => setBulkScheduleValue(e.target.value)}
-                          placeholder={bulkScheduleType === "interval" ? "60" : "*/5 * * * *"}
+                          placeholder="*/5 * * * *"
                           className="flex-1 text-xs h-7"
                         />
                       )}
@@ -247,7 +294,9 @@ export function AssignmentsPage() {
 
                   {/* Credential */}
                   <div>
-                    <label className="text-xs text-zinc-500 block mb-1">Credential</label>
+                    <label className="text-xs text-zinc-500 block mb-1">
+                      Credential
+                    </label>
                     <Select
                       value={bulkCredentialId}
                       onChange={(e) => setBulkCredentialId(e.target.value)}
@@ -256,14 +305,18 @@ export function AssignmentsPage() {
                       <option value="">— No change —</option>
                       <option value="__clear__">Clear credential</option>
                       {(credentials ?? []).map((c) => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
                       ))}
                     </Select>
                   </div>
 
                   {/* Version */}
                   <div>
-                    <label className="text-xs text-zinc-500 block mb-1">Version</label>
+                    <label className="text-xs text-zinc-500 block mb-1">
+                      Version
+                    </label>
                     <select
                       value={bulkVersionMode}
                       onChange={(e) => setBulkVersionMode(e.target.value)}
@@ -271,11 +324,13 @@ export function AssignmentsPage() {
                     >
                       <option value="">— No change —</option>
                       <option value="latest">Latest</option>
-                      {selectedApps.singleApp && bulkAppDetail?.versions?.map((v: any) => (
-                        <option key={v.id} value={v.id}>
-                          {v.version}{v.is_latest ? " (latest)" : ""}
-                        </option>
-                      ))}
+                      {selectedApps.singleApp &&
+                        bulkAppDetail?.versions?.map((v: any) => (
+                          <option key={v.id} value={v.id}>
+                            {v.version}
+                            {v.is_latest ? " (latest)" : ""}
+                          </option>
+                        ))}
                     </select>
                     {!selectedApps.singleApp && selected.size > 0 && (
                       <p className="text-[10px] text-zinc-600 mt-1">
@@ -286,7 +341,9 @@ export function AssignmentsPage() {
 
                   {/* Enabled */}
                   <div>
-                    <label className="text-xs text-zinc-500 block mb-1">Enabled</label>
+                    <label className="text-xs text-zinc-500 block mb-1">
+                      Enabled
+                    </label>
                     <Select
                       value={bulkEnabled}
                       onChange={(e) => setBulkEnabled(e.target.value)}
@@ -305,8 +362,11 @@ export function AssignmentsPage() {
                       disabled={bulkUpdate.isPending}
                       onClick={handleBulkApply}
                     >
-                      {bulkUpdate.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                      Apply to {selected.size} assignment{selected.size !== 1 ? "s" : ""}
+                      {bulkUpdate.isPending && (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      )}
+                      Apply to {selected.size} assignment
+                      {selected.size !== 1 ? "s" : ""}
                     </Button>
                   )}
                 </div>
@@ -319,7 +379,12 @@ export function AssignmentsPage() {
       {bulkError && (
         <div className="flex items-center justify-between rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-400">
           <span>{bulkError}</span>
-          <button onClick={() => setBulkError("")} className="ml-3 text-red-400 hover:text-red-300">&times;</button>
+          <button
+            onClick={() => setBulkError("")}
+            className="ml-3 text-red-400 hover:text-red-300"
+          >
+            &times;
+          </button>
         </div>
       )}
 
@@ -338,74 +403,122 @@ export function AssignmentsPage() {
                   <input
                     type="checkbox"
                     checked={allVisibleSelected}
-                    ref={(el) => { if (el) el.indeterminate = someSelected && !allVisibleSelected; }}
+                    ref={(el) => {
+                      if (el)
+                        el.indeterminate = someSelected && !allVisibleSelected;
+                    }}
                     onChange={toggleSelectAll}
                     className="accent-brand-500 cursor-pointer"
                   />
                 </TableHead>
                 <FilterableSortHead
-                  col="app_name" label="App"
-                  sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
+                  col="app_name"
+                  label="App"
+                  sortBy={listState.sortBy}
+                  sortDir={listState.sortDir}
+                  onSort={listState.handleSort}
                   filterValue={listState.filters.app_name}
                   onFilterChange={(v) => listState.setFilter("app_name", v)}
                 />
                 <FilterableSortHead
-                  col="device_name" label="Device"
-                  sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
+                  col="device_name"
+                  label="Device"
+                  sortBy={listState.sortBy}
+                  sortDir={listState.sortDir}
+                  onSort={listState.handleSort}
                   filterValue={listState.filters.device_name}
                   onFilterChange={(v) => listState.setFilter("device_name", v)}
                 />
                 <FilterableSortHead
-                  col="device_category" label="Category"
-                  sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
+                  col="device_category"
+                  label="Category"
+                  sortBy={listState.sortBy}
+                  sortDir={listState.sortDir}
+                  onSort={listState.handleSort}
                   filterValue={listState.filters.device_category}
-                  onFilterChange={(v) => listState.setFilter("device_category", v)}
+                  onFilterChange={(v) =>
+                    listState.setFilter("device_category", v)
+                  }
                 />
                 <FilterableSortHead
-                  col="device_type_name" label="Device Type"
-                  sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
+                  col="device_type_name"
+                  label="Device Type"
+                  sortBy={listState.sortBy}
+                  sortDir={listState.sortDir}
+                  onSort={listState.handleSort}
                   filterValue={listState.filters.device_type_name}
-                  onFilterChange={(v) => listState.setFilter("device_type_name", v)}
+                  onFilterChange={(v) =>
+                    listState.setFilter("device_type_name", v)
+                  }
                 />
                 <FilterableSortHead
-                  col="device_address" label="Device Address"
-                  sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
+                  col="device_address"
+                  label="Device Address"
+                  sortBy={listState.sortBy}
+                  sortDir={listState.sortDir}
+                  onSort={listState.handleSort}
                   sortable={false}
                   filterValue={listState.filters.device_address}
-                  onFilterChange={(v) => listState.setFilter("device_address", v)}
+                  onFilterChange={(v) =>
+                    listState.setFilter("device_address", v)
+                  }
                 />
                 <FilterableSortHead
-                  col="collector_group_name" label="Collector Group"
-                  sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
+                  col="collector_group_name"
+                  label="Collector Group"
+                  sortBy={listState.sortBy}
+                  sortDir={listState.sortDir}
+                  onSort={listState.handleSort}
                   filterValue={listState.filters.collector_group_name}
-                  onFilterChange={(v) => listState.setFilter("collector_group_name", v)}
+                  onFilterChange={(v) =>
+                    listState.setFilter("collector_group_name", v)
+                  }
                 />
                 <FilterableSortHead
-                  col="schedule" label="Schedule"
-                  sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
+                  col="schedule"
+                  label="Schedule"
+                  sortBy={listState.sortBy}
+                  sortDir={listState.sortDir}
+                  onSort={listState.handleSort}
                   filterValue={listState.filters.schedule_value}
-                  onFilterChange={(v) => listState.setFilter("schedule_value", v)}
+                  onFilterChange={(v) =>
+                    listState.setFilter("schedule_value", v)
+                  }
                 />
                 <FilterableSortHead
-                  col="credential_name" label="Credential"
-                  sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
+                  col="credential_name"
+                  label="Credential"
+                  sortBy={listState.sortBy}
+                  sortDir={listState.sortDir}
+                  onSort={listState.handleSort}
                   filterValue={listState.filters.credential_name}
-                  onFilterChange={(v) => listState.setFilter("credential_name", v)}
+                  onFilterChange={(v) =>
+                    listState.setFilter("credential_name", v)
+                  }
                 />
                 <FilterableSortHead
-                  col="enabled" label="Enabled"
-                  sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
+                  col="enabled"
+                  label="Enabled"
+                  sortBy={listState.sortBy}
+                  sortDir={listState.sortDir}
+                  onSort={listState.handleSort}
                   filterValue={listState.filters.enabled}
                   onFilterChange={(v) => listState.setFilter("enabled", v)}
                 />
                 <FilterableSortHead
-                  col="created_at" label="Created"
-                  sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
+                  col="created_at"
+                  label="Created"
+                  sortBy={listState.sortBy}
+                  sortDir={listState.sortDir}
+                  onSort={listState.handleSort}
                   filterable={false}
                 />
                 <FilterableSortHead
-                  col="updated_at" label="Updated"
-                  sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort}
+                  col="updated_at"
+                  label="Updated"
+                  sortBy={listState.sortBy}
+                  sortDir={listState.sortDir}
+                  onSort={listState.handleSort}
                   filterable={false}
                 />
               </TableRow>
@@ -413,89 +526,113 @@ export function AssignmentsPage() {
             <TableBody>
               {assignments.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={13} className="text-center py-8 text-zinc-500 text-sm">
-                    {listState.hasActiveFilters ? "No assignments match your filters" : "No assignments configured"}
+                  <TableCell
+                    colSpan={13}
+                    className="text-center py-8 text-zinc-500 text-sm"
+                  >
+                    {listState.hasActiveFilters
+                      ? "No assignments match your filters"
+                      : "No assignments configured"}
                   </TableCell>
                 </TableRow>
-              ) : assignments.map((assignment) => (
-                <TableRow
-                  key={assignment.id}
-                  className={selected.has(assignment.id) ? "bg-brand-500/5" : ""}
-                >
-                  <TableCell>
-                    <input
-                      type="checkbox"
-                      checked={selected.has(assignment.id)}
-                      onChange={() => toggleSelect(assignment.id)}
-                      className="accent-brand-500 cursor-pointer"
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-zinc-100">
-                        {assignment.app.name}
-                      </span>
-                      <Badge variant="default" className="text-xs">
-                        v{assignment.app.version}
-                      </Badge>
-                      {assignment.use_latest && (
-                        <Badge variant="default" className="text-[10px] text-zinc-500 border-zinc-700">
-                          latest
+              ) : (
+                assignments.map((assignment) => (
+                  <TableRow
+                    key={assignment.id}
+                    className={
+                      selected.has(assignment.id) ? "bg-brand-500/5" : ""
+                    }
+                  >
+                    <TableCell>
+                      <input
+                        type="checkbox"
+                        checked={selected.has(assignment.id)}
+                        onChange={() => toggleSelect(assignment.id)}
+                        className="accent-brand-500 cursor-pointer"
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-zinc-100">
+                          {assignment.app.name}
+                        </span>
+                        <Badge variant="default" className="text-xs">
+                          v{assignment.app.version}
                         </Badge>
+                        {assignment.use_latest && (
+                          <Badge
+                            variant="default"
+                            className="text-[10px] text-zinc-500 border-zinc-700"
+                          >
+                            latest
+                          </Badge>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      {assignment.device ? (
+                        <Link
+                          to={`/devices/${assignment.device.id}`}
+                          className="text-brand-400 hover:text-brand-300 transition-colors"
+                        >
+                          {assignment.device.name}
+                        </Link>
+                      ) : (
+                        <span className="italic text-zinc-500">inline</span>
                       )}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    {assignment.device ? (
-                      <Link
-                        to={`/devices/${assignment.device.id}`}
-                        className="text-brand-400 hover:text-brand-300 transition-colors"
+                    </TableCell>
+                    <TableCell className="text-zinc-400 text-xs">
+                      {assignment.device?.device_category ?? "—"}
+                    </TableCell>
+                    <TableCell className="text-zinc-400 text-xs">
+                      {assignment.device?.device_type_name ?? (
+                        <span className="text-zinc-600">&mdash;</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs text-zinc-400">
+                      {assignment.device ? (
+                        assignment.device.address
+                      ) : (
+                        <span className="text-zinc-600 not-italic">
+                          {String(assignment.config?.host ?? "—")}
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-zinc-400 text-xs">
+                      {assignment.device?.collector_group_name ?? (
+                        <span className="text-zinc-600">&mdash;</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-zinc-400">
+                      {assignment.schedule_human}
+                    </TableCell>
+                    <TableCell className="text-zinc-400">
+                      <CredentialCell
+                        credentialName={assignment.credential_name}
+                        credentialOverrides={assignment.credential_overrides}
+                        deviceDefaultCredentialName={
+                          assignment.device_default_credential_name
+                        }
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={assignment.enabled ? "success" : "default"}
                       >
-                        {assignment.device.name}
-                      </Link>
-                    ) : (
-                      <span className="italic text-zinc-500">inline</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-zinc-400 text-xs">
-                    {assignment.device?.device_category ?? "—"}
-                  </TableCell>
-                  <TableCell className="text-zinc-400 text-xs">
-                    {assignment.device?.device_type_name ?? <span className="text-zinc-600">&mdash;</span>}
-                  </TableCell>
-                  <TableCell className="font-mono text-xs text-zinc-400">
-                    {assignment.device
-                      ? assignment.device.address
-                      : <span className="text-zinc-600 not-italic">{String(assignment.config?.host ?? "—")}</span>}
-                  </TableCell>
-                  <TableCell className="text-zinc-400 text-xs">
-                    {assignment.device?.collector_group_name ?? <span className="text-zinc-600">&mdash;</span>}
-                  </TableCell>
-                  <TableCell className="text-zinc-400">
-                    {assignment.schedule_human}
-                  </TableCell>
-                  <TableCell className="text-zinc-400">
-                    <CredentialCell
-                      credentialName={assignment.credential_name}
-                      credentialOverrides={assignment.credential_overrides}
-                      deviceDefaultCredentialName={assignment.device_default_credential_name}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={assignment.enabled ? "success" : "default"}
-                    >
-                      {assignment.enabled ? "Enabled" : "Disabled"}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-zinc-500">
-                    {formatDate(assignment.created_at, tz)}
-                  </TableCell>
-                  <TableCell className="text-zinc-500">
-                    {assignment.updated_at ? formatDate(assignment.updated_at, tz) : "—"}
-                  </TableCell>
-                </TableRow>
-              ))}
+                        {assignment.enabled ? "Enabled" : "Disabled"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-zinc-500">
+                      {formatDate(assignment.created_at, tz)}
+                    </TableCell>
+                    <TableCell className="text-zinc-500">
+                      {assignment.updated_at
+                        ? formatDate(assignment.updated_at, tz)
+                        : "—"}
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
             </TableBody>
           </Table>
           <PaginationBar
