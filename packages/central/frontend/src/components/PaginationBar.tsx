@@ -42,7 +42,9 @@ export function PaginationBar({
   useEffect(() => {
     if (!isInfinite || !sentinelRef?.current) return;
     const observer = new IntersectionObserver(
-      (entries) => { if (entries[0].isIntersecting) handleIntersection(); },
+      (entries) => {
+        if (entries[0].isIntersecting) handleIntersection();
+      },
       { root: document.querySelector("main"), threshold: 0.1 },
     );
     observer.observe(sentinelRef.current);
@@ -53,7 +55,9 @@ export function PaginationBar({
     return (
       <>
         <div ref={sentinelRef} className="flex justify-center py-3">
-          {isFetching && <Loader2 className="h-5 w-5 animate-spin text-brand-500" />}
+          {isFetching && (
+            <Loader2 className="h-5 w-5 animate-spin text-brand-500" />
+          )}
           {!isFetching && hasMoreInfinite && (
             <span className="text-xs text-zinc-600">Scroll for more...</span>
           )}
@@ -70,13 +74,25 @@ export function PaginationBar({
   return (
     <div className="flex items-center justify-between text-sm text-zinc-500 pt-2">
       <span>
-        {total === 0 ? "No results" : `${startItem}\u2013${endItem} of ${total}`}
+        {total === 0
+          ? "No results"
+          : `${startItem}\u2013${endItem} of ${total}`}
       </span>
       <div className="flex items-center gap-1">
-        <Button variant="ghost" size="sm" disabled={!hasPrev} onClick={() => onPageChange(page - 1)}>
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={!hasPrev}
+          onClick={() => onPageChange(page - 1)}
+        >
           <ChevronLeft className="h-4 w-4" />
         </Button>
-        <Button variant="ghost" size="sm" disabled={!hasNext} onClick={() => onPageChange(page + 1)}>
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={!hasNext}
+          onClick={() => onPageChange(page + 1)}
+        >
           <ChevronRight className="h-4 w-4" />
         </Button>
       </div>

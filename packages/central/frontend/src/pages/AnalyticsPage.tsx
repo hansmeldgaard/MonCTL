@@ -1,5 +1,10 @@
 import { ExternalLink, Activity, Bell, Network, Server } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card.tsx";
 import { useSystemSettings } from "@/api/hooks.ts";
 
 const DASHBOARDS = [
@@ -36,10 +41,13 @@ export function AnalyticsPage() {
   if (!metabaseUrl) {
     return (
       <div className="space-y-4">
-        <h1 className="text-xl font-semibold text-zinc-100">Analytics & Custom Dashboards</h1>
+        <h1 className="text-xl font-semibold text-zinc-100">
+          Analytics & Custom Dashboards
+        </h1>
         <p className="text-sm text-zinc-500">
-          Metabase is not configured. Set the <code className="rounded bg-zinc-800 px-1 py-0.5">metabase_url</code> in
-          Settings to enable analytics dashboards.
+          Metabase is not configured. Set the{" "}
+          <code className="rounded bg-zinc-800 px-1 py-0.5">metabase_url</code>{" "}
+          in Settings to enable analytics dashboards.
         </p>
       </div>
     );
@@ -48,9 +56,12 @@ export function AnalyticsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold text-zinc-100">Analytics & Custom Dashboards</h1>
+        <h1 className="text-xl font-semibold text-zinc-100">
+          Analytics & Custom Dashboards
+        </h1>
         <p className="mt-1 text-sm text-zinc-500">
-          Explore monitoring data, build custom dashboards, and run ad-hoc SQL queries against ClickHouse.
+          Explore monitoring data, build custom dashboards, and run ad-hoc SQL
+          queries against ClickHouse.
         </p>
       </div>
 

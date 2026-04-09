@@ -113,6 +113,7 @@ packages/
 ## Key Gotchas & Non-Obvious Behavior
 
 ### App & Pack System
+
 - **All apps are BasePoller subclasses** with `class Poller(BasePoller)` and `async def poll() -> PollResult`. No legacy script (stdin/stdout) execution.
 - **Built-in packs** (`packs/`) are auto-imported at startup if not already present. Uses "skip" resolution (creates missing apps, never overwrites existing).
 - **`snmp_discovery` is special**: One-shot (`interval=0`), injected into job lists when Redis discovery flag is set. Looked up by name, not ID.
@@ -121,17 +122,20 @@ packages/
 - **Error categories**: All apps MUST set `error_category` on error PollResults: `"device"` (unreachable/timeout), `"config"` (missing connector/credential), `"app"` (bug/crash). Empty string = no error.
 
 ### Credential Resolution Chain (precedence order)
+
 1. `AssignmentCredentialOverride` — per-assignment, per-connector-alias
 2. `AppAssignment.credential_id` — assignment-level
 3. `Device.credentials` JSONB — per-type mapping (`{credential_type: credential_id}`)
 
 ### Connector System
+
 - **SNMP Connector** accepts both `snmp_version` and `version` credential keys (backward compat). Credential API returns `version` from template key names.
 - **Connector lifecycle**: Polling engine manages connect→use→close. **Apps must NOT call `connector.connect()`** — the engine does it. Idempotent guard prevents leaks if called anyway.
 - **Venv site-packages** are permanently added to `sys.path` so lazy imports work at runtime.
 - **Memory management**: `gc.collect()` + `malloc_trim(0)` after each job. Workers use `MALLOC_ARENA_MAX=2`, `PYTHONMALLOC=malloc`, `mem_limit: 1g`.
 
 ### Job Partitioning
+
 - Unpinned assignments use consistent hashing via `CollectorGroup.weight_snapshot` JSONB.
 - `weight_snapshot = NULL` → equal weights fallback. Set to NULL on collector DOWN/approve/group-change.
 - Rebalancer runs every 5 min. Threshold: 1.5x imbalance ratio, 15% weight change hysteresis.
@@ -139,36 +143,43 @@ packages/
 - **Minimum weight floor is 0.3** (both in rebalancer and `/jobs` endpoint). Lower values (e.g. 0.05) create extreme vnode ratios (20:1) that cause flip-flopping.
 
 ### Interface Monitoring
+
 - **Rate calculation is central-side** (not collector). Previous counters cached in Redis.
 - **Targeted polling**: `monitored_interfaces` list injected into job params. Uses SNMP GET (not walk).
 - **Multi-tier retention**: Raw (7d), hourly (90d), daily (730d). Auto-tier selection by time range.
 
 ### Alerting & Thresholds
+
 - **DSL**: `avg(metric) > 80`, `rate(octets) * 8 / 1e6 > 500`, `field CHANGED`, `state IN (...)`. Compiled to ClickHouse SQL.
 - **4-level threshold hierarchy**: expression default → app_value → device override → entity override.
 - **Engine**: 30s evaluation cycle. Writes fire/clear to `alert_log` ClickHouse table.
 - **Events**: Promote alerts via `EventPolicy` (fire_count or fire_history window).
 
 ### Template Hierarchy
+
 - Two-level: `DeviceCategory` (broad) → `DeviceType` (specific override). Priority field controls merge order.
 - `templates/resolver.py`: Category merges first (low→high priority), then type overlays.
 
 ### Dashboard & Analytics
+
 - **ClickHouse 24.3 cannot parse ISO 8601**. `resolveTimestamp()` outputs `YYYY-MM-DD HH:MM:SS`. Values wrapped in single quotes.
 - **Dashboard Editor**: `react-grid-layout` v2.2.3 (hook-based API). 24-column grid, `rowHeight: 40`.
 - **Cross-widget variables**: `{var:name}` in SQL, client-side substitution, single-quote wrapped.
 - **History query default**: `GET /v1/results` queries `availability_latency`, `performance`, `config` — NOT `interface` (has own endpoints).
 
 ### Redis Sentinel
+
 - **`announce-ip` is critical**: Without it in Docker bridge mode, sentinels advertise unreachable 172.x.x.x IPs.
 - Sentinel config copied to `/tmp/` on start — container must be **recreated** (not restarted) to reset state.
 - **Coordinated restart**: All 3 sentinels must stop simultaneously before restarting.
 
 ### Log Collection
+
 - `logs` ClickHouse table uses `toDateTime(timestamp)` wrapper in TTL (required for ClickHouse 24.3 DateTime64).
 - `log_level_filter` on Collector model controls minimum shipped level.
 
 ### Audit Log
+
 - **Two stores**: `audit_login_events` (PostgreSQL — auth events, ACID, queryable by user) and `audit_mutations` (ClickHouse — high-volume mutation history, 365d TTL).
 - **Capture mechanism**: `AuditContextMiddleware` populates a request-scoped `contextvars.ContextVar` with user/IP/request_id. A SQLAlchemy `before_flush` event listener walks `session.new/dirty/deleted`, extracts old values from `attrs.history`, and stashes rows on the context. The middleware forwards them to an async batch buffer on response completion. No per-endpoint decorators.
 - **Whitelist, not blacklist**: Only tablenames listed in `audit/resource_map.py::TABLE_TO_RESOURCE` are audited. Adding a new audited table requires updating that map.
@@ -180,6 +191,7 @@ packages/
 - **ClickHouse cluster DDL gotcha**: Any DDL in the `ON CLUSTER` path uses `.format(cluster=...)`, so literal `{}` in DEFAULT clauses (e.g. `'{}'` for empty JSON) must be escaped to `'{{}}'`. Otherwise Python raises `IndexError: Replacement index 0` before the SQL reaches ClickHouse.
 
 ### System Health
+
 - **Overall status excludes alerts** — only infrastructure subsystems (postgresql, clickhouse, redis, scheduler, collectors, etc.) count. Alerts reflect monitored devices, not platform health.
 - **Scheduler leader election**: Redis SETNX with 30s TTL, renewed every 10s. Only `role=all` or `role=scheduler` instances participate. **Gotcha**: Do not reuse `role` as a variable name in `main.py` lifespan — it shadows `settings.role` and breaks the scheduler check.
 - **Lightweight status endpoint**: `GET /system/health/status` returns cached `overall_status` from last full check. Used by the top-bar health indicator dot (admin-only).
@@ -246,6 +258,7 @@ docker build --platform linux/amd64 -t monctl-collector:latest -f docker/Dockerf
 ```
 
 **Important**:
+
 - Use `Dockerfile.collector-v2` (not `Dockerfile.collector`)
 - No npm/node on servers — Dockerfile handles frontend build
 - No package-lock.json — uses `npm install` (not `npm ci`)
@@ -256,25 +269,25 @@ docker build --platform linux/amd64 -t monctl-collector:latest -f docker/Dockerf
 
 ### Server Inventory
 
-| Role     | Hosts          | IPs                    |
-|----------|----------------|------------------------|
-| Central  | central1-4     | 10.145.210.41 - .44    |
-| Workers  | worker1-4      | 10.145.210.31 - .34    |
-| VIP      | (keepalived)   | 10.145.210.40          |
+| Role    | Hosts        | IPs                 |
+| ------- | ------------ | ------------------- |
+| Central | central1-4   | 10.145.210.41 - .44 |
+| Workers | worker1-4    | 10.145.210.31 - .34 |
+| VIP     | (keepalived) | 10.145.210.40       |
 
 SSH user: `monctl` for all servers.
 
 ### Central Compose Projects
 
-| Project | Path | Central1 | Central2 | Central3 | Central4 |
-|---------|------|----------|----------|----------|----------|
-| central-ha | `/opt/monctl/central-ha/` | app + Patroni + Redis primary + sentinel + Metabase | app + Patroni + Redis replica + sentinel | app + Redis sentinel | — |
-| central | `/opt/monctl/central/` | — | — | — | app + Grafana |
-| clickhouse | `/opt/monctl/clickhouse/` | — | — | ClickHouse node | ClickHouse node |
-| clickhouse-keeper | `/opt/monctl/clickhouse-keeper/` | Keeper-only (quorum voter) | — | — | — |
-| haproxy | `/opt/monctl/haproxy/` | HAProxy + keepalived | HAProxy + keepalived | HAProxy + keepalived | HAProxy + keepalived |
-| etcd | `/opt/monctl/etcd/` | etcd | etcd | etcd | — |
-| docker-stats | `/opt/monctl/docker-stats/` | stats agent | stats agent | stats agent | stats agent |
+| Project           | Path                             | Central1                                            | Central2                                 | Central3             | Central4             |
+| ----------------- | -------------------------------- | --------------------------------------------------- | ---------------------------------------- | -------------------- | -------------------- |
+| central-ha        | `/opt/monctl/central-ha/`        | app + Patroni + Redis primary + sentinel + Metabase | app + Patroni + Redis replica + sentinel | app + Redis sentinel | —                    |
+| central           | `/opt/monctl/central/`           | —                                                   | —                                        | —                    | app + Grafana        |
+| clickhouse        | `/opt/monctl/clickhouse/`        | —                                                   | —                                        | ClickHouse node      | ClickHouse node      |
+| clickhouse-keeper | `/opt/monctl/clickhouse-keeper/` | Keeper-only (quorum voter)                          | —                                        | —                    | —                    |
+| haproxy           | `/opt/monctl/haproxy/`           | HAProxy + keepalived                                | HAProxy + keepalived                     | HAProxy + keepalived | HAProxy + keepalived |
+| etcd              | `/opt/monctl/etcd/`              | etcd                                                | etcd                                     | etcd                 | —                    |
+| docker-stats      | `/opt/monctl/docker-stats/`      | stats agent                                         | stats agent                              | stats agent          | stats agent          |
 
 **Important**: Central1-3 use `central-ha` (:8443). Central4 uses `central` (:8443). Never start both on same node.
 
@@ -309,6 +322,7 @@ SSH user: `monctl` for all servers.
 **Target URL**: `https://10.145.210.40` (HAProxy VIP)
 
 **Auth flow**:
+
 1. Navigate with `--storage-state .playwright/auth-state.json`
 2. If redirected to `/login`, read credentials from `.env.local-dev` (`MONCTL_TEST_USER`, `MONCTL_TEST_PASSWORD`)
 3. Save state after login

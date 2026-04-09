@@ -16,9 +16,16 @@ interface FilterableSortHeadProps {
 }
 
 export function FilterableSortHead({
-  col, label, sortBy, sortDir, onSort,
-  filterValue, onFilterChange,
-  className, sortable = true, filterable = true,
+  col,
+  label,
+  sortBy,
+  sortDir,
+  onSort,
+  filterValue,
+  onFilterChange,
+  className,
+  sortable = true,
+  filterable = true,
 }: FilterableSortHeadProps) {
   const active = sortBy === col;
 
@@ -29,8 +36,8 @@ export function FilterableSortHead({
         onClick={sortable ? () => onSort(col) : undefined}
       >
         {label}
-        {sortable && (
-          active ? (
+        {sortable &&
+          (active ? (
             sortDir === "asc" ? (
               <ArrowUp className="h-3 w-3 text-brand-400" />
             ) : (
@@ -38,8 +45,7 @@ export function FilterableSortHead({
             )
           ) : (
             <ArrowUpDown className="h-3 w-3 text-zinc-600" />
-          )
-        )}
+          ))}
       </div>
       {filterable && onFilterChange && (
         <ClearableInput

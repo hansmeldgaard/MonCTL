@@ -1,17 +1,41 @@
 import { useState, useMemo } from "react";
 import {
-  LineChart, Line, BarChart, Bar, AreaChart, Area, PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+  LineChart,
+  Line,
+  BarChart,
+  Bar,
+  AreaChart,
+  Area,
+  PieChart,
+  Pie,
+  Cell,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
 } from "recharts";
 
 const COLORS = [
-  "#3b82f6", "#ef4444", "#22c55e", "#f59e0b", "#8b5cf6",
-  "#ec4899", "#06b6d4", "#f97316", "#14b8a6", "#6366f1",
+  "#3b82f6",
+  "#ef4444",
+  "#22c55e",
+  "#f59e0b",
+  "#8b5cf6",
+  "#ec4899",
+  "#06b6d4",
+  "#f97316",
+  "#14b8a6",
+  "#6366f1",
 ];
 
 type ChartType = "line" | "bar" | "area" | "pie";
 
-interface Column { name: string; type: string; }
+interface Column {
+  name: string;
+  type: string;
+}
 
 interface Props {
   columns: Column[];
@@ -21,7 +45,12 @@ interface Props {
   initialYColumns?: string[];
   initialGroupBy?: string;
   hideControls?: boolean;
-  onSettingsChange?: (settings: { chartType: ChartType; xColumn: string; yColumns: string[]; groupBy: string }) => void;
+  onSettingsChange?: (settings: {
+    chartType: ChartType;
+    xColumn: string;
+    yColumns: string[];
+    groupBy: string;
+  }) => void;
 }
 
 function isNumericType(type: string): boolean {
@@ -29,23 +58,35 @@ function isNumericType(type: string): boolean {
 }
 
 export function QueryResultChart({
-  columns, rows,
-  initialChartType = "line", initialXColumn, initialYColumns, initialGroupBy,
-  hideControls = false, onSettingsChange,
+  columns,
+  rows,
+  initialChartType = "line",
+  initialXColumn,
+  initialYColumns,
+  initialGroupBy,
+  hideControls = false,
+  onSettingsChange,
 }: Props) {
   const numericCols = columns.filter((c) => isNumericType(c.type));
   const nonNumericCols = columns.filter((c) => !isNumericType(c.type));
 
   const [chartType, setChartType] = useState<ChartType>(initialChartType);
   const [xColumn, setXColumn] = useState(
-    initialXColumn || nonNumericCols[0]?.name || columns[0]?.name || ""
+    initialXColumn || nonNumericCols[0]?.name || columns[0]?.name || "",
   );
   const [yColumns, setYColumns] = useState<string[]>(
-    initialYColumns || numericCols.slice(0, 3).map((c) => c.name)
+    initialYColumns || numericCols.slice(0, 3).map((c) => c.name),
   );
   const [groupBy, setGroupBy] = useState(initialGroupBy || "");
 
-  function updateSettings(updates: Partial<{ chartType: ChartType; xColumn: string; yColumns: string[]; groupBy: string }>) {
+  function updateSettings(
+    updates: Partial<{
+      chartType: ChartType;
+      xColumn: string;
+      yColumns: string[];
+      groupBy: string;
+    }>,
+  ) {
     const next = {
       chartType: updates.chartType ?? chartType,
       xColumn: updates.xColumn ?? xColumn,
@@ -64,7 +105,9 @@ export function QueryResultChart({
     const xIdx = columns.findIndex((c) => c.name === xColumn);
     if (xIdx === -1) return { chartData: [], seriesKeys: [] as string[] };
 
-    const groupIdx = groupBy ? columns.findIndex((c) => c.name === groupBy) : -1;
+    const groupIdx = groupBy
+      ? columns.findIndex((c) => c.name === groupBy)
+      : -1;
 
     // No group by — standard mode: each yColumn is a series
     if (groupIdx === -1 || yColumns.length !== 1) {
@@ -126,7 +169,9 @@ export function QueryResultChart({
       {!hideControls && (
         <div className="flex flex-wrap gap-3 items-end text-xs">
           <div className="space-y-1">
-            <label className="text-zinc-500 uppercase tracking-wide text-[10px] font-semibold">Type</label>
+            <label className="text-zinc-500 uppercase tracking-wide text-[10px] font-semibold">
+              Type
+            </label>
             <div className="flex gap-1">
               {(["line", "bar", "area", "pie"] as ChartType[]).map((t) => (
                 <button
@@ -145,20 +190,26 @@ export function QueryResultChart({
           </div>
 
           <div className="space-y-1">
-            <label className="text-zinc-500 uppercase tracking-wide text-[10px] font-semibold">X Axis</label>
+            <label className="text-zinc-500 uppercase tracking-wide text-[10px] font-semibold">
+              X Axis
+            </label>
             <select
               value={xColumn}
               onChange={(e) => updateSettings({ xColumn: e.target.value })}
               className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-300"
             >
               {columns.map((c) => (
-                <option key={c.name} value={c.name}>{c.name}</option>
+                <option key={c.name} value={c.name}>
+                  {c.name}
+                </option>
               ))}
             </select>
           </div>
 
           <div className="space-y-1">
-            <label className="text-zinc-500 uppercase tracking-wide text-[10px] font-semibold">Y Axis</label>
+            <label className="text-zinc-500 uppercase tracking-wide text-[10px] font-semibold">
+              Y Axis
+            </label>
             <div className="flex flex-wrap gap-1">
               {numericCols.map((c) => (
                 <button
@@ -178,7 +229,9 @@ export function QueryResultChart({
 
           {groupByCandidates.length > 0 && (
             <div className="space-y-1">
-              <label className="text-zinc-500 uppercase tracking-wide text-[10px] font-semibold">Group By</label>
+              <label className="text-zinc-500 uppercase tracking-wide text-[10px] font-semibold">
+                Group By
+              </label>
               <select
                 value={groupBy}
                 onChange={(e) => updateSettings({ groupBy: e.target.value })}
@@ -186,7 +239,9 @@ export function QueryResultChart({
               >
                 <option value="">None</option>
                 {groupByCandidates.map((c) => (
-                  <option key={c.name} value={c.name}>{c.name}</option>
+                  <option key={c.name} value={c.name}>
+                    {c.name}
+                  </option>
                 ))}
               </select>
             </div>
@@ -197,22 +252,65 @@ export function QueryResultChart({
       <div className="h-72">
         <ResponsiveContainer width="100%" height="100%">
           {chartType === "line" ? (
-            <LineChart data={chartData} margin={{ top: 4, right: 16, bottom: 0, left: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
-              <XAxis dataKey={xColumn} stroke="#52525b" fontSize={10} tickLine={false} axisLine={false} />
-              <YAxis stroke="#52525b" fontSize={10} tickLine={false} axisLine={false} />
+            <LineChart
+              data={chartData}
+              margin={{ top: 4, right: 16, bottom: 0, left: 0 }}
+            >
+              <CartesianGrid
+                strokeDasharray="3 3"
+                stroke="#27272a"
+                vertical={false}
+              />
+              <XAxis
+                dataKey={xColumn}
+                stroke="#52525b"
+                fontSize={10}
+                tickLine={false}
+                axisLine={false}
+              />
+              <YAxis
+                stroke="#52525b"
+                fontSize={10}
+                tickLine={false}
+                axisLine={false}
+              />
               <Tooltip contentStyle={tooltipStyle} />
               <Legend wrapperStyle={{ fontSize: 11, color: "#a1a1aa" }} />
               {seriesKeys.map((col, i) => (
-                <Line key={col} type="monotone" dataKey={col} stroke={COLORS[i % COLORS.length]}
-                  strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                <Line
+                  key={col}
+                  type="monotone"
+                  dataKey={col}
+                  stroke={COLORS[i % COLORS.length]}
+                  strokeWidth={1.5}
+                  dot={false}
+                  isAnimationActive={false}
+                />
               ))}
             </LineChart>
           ) : chartType === "bar" ? (
-            <BarChart data={chartData} margin={{ top: 4, right: 16, bottom: 0, left: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
-              <XAxis dataKey={xColumn} stroke="#52525b" fontSize={10} tickLine={false} axisLine={false} />
-              <YAxis stroke="#52525b" fontSize={10} tickLine={false} axisLine={false} />
+            <BarChart
+              data={chartData}
+              margin={{ top: 4, right: 16, bottom: 0, left: 0 }}
+            >
+              <CartesianGrid
+                strokeDasharray="3 3"
+                stroke="#27272a"
+                vertical={false}
+              />
+              <XAxis
+                dataKey={xColumn}
+                stroke="#52525b"
+                fontSize={10}
+                tickLine={false}
+                axisLine={false}
+              />
+              <YAxis
+                stroke="#52525b"
+                fontSize={10}
+                tickLine={false}
+                axisLine={false}
+              />
               <Tooltip contentStyle={tooltipStyle} />
               <Legend wrapperStyle={{ fontSize: 11, color: "#a1a1aa" }} />
               {seriesKeys.map((col, i) => (
@@ -220,21 +318,53 @@ export function QueryResultChart({
               ))}
             </BarChart>
           ) : chartType === "area" ? (
-            <AreaChart data={chartData} margin={{ top: 4, right: 16, bottom: 0, left: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
-              <XAxis dataKey={xColumn} stroke="#52525b" fontSize={10} tickLine={false} axisLine={false} />
-              <YAxis stroke="#52525b" fontSize={10} tickLine={false} axisLine={false} />
+            <AreaChart
+              data={chartData}
+              margin={{ top: 4, right: 16, bottom: 0, left: 0 }}
+            >
+              <CartesianGrid
+                strokeDasharray="3 3"
+                stroke="#27272a"
+                vertical={false}
+              />
+              <XAxis
+                dataKey={xColumn}
+                stroke="#52525b"
+                fontSize={10}
+                tickLine={false}
+                axisLine={false}
+              />
+              <YAxis
+                stroke="#52525b"
+                fontSize={10}
+                tickLine={false}
+                axisLine={false}
+              />
               <Tooltip contentStyle={tooltipStyle} />
               <Legend wrapperStyle={{ fontSize: 11, color: "#a1a1aa" }} />
               {seriesKeys.map((col, i) => (
-                <Area key={col} type="monotone" dataKey={col} stroke={COLORS[i % COLORS.length]}
-                  fill={COLORS[i % COLORS.length]} fillOpacity={0.15} isAnimationActive={false} />
+                <Area
+                  key={col}
+                  type="monotone"
+                  dataKey={col}
+                  stroke={COLORS[i % COLORS.length]}
+                  fill={COLORS[i % COLORS.length]}
+                  fillOpacity={0.15}
+                  isAnimationActive={false}
+                />
               ))}
             </AreaChart>
           ) : (
             <PieChart>
-              <Pie data={chartData} dataKey={seriesKeys[0] || ""} nameKey={xColumn}
-                cx="50%" cy="50%" outerRadius={100} label>
+              <Pie
+                data={chartData}
+                dataKey={seriesKeys[0] || ""}
+                nameKey={xColumn}
+                cx="50%"
+                cy="50%"
+                outerRadius={100}
+                label
+              >
                 {chartData.map((_, i) => (
                   <Cell key={i} fill={COLORS[i % COLORS.length]} />
                 ))}

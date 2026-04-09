@@ -18,7 +18,9 @@ const PRESETS: { label: string; from: string; to: string }[] = [
 ];
 
 function formatLabel(range: TimeRange): string {
-  const preset = PRESETS.find((p) => p.from === range.from && p.to === range.to);
+  const preset = PRESETS.find(
+    (p) => p.from === range.from && p.to === range.to,
+  );
   if (preset) return preset.label;
   return "Custom";
 }
@@ -36,7 +38,8 @@ export function DashboardTimePicker({ value, onChange }: Props) {
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node))
+        setOpen(false);
     }
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
@@ -64,7 +67,10 @@ export function DashboardTimePicker({ value, onChange }: Props) {
           {PRESETS.map((p) => (
             <button
               key={p.label}
-              onClick={() => { onChange({ from: p.from, to: p.to }); setOpen(false); }}
+              onClick={() => {
+                onChange({ from: p.from, to: p.to });
+                setOpen(false);
+              }}
               className={`w-full text-left px-3 py-1.5 text-xs hover:bg-zinc-700 ${
                 value.from === p.from && value.to === p.to
                   ? "text-brand-400"
@@ -75,7 +81,9 @@ export function DashboardTimePicker({ value, onChange }: Props) {
             </button>
           ))}
           <div className="border-t border-zinc-700 mt-1 pt-2 px-3 pb-2 space-y-2">
-            <span className="text-[10px] text-zinc-500 uppercase tracking-wide">Custom Range</span>
+            <span className="text-[10px] text-zinc-500 uppercase tracking-wide">
+              Custom Range
+            </span>
             <Input
               type="datetime-local"
               value={customFrom}
@@ -88,7 +96,11 @@ export function DashboardTimePicker({ value, onChange }: Props) {
               onChange={(e) => setCustomTo(e.target.value)}
               className="text-xs h-7"
             />
-            <Button size="sm" className="w-full text-xs h-7" onClick={applyCustom}>
+            <Button
+              size="sm"
+              className="w-full text-xs h-7"
+              onClick={applyCustom}
+            >
               Apply
             </Button>
           </div>

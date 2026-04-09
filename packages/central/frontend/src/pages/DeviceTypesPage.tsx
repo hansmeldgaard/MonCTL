@@ -58,23 +58,81 @@ import { cn } from "@/lib/utils.ts";
 
 // Built-in (seeded) categories that shouldn't be deleted
 const BUILTIN_CATEGORIES = new Set([
-  "host", "network", "api", "database", "service",
-  "container", "virtual-machine", "storage", "printer", "iot",
+  "host",
+  "network",
+  "api",
+  "database",
+  "service",
+  "container",
+  "virtual-machine",
+  "storage",
+  "printer",
+  "iot",
 ]);
 
 const CATEGORIES = [
-  "network", "server", "storage", "printer", "iot", "service", "database", "other",
+  "network",
+  "server",
+  "storage",
+  "printer",
+  "iot",
+  "service",
+  "database",
+  "other",
 ] as const;
 
-const CATEGORY_META: Record<string, { icon: typeof Server; label: string; accent: string; accentBg: string }> = {
-  network:  { icon: Globe,     label: "Network",  accent: "text-sky-400",    accentBg: "bg-sky-400/10" },
-  server:   { icon: Server,    label: "Server",   accent: "text-zinc-300",   accentBg: "bg-zinc-300/10" },
-  storage:  { icon: HardDrive, label: "Storage",  accent: "text-amber-400",  accentBg: "bg-amber-400/10" },
-  printer:  { icon: Printer,   label: "Printer",  accent: "text-zinc-400",   accentBg: "bg-zinc-400/10" },
-  iot:      { icon: Cpu,       label: "IoT",      accent: "text-teal-400",   accentBg: "bg-teal-400/10" },
-  service:  { icon: Wrench,    label: "Service",  accent: "text-violet-400", accentBg: "bg-violet-400/10" },
-  database: { icon: Database,  label: "Database",  accent: "text-blue-400",   accentBg: "bg-blue-400/10" },
-  other:    { icon: Settings2, label: "Other",    accent: "text-zinc-500",   accentBg: "bg-zinc-500/10" },
+const CATEGORY_META: Record<
+  string,
+  { icon: typeof Server; label: string; accent: string; accentBg: string }
+> = {
+  network: {
+    icon: Globe,
+    label: "Network",
+    accent: "text-sky-400",
+    accentBg: "bg-sky-400/10",
+  },
+  server: {
+    icon: Server,
+    label: "Server",
+    accent: "text-zinc-300",
+    accentBg: "bg-zinc-300/10",
+  },
+  storage: {
+    icon: HardDrive,
+    label: "Storage",
+    accent: "text-amber-400",
+    accentBg: "bg-amber-400/10",
+  },
+  printer: {
+    icon: Printer,
+    label: "Printer",
+    accent: "text-zinc-400",
+    accentBg: "bg-zinc-400/10",
+  },
+  iot: {
+    icon: Cpu,
+    label: "IoT",
+    accent: "text-teal-400",
+    accentBg: "bg-teal-400/10",
+  },
+  service: {
+    icon: Wrench,
+    label: "Service",
+    accent: "text-violet-400",
+    accentBg: "bg-violet-400/10",
+  },
+  database: {
+    icon: Database,
+    label: "Database",
+    accent: "text-blue-400",
+    accentBg: "bg-blue-400/10",
+  },
+  other: {
+    icon: Settings2,
+    label: "Other",
+    accent: "text-zinc-500",
+    accentBg: "bg-zinc-500/10",
+  },
 };
 
 const ICON_OPTIONS = [
@@ -113,19 +171,28 @@ export function DeviceCategoriesPage() {
   }, [search]);
 
   // Category counts (respects search filter)
-  const { data: catData } = useDeviceCategoryCounts(debouncedSearch || undefined);
+  const { data: catData } = useDeviceCategoryCounts(
+    debouncedSearch || undefined,
+  );
 
   // Paginated type list
-  const listParams = useMemo(() => ({
-    limit: 500,
-    offset: 0,
-    sort_by: "name" as const,
-    sort_dir: "asc" as const,
-    ...(debouncedSearch ? { search: debouncedSearch } : {}),
-    ...(activeCategory ? { category: activeCategory } : {}),
-  }), [debouncedSearch, activeCategory]);
+  const listParams = useMemo(
+    () => ({
+      limit: 500,
+      offset: 0,
+      sort_by: "name" as const,
+      sort_dir: "asc" as const,
+      ...(debouncedSearch ? { search: debouncedSearch } : {}),
+      ...(activeCategory ? { category: activeCategory } : {}),
+    }),
+    [debouncedSearch, activeCategory],
+  );
 
-  const { data: listData, isLoading, isFetching } = useDeviceCategoryList(listParams);
+  const {
+    data: listData,
+    isLoading,
+    isFetching,
+  } = useDeviceCategoryList(listParams);
 
   const allTypes: DeviceCategory[] = listData?.data ?? [];
   const total = listData?.meta?.total ?? 0;
@@ -145,7 +212,10 @@ export function DeviceCategoriesPage() {
   const [editIcon, setEditIcon] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
 
-  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
 
   // Expanded row for template bindings
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
@@ -167,7 +237,9 @@ export function DeviceCategoriesPage() {
       setIcon("");
       setAddOpen(false);
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : "Failed to create device type");
+      setFormError(
+        err instanceof Error ? err.message : "Failed to create device type",
+      );
     }
   }
 
@@ -189,7 +261,14 @@ export function DeviceCategoriesPage() {
       await updateType.mutateAsync({
         id: editTarget.id,
         data: {
-          ...(isBuiltin ? {} : { name: editNameField.value.trim().toLowerCase().replace(/\s+/g, "-") }),
+          ...(isBuiltin
+            ? {}
+            : {
+                name: editNameField.value
+                  .trim()
+                  .toLowerCase()
+                  .replace(/\s+/g, "-"),
+              }),
           description: editDescription.trim() || undefined,
           category: editCategory,
           icon: editIcon || undefined,
@@ -197,7 +276,9 @@ export function DeviceCategoriesPage() {
       });
       setEditTarget(null);
     } catch (err) {
-      setEditError(err instanceof Error ? err.message : "Failed to update device type");
+      setEditError(
+        err instanceof Error ? err.message : "Failed to update device type",
+      );
     }
   }
 
@@ -244,10 +325,16 @@ export function DeviceCategoriesPage() {
         <span className="text-xs text-zinc-500 tabular-nums whitespace-nowrap">
           {total} categor{total !== 1 ? "ies" : "y"}
         </span>
-        {isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-600" />}
+        {isFetching && (
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-600" />
+        )}
         {canCreate("device") && (
           <div className="ml-auto">
-            <Button size="sm" onClick={() => setAddOpen(true)} className="gap-1.5">
+            <Button
+              size="sm"
+              onClick={() => setAddOpen(true)}
+              className="gap-1.5"
+            >
               <Plus className="h-4 w-4" />
               Add Category
             </Button>
@@ -281,7 +368,9 @@ export function DeviceCategoriesPage() {
             <button
               key={cat}
               type="button"
-              onClick={() => setActiveCategory(activeCategory === cat ? null : cat)}
+              onClick={() =>
+                setActiveCategory(activeCategory === cat ? null : cat)
+              }
               className={cn(
                 "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer",
                 activeCategory === cat
@@ -336,31 +425,53 @@ export function DeviceCategoriesPage() {
                   >
                     <TableCell>
                       <span className="flex items-center gap-2">
-                        <ChevronDown className={cn("h-3.5 w-3.5 text-zinc-600 transition-transform", !isExpanded && "-rotate-90")} />
+                        <ChevronDown
+                          className={cn(
+                            "h-3.5 w-3.5 text-zinc-600 transition-transform",
+                            !isExpanded && "-rotate-90",
+                          )}
+                        />
                         <DeviceIcon
                           icon={dt.icon}
-                          customIconUrl={dt.has_custom_icon ? categoryIconUrl(dt.id) : null}
+                          customIconUrl={
+                            dt.has_custom_icon ? categoryIconUrl(dt.id) : null
+                          }
                           className="h-4 w-4 text-zinc-400"
                         />
-                        <span className="font-mono text-sm font-medium text-zinc-200">{dt.name}</span>
-                        {isBuiltin && <Lock className="h-3 w-3 text-zinc-600" />}
-                        {isPackManaged && <Package className="h-3 w-3 text-violet-500/70" />}
+                        <span className="font-mono text-sm font-medium text-zinc-200">
+                          {dt.name}
+                        </span>
+                        {isBuiltin && (
+                          <Lock className="h-3 w-3 text-zinc-600" />
+                        )}
+                        {isPackManaged && (
+                          <Package className="h-3 w-3 text-violet-500/70" />
+                        )}
                       </span>
                     </TableCell>
                     <TableCell>
                       <span className="flex items-center gap-1.5">
-                        <CatIcon className={cn("h-3.5 w-3.5", catMeta.accent)} />
-                        <span className="text-sm text-zinc-400">{catMeta.label}</span>
+                        <CatIcon
+                          className={cn("h-3.5 w-3.5", catMeta.accent)}
+                        />
+                        <span className="text-sm text-zinc-400">
+                          {catMeta.label}
+                        </span>
                       </span>
                     </TableCell>
                     <TableCell className="text-sm text-zinc-500 truncate max-w-xs">
                       {dt.description || "—"}
                     </TableCell>
                     <TableCell className="text-center">
-                      <span className="text-sm text-zinc-400">{(dt as any).device_type_count ?? 0}</span>
+                      <span className="text-sm text-zinc-400">
+                        {(dt as any).device_type_count ?? 0}
+                      </span>
                     </TableCell>
                     <TableCell>
-                      <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                      <div
+                        className="flex items-center gap-1"
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         {canEdit("device") && (
                           <button
                             onClick={() => openEdit(dt)}
@@ -369,20 +480,27 @@ export function DeviceCategoriesPage() {
                             <Pencil className="h-3.5 w-3.5" />
                           </button>
                         )}
-                        {canDelete("device") && !isBuiltin && !isPackManaged && (
-                          <button
-                            onClick={() => setDeleteTarget({ id: dt.id, name: dt.name })}
-                            className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        )}
+                        {canDelete("device") &&
+                          !isBuiltin &&
+                          !isPackManaged && (
+                            <button
+                              onClick={() =>
+                                setDeleteTarget({ id: dt.id, name: dt.name })
+                              }
+                              className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
                       </div>
                     </TableCell>
                   </TableRow>
                   {isExpanded && (
                     <TableRow key={`${dt.id}-templates`}>
-                      <TableCell colSpan={4} className="bg-zinc-900/50 px-6 py-3">
+                      <TableCell
+                        colSpan={4}
+                        className="bg-zinc-900/50 px-6 py-3"
+                      >
                         <CategoryTemplateBindingsPanel categoryId={dt.id} />
                       </TableCell>
                     </TableRow>
@@ -395,7 +513,14 @@ export function DeviceCategoriesPage() {
       )}
 
       {/* Add Category Dialog */}
-      <Dialog open={addOpen} onClose={() => { setAddOpen(false); setFormError(null); }} title="Add Device Category">
+      <Dialog
+        open={addOpen}
+        onClose={() => {
+          setAddOpen(false);
+          setFormError(null);
+        }}
+        title="Add Device Category"
+      >
         <form onSubmit={handleCreate} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="dt-name">Name</Label>
@@ -407,30 +532,45 @@ export function DeviceCategoriesPage() {
               onBlur={nameField.onBlur}
               autoFocus
             />
-            {nameField.error && <p className="text-xs text-red-400 mt-0.5">{nameField.error}</p>}
+            {nameField.error && (
+              <p className="text-xs text-red-400 mt-0.5">{nameField.error}</p>
+            )}
             <p className="text-xs text-zinc-500">
               Lowercase, hyphens allowed. Will be auto-formatted.
             </p>
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="dt-category">Category</Label>
-            <Select id="dt-category" value={category} onChange={(e) => setCategory(e.target.value)}>
+            <Select
+              id="dt-category"
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+            >
               {CATEGORIES.map((c) => (
-                <option key={c} value={c}>{c}</option>
+                <option key={c} value={c}>
+                  {c}
+                </option>
               ))}
             </Select>
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="dt-icon">Icon</Label>
-            <Select id="dt-icon" value={icon} onChange={(e) => setIcon(e.target.value)}>
+            <Select
+              id="dt-icon"
+              value={icon}
+              onChange={(e) => setIcon(e.target.value)}
+            >
               {ICON_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>{o.label}</option>
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
               ))}
             </Select>
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="dt-description">
-              Description <span className="font-normal text-zinc-500">(optional)</span>
+              Description{" "}
+              <span className="font-normal text-zinc-500">(optional)</span>
             </Label>
             <Input
               id="dt-description"
@@ -444,12 +584,17 @@ export function DeviceCategoriesPage() {
             <Button
               type="button"
               variant="secondary"
-              onClick={() => { setAddOpen(false); setFormError(null); }}
+              onClick={() => {
+                setAddOpen(false);
+                setFormError(null);
+              }}
             >
               Cancel
             </Button>
             <Button type="submit" disabled={createType.isPending}>
-              {createType.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              {createType.isPending && (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              )}
               Add Category
             </Button>
           </DialogFooter>
@@ -457,7 +602,11 @@ export function DeviceCategoriesPage() {
       </Dialog>
 
       {/* Edit Category Dialog */}
-      <Dialog open={!!editTarget} onClose={() => setEditTarget(null)} title="Edit Device Category">
+      <Dialog
+        open={!!editTarget}
+        onClose={() => setEditTarget(null)}
+        title="Edit Device Category"
+      >
         <form onSubmit={handleEdit} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="dt-edit-name">Name</Label>
@@ -466,32 +615,53 @@ export function DeviceCategoriesPage() {
               value={editNameField.value}
               onChange={editNameField.onChange}
               onBlur={editNameField.onBlur}
-              disabled={editTarget ? BUILTIN_CATEGORIES.has(editTarget.name) : false}
+              disabled={
+                editTarget ? BUILTIN_CATEGORIES.has(editTarget.name) : false
+              }
               autoFocus
             />
             {editTarget && BUILTIN_CATEGORIES.has(editTarget.name) && (
-              <p className="text-xs text-zinc-500">Built-in category names cannot be changed.</p>
+              <p className="text-xs text-zinc-500">
+                Built-in category names cannot be changed.
+              </p>
             )}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="dt-edit-category">Category</Label>
-            <Select id="dt-edit-category" value={editCategory} onChange={(e) => setEditCategory(e.target.value)}>
+            <Select
+              id="dt-edit-category"
+              value={editCategory}
+              onChange={(e) => setEditCategory(e.target.value)}
+            >
               {CATEGORIES.map((c) => (
-                <option key={c} value={c}>{c}</option>
+                <option key={c} value={c}>
+                  {c}
+                </option>
               ))}
             </Select>
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="dt-edit-icon">Icon</Label>
-            <Select id="dt-edit-icon" value={editIcon} onChange={(e) => setEditIcon(e.target.value)}>
+            <Select
+              id="dt-edit-icon"
+              value={editIcon}
+              onChange={(e) => setEditIcon(e.target.value)}
+            >
               {ICON_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>{o.label}</option>
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
               ))}
             </Select>
           </div>
           {/* Custom icon upload */}
           <div className="space-y-1.5">
-            <Label>Custom Icon <span className="font-normal text-zinc-500">(optional, overrides built-in)</span></Label>
+            <Label>
+              Custom Icon{" "}
+              <span className="font-normal text-zinc-500">
+                (optional, overrides built-in)
+              </span>
+            </Label>
             {editTarget?.has_custom_icon ? (
               <div className="flex items-center gap-3">
                 <img
@@ -547,11 +717,17 @@ export function DeviceCategoriesPage() {
           </div>
           {editError && <p className="text-sm text-red-400">{editError}</p>}
           <DialogFooter>
-            <Button type="button" variant="secondary" onClick={() => setEditTarget(null)}>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setEditTarget(null)}
+            >
               Cancel
             </Button>
             <Button type="submit" disabled={updateType.isPending}>
-              {updateType.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              {updateType.isPending && (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              )}
               Save
             </Button>
           </DialogFooter>
@@ -579,7 +755,9 @@ export function DeviceCategoriesPage() {
             onClick={handleDelete}
             disabled={deleteType.isPending}
           >
-            {deleteType.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+            {deleteType.isPending && (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            )}
             Delete
           </Button>
         </DialogFooter>
@@ -588,11 +766,11 @@ export function DeviceCategoriesPage() {
   );
 }
 
-
 /* ── Category template bindings panel (shown in expanded row) ── */
 
 function CategoryTemplateBindingsPanel({ categoryId }: { categoryId: string }) {
-  const { data: bindingsData, refetch } = useCategoryTemplateBindings(categoryId);
+  const { data: bindingsData, refetch } =
+    useCategoryTemplateBindings(categoryId);
   const bindTemplate = useBindCategoryTemplate();
   const unbindTemplate = useUnbindCategoryTemplate();
   const { data: templatesData } = useTemplates({ limit: 200 });
@@ -610,15 +788,24 @@ function CategoryTemplateBindingsPanel({ categoryId }: { categoryId: string }) {
     const b = bindings[target];
     // Swap steps by re-binding with swapped step values
     await Promise.all([
-      bindTemplate.mutateAsync({ device_category_id: categoryId, template_id: a.template_id, step: b.step }),
-      bindTemplate.mutateAsync({ device_category_id: categoryId, template_id: b.template_id, step: a.step }),
+      bindTemplate.mutateAsync({
+        device_category_id: categoryId,
+        template_id: a.template_id,
+        step: b.step,
+      }),
+      bindTemplate.mutateAsync({
+        device_category_id: categoryId,
+        template_id: b.template_id,
+        step: a.step,
+      }),
     ]);
     refetch();
   }
 
   async function handleAdd() {
     if (!addTemplateId) return;
-    const nextStep = bindings.length > 0 ? Math.max(...bindings.map((b) => b.step)) + 1 : 1;
+    const nextStep =
+      bindings.length > 0 ? Math.max(...bindings.map((b) => b.step)) + 1 : 1;
     await bindTemplate.mutateAsync({
       device_category_id: categoryId,
       template_id: addTemplateId,
@@ -632,19 +819,29 @@ function CategoryTemplateBindingsPanel({ categoryId }: { categoryId: string }) {
     <div className="space-y-3">
       <div className="flex items-center gap-2">
         <FileText className="h-3.5 w-3.5 text-zinc-400" />
-        <span className="text-xs font-medium text-zinc-400">Linked Templates</span>
+        <span className="text-xs font-medium text-zinc-400">
+          Linked Templates
+        </span>
       </div>
 
       <p className="text-xs text-zinc-500">
-        Templates are applied in step order (1 → 99). Device type templates (step 100 → 199) are applied after and override on app name overlap.
+        Templates are applied in step order (1 → 99). Device type templates
+        (step 100 → 199) are applied after and override on app name overlap.
       </p>
 
       {bindings.length > 0 ? (
         <div className="space-y-1">
           {bindings.map((b, idx) => (
-            <div key={b.id} className="flex items-center gap-2 rounded border border-zinc-800 bg-zinc-800/40 px-2.5 py-1.5 text-sm">
-              <span className="w-8 text-center text-xs text-zinc-500 tabular-nums font-mono">{b.step}</span>
-              <span className="flex-1 truncate text-zinc-200">{b.template_name}</span>
+            <div
+              key={b.id}
+              className="flex items-center gap-2 rounded border border-zinc-800 bg-zinc-800/40 px-2.5 py-1.5 text-sm"
+            >
+              <span className="w-8 text-center text-xs text-zinc-500 tabular-nums font-mono">
+                {b.step}
+              </span>
+              <span className="flex-1 truncate text-zinc-200">
+                {b.template_name}
+              </span>
               <div className="flex items-center gap-0.5">
                 <button
                   type="button"
@@ -699,7 +896,11 @@ function CategoryTemplateBindingsPanel({ categoryId }: { categoryId: string }) {
           disabled={!addTemplateId || bindTemplate.isPending}
           onClick={handleAdd}
         >
-          {bindTemplate.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+          {bindTemplate.isPending ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Plus className="h-3.5 w-3.5" />
+          )}
         </Button>
       </div>
     </div>

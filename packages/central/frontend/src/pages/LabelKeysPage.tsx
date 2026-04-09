@@ -3,7 +3,12 @@ import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
 import { validateLabelKey, validateHexColor } from "@/lib/validation.ts";
 import { Loader2, Plus, Pencil, Trash2, Tag, X } from "lucide-react";
 import { usePermissions } from "@/hooks/usePermissions.ts";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
@@ -18,13 +23,31 @@ import {
 import type { LabelKey } from "@/types/api.ts";
 
 const PRESET_COLORS = [
-  "#EF4444", "#F97316", "#F59E0B", "#EAB308",
-  "#84CC16", "#22C55E", "#14B8A6", "#06B6D4",
-  "#3B82F6", "#6366F1", "#8B5CF6", "#A855F7",
-  "#D946EF", "#EC4899", "#F43F5E", "#78716C",
+  "#EF4444",
+  "#F97316",
+  "#F59E0B",
+  "#EAB308",
+  "#84CC16",
+  "#22C55E",
+  "#14B8A6",
+  "#06B6D4",
+  "#3B82F6",
+  "#6366F1",
+  "#8B5CF6",
+  "#A855F7",
+  "#D946EF",
+  "#EC4899",
+  "#F43F5E",
+  "#78716C",
 ];
 
-function ColorPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function ColorPicker({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
   return (
     <div className="space-y-2">
       <div className="grid grid-cols-8 gap-1.5">
@@ -69,7 +92,13 @@ function ColorPicker({ value, onChange }: { value: string; onChange: (v: string)
   );
 }
 
-function TagInput({ values, onChange }: { values: string[]; onChange: (v: string[]) => void }) {
+function TagInput({
+  values,
+  onChange,
+}: {
+  values: string[];
+  onChange: (v: string[]) => void;
+}) {
   const [input, setInput] = useState("");
 
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -209,7 +238,11 @@ export function LabelKeysPage() {
             <Tag className="h-4 w-4" />
             Label Keys
             {canCreate("device") && (
-              <Button size="sm" className="ml-auto gap-1.5" onClick={openCreate}>
+              <Button
+                size="sm"
+                className="ml-auto gap-1.5"
+                onClick={openCreate}
+              >
                 <Plus className="h-3.5 w-3.5" />
                 Add Label Key
               </Button>
@@ -240,7 +273,15 @@ export function LabelKeysPage() {
                         <Badge
                           variant="default"
                           className="text-xs font-mono"
-                          style={lk.color ? { backgroundColor: `${lk.color}20`, color: lk.color, borderColor: `${lk.color}40` } : undefined}
+                          style={
+                            lk.color
+                              ? {
+                                  backgroundColor: `${lk.color}20`,
+                                  color: lk.color,
+                                  borderColor: `${lk.color}40`,
+                                }
+                              : undefined
+                          }
                         >
                           {lk.key}
                         </Badge>
@@ -255,7 +296,13 @@ export function LabelKeysPage() {
                       <td className="py-2.5 pr-4">
                         <div className="flex flex-wrap gap-1">
                           {(lk.predefined_values ?? []).slice(0, 5).map((v) => (
-                            <Badge key={v} variant="default" className="text-[10px]">{v}</Badge>
+                            <Badge
+                              key={v}
+                              variant="default"
+                              className="text-[10px]"
+                            >
+                              {v}
+                            </Badge>
                           ))}
                           {(lk.predefined_values ?? []).length > 5 && (
                             <span className="text-[10px] text-zinc-500">
@@ -270,12 +317,20 @@ export function LabelKeysPage() {
                       <td className="py-2.5 text-right">
                         <div className="flex items-center justify-end gap-1">
                           {canEdit("device") && (
-                            <Button size="sm" variant="ghost" onClick={() => openEdit(lk)}>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => openEdit(lk)}
+                            >
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
                           )}
                           {canDelete("device") && (
-                            <Button size="sm" variant="ghost" onClick={() => setDeleteTarget(lk)}>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => setDeleteTarget(lk)}
+                            >
                               <Trash2 className="h-3.5 w-3.5 text-red-400" />
                             </Button>
                           )}
@@ -291,7 +346,11 @@ export function LabelKeysPage() {
       </Card>
 
       {/* Create Dialog */}
-      <Dialog open={createOpen} onClose={() => setCreateOpen(false)} title="Add Label Key">
+      <Dialog
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title="Add Label Key"
+      >
         <div className="space-y-4">
           <div className="space-y-1.5">
             <Label>Key</Label>
@@ -303,8 +362,12 @@ export function LabelKeysPage() {
               className="font-mono text-xs"
               autoFocus
             />
-            {newKeyField.error && <p className="text-xs text-red-400 mt-0.5">{newKeyField.error}</p>}
-            <p className="text-[10px] text-zinc-500">Lowercase, a-z, 0-9, hyphens, underscores.</p>
+            {newKeyField.error && (
+              <p className="text-xs text-red-400 mt-0.5">{newKeyField.error}</p>
+            )}
+            <p className="text-[10px] text-zinc-500">
+              Lowercase, a-z, 0-9, hyphens, underscores.
+            </p>
           </div>
           <div className="space-y-1.5">
             <Label>Description</Label>
@@ -324,7 +387,9 @@ export function LabelKeysPage() {
                 disabled={!newDesc.trim()}
                 className="rounded border-zinc-700"
               />
-              <span className={!newDesc.trim() ? "text-zinc-600" : "text-zinc-300"}>
+              <span
+                className={!newDesc.trim() ? "text-zinc-600" : "text-zinc-300"}
+              >
                 Show description instead of key
               </span>
             </label>
@@ -336,8 +401,15 @@ export function LabelKeysPage() {
           </div>
           <div className="space-y-1.5">
             <Label>Color</Label>
-            <ColorPicker value={newColorField.value} onChange={(v) => newColorField.setValue(v)} />
-            {newColorField.error && <p className="text-xs text-red-400 mt-0.5">{newColorField.error}</p>}
+            <ColorPicker
+              value={newColorField.value}
+              onChange={(v) => newColorField.setValue(v)}
+            />
+            {newColorField.error && (
+              <p className="text-xs text-red-400 mt-0.5">
+                {newColorField.error}
+              </p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label>Predefined Values</Label>
@@ -345,9 +417,13 @@ export function LabelKeysPage() {
           </div>
           {createError && <p className="text-sm text-red-400">{createError}</p>}
           <DialogFooter>
-            <Button variant="secondary" onClick={() => setCreateOpen(false)}>Cancel</Button>
+            <Button variant="secondary" onClick={() => setCreateOpen(false)}>
+              Cancel
+            </Button>
             <Button onClick={handleCreate} disabled={createLabelKey.isPending}>
-              {createLabelKey.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              {createLabelKey.isPending && (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              )}
               Create
             </Button>
           </DialogFooter>
@@ -355,11 +431,19 @@ export function LabelKeysPage() {
       </Dialog>
 
       {/* Edit Dialog */}
-      <Dialog open={!!editTarget} onClose={() => setEditTarget(null)} title={`Edit "${editTarget?.key}"`}>
+      <Dialog
+        open={!!editTarget}
+        onClose={() => setEditTarget(null)}
+        title={`Edit "${editTarget?.key}"`}
+      >
         <div className="space-y-4">
           <div className="space-y-1.5">
             <Label>Key</Label>
-            <Input value={editTarget?.key ?? ""} disabled className="font-mono text-xs bg-zinc-900" />
+            <Input
+              value={editTarget?.key ?? ""}
+              disabled
+              className="font-mono text-xs bg-zinc-900"
+            />
           </div>
           <div className="space-y-1.5">
             <Label>Description</Label>
@@ -378,7 +462,9 @@ export function LabelKeysPage() {
                 disabled={!editDesc.trim()}
                 className="rounded border-zinc-700"
               />
-              <span className={!editDesc.trim() ? "text-zinc-600" : "text-zinc-300"}>
+              <span
+                className={!editDesc.trim() ? "text-zinc-600" : "text-zinc-300"}
+              >
                 Show description instead of key
               </span>
             </label>
@@ -397,9 +483,13 @@ export function LabelKeysPage() {
             <TagInput values={editValues} onChange={setEditValues} />
           </div>
           <DialogFooter>
-            <Button variant="secondary" onClick={() => setEditTarget(null)}>Cancel</Button>
+            <Button variant="secondary" onClick={() => setEditTarget(null)}>
+              Cancel
+            </Button>
             <Button onClick={handleUpdate} disabled={updateLabelKey.isPending}>
-              {updateLabelKey.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              {updateLabelKey.isPending && (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              )}
               Save
             </Button>
           </DialogFooter>
@@ -407,15 +497,29 @@ export function LabelKeysPage() {
       </Dialog>
 
       {/* Delete Dialog */}
-      <Dialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)} title="Delete Label Key">
+      <Dialog
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete Label Key"
+      >
         <p className="text-sm text-zinc-400">
-          Are you sure you want to delete the label key <strong className="text-zinc-200">"{deleteTarget?.key}"</strong>?
-          This will only remove it from the autocomplete suggestions. Existing labels on devices will not be affected.
+          Are you sure you want to delete the label key{" "}
+          <strong className="text-zinc-200">"{deleteTarget?.key}"</strong>? This
+          will only remove it from the autocomplete suggestions. Existing labels
+          on devices will not be affected.
         </p>
         <DialogFooter>
-          <Button variant="secondary" onClick={() => setDeleteTarget(null)}>Cancel</Button>
-          <Button variant="destructive" onClick={handleDelete} disabled={deleteLabelKey.isPending}>
-            {deleteLabelKey.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+          <Button variant="secondary" onClick={() => setDeleteTarget(null)}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={handleDelete}
+            disabled={deleteLabelKey.isPending}
+          >
+            {deleteLabelKey.isPending && (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            )}
             Delete
           </Button>
         </DialogFooter>

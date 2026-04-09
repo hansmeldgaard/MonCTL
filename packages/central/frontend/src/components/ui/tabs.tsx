@@ -40,12 +40,7 @@ interface TabsListProps {
 
 export function TabsList({ children, className }: TabsListProps) {
   return (
-    <div
-      className={cn(
-        "flex border-b border-zinc-800",
-        className,
-      )}
-    >
+    <div className={cn("flex border-b border-zinc-800", className)}>
       {children}
     </div>
   );
@@ -90,7 +85,5 @@ interface TabsContentProps {
 export function TabsContent({ value, children, className }: TabsContentProps) {
   const ctx = useContext(TabsContext);
   if (ctx.value !== value) return null;
-  return (
-    <div className={cn("mt-4", className)}>{children}</div>
-  );
+  return <div className={cn("mt-4", className)}>{children}</div>;
 }

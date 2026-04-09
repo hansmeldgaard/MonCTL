@@ -49,3 +49,12 @@ docker/redis-data/
 
 # Playwright screenshots
 .playwright/screenshots/
+
+# Claude Code
+.claude/audit/
+.claude/settings.local.json
+.mcp.json
+.playwright-mcp/
+
+# TLS certificates
+docker/certs/

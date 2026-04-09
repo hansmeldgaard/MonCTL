@@ -10,11 +10,29 @@ export function usePermissions() {
     return user?.permissions?.includes(`${resource}:${action}`) ?? false;
   }
 
-  function canView(resource: string) { return hasPermission(resource, "view"); }
-  function canCreate(resource: string) { return hasPermission(resource, "create"); }
-  function canEdit(resource: string) { return hasPermission(resource, "edit"); }
-  function canDelete(resource: string) { return hasPermission(resource, "delete"); }
-  function canManage(resource: string) { return hasPermission(resource, "manage"); }
+  function canView(resource: string) {
+    return hasPermission(resource, "view");
+  }
+  function canCreate(resource: string) {
+    return hasPermission(resource, "create");
+  }
+  function canEdit(resource: string) {
+    return hasPermission(resource, "edit");
+  }
+  function canDelete(resource: string) {
+    return hasPermission(resource, "delete");
+  }
+  function canManage(resource: string) {
+    return hasPermission(resource, "manage");
+  }
 
-  return { isAdmin, hasPermission, canView, canCreate, canEdit, canDelete, canManage };
+  return {
+    isAdmin,
+    hasPermission,
+    canView,
+    canCreate,
+    canEdit,
+    canDelete,
+    canManage,
+  };
 }

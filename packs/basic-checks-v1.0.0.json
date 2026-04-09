@@ -95,13 +95,7 @@
             "expected_status": {
               "type": "array",
               "title": "Expected Status Codes",
-              "default": [
-                200,
-                201,
-                204,
-                301,
-                302
-              ],
+              "default": [200, 201, 204, 301, 302],
               "description": "HTTP status codes considered OK"
             },
             "verify_ssl": {

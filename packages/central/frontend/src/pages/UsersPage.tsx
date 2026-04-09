@@ -1,16 +1,17 @@
 import { useState, useEffect } from "react";
 import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
-import { validateUsername, validatePassword, validateEmail } from "@/lib/validation.ts";
 import {
-  Loader2,
-  Plus,
-  Shield,
-  Trash2,
-  UserCog,
-  Users,
-  X,
-} from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
+  validateUsername,
+  validatePassword,
+  validateEmail,
+} from "@/lib/validation.ts";
+import { Loader2, Plus, Shield, Trash2, UserCog, Users, X } from "lucide-react";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
@@ -44,11 +45,7 @@ import { useTimezone } from "@/hooks/useTimezone.ts";
 // ── Role badge helper ────────────────────────────────────
 
 function RoleBadge({ role }: { role: string }) {
-  return (
-    <Badge variant={role === "admin" ? "info" : "default"}>
-      {role}
-    </Badge>
-  );
+  return <Badge variant={role === "admin" ? "info" : "default"}>{role}</Badge>;
 }
 
 // ── Add User Dialog ───────────────────────────────────────
@@ -71,7 +68,9 @@ function AddUserDialog({ open, onClose }: AddUserDialogProps) {
   const [role, setRole] = useState("user");
   const [roleId, setRoleId] = useState("");
   const [allTenants, setAllTenants] = useState(false);
-  const [selectedTenantIds, setSelectedTenantIds] = useState<Set<string>>(new Set());
+  const [selectedTenantIds, setSelectedTenantIds] = useState<Set<string>>(
+    new Set(),
+  );
   const [formError, setFormError] = useState<string | null>(null);
 
   function reset() {
@@ -130,7 +129,9 @@ function AddUserDialog({ open, onClose }: AddUserDialogProps) {
       reset();
       onClose();
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : "Failed to create user");
+      setFormError(
+        err instanceof Error ? err.message : "Failed to create user",
+      );
     }
   }
 
@@ -148,7 +149,11 @@ function AddUserDialog({ open, onClose }: AddUserDialogProps) {
               placeholder="jdoe"
               autoComplete="off"
             />
-            {usernameField.error && <p className="text-xs text-red-400 mt-0.5">{usernameField.error}</p>}
+            {usernameField.error && (
+              <p className="text-xs text-red-400 mt-0.5">
+                {usernameField.error}
+              </p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="nu-password">Password *</Label>
@@ -160,7 +165,11 @@ function AddUserDialog({ open, onClose }: AddUserDialogProps) {
               onBlur={passwordField.onBlur}
               autoComplete="new-password"
             />
-            {passwordField.error && <p className="text-xs text-red-400 mt-0.5">{passwordField.error}</p>}
+            {passwordField.error && (
+              <p className="text-xs text-red-400 mt-0.5">
+                {passwordField.error}
+              </p>
+            )}
           </div>
         </div>
 
@@ -184,14 +193,23 @@ function AddUserDialog({ open, onClose }: AddUserDialogProps) {
               onBlur={emailField.onBlur}
               placeholder="jdoe@example.com"
             />
-            {emailField.error && <p className="text-xs text-red-400 mt-0.5">{emailField.error}</p>}
+            {emailField.error && (
+              <p className="text-xs text-red-400 mt-0.5">{emailField.error}</p>
+            )}
           </div>
         </div>
 
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">
             <Label htmlFor="nu-role">User Type</Label>
-            <Select id="nu-role" value={role} onChange={(e) => { setRole(e.target.value); if (e.target.value === "admin") setRoleId(""); }}>
+            <Select
+              id="nu-role"
+              value={role}
+              onChange={(e) => {
+                setRole(e.target.value);
+                if (e.target.value === "admin") setRoleId("");
+              }}
+            >
               <option value="user">User</option>
               <option value="admin">Admin</option>
             </Select>
@@ -199,10 +217,16 @@ function AddUserDialog({ open, onClose }: AddUserDialogProps) {
           {role !== "admin" && (
             <div className="space-y-1.5">
               <Label htmlFor="nu-role-id">Assigned Role</Label>
-              <Select id="nu-role-id" value={roleId} onChange={(e) => setRoleId(e.target.value)}>
+              <Select
+                id="nu-role-id"
+                value={roleId}
+                onChange={(e) => setRoleId(e.target.value)}
+              >
                 <option value="">— No role —</option>
                 {(roles ?? []).map((r) => (
-                  <option key={r.id} value={r.id}>{r.name}</option>
+                  <option key={r.id} value={r.id}>
+                    {r.name}
+                  </option>
                 ))}
               </Select>
             </div>
@@ -263,7 +287,9 @@ function AddUserDialog({ open, onClose }: AddUserDialogProps) {
             Cancel
           </Button>
           <Button type="submit" disabled={createUser.isPending}>
-            {createUser.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+            {createUser.isPending && (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            )}
             Create User
           </Button>
         </DialogFooter>
@@ -281,7 +307,9 @@ interface EditUserDialogProps {
 
 function EditUserDialog({ user, onClose }: EditUserDialogProps) {
   const updateUser = useUpdateUser();
-  const { data: assignedTenants, isLoading: tenantsLoading } = useUserTenants(user?.id);
+  const { data: assignedTenants, isLoading: tenantsLoading } = useUserTenants(
+    user?.id,
+  );
   const { data: allTenantsList } = useTenants();
   const { data: roles } = useRoles();
   const assignTenant = useAssignTenantToUser();
@@ -322,7 +350,7 @@ function EditUserDialog({ user, onClose }: EditUserDialogProps) {
         id: userId,
         data: {
           role,
-          role_id: role !== "admin" ? (roleId || null) : null,
+          role_id: role !== "admin" ? roleId || null : null,
           display_name: displayName.trim() || null,
           email: editEmailField.value.trim() || null,
           all_tenants: allTenants,
@@ -356,12 +384,18 @@ function EditUserDialog({ user, onClose }: EditUserDialogProps) {
   }
 
   const assignedIds = new Set((assignedTenants ?? []).map((t) => t.id));
-  const availableTenants = (allTenantsList ?? []).filter((t) => !assignedIds.has(t.id));
+  const availableTenants = (allTenantsList ?? []).filter(
+    (t) => !assignedIds.has(t.id),
+  );
 
   if (!user) return null;
 
   return (
-    <Dialog open={!!user} onClose={onClose} title={`Edit User: ${user.username}`}>
+    <Dialog
+      open={!!user}
+      onClose={onClose}
+      title={`Edit User: ${user.username}`}
+    >
       <div className="space-y-5">
         {/* Basic settings */}
         <form onSubmit={handleSave} className="space-y-4">
@@ -384,14 +418,25 @@ function EditUserDialog({ user, onClose }: EditUserDialogProps) {
                 onChange={editEmailField.onChange}
                 onBlur={editEmailField.onBlur}
               />
-              {editEmailField.error && <p className="text-xs text-red-400 mt-0.5">{editEmailField.error}</p>}
+              {editEmailField.error && (
+                <p className="text-xs text-red-400 mt-0.5">
+                  {editEmailField.error}
+                </p>
+              )}
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="eu-role">User Type</Label>
-              <Select id="eu-role" value={role} onChange={(e) => { setRole(e.target.value); if (e.target.value === "admin") setRoleId(""); }}>
+              <Select
+                id="eu-role"
+                value={role}
+                onChange={(e) => {
+                  setRole(e.target.value);
+                  if (e.target.value === "admin") setRoleId("");
+                }}
+              >
                 <option value="user">User</option>
                 <option value="admin">Admin</option>
               </Select>
@@ -399,10 +444,16 @@ function EditUserDialog({ user, onClose }: EditUserDialogProps) {
             {role !== "admin" ? (
               <div className="space-y-1.5">
                 <Label htmlFor="eu-role-id">Assigned Role</Label>
-                <Select id="eu-role-id" value={roleId} onChange={(e) => setRoleId(e.target.value)}>
+                <Select
+                  id="eu-role-id"
+                  value={roleId}
+                  onChange={(e) => setRoleId(e.target.value)}
+                >
                   <option value="">— No role —</option>
                   {(roles ?? []).map((r) => (
-                    <option key={r.id} value={r.id}>{r.name}</option>
+                    <option key={r.id} value={r.id}>
+                      {r.name}
+                    </option>
                   ))}
                 </Select>
               </div>
@@ -440,7 +491,9 @@ function EditUserDialog({ user, onClose }: EditUserDialogProps) {
           {saveSuccess && <p className="text-sm text-emerald-400">Saved.</p>}
 
           <Button type="submit" size="sm" disabled={updateUser.isPending}>
-            {updateUser.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+            {updateUser.isPending && (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            )}
             Save Changes
           </Button>
         </form>
@@ -457,11 +510,16 @@ function EditUserDialog({ user, onClose }: EditUserDialogProps) {
             ) : (
               <div className="space-y-2">
                 {(assignedTenants ?? []).length === 0 ? (
-                  <p className="text-xs text-zinc-600">No tenants assigned — user sees nothing.</p>
+                  <p className="text-xs text-zinc-600">
+                    No tenants assigned — user sees nothing.
+                  </p>
                 ) : (
                   <div className="rounded-md border border-zinc-800 divide-y divide-zinc-800">
                     {(assignedTenants ?? []).map((t) => (
-                      <div key={t.id} className="flex items-center justify-between px-3 py-2">
+                      <div
+                        key={t.id}
+                        className="flex items-center justify-between px-3 py-2"
+                      >
                         <span className="text-sm text-zinc-300">{t.name}</span>
                         <button
                           type="button"
@@ -486,7 +544,9 @@ function EditUserDialog({ user, onClose }: EditUserDialogProps) {
                     >
                       <option value="">— Select tenant —</option>
                       {availableTenants.map((t) => (
-                        <option key={t.id} value={t.id}>{t.name}</option>
+                        <option key={t.id} value={t.id}>
+                          {t.name}
+                        </option>
                       ))}
                     </Select>
                     <Button
@@ -496,9 +556,11 @@ function EditUserDialog({ user, onClose }: EditUserDialogProps) {
                       onClick={handleAddTenant}
                       disabled={!selectedTenantId || assignTenant.isPending}
                     >
-                      {assignTenant.isPending
-                        ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        : <Plus className="h-3.5 w-3.5" />}
+                      {assignTenant.isPending ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Plus className="h-3.5 w-3.5" />
+                      )}
                       Add
                     </Button>
                   </div>
@@ -566,7 +628,9 @@ export function UsersPage() {
           <Users className="h-5 w-5 text-zinc-400" />
           <h1 className="text-xl font-semibold text-zinc-100">Users</h1>
           {users && (
-            <Badge variant="default" className="text-xs">{users.length}</Badge>
+            <Badge variant="default" className="text-xs">
+              {users.length}
+            </Badge>
           )}
         </div>
         <Button onClick={() => setAddOpen(true)} className="gap-1.5">
@@ -618,19 +682,25 @@ export function UsersPage() {
                       {u.username}
                     </TableCell>
                     <TableCell className="text-zinc-400 text-sm">
-                      {u.display_name ?? <span className="text-zinc-600">—</span>}
+                      {u.display_name ?? (
+                        <span className="text-zinc-600">—</span>
+                      )}
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1.5">
                         <RoleBadge role={u.role} />
                         {u.role_name && (
-                          <span className="text-xs text-zinc-500">{u.role_name}</span>
+                          <span className="text-xs text-zinc-500">
+                            {u.role_name}
+                          </span>
                         )}
                       </div>
                     </TableCell>
                     <TableCell className="text-zinc-400 text-sm">
                       {u.role === "admin" || u.all_tenants ? (
-                        <span className="text-emerald-400 text-xs font-medium">All tenants</span>
+                        <span className="text-emerald-400 text-xs font-medium">
+                          All tenants
+                        </span>
                       ) : (
                         <span className="text-zinc-500 text-xs">
                           {u.tenant_count ?? 0} assigned
@@ -685,17 +755,23 @@ export function UsersPage() {
       >
         <p className="text-sm text-zinc-400">
           Permanently delete user{" "}
-          <span className="font-semibold text-zinc-200">{deleteTarget?.username}</span>?
-          This action cannot be undone.
+          <span className="font-semibold text-zinc-200">
+            {deleteTarget?.username}
+          </span>
+          ? This action cannot be undone.
         </p>
         <DialogFooter>
-          <Button variant="secondary" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+          <Button variant="secondary" onClick={() => setDeleteTarget(null)}>
+            Cancel
+          </Button>
           <Button
             variant="destructive"
             onClick={handleDelete}
             disabled={deleteUser.isPending}
           >
-            {deleteUser.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+            {deleteUser.isPending && (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            )}
             Delete
           </Button>
         </DialogFooter>

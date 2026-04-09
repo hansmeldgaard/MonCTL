@@ -39,16 +39,20 @@ export function Header() {
   if (!title) {
     if (location.pathname.startsWith("/devices/")) title = "Device Detail";
     else if (location.pathname.startsWith("/apps/")) title = "App Detail";
-    else if (location.pathname.startsWith("/connectors/")) title = "Connector Detail";
+    else if (location.pathname.startsWith("/connectors/"))
+      title = "Connector Detail";
     else if (location.pathname.startsWith("/packs/")) title = "Pack Detail";
-    else if (location.pathname.startsWith("/analytics/dashboards/")) title = "Dashboard Editor";
+    else if (location.pathname.startsWith("/analytics/dashboards/"))
+      title = "Dashboard Editor";
     else if (location.pathname.startsWith("/settings/")) title = "Settings";
     else title = "MonCTL";
   }
 
   // Determine if the current page can be set as default (must be a top-level page in pageTitles)
   const currentRoute = pageTitles[location.pathname] ? location.pathname : null;
-  const isDefault = currentRoute !== null && (user?.default_page ?? "/devices") === currentRoute;
+  const isDefault =
+    currentRoute !== null &&
+    (user?.default_page ?? "/devices") === currentRoute;
 
   const handleLogout = async () => {
     await logout();
@@ -57,13 +61,14 @@ export function Header() {
 
   const isAdmin = user?.role === "admin";
   const { data: healthStatus } = useSystemHealthStatus();
-  const healthColor = !healthStatus?.overall_status || healthStatus.overall_status === "unknown"
-    ? "bg-zinc-500"
-    : healthStatus.overall_status === "healthy"
-      ? "bg-emerald-400"
-      : healthStatus.overall_status === "degraded"
-        ? "bg-amber-400"
-        : "bg-red-400";
+  const healthColor =
+    !healthStatus?.overall_status || healthStatus.overall_status === "unknown"
+      ? "bg-zinc-500"
+      : healthStatus.overall_status === "healthy"
+        ? "bg-emerald-400"
+        : healthStatus.overall_status === "degraded"
+          ? "bg-amber-400"
+          : "bg-red-400";
 
   return (
     <>
@@ -86,13 +91,19 @@ export function Header() {
               }}
               title={isDefault ? "Default page" : "Set as default page"}
             >
-              <Star className="h-4 w-4" fill={isDefault ? "currentColor" : "none"} />
+              <Star
+                className="h-4 w-4"
+                fill={isDefault ? "currentColor" : "none"}
+              />
             </button>
           )}
         </div>
         <div className="flex items-center gap-3">
           {user && (
-            <Link to="/settings/profile" className="flex items-center gap-2 text-sm text-zinc-400 hover:text-zinc-200 transition-colors no-underline">
+            <Link
+              to="/settings/profile"
+              className="flex items-center gap-2 text-sm text-zinc-400 hover:text-zinc-200 transition-colors no-underline"
+            >
               <User className="h-4 w-4" />
               <span>{user.username}</span>
               <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs text-zinc-500">
@@ -104,8 +115,14 @@ export function Header() {
             </Link>
           )}
           {isAdmin && healthStatus && (
-            <Link to="/system-health" className="group flex items-center gap-1.5" title={`System: ${healthStatus.overall_status}`}>
-              <span className={`inline-block h-2.5 w-2.5 rounded-full ${healthColor} group-hover:ring-2 group-hover:ring-offset-1 group-hover:ring-offset-zinc-900 group-hover:ring-current transition-shadow`} />
+            <Link
+              to="/system-health"
+              className="group flex items-center gap-1.5"
+              title={`System: ${healthStatus.overall_status}`}
+            >
+              <span
+                className={`inline-block h-2.5 w-2.5 rounded-full ${healthColor} group-hover:ring-2 group-hover:ring-offset-1 group-hover:ring-offset-zinc-900 group-hover:ring-current transition-shadow`}
+              />
             </Link>
           )}
           <Button variant="ghost" size="sm" onClick={() => void handleLogout()}>
@@ -116,11 +133,15 @@ export function Header() {
       </header>
       {confirmOpen && currentRoute !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/60" onClick={() => setConfirmOpen(false)} />
+          <div
+            className="absolute inset-0 bg-black/60"
+            onClick={() => setConfirmOpen(false)}
+          />
           <div className="relative z-10 w-full max-w-sm rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl">
             <div className="px-6 py-5 space-y-4">
               <p className="text-sm text-zinc-200">
-                Set <span className="font-semibold text-zinc-100">{title}</span> as your default landing page?
+                Set <span className="font-semibold text-zinc-100">{title}</span>{" "}
+                as your default landing page?
               </p>
               <div className="flex items-center justify-end gap-3">
                 <button

@@ -3,7 +3,12 @@ import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
 import { validateShortName } from "@/lib/validation.ts";
 import { usePermissions } from "@/hooks/usePermissions.ts";
 import { Loader2, Plus, Pencil, Trash2, ShieldCheck } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
@@ -35,7 +40,11 @@ function PermissionMatrix({
   function toggle(resource: string, action: string) {
     const key = `${resource}:${action}`;
     if (permSet.has(key)) {
-      onChange(permissions.filter((p) => !(p.resource === resource && p.action === action)));
+      onChange(
+        permissions.filter(
+          (p) => !(p.resource === resource && p.action === action),
+        ),
+      );
     } else {
       onChange([...permissions, { resource, action }]);
     }
@@ -53,12 +62,20 @@ function PermissionMatrix({
   }
 
   function toggleCol(action: string) {
-    const applicable = resources.filter((r) => resourceActions[r].includes(action));
+    const applicable = resources.filter((r) =>
+      resourceActions[r].includes(action),
+    );
     const allChecked = applicable.every((r) => permSet.has(`${r}:${action}`));
     if (allChecked) {
-      onChange(permissions.filter((p) => p.action !== action || !applicable.includes(p.resource)));
+      onChange(
+        permissions.filter(
+          (p) => p.action !== action || !applicable.includes(p.resource),
+        ),
+      );
     } else {
-      const kept = permissions.filter((p) => p.action !== action || !applicable.includes(p.resource));
+      const kept = permissions.filter(
+        (p) => p.action !== action || !applicable.includes(p.resource),
+      );
       onChange([...kept, ...applicable.map((r) => ({ resource: r, action }))]);
     }
   }
@@ -68,9 +85,14 @@ function PermissionMatrix({
       <table className="w-full text-xs">
         <thead>
           <tr className="border-b border-zinc-800">
-            <th className="text-left py-2 pr-3 font-medium text-zinc-400">Resource</th>
+            <th className="text-left py-2 pr-3 font-medium text-zinc-400">
+              Resource
+            </th>
             {allActions.map((a) => (
-              <th key={a} className="py-2 px-2 font-medium text-zinc-400 text-center">
+              <th
+                key={a}
+                className="py-2 px-2 font-medium text-zinc-400 text-center"
+              >
                 <button
                   type="button"
                   onClick={() => toggleCol(a)}
@@ -135,12 +157,16 @@ export function RolesPage() {
   // Create form
   const newNameField = useField("", validateShortName);
   const [newDesc, setNewDesc] = useState("");
-  const [newPerms, setNewPerms] = useState<{ resource: string; action: string }[]>([]);
+  const [newPerms, setNewPerms] = useState<
+    { resource: string; action: string }[]
+  >([]);
 
   // Edit form
   const editNameField = useField("", validateShortName);
   const [editDesc, setEditDesc] = useState("");
-  const [editPerms, setEditPerms] = useState<{ resource: string; action: string }[]>([]);
+  const [editPerms, setEditPerms] = useState<
+    { resource: string; action: string }[]
+  >([]);
 
   function openCreate() {
     newNameField.reset();
@@ -152,7 +178,9 @@ export function RolesPage() {
   function openEdit(role: Role) {
     editNameField.reset(role.name);
     setEditDesc(role.description ?? "");
-    setEditPerms(role.permissions.map((p) => ({ resource: p.resource, action: p.action })));
+    setEditPerms(
+      role.permissions.map((p) => ({ resource: p.resource, action: p.action })),
+    );
     setEditTarget(role);
   }
 
@@ -202,7 +230,11 @@ export function RolesPage() {
             <ShieldCheck className="h-4 w-4" />
             Roles
             {isAdmin && (
-              <Button size="sm" className="ml-auto gap-1.5" onClick={openCreate}>
+              <Button
+                size="sm"
+                className="ml-auto gap-1.5"
+                onClick={openCreate}
+              >
                 <Plus className="h-3.5 w-3.5" />
                 Add Role
               </Button>
@@ -232,7 +264,9 @@ export function RolesPage() {
                       <td className="py-2.5 pr-4 text-xs font-medium">
                         {role.name}
                         {role.is_system && (
-                          <Badge variant="default" className="ml-2 text-[10px]">System</Badge>
+                          <Badge variant="default" className="ml-2 text-[10px]">
+                            System
+                          </Badge>
                         )}
                       </td>
                       <td className="py-2.5 pr-4 text-xs text-zinc-400">
@@ -244,7 +278,11 @@ export function RolesPage() {
                       <td className="py-2.5 text-right">
                         {isAdmin && (
                           <div className="flex items-center justify-end gap-1">
-                            <Button size="sm" variant="ghost" onClick={() => openEdit(role)}>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => openEdit(role)}
+                            >
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
                             <Button
@@ -268,7 +306,11 @@ export function RolesPage() {
       </Card>
 
       {/* Create Dialog */}
-      <Dialog open={createOpen} onClose={() => setCreateOpen(false)} title="Create Role">
+      <Dialog
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title="Create Role"
+      >
         <div className="space-y-4">
           <div className="space-y-1.5">
             <Label>Name</Label>
@@ -280,7 +322,11 @@ export function RolesPage() {
               className="text-xs"
               autoFocus
             />
-            {newNameField.error && <p className="text-xs text-red-400 mt-0.5">{newNameField.error}</p>}
+            {newNameField.error && (
+              <p className="text-xs text-red-400 mt-0.5">
+                {newNameField.error}
+              </p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label>Description</Label>
@@ -302,9 +348,16 @@ export function RolesPage() {
             </div>
           )}
           <DialogFooter>
-            <Button variant="secondary" onClick={() => setCreateOpen(false)}>Cancel</Button>
-            <Button onClick={handleCreate} disabled={createRole.isPending || !newNameField.value.trim()}>
-              {createRole.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+            <Button variant="secondary" onClick={() => setCreateOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleCreate}
+              disabled={createRole.isPending || !newNameField.value.trim()}
+            >
+              {createRole.isPending && (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              )}
               Create
             </Button>
           </DialogFooter>
@@ -312,7 +365,11 @@ export function RolesPage() {
       </Dialog>
 
       {/* Edit Dialog */}
-      <Dialog open={!!editTarget} onClose={() => setEditTarget(null)} title={`Edit "${editTarget?.name}"`}>
+      <Dialog
+        open={!!editTarget}
+        onClose={() => setEditTarget(null)}
+        title={`Edit "${editTarget?.name}"`}
+      >
         <div className="space-y-4">
           <div className="space-y-1.5">
             <Label>Name</Label>
@@ -322,7 +379,11 @@ export function RolesPage() {
               onBlur={editNameField.onBlur}
               className="text-xs"
             />
-            {editNameField.error && <p className="text-xs text-red-400 mt-0.5">{editNameField.error}</p>}
+            {editNameField.error && (
+              <p className="text-xs text-red-400 mt-0.5">
+                {editNameField.error}
+              </p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label>Description</Label>
@@ -343,9 +404,13 @@ export function RolesPage() {
             </div>
           )}
           <DialogFooter>
-            <Button variant="secondary" onClick={() => setEditTarget(null)}>Cancel</Button>
+            <Button variant="secondary" onClick={() => setEditTarget(null)}>
+              Cancel
+            </Button>
             <Button onClick={handleUpdate} disabled={updateRole.isPending}>
-              {updateRole.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              {updateRole.isPending && (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              )}
               Save
             </Button>
           </DialogFooter>
@@ -353,15 +418,28 @@ export function RolesPage() {
       </Dialog>
 
       {/* Delete Dialog */}
-      <Dialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)} title="Delete Role">
+      <Dialog
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete Role"
+      >
         <p className="text-sm text-zinc-400">
-          Are you sure you want to delete the role <strong className="text-zinc-200">"{deleteTarget?.name}"</strong>?
+          Are you sure you want to delete the role{" "}
+          <strong className="text-zinc-200">"{deleteTarget?.name}"</strong>?
           Users assigned to this role will lose their permissions.
         </p>
         <DialogFooter>
-          <Button variant="secondary" onClick={() => setDeleteTarget(null)}>Cancel</Button>
-          <Button variant="destructive" onClick={handleDelete} disabled={deleteRole.isPending}>
-            {deleteRole.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+          <Button variant="secondary" onClick={() => setDeleteTarget(null)}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={handleDelete}
+            disabled={deleteRole.isPending}
+          >
+            {deleteRole.isPending && (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            )}
             Delete
           </Button>
         </DialogFooter>

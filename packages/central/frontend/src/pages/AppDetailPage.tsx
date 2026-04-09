@@ -1,14 +1,46 @@
 import { useState, useCallback, useMemo, Fragment } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
-import { validateName, validateSemver, validateAlertWindow } from "@/lib/validation.ts";
-import { ArrowLeft, AppWindow, Bell, Check, ChevronDown, ChevronRight, Code2, Copy, Layout, Loader2, Pencil, Plug, Plus, RefreshCw, SlidersHorizontal, Star, Trash2 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
+import {
+  validateName,
+  validateSemver,
+  validateAlertWindow,
+} from "@/lib/validation.ts";
+import {
+  ArrowLeft,
+  AppWindow,
+  Bell,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Code2,
+  Copy,
+  Layout,
+  Loader2,
+  Pencil,
+  Plug,
+  Plus,
+  RefreshCw,
+  SlidersHorizontal,
+  Star,
+  Trash2,
+} from "lucide-react";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
-import { Tabs, TabsList, TabTrigger, TabsContent } from "@/components/ui/tabs.tsx";
+import {
+  Tabs,
+  TabsList,
+  TabTrigger,
+  TabsContent,
+} from "@/components/ui/tabs.tsx";
 import {
   Table,
   TableBody,
@@ -50,7 +82,11 @@ import {
   useAutoAssignEligible,
 } from "@/api/hooks.ts";
 import { apiGet } from "@/api/client.ts";
-import type { AppAlertDefinition, DisplayTemplate, EligibilityOidCheck } from "@/types/api.ts";
+import type {
+  AppAlertDefinition,
+  DisplayTemplate,
+  EligibilityOidCheck,
+} from "@/types/api.ts";
 import { X } from "lucide-react";
 import { Select } from "@/components/ui/select.tsx";
 
@@ -91,35 +127,50 @@ export function AppDetailPage() {
   // New version state
   const [versionOpen, setVersionOpen] = useState(false);
   const versionField = useField("", validateSemver);
-  const [versionCode, setVersionCode] = useState("# New monitoring app\n\nclass MyCheck:\n    def run(self, config):\n        pass\n");
+  const [versionCode, setVersionCode] = useState(
+    "# New monitoring app\n\nclass MyCheck:\n    def run(self, config):\n        pass\n",
+  );
   const [versionReqs, setVersionReqs] = useState("");
   const [versionEntry, setVersionEntry] = useState("");
   const [versionError, setVersionError] = useState<string | null>(null);
   const [newVersionTab, setNewVersionTab] = useState("code");
-  const [newVersionTemplate, setNewVersionTemplate] = useState<DisplayTemplate | null>(null);
+  const [newVersionTemplate, setNewVersionTemplate] =
+    useState<DisplayTemplate | null>(null);
   const [versionVolatileKeys, setVersionVolatileKeys] = useState<string[]>([]);
-  const [versionEligibilityOids, setVersionEligibilityOids] = useState<EligibilityOidCheck[]>([]);
+  const [versionEligibilityOids, setVersionEligibilityOids] = useState<
+    EligibilityOidCheck[]
+  >([]);
 
   // Version detail viewer
   const [viewVersion, setViewVersion] = useState<VersionDetail | null>(null);
   const [loadingVersion, setLoadingVersion] = useState(false);
 
   // Edit version state
-  const [editVersionTarget, setEditVersionTarget] = useState<VersionDetail | null>(null);
+  const [editVersionTarget, setEditVersionTarget] =
+    useState<VersionDetail | null>(null);
   const [editVersionCode, setEditVersionCode] = useState("");
   const [editVersionReqs, setEditVersionReqs] = useState("");
   const [editVersionEntry, setEditVersionEntry] = useState("");
   const [editVersionError, setEditVersionError] = useState<string | null>(null);
-  const [editVersionVolatileKeys, setEditVersionVolatileKeys] = useState<string[]>([]);
-  const [editVersionEligibilityOids, setEditVersionEligibilityOids] = useState<EligibilityOidCheck[]>([]);
+  const [editVersionVolatileKeys, setEditVersionVolatileKeys] = useState<
+    string[]
+  >([]);
+  const [editVersionEligibilityOids, setEditVersionEligibilityOids] = useState<
+    EligibilityOidCheck[]
+  >([]);
 
   // Version dialog tab (for config apps)
   const [viewDialogTab, setViewDialogTab] = useState("code");
   const [editDialogTab, setEditDialogTab] = useState("code");
 
   // Delete version state
-  const [deleteVersionTarget, setDeleteVersionTarget] = useState<{ id: string; version: string } | null>(null);
-  const [deleteVersionError, setDeleteVersionError] = useState<string | null>(null);
+  const [deleteVersionTarget, setDeleteVersionTarget] = useState<{
+    id: string;
+    version: string;
+  } | null>(null);
+  const [deleteVersionError, setDeleteVersionError] = useState<string | null>(
+    null,
+  );
 
   // Connector binding state
   const addConnector = useAddAppConnector();
@@ -137,7 +188,12 @@ export function AppDetailPage() {
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const [eligFilter, setEligFilter] = useState<number | undefined>(undefined);
   const [eligPage, setEligPage] = useState(1);
-  const eligDetailQuery = useEligibilityRunDetail(id, expandedRunId ?? undefined, eligFilter, eligPage);
+  const eligDetailQuery = useEligibilityRunDetail(
+    id,
+    expandedRunId ?? undefined,
+    eligFilter,
+    eligPage,
+  );
   const autoAssign = useAutoAssignEligible();
 
   async function handleEditApp(e: React.FormEvent) {
@@ -150,11 +206,20 @@ export function AppDetailPage() {
       try {
         parsedSchema = JSON.parse(editConfigSchema.trim());
       } catch {
-        setEditError("Config Schema is not valid JSON."); return;
+        setEditError("Config Schema is not valid JSON.");
+        return;
       }
     }
     try {
-      await updateApp.mutateAsync({ id, data: { name: editNameField.value.trim(), description: editDesc.trim(), config_schema: parsedSchema ?? {}, vendor_oid_prefix: editVendorPrefix.trim() || null } });
+      await updateApp.mutateAsync({
+        id,
+        data: {
+          name: editNameField.value.trim(),
+          description: editDesc.trim(),
+          config_schema: parsedSchema ?? {},
+          vendor_oid_prefix: editVendorPrefix.trim() || null,
+        },
+      });
       setEditOpen(false);
     } catch (err) {
       setEditError(err instanceof Error ? err.message : "Failed to update");
@@ -166,23 +231,44 @@ export function AppDetailPage() {
     if (!id) return;
     setVersionError(null);
     if (!validateAll(versionField)) return;
-    if (!versionCode.trim()) { setVersionError("Source code is required."); return; }
+    if (!versionCode.trim()) {
+      setVersionError("Source code is required.");
+      return;
+    }
     try {
       await createVersion.mutateAsync({
         appId: id,
         data: {
           version: versionField.value.trim(),
           source_code: versionCode,
-          requirements: versionReqs.trim() ? versionReqs.trim().split("\n").map((r) => r.trim()).filter(Boolean) : [],
+          requirements: versionReqs.trim()
+            ? versionReqs
+                .trim()
+                .split("\n")
+                .map((r) => r.trim())
+                .filter(Boolean)
+            : [],
           entry_class: versionEntry.trim() || undefined,
           display_template: newVersionTemplate ?? undefined,
           volatile_keys: isConfigApp ? versionVolatileKeys : undefined,
-          eligibility_oids: versionEligibilityOids.length > 0 ? versionEligibilityOids : undefined,
+          eligibility_oids:
+            versionEligibilityOids.length > 0
+              ? versionEligibilityOids
+              : undefined,
         },
       });
-      versionField.reset(); setVersionCode(""); setVersionReqs(""); setVersionEntry(""); setNewVersionTemplate(null); setVersionVolatileKeys([]); setNewVersionTab("code"); setVersionOpen(false);
+      versionField.reset();
+      setVersionCode("");
+      setVersionReqs("");
+      setVersionEntry("");
+      setNewVersionTemplate(null);
+      setVersionVolatileKeys([]);
+      setNewVersionTab("code");
+      setVersionOpen(false);
     } catch (err) {
-      setVersionError(err instanceof Error ? err.message : "Failed to create version");
+      setVersionError(
+        err instanceof Error ? err.message : "Failed to create version",
+      );
     }
   }
 
@@ -196,15 +282,26 @@ export function AppDetailPage() {
         versionId: editVersionTarget.id,
         data: {
           source_code: editVersionCode,
-          requirements: editVersionReqs.trim() ? editVersionReqs.trim().split("\n").map((r) => r.trim()).filter(Boolean) : [],
+          requirements: editVersionReqs.trim()
+            ? editVersionReqs
+                .trim()
+                .split("\n")
+                .map((r) => r.trim())
+                .filter(Boolean)
+            : [],
           entry_class: editVersionEntry.trim() || undefined,
           volatile_keys: isConfigApp ? editVersionVolatileKeys : undefined,
-          eligibility_oids: editVersionEligibilityOids.length > 0 ? editVersionEligibilityOids : [],
+          eligibility_oids:
+            editVersionEligibilityOids.length > 0
+              ? editVersionEligibilityOids
+              : [],
         },
       });
       setEditVersionTarget(null);
     } catch (err) {
-      setEditVersionError(err instanceof Error ? err.message : "Failed to update version");
+      setEditVersionError(
+        err instanceof Error ? err.message : "Failed to update version",
+      );
     }
   }
 
@@ -212,10 +309,15 @@ export function AppDetailPage() {
     if (!id || !deleteVersionTarget) return;
     setDeleteVersionError(null);
     try {
-      await deleteVersion.mutateAsync({ appId: id, versionId: deleteVersionTarget.id });
+      await deleteVersion.mutateAsync({
+        appId: id,
+        versionId: deleteVersionTarget.id,
+      });
       setDeleteVersionTarget(null);
     } catch (err) {
-      setDeleteVersionError(err instanceof Error ? err.message : "Failed to delete version");
+      setDeleteVersionError(
+        err instanceof Error ? err.message : "Failed to delete version",
+      );
     }
   }
 
@@ -223,7 +325,9 @@ export function AppDetailPage() {
     if (!id) return;
     try {
       await cloneVersion.mutateAsync({ appId: id, versionId });
-    } catch { /* handled by React Query */ }
+    } catch {
+      /* handled by React Query */
+    }
   }
 
   async function openEditVersion(versionId: string) {
@@ -231,7 +335,9 @@ export function AppDetailPage() {
     setLoadingVersion(true);
     setEditDialogTab("code");
     try {
-      const res = await apiGet<VersionDetail>(`/apps/${id}/versions/${versionId}`);
+      const res = await apiGet<VersionDetail>(
+        `/apps/${id}/versions/${versionId}`,
+      );
       const v = res.data;
       setEditVersionCode(v.source_code ?? "");
       setEditVersionReqs((v.requirements ?? []).join("\n"));
@@ -252,7 +358,9 @@ export function AppDetailPage() {
     setLoadingVersion(true);
     setViewDialogTab("code");
     try {
-      const res = await apiGet<VersionDetail>(`/apps/${id}/versions/${versionId}`);
+      const res = await apiGet<VersionDetail>(
+        `/apps/${id}/versions/${versionId}`,
+      );
       setViewVersion(res.data);
     } catch {
       // silent
@@ -271,7 +379,9 @@ export function AppDetailPage() {
       });
       // Refresh view version data
       try {
-        const res = await apiGet<VersionDetail>(`/apps/${id}/versions/${versionId}`);
+        const res = await apiGet<VersionDetail>(
+          `/apps/${id}/versions/${versionId}`,
+        );
         setViewVersion(res.data);
       } catch {
         // silent
@@ -292,7 +402,9 @@ export function AppDetailPage() {
     return (
       <div className="space-y-4">
         <Link to="/apps">
-          <Button variant="ghost" size="sm"><ArrowLeft className="h-4 w-4" /> Back to Apps</Button>
+          <Button variant="ghost" size="sm">
+            <ArrowLeft className="h-4 w-4" /> Back to Apps
+          </Button>
         </Link>
         <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
           <AppWindow className="mb-2 h-8 w-8 text-zinc-600" />
@@ -307,13 +419,26 @@ export function AppDetailPage() {
       {/* Header */}
       <div className="space-y-1.5">
         <Link to="/apps">
-          <Button variant="ghost" size="sm"><ArrowLeft className="h-4 w-4" /> Back to Apps</Button>
+          <Button variant="ghost" size="sm">
+            <ArrowLeft className="h-4 w-4" /> Back to Apps
+          </Button>
         </Link>
         <div className="flex items-center gap-3">
           <h2 className="text-xl font-semibold text-zinc-100">{app.name}</h2>
           <Badge variant="info">{app.app_type}</Badge>
           <button
-            onClick={() => { editNameField.reset(app.name); setEditDesc(app.description ?? ""); setEditConfigSchema(app.config_schema ? JSON.stringify(app.config_schema, null, 2) : ""); setEditVendorPrefix(app.vendor_oid_prefix ?? ""); setEditError(null); setEditOpen(true); }}
+            onClick={() => {
+              editNameField.reset(app.name);
+              setEditDesc(app.description ?? "");
+              setEditConfigSchema(
+                app.config_schema
+                  ? JSON.stringify(app.config_schema, null, 2)
+                  : "",
+              );
+              setEditVendorPrefix(app.vendor_oid_prefix ?? "");
+              setEditError(null);
+              setEditOpen(true);
+            }}
             className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer"
             title="Edit"
           >
@@ -328,7 +453,9 @@ export function AppDetailPage() {
       <Tabs value={activeTab} onChange={setActiveTab}>
         <TabsList>
           <TabTrigger value="overview">Overview</TabTrigger>
-          <TabTrigger value="versions">Versions ({app.versions.length})</TabTrigger>
+          <TabTrigger value="versions">
+            Versions ({app.versions.length})
+          </TabTrigger>
           <TabTrigger value="alerts">Alerts</TabTrigger>
           <TabTrigger value="thresholds">Thresholds</TabTrigger>
           <TabTrigger value="eligibility">Eligibility</TabTrigger>
@@ -345,7 +472,9 @@ export function AppDetailPage() {
               <div className="space-y-3 max-w-md">
                 <div className="flex items-center justify-between rounded-md bg-zinc-800/50 px-4 py-3">
                   <span className="text-sm text-zinc-400">Name</span>
-                  <span className="font-mono text-sm text-zinc-100">{app.name}</span>
+                  <span className="font-mono text-sm text-zinc-100">
+                    {app.name}
+                  </span>
                 </div>
                 <div className="flex items-center justify-between rounded-md bg-zinc-800/50 px-4 py-3">
                   <span className="text-sm text-zinc-400">Type</span>
@@ -353,15 +482,21 @@ export function AppDetailPage() {
                 </div>
                 <div className="flex items-center justify-between rounded-md bg-zinc-800/50 px-4 py-3">
                   <span className="text-sm text-zinc-400">Target Table</span>
-                  <Badge variant="default" className="font-mono text-xs">{app.target_table}</Badge>
+                  <Badge variant="default" className="font-mono text-xs">
+                    {app.target_table}
+                  </Badge>
                 </div>
                 <div className="flex items-center justify-between rounded-md bg-zinc-800/50 px-4 py-3">
                   <span className="text-sm text-zinc-400">Versions</span>
-                  <span className="text-sm text-zinc-100">{app.versions.length}</span>
+                  <span className="text-sm text-zinc-100">
+                    {app.versions.length}
+                  </span>
                 </div>
                 {app.config_schema && (
                   <div className="rounded-md bg-zinc-800/50 px-4 py-3">
-                    <span className="text-sm text-zinc-400 block mb-1">Config Schema</span>
+                    <span className="text-sm text-zinc-400 block mb-1">
+                      Config Schema
+                    </span>
                     <pre className="text-xs font-mono text-zinc-300 whitespace-pre-wrap">
                       {JSON.stringify(app.config_schema, null, 2)}
                     </pre>
@@ -376,7 +511,17 @@ export function AppDetailPage() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Plug className="h-4 w-4" /> Required Connectors
-                <Button size="sm" variant="secondary" className="ml-auto gap-1.5" onClick={() => { setConnBindAlias(""); setConnBindConnectorId(""); setConnBindError(null); setConnBindOpen(true); }}>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="ml-auto gap-1.5"
+                  onClick={() => {
+                    setConnBindAlias("");
+                    setConnBindConnectorId("");
+                    setConnBindError(null);
+                    setConnBindOpen(true);
+                  }}
+                >
                   <Plus className="h-3 w-3" /> Add Connector
                 </Button>
               </CardTitle>
@@ -385,7 +530,10 @@ export function AppDetailPage() {
               {app.connector_bindings && app.connector_bindings.length > 0 ? (
                 <div className="space-y-2">
                   {app.connector_bindings.map((cb) => (
-                    <div key={cb.alias} className="flex items-center justify-between rounded-md bg-zinc-800/50 px-4 py-3">
+                    <div
+                      key={cb.alias}
+                      className="flex items-center justify-between rounded-md bg-zinc-800/50 px-4 py-3"
+                    >
                       <div className="flex items-center gap-3">
                         <Badge variant="info" className="text-xs gap-1">
                           <Plug className="h-2.5 w-2.5" />
@@ -397,11 +545,26 @@ export function AppDetailPage() {
                       </div>
                       <div className="flex items-center gap-2">
                         {cb.use_latest ? (
-                          <Badge variant="success" className="text-xs">latest</Badge>
+                          <Badge variant="success" className="text-xs">
+                            latest
+                          </Badge>
                         ) : (
-                          <Badge variant="default" className="text-xs">pinned</Badge>
+                          <Badge variant="default" className="text-xs">
+                            pinned
+                          </Badge>
                         )}
-                        <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-zinc-500 hover:text-red-400" onClick={() => { if (id) deleteConnector.mutate({ appId: id, alias: cb.alias }); }}>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 w-6 p-0 text-zinc-500 hover:text-red-400"
+                          onClick={() => {
+                            if (id)
+                              deleteConnector.mutate({
+                                appId: id,
+                                alias: cb.alias,
+                              });
+                          }}
+                        >
                           <Trash2 className="h-3 w-3" />
                         </Button>
                       </div>
@@ -409,44 +572,86 @@ export function AppDetailPage() {
                   ))}
                 </div>
               ) : (
-                <p className="text-sm text-zinc-500">No connectors bound. Click "Add Connector" to bind one.</p>
+                <p className="text-sm text-zinc-500">
+                  No connectors bound. Click "Add Connector" to bind one.
+                </p>
               )}
             </CardContent>
           </Card>
 
           {/* Add Connector Binding Dialog */}
           {connBindOpen && (
-            <Dialog open onClose={() => setConnBindOpen(false)} title="Add Connector Binding">
+            <Dialog
+              open
+              onClose={() => setConnBindOpen(false)}
+              title="Add Connector Binding"
+            >
               <div className="space-y-4">
                 <div>
                   <Label>Alias</Label>
-                  <Input placeholder='e.g. "snmp"' value={connBindAlias} onChange={e => setConnBindAlias(e.target.value)} />
-                  <p className="text-xs text-zinc-500 mt-1">The alias your app code uses to reference this connector (e.g. context.connectors["snmp"])</p>
+                  <Input
+                    placeholder='e.g. "snmp"'
+                    value={connBindAlias}
+                    onChange={(e) => setConnBindAlias(e.target.value)}
+                  />
+                  <p className="text-xs text-zinc-500 mt-1">
+                    The alias your app code uses to reference this connector
+                    (e.g. context.connectors["snmp"])
+                  </p>
                 </div>
                 <div>
                   <Label>Connector</Label>
-                  <select className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100" value={connBindConnectorId} onChange={e => setConnBindConnectorId(e.target.value)}>
+                  <select
+                    className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100"
+                    value={connBindConnectorId}
+                    onChange={(e) => setConnBindConnectorId(e.target.value)}
+                  >
                     <option value="">Select a connector...</option>
-                    {connectorsList?.map(c => (
-                      <option key={c.id} value={c.id}>{c.name} — {c.description}</option>
+                    {connectorsList?.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} — {c.description}
+                      </option>
                     ))}
                   </select>
                 </div>
-                {connBindError && <p className="text-sm text-red-400">{connBindError}</p>}
+                {connBindError && (
+                  <p className="text-sm text-red-400">{connBindError}</p>
+                )}
               </div>
               <DialogFooter>
-                <Button variant="secondary" onClick={() => setConnBindOpen(false)}>Cancel</Button>
-                <Button onClick={() => {
-                  if (!connBindAlias.trim() || !connBindConnectorId) {
-                    setConnBindError("Alias and connector are required");
-                    return;
-                  }
-                  if (!id) return;
-                  addConnector.mutate({ appId: id, data: { alias: connBindAlias.trim(), connector_id: connBindConnectorId, use_latest: true } }, {
-                    onSuccess: () => setConnBindOpen(false),
-                    onError: (err: unknown) => setConnBindError(err instanceof Error ? err.message : String(err)),
-                  });
-                }} disabled={addConnector.isPending}>
+                <Button
+                  variant="secondary"
+                  onClick={() => setConnBindOpen(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => {
+                    if (!connBindAlias.trim() || !connBindConnectorId) {
+                      setConnBindError("Alias and connector are required");
+                      return;
+                    }
+                    if (!id) return;
+                    addConnector.mutate(
+                      {
+                        appId: id,
+                        data: {
+                          alias: connBindAlias.trim(),
+                          connector_id: connBindConnectorId,
+                          use_latest: true,
+                        },
+                      },
+                      {
+                        onSuccess: () => setConnBindOpen(false),
+                        onError: (err: unknown) =>
+                          setConnBindError(
+                            err instanceof Error ? err.message : String(err),
+                          ),
+                      },
+                    );
+                  }}
+                  disabled={addConnector.isPending}
+                >
                   {addConnector.isPending ? "Adding..." : "Add"}
                 </Button>
               </DialogFooter>
@@ -463,7 +668,16 @@ export function AppDetailPage() {
                   size="sm"
                   variant="secondary"
                   className="ml-auto gap-1.5"
-                  onClick={() => { versionField.reset(); setVersionCode("# New version\n"); setVersionReqs(""); setVersionEntry(""); setVersionError(null); setNewVersionTab("code"); setNewVersionTemplate(null); setVersionOpen(true); }}
+                  onClick={() => {
+                    versionField.reset();
+                    setVersionCode("# New version\n");
+                    setVersionReqs("");
+                    setVersionEntry("");
+                    setVersionError(null);
+                    setNewVersionTab("code");
+                    setNewVersionTemplate(null);
+                    setVersionOpen(true);
+                  }}
                 >
                   <Plus className="h-4 w-4" /> New Version
                 </Button>
@@ -488,8 +702,12 @@ export function AppDetailPage() {
                   <TableBody>
                     {app.versions.map((v) => (
                       <TableRow key={v.id}>
-                        <TableCell className="font-mono text-sm text-zinc-100">{v.version}</TableCell>
-                        <TableCell className="font-mono text-xs text-zinc-500">{v.id.slice(0, 8)}</TableCell>
+                        <TableCell className="font-mono text-sm text-zinc-100">
+                          {v.version}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs text-zinc-500">
+                          {v.id.slice(0, 8)}
+                        </TableCell>
                         <TableCell>
                           {v.is_latest && (
                             <Badge variant="info" className="gap-1">
@@ -500,12 +718,24 @@ export function AppDetailPage() {
                         <TableCell>
                           <VersionActions
                             isLatest={v.is_latest}
-                            onSetLatest={() => id && setLatest.mutate({ appId: id, versionId: v.id })}
+                            onSetLatest={() =>
+                              id &&
+                              setLatest.mutate({ appId: id, versionId: v.id })
+                            }
                             onView={() => loadVersion(v.id)}
                             onEdit={() => openEditVersion(v.id)}
                             onClone={() => handleCloneVersion(v.id)}
-                            onDelete={() => setDeleteVersionTarget({ id: v.id, version: v.version })}
-                            disabled={loadingVersion || setLatest.isPending || cloneVersion.isPending}
+                            onDelete={() =>
+                              setDeleteVersionTarget({
+                                id: v.id,
+                                version: v.version,
+                              })
+                            }
+                            disabled={
+                              loadingVersion ||
+                              setLatest.isPending ||
+                              cloneVersion.isPending
+                            }
                           />
                         </TableCell>
                       </TableRow>
@@ -530,10 +760,17 @@ export function AppDetailPage() {
             startTest={startEligTest}
             runsQuery={eligRunsQuery}
             expandedRunId={expandedRunId}
-            setExpandedRunId={(rid) => { setExpandedRunId(rid); setEligFilter(undefined); setEligPage(1); }}
+            setExpandedRunId={(rid) => {
+              setExpandedRunId(rid);
+              setEligFilter(undefined);
+              setEligPage(1);
+            }}
             detailQuery={eligDetailQuery}
             eligFilter={eligFilter}
-            setEligFilter={(f) => { setEligFilter(f); setEligPage(1); }}
+            setEligFilter={(f) => {
+              setEligFilter(f);
+              setEligPage(1);
+            }}
             eligPage={eligPage}
             setEligPage={setEligPage}
             autoAssign={autoAssign}
@@ -543,19 +780,42 @@ export function AppDetailPage() {
       </Tabs>
 
       {/* Edit App Dialog */}
-      <Dialog open={editOpen} onClose={() => setEditOpen(false)} title="Edit App">
+      <Dialog
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        title="Edit App"
+      >
         <form onSubmit={handleEditApp} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="app-edit-name">Name</Label>
-            <Input id="app-edit-name" value={editNameField.value} onChange={editNameField.onChange} onBlur={editNameField.onBlur} autoFocus />
-            {editNameField.error && <p className="text-xs text-red-400 mt-0.5">{editNameField.error}</p>}
+            <Input
+              id="app-edit-name"
+              value={editNameField.value}
+              onChange={editNameField.onChange}
+              onBlur={editNameField.onBlur}
+              autoFocus
+            />
+            {editNameField.error && (
+              <p className="text-xs text-red-400 mt-0.5">
+                {editNameField.error}
+              </p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="app-edit-desc">Description</Label>
-            <Input id="app-edit-desc" value={editDesc} onChange={(e) => setEditDesc(e.target.value)} />
+            <Input
+              id="app-edit-desc"
+              value={editDesc}
+              onChange={(e) => setEditDesc(e.target.value)}
+            />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="app-edit-schema">Config Schema <span className="font-normal text-zinc-500">(JSON, optional)</span></Label>
+            <Label htmlFor="app-edit-schema">
+              Config Schema{" "}
+              <span className="font-normal text-zinc-500">
+                (JSON, optional)
+              </span>
+            </Label>
             <textarea
               id="app-edit-schema"
               value={editConfigSchema}
@@ -567,43 +827,74 @@ export function AppDetailPage() {
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="app-edit-vendor">Vendor OID Prefix</Label>
-            <p className="text-[11px] text-zinc-500">If set, auto-assign only to devices matching this sysObjectID prefix. Common: 1.3.6.1.4.1.9 (Cisco), 1.3.6.1.4.1.2636 (Juniper)</p>
-            <Input id="app-edit-vendor" placeholder="1.3.6.1.4.1.9" value={editVendorPrefix} onChange={(e) => setEditVendorPrefix(e.target.value)} />
+            <p className="text-[11px] text-zinc-500">
+              If set, auto-assign only to devices matching this sysObjectID
+              prefix. Common: 1.3.6.1.4.1.9 (Cisco), 1.3.6.1.4.1.2636 (Juniper)
+            </p>
+            <Input
+              id="app-edit-vendor"
+              placeholder="1.3.6.1.4.1.9"
+              value={editVendorPrefix}
+              onChange={(e) => setEditVendorPrefix(e.target.value)}
+            />
           </div>
           {editError && <p className="text-sm text-red-400">{editError}</p>}
           <DialogFooter>
-            <Button type="button" variant="secondary" onClick={() => setEditOpen(false)}>Cancel</Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setEditOpen(false)}
+            >
+              Cancel
+            </Button>
             <Button type="submit" disabled={updateApp.isPending}>
-              {updateApp.isPending && <Loader2 className="h-4 w-4 animate-spin" />} Save
+              {updateApp.isPending && (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              )}{" "}
+              Save
             </Button>
           </DialogFooter>
         </form>
       </Dialog>
 
       {/* New Version Dialog */}
-      <Dialog open={versionOpen} onClose={() => setVersionOpen(false)} title="New Version" size="fullscreen">
+      <Dialog
+        open={versionOpen}
+        onClose={() => setVersionOpen(false)}
+        title="New Version"
+        size="fullscreen"
+      >
         {isConfigApp ? (
           <Tabs value={newVersionTab} onChange={setNewVersionTab}>
             <TabsList>
               <TabTrigger value="code">
-                <span className="flex items-center gap-1.5"><Code2 className="h-3.5 w-3.5" /> Code</span>
+                <span className="flex items-center gap-1.5">
+                  <Code2 className="h-3.5 w-3.5" /> Code
+                </span>
               </TabTrigger>
               <TabTrigger value="template">
-                <span className="flex items-center gap-1.5"><Layout className="h-3.5 w-3.5" /> Display Template</span>
+                <span className="flex items-center gap-1.5">
+                  <Layout className="h-3.5 w-3.5" /> Display Template
+                </span>
               </TabTrigger>
             </TabsList>
             <TabsContent value="code">
               <NewVersionCodeForm
                 versionField={versionField}
-                versionCode={versionCode} setVersionCode={setVersionCode}
-                versionReqs={versionReqs} setVersionReqs={setVersionReqs}
-                versionEntry={versionEntry} setVersionEntry={setVersionEntry}
+                versionCode={versionCode}
+                setVersionCode={setVersionCode}
+                versionReqs={versionReqs}
+                setVersionReqs={setVersionReqs}
+                versionEntry={versionEntry}
+                setVersionEntry={setVersionEntry}
                 versionError={versionError}
                 onSubmit={handleCreateVersion}
                 onCancel={() => setVersionOpen(false)}
                 isPending={createVersion.isPending}
-                volatileKeys={versionVolatileKeys} setVolatileKeys={setVersionVolatileKeys}
-                eligibilityOids={versionEligibilityOids} setEligibilityOids={setVersionEligibilityOids}
+                volatileKeys={versionVolatileKeys}
+                setVolatileKeys={setVersionVolatileKeys}
+                eligibilityOids={versionEligibilityOids}
+                setEligibilityOids={setVersionEligibilityOids}
                 isConfigApp={true}
                 appId={id!}
               />
@@ -612,36 +903,52 @@ export function AppDetailPage() {
               <DisplayTemplateEditor
                 appId={id!}
                 initialTemplate={newVersionTemplate}
-                onSave={async (tpl) => { setNewVersionTemplate(tpl); setNewVersionTab("code"); }}
+                onSave={async (tpl) => {
+                  setNewVersionTemplate(tpl);
+                  setNewVersionTab("code");
+                }}
               />
             </TabsContent>
           </Tabs>
         ) : (
           <NewVersionCodeForm
             versionField={versionField}
-            versionCode={versionCode} setVersionCode={setVersionCode}
-            versionReqs={versionReqs} setVersionReqs={setVersionReqs}
-            versionEntry={versionEntry} setVersionEntry={setVersionEntry}
+            versionCode={versionCode}
+            setVersionCode={setVersionCode}
+            versionReqs={versionReqs}
+            setVersionReqs={setVersionReqs}
+            versionEntry={versionEntry}
+            setVersionEntry={setVersionEntry}
             versionError={versionError}
             onSubmit={handleCreateVersion}
             onCancel={() => setVersionOpen(false)}
             isPending={createVersion.isPending}
-            eligibilityOids={versionEligibilityOids} setEligibilityOids={setVersionEligibilityOids}
+            eligibilityOids={versionEligibilityOids}
+            setEligibilityOids={setVersionEligibilityOids}
           />
         )}
       </Dialog>
 
       {/* View Version Dialog */}
-      <Dialog open={!!viewVersion} onClose={() => setViewVersion(null)} title={`Version ${viewVersion?.version ?? ""}`} size="fullscreen">
-        {viewVersion && (
-          isConfigApp ? (
+      <Dialog
+        open={!!viewVersion}
+        onClose={() => setViewVersion(null)}
+        title={`Version ${viewVersion?.version ?? ""}`}
+        size="fullscreen"
+      >
+        {viewVersion &&
+          (isConfigApp ? (
             <Tabs value={viewDialogTab} onChange={setViewDialogTab}>
               <TabsList>
                 <TabTrigger value="code">
-                  <span className="flex items-center gap-1.5"><Code2 className="h-3.5 w-3.5" /> Code</span>
+                  <span className="flex items-center gap-1.5">
+                    <Code2 className="h-3.5 w-3.5" /> Code
+                  </span>
                 </TabTrigger>
                 <TabTrigger value="template">
-                  <span className="flex items-center gap-1.5"><Layout className="h-3.5 w-3.5" /> Display Template</span>
+                  <span className="flex items-center gap-1.5">
+                    <Layout className="h-3.5 w-3.5" /> Display Template
+                  </span>
                 </TabTrigger>
               </TabsList>
               <TabsContent value="code">
@@ -652,14 +959,15 @@ export function AppDetailPage() {
                   appId={id!}
                   versionId={viewVersion.id}
                   initialTemplate={viewVersion.display_template}
-                  onSave={(tpl) => handleSaveDisplayTemplate(viewVersion.id, tpl)}
+                  onSave={(tpl) =>
+                    handleSaveDisplayTemplate(viewVersion.id, tpl)
+                  }
                 />
               </TabsContent>
             </Tabs>
           ) : (
             <VersionCodeView version={viewVersion} />
-          )
-        )}
+          ))}
         <DialogFooter>
           <Button
             size="sm"
@@ -675,20 +983,31 @@ export function AppDetailPage() {
           >
             <Copy className="h-4 w-4" /> Clone
           </Button>
-          <Button variant="secondary" onClick={() => setViewVersion(null)}>Close</Button>
+          <Button variant="secondary" onClick={() => setViewVersion(null)}>
+            Close
+          </Button>
         </DialogFooter>
       </Dialog>
 
       {/* Edit Version Dialog */}
-      <Dialog open={!!editVersionTarget} onClose={() => setEditVersionTarget(null)} title={`Edit Version ${editVersionTarget?.version ?? ""}`} size="fullscreen">
+      <Dialog
+        open={!!editVersionTarget}
+        onClose={() => setEditVersionTarget(null)}
+        title={`Edit Version ${editVersionTarget?.version ?? ""}`}
+        size="fullscreen"
+      >
         {isConfigApp ? (
           <Tabs value={editDialogTab} onChange={setEditDialogTab}>
             <TabsList>
               <TabTrigger value="code">
-                <span className="flex items-center gap-1.5"><Code2 className="h-3.5 w-3.5" /> Code</span>
+                <span className="flex items-center gap-1.5">
+                  <Code2 className="h-3.5 w-3.5" /> Code
+                </span>
               </TabTrigger>
               <TabTrigger value="template">
-                <span className="flex items-center gap-1.5"><Layout className="h-3.5 w-3.5" /> Display Template</span>
+                <span className="flex items-center gap-1.5">
+                  <Layout className="h-3.5 w-3.5" /> Display Template
+                </span>
               </TabTrigger>
             </TabsList>
             <TabsContent value="code">
@@ -703,8 +1022,10 @@ export function AppDetailPage() {
                 onSubmit={handleEditVersion}
                 onCancel={() => setEditVersionTarget(null)}
                 isPending={updateVersion.isPending}
-                volatileKeys={editVersionVolatileKeys} setVolatileKeys={setEditVersionVolatileKeys}
-                eligibilityOids={editVersionEligibilityOids} setEligibilityOids={setEditVersionEligibilityOids}
+                volatileKeys={editVersionVolatileKeys}
+                setVolatileKeys={setEditVersionVolatileKeys}
+                eligibilityOids={editVersionEligibilityOids}
+                setEligibilityOids={setEditVersionEligibilityOids}
                 isConfigApp={true}
                 appId={id!}
               />
@@ -715,7 +1036,9 @@ export function AppDetailPage() {
                   appId={id!}
                   versionId={editVersionTarget.id}
                   initialTemplate={editVersionTarget.display_template}
-                  onSave={(tpl) => handleSaveDisplayTemplate(editVersionTarget.id, tpl)}
+                  onSave={(tpl) =>
+                    handleSaveDisplayTemplate(editVersionTarget.id, tpl)
+                  }
                 />
               )}
             </TabsContent>
@@ -732,26 +1055,53 @@ export function AppDetailPage() {
             onSubmit={handleEditVersion}
             onCancel={() => setEditVersionTarget(null)}
             isPending={updateVersion.isPending}
-            eligibilityOids={editVersionEligibilityOids} setEligibilityOids={setEditVersionEligibilityOids}
+            eligibilityOids={editVersionEligibilityOids}
+            setEligibilityOids={setEditVersionEligibilityOids}
           />
         )}
       </Dialog>
 
       {/* Delete Version Dialog */}
-      <Dialog open={!!deleteVersionTarget} onClose={() => { setDeleteVersionTarget(null); setDeleteVersionError(null); }} title="Delete Version">
+      <Dialog
+        open={!!deleteVersionTarget}
+        onClose={() => {
+          setDeleteVersionTarget(null);
+          setDeleteVersionError(null);
+        }}
+        title="Delete Version"
+      >
         <p className="text-sm text-zinc-400">
-          Delete version <span className="font-semibold text-zinc-200">{deleteVersionTarget?.version}</span>?
+          Delete version{" "}
+          <span className="font-semibold text-zinc-200">
+            {deleteVersionTarget?.version}
+          </span>
+          ?
         </p>
-        {deleteVersionError && <p className="text-sm text-red-400 mt-2">{deleteVersionError}</p>}
+        {deleteVersionError && (
+          <p className="text-sm text-red-400 mt-2">{deleteVersionError}</p>
+        )}
         <DialogFooter>
-          <Button variant="secondary" onClick={() => { setDeleteVersionTarget(null); setDeleteVersionError(null); }}>Cancel</Button>
-          <Button variant="destructive" onClick={handleDeleteVersion} disabled={deleteVersion.isPending}>
-            {deleteVersion.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setDeleteVersionTarget(null);
+              setDeleteVersionError(null);
+            }}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={handleDeleteVersion}
+            disabled={deleteVersion.isPending}
+          >
+            {deleteVersion.isPending && (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            )}
             Delete
           </Button>
         </DialogFooter>
       </Dialog>
-
     </div>
   );
 }
@@ -764,27 +1114,41 @@ function VersionCodeView({ version }: { version: VersionDetail }) {
       <div className="grid grid-cols-2 gap-3 text-sm">
         <div className="rounded-md bg-zinc-800/50 px-3 py-2">
           <span className="text-zinc-500">Entry Class:</span>{" "}
-          <span className="text-zinc-200 font-mono">{version.entry_class ?? "\u2014"}</span>
+          <span className="text-zinc-200 font-mono">
+            {version.entry_class ?? "\u2014"}
+          </span>
         </div>
         <div className="rounded-md bg-zinc-800/50 px-3 py-2">
           <span className="text-zinc-500">Checksum:</span>{" "}
-          <span className="text-zinc-200 font-mono text-xs">{version.checksum?.slice(0, 12)}...</span>
+          <span className="text-zinc-200 font-mono text-xs">
+            {version.checksum?.slice(0, 12)}...
+          </span>
         </div>
       </div>
       {version.requirements && version.requirements.length > 0 && (
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-1">Requirements</p>
+          <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-1">
+            Requirements
+          </p>
           <div className="flex flex-wrap gap-1">
             {version.requirements.map((r, i) => (
-              <Badge key={i} variant="default" className="font-mono text-xs">{r}</Badge>
+              <Badge key={i} variant="default" className="font-mono text-xs">
+                {r}
+              </Badge>
             ))}
           </div>
         </div>
       )}
       {version.source_code && (
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-1">Source Code</p>
-          <CodeEditor value={version.source_code} readOnly height="calc(100vh - 300px)" />
+          <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-1">
+            Source Code
+          </p>
+          <CodeEditor
+            value={version.source_code}
+            readOnly
+            height="calc(100vh - 300px)"
+          />
         </div>
       )}
     </div>
@@ -816,24 +1180,31 @@ function VolatileKeyPicker({
     });
   }, [configKeys, keys]);
 
-  const toggleKey = useCallback((key: string) => {
-    if (keys.includes(key)) {
-      setKeys(keys.filter((k) => k !== key));
-    } else {
-      setKeys([...keys, key]);
-    }
-  }, [keys, setKeys]);
+  const toggleKey = useCallback(
+    (key: string) => {
+      if (keys.includes(key)) {
+        setKeys(keys.filter((k) => k !== key));
+      } else {
+        setKeys([...keys, key]);
+      }
+    },
+    [keys, setKeys],
+  );
 
   return (
     <div className="space-y-2">
       <Label className="text-sm">Volatile Keys</Label>
       <p className="text-xs text-zinc-500">
-        Keys excluded from change detection. Volatile keys change every poll cycle and won't create change history entries.
+        Keys excluded from change detection. Volatile keys change every poll
+        cycle and won't create change history entries.
       </p>
 
       <div className="border border-zinc-800 rounded-lg max-h-[300px] overflow-auto">
         {allKeys.map((key) => (
-          <div key={key} className="flex items-center justify-between px-3 py-1.5 border-b border-zinc-800/50 last:border-0 hover:bg-zinc-800/30">
+          <div
+            key={key}
+            className="flex items-center justify-between px-3 py-1.5 border-b border-zinc-800/50 last:border-0 hover:bg-zinc-800/30"
+          >
             <span className="font-mono text-xs text-zinc-300">{key}</span>
             <input
               type="checkbox"
@@ -844,7 +1215,9 @@ function VolatileKeyPicker({
           </div>
         ))}
         {allKeys.length === 0 && (
-          <p className="text-xs text-zinc-600 py-4 text-center">No config keys detected yet. Run the app once to populate.</p>
+          <p className="text-xs text-zinc-600 py-4 text-center">
+            No config keys detected yet. Run the app once to populate.
+          </p>
         )}
       </div>
 
@@ -880,8 +1253,10 @@ function EditVersionCodeForm({
   onSubmit,
   onCancel,
   isPending,
-  volatileKeys, setVolatileKeys,
-  eligibilityOids, setEligibilityOids,
+  volatileKeys,
+  setVolatileKeys,
+  eligibilityOids,
+  setEligibilityOids,
   isConfigApp,
   appId,
 }: {
@@ -895,25 +1270,42 @@ function EditVersionCodeForm({
   onSubmit: (e: React.FormEvent) => void;
   onCancel: () => void;
   isPending: boolean;
-  volatileKeys?: string[]; setVolatileKeys?: (v: string[]) => void;
-  eligibilityOids?: EligibilityOidCheck[]; setEligibilityOids?: (v: EligibilityOidCheck[]) => void;
+  volatileKeys?: string[];
+  setVolatileKeys?: (v: string[]) => void;
+  eligibilityOids?: EligibilityOidCheck[];
+  setEligibilityOids?: (v: EligibilityOidCheck[]) => void;
   isConfigApp?: boolean;
   appId?: string;
 }) {
   const reqsList = useMemo(
-    () => editVersionReqs.trim() ? editVersionReqs.trim().split("\n").filter(Boolean) : [],
+    () =>
+      editVersionReqs.trim()
+        ? editVersionReqs.trim().split("\n").filter(Boolean)
+        : [],
     [editVersionReqs],
   );
 
   return (
     <form onSubmit={onSubmit} className="space-y-4">
       <div className="space-y-1.5">
-        <Label htmlFor="edit-ver-entry">Entry Class <span className="font-normal text-zinc-500">(optional)</span></Label>
-        <Input id="edit-ver-entry" placeholder="e.g. Poller" value={editVersionEntry} onChange={(e) => setEditVersionEntry(e.target.value)} />
+        <Label htmlFor="edit-ver-entry">
+          Entry Class{" "}
+          <span className="font-normal text-zinc-500">(optional)</span>
+        </Label>
+        <Input
+          id="edit-ver-entry"
+          placeholder="e.g. Poller"
+          value={editVersionEntry}
+          onChange={(e) => setEditVersionEntry(e.target.value)}
+        />
       </div>
       <div className="space-y-1.5">
         <Label>Source Code (Python)</Label>
-        <CodeEditor value={editVersionCode} onChange={setEditVersionCode} height="calc(100vh - 300px)" />
+        <CodeEditor
+          value={editVersionCode}
+          onChange={setEditVersionCode}
+          height="calc(100vh - 300px)"
+        />
       </div>
       <div className="space-y-1.5">
         <Label>Requirements</Label>
@@ -930,11 +1322,18 @@ function EditVersionCodeForm({
         />
       )}
       {eligibilityOids && setEligibilityOids && (
-        <EligibilityOidsEditor value={eligibilityOids} onChange={setEligibilityOids} />
+        <EligibilityOidsEditor
+          value={eligibilityOids}
+          onChange={setEligibilityOids}
+        />
       )}
-      {editVersionError && <p className="text-sm text-red-400">{editVersionError}</p>}
+      {editVersionError && (
+        <p className="text-sm text-red-400">{editVersionError}</p>
+      )}
       <DialogFooter>
-        <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
+        <Button type="button" variant="secondary" onClick={onCancel}>
+          Cancel
+        </Button>
         <Button type="submit" disabled={isPending}>
           {isPending && <Loader2 className="h-4 w-4 animate-spin" />} Save
         </Button>
@@ -945,33 +1344,53 @@ function EditVersionCodeForm({
 
 function NewVersionCodeForm({
   versionField,
-  versionCode, setVersionCode,
-  versionReqs, setVersionReqs,
-  versionEntry, setVersionEntry,
+  versionCode,
+  setVersionCode,
+  versionReqs,
+  setVersionReqs,
+  versionEntry,
+  setVersionEntry,
   versionError,
   onSubmit,
   onCancel,
   isPending,
-  volatileKeys, setVolatileKeys,
-  eligibilityOids, setEligibilityOids,
+  volatileKeys,
+  setVolatileKeys,
+  eligibilityOids,
+  setEligibilityOids,
   isConfigApp,
   appId,
 }: {
-  versionField: { value: string; onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => void; onBlur: () => void; error: string | null };
-  versionCode: string; setVersionCode: (v: string) => void;
-  versionReqs: string; setVersionReqs: (v: string) => void;
-  versionEntry: string; setVersionEntry: (v: string) => void;
+  versionField: {
+    value: string;
+    onChange: (
+      e: React.ChangeEvent<
+        HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+      >,
+    ) => void;
+    onBlur: () => void;
+    error: string | null;
+  };
+  versionCode: string;
+  setVersionCode: (v: string) => void;
+  versionReqs: string;
+  setVersionReqs: (v: string) => void;
+  versionEntry: string;
+  setVersionEntry: (v: string) => void;
   versionError: string | null;
   onSubmit: (e: React.FormEvent) => void;
   onCancel: () => void;
   isPending: boolean;
-  volatileKeys?: string[]; setVolatileKeys?: (v: string[]) => void;
-  eligibilityOids?: EligibilityOidCheck[]; setEligibilityOids?: (v: EligibilityOidCheck[]) => void;
+  volatileKeys?: string[];
+  setVolatileKeys?: (v: string[]) => void;
+  eligibilityOids?: EligibilityOidCheck[];
+  setEligibilityOids?: (v: EligibilityOidCheck[]) => void;
   isConfigApp?: boolean;
   appId?: string;
 }) {
   const reqsList = useMemo(
-    () => versionReqs.trim() ? versionReqs.trim().split("\n").filter(Boolean) : [],
+    () =>
+      versionReqs.trim() ? versionReqs.trim().split("\n").filter(Boolean) : [],
     [versionReqs],
   );
 
@@ -980,17 +1399,38 @@ function NewVersionCodeForm({
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1.5">
           <Label htmlFor="ver-string">Version</Label>
-          <Input id="ver-string" placeholder="e.g. 1.1.0" value={versionField.value} onChange={versionField.onChange} onBlur={versionField.onBlur} autoFocus />
-          {versionField.error && <p className="text-xs text-red-400 mt-0.5">{versionField.error}</p>}
+          <Input
+            id="ver-string"
+            placeholder="e.g. 1.1.0"
+            value={versionField.value}
+            onChange={versionField.onChange}
+            onBlur={versionField.onBlur}
+            autoFocus
+          />
+          {versionField.error && (
+            <p className="text-xs text-red-400 mt-0.5">{versionField.error}</p>
+          )}
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="ver-entry">Entry Class <span className="font-normal text-zinc-500">(optional)</span></Label>
-          <Input id="ver-entry" placeholder="e.g. MyCheck" value={versionEntry} onChange={(e) => setVersionEntry(e.target.value)} />
+          <Label htmlFor="ver-entry">
+            Entry Class{" "}
+            <span className="font-normal text-zinc-500">(optional)</span>
+          </Label>
+          <Input
+            id="ver-entry"
+            placeholder="e.g. MyCheck"
+            value={versionEntry}
+            onChange={(e) => setVersionEntry(e.target.value)}
+          />
         </div>
       </div>
       <div className="space-y-1.5">
         <Label>Source Code (Python)</Label>
-        <CodeEditor value={versionCode} onChange={setVersionCode} height="calc(100vh - 300px)" />
+        <CodeEditor
+          value={versionCode}
+          onChange={setVersionCode}
+          height="calc(100vh - 300px)"
+        />
       </div>
       <div className="space-y-1.5">
         <Label>Requirements</Label>
@@ -1007,26 +1447,40 @@ function NewVersionCodeForm({
         />
       )}
       {eligibilityOids && setEligibilityOids && (
-        <EligibilityOidsEditor value={eligibilityOids} onChange={setEligibilityOids} />
+        <EligibilityOidsEditor
+          value={eligibilityOids}
+          onChange={setEligibilityOids}
+        />
       )}
       {versionError && <p className="text-sm text-red-400">{versionError}</p>}
       <DialogFooter>
-        <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
+        <Button type="button" variant="secondary" onClick={onCancel}>
+          Cancel
+        </Button>
         <Button type="submit" disabled={isPending}>
-          {isPending && <Loader2 className="h-4 w-4 animate-spin" />} Create Version
+          {isPending && <Loader2 className="h-4 w-4 animate-spin" />} Create
+          Version
         </Button>
       </DialogFooter>
     </form>
   );
 }
 
-
 // ── Eligibility Tab ─────────────────────────────────────
 
 function EligibilityTab({
-  appId, startTest, runsQuery, expandedRunId, setExpandedRunId,
-  detailQuery, eligFilter, setEligFilter, eligPage, setEligPage,
-  autoAssign, appId2,
+  appId,
+  startTest,
+  runsQuery,
+  expandedRunId,
+  setExpandedRunId,
+  detailQuery,
+  eligFilter,
+  setEligFilter,
+  eligPage,
+  setEligPage,
+  autoAssign,
+  appId2,
 }: {
   appId: string;
   startTest: ReturnType<typeof useStartEligibilityTest>;
@@ -1055,21 +1509,29 @@ function EligibilityTab({
     if (!deviceSearch) return devices;
     const q = deviceSearch.toLowerCase();
     return devices.filter(
-      (d) => d.device_name.toLowerCase().includes(q) || d.device_address.toLowerCase().includes(q),
+      (d) =>
+        d.device_name.toLowerCase().includes(q) ||
+        d.device_address.toLowerCase().includes(q),
     );
   }, [detail?.devices, deviceSearch]);
 
   // Eligible (non-already-assigned) device IDs on current page for select-all
   const selectableIds = useMemo(
-    () => visibleDevices.filter((d) => d.eligible === 1 && !d.already_assigned).map((d) => d.device_id),
+    () =>
+      visibleDevices
+        .filter((d) => d.eligible === 1 && !d.already_assigned)
+        .map((d) => d.device_id),
     [visibleDevices],
   );
-  const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selectedIds.has(id));
+  const allSelected =
+    selectableIds.length > 0 &&
+    selectableIds.every((id) => selectedIds.has(id));
 
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   };
@@ -1096,9 +1558,16 @@ function EligibilityTab({
     setExpandedRunId(runId);
   };
 
-  const statusBadge = (run: { status: string; tested: number; total_devices: number }) => {
+  const statusBadge = (run: {
+    status: string;
+    tested: number;
+    total_devices: number;
+  }) => {
     if (run.status === "running") {
-      const pct = run.total_devices > 0 ? Math.round((run.tested / run.total_devices) * 100) : 0;
+      const pct =
+        run.total_devices > 0
+          ? Math.round((run.tested / run.total_devices) * 100)
+          : 0;
       return (
         <div className="flex items-center gap-2">
           <Badge className="bg-blue-500/15 text-blue-400 border-blue-500/30">
@@ -1106,14 +1575,26 @@ function EligibilityTab({
             {run.tested}/{run.total_devices}
           </Badge>
           <div className="w-16 h-1.5 rounded-full bg-zinc-800">
-            <div className="h-1.5 rounded-full bg-blue-500 transition-all" style={{ width: `${pct}%` }} />
+            <div
+              className="h-1.5 rounded-full bg-blue-500 transition-all"
+              style={{ width: `${pct}%` }}
+            />
           </div>
           <span className="text-[10px] text-zinc-500">{pct}%</span>
         </div>
       );
     }
-    if (run.status === "completed") return <Badge className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30">completed</Badge>;
-    return <Badge className="bg-red-500/15 text-red-400 border-red-500/30">failed</Badge>;
+    if (run.status === "completed")
+      return (
+        <Badge className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30">
+          completed
+        </Badge>
+      );
+    return (
+      <Badge className="bg-red-500/15 text-red-400 border-red-500/30">
+        failed
+      </Badge>
+    );
   };
 
   const eligLabel = (e: number) => {
@@ -1127,7 +1608,10 @@ function EligibilityTab({
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-xs text-zinc-500">Find eligible devices via vendor match (instant) or live SNMP OID probing.</p>
+        <p className="text-xs text-zinc-500">
+          Find eligible devices via vendor match (instant) or live SNMP OID
+          probing.
+        </p>
         <div className="flex gap-2">
           <Button
             size="sm"
@@ -1135,7 +1619,11 @@ function EligibilityTab({
             disabled={startTest.isPending || hasRunning}
             onClick={() => startTest.mutate({ appId, mode: "probe" })}
           >
-            {startTest.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <RefreshCw className="h-3.5 w-3.5 mr-1.5" />}
+            {startTest.isPending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+            ) : (
+              <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+            )}
             Probe OIDs
           </Button>
           <Button
@@ -1143,7 +1631,11 @@ function EligibilityTab({
             disabled={startTest.isPending || hasRunning}
             onClick={() => startTest.mutate({ appId, mode: "instant" })}
           >
-            {startTest.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <SlidersHorizontal className="h-3.5 w-3.5 mr-1.5" />}
+            {startTest.isPending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+            ) : (
+              <SlidersHorizontal className="h-3.5 w-3.5 mr-1.5" />
+            )}
             Find Eligible
           </Button>
         </div>
@@ -1173,21 +1665,47 @@ function EligibilityTab({
               const isExpanded = expandedRunId === run.run_id;
               return (
                 <Fragment key={run.run_id}>
-                  <TableRow className="cursor-pointer hover:bg-zinc-800/50" onClick={() => handleExpand(isExpanded ? null : run.run_id)}>
+                  <TableRow
+                    className="cursor-pointer hover:bg-zinc-800/50"
+                    onClick={() => handleExpand(isExpanded ? null : run.run_id)}
+                  >
                     <TableCell className="py-1.5 px-2">
-                      {isExpanded ? <ChevronDown className="h-3.5 w-3.5 text-zinc-500" /> : <ChevronRight className="h-3.5 w-3.5 text-zinc-500" />}
+                      {isExpanded ? (
+                        <ChevronDown className="h-3.5 w-3.5 text-zinc-500" />
+                      ) : (
+                        <ChevronRight className="h-3.5 w-3.5 text-zinc-500" />
+                      )}
                     </TableCell>
-                    <TableCell className="py-1.5 text-xs text-zinc-400">{run.started_at ? new Date(run.started_at).toLocaleString() : "—"}</TableCell>
+                    <TableCell className="py-1.5 text-xs text-zinc-400">
+                      {run.started_at
+                        ? new Date(run.started_at).toLocaleString()
+                        : "—"}
+                    </TableCell>
                     <TableCell className="py-1.5">{statusBadge(run)}</TableCell>
-                    <TableCell className="py-1.5 text-xs font-mono text-emerald-400">{run.eligible}</TableCell>
-                    <TableCell className="py-1.5 text-xs font-mono text-red-400">{run.ineligible}</TableCell>
-                    <TableCell className="py-1.5 text-xs font-mono text-zinc-500">{run.unreachable}</TableCell>
-                    <TableCell className="py-1.5 text-xs text-zinc-500">{run.duration_ms ? `${(run.duration_ms / 1000).toFixed(1)}s` : "—"}</TableCell>
-                    <TableCell className="py-1.5 text-xs text-zinc-500">{run.triggered_by}</TableCell>
+                    <TableCell className="py-1.5 text-xs font-mono text-emerald-400">
+                      {run.eligible}
+                    </TableCell>
+                    <TableCell className="py-1.5 text-xs font-mono text-red-400">
+                      {run.ineligible}
+                    </TableCell>
+                    <TableCell className="py-1.5 text-xs font-mono text-zinc-500">
+                      {run.unreachable}
+                    </TableCell>
+                    <TableCell className="py-1.5 text-xs text-zinc-500">
+                      {run.duration_ms
+                        ? `${(run.duration_ms / 1000).toFixed(1)}s`
+                        : "—"}
+                    </TableCell>
+                    <TableCell className="py-1.5 text-xs text-zinc-500">
+                      {run.triggered_by}
+                    </TableCell>
                   </TableRow>
                   {isExpanded && (
                     <TableRow>
-                      <TableCell colSpan={8} className="bg-zinc-900/50 px-4 py-3">
+                      <TableCell
+                        colSpan={8}
+                        className="bg-zinc-900/50 px-4 py-3"
+                      >
                         {/* Filter + search + assign bar */}
                         <div className="flex flex-wrap gap-2 mb-3 items-center">
                           {[
@@ -1199,8 +1717,13 @@ function EligibilityTab({
                             <Button
                               key={f.label}
                               size="sm"
-                              variant={eligFilter === f.value ? "default" : "outline"}
-                              onClick={() => { setEligFilter(f.value); setEligPage(1); }}
+                              variant={
+                                eligFilter === f.value ? "default" : "outline"
+                              }
+                              onClick={() => {
+                                setEligFilter(f.value);
+                                setEligPage(1);
+                              }}
                               className="h-6 text-xs"
                             >
                               {f.label}
@@ -1225,21 +1748,29 @@ function EligibilityTab({
                                 autoAssign.mutate({
                                   appId: appId2,
                                   runId: run.run_id,
-                                  deviceIds: selectedCount > 0 ? [...selectedIds] : undefined,
+                                  deviceIds:
+                                    selectedCount > 0
+                                      ? [...selectedIds]
+                                      : undefined,
                                 });
                               }}
                             >
-                              {autoAssign.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Plus className="h-3 w-3 mr-1" />}
+                              {autoAssign.isPending ? (
+                                <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                              ) : (
+                                <Plus className="h-3 w-3 mr-1" />
+                              )}
                               {selectedCount > 0
                                 ? `Assign ${selectedCount} selected`
                                 : `Auto-assign ${run.eligible} eligible`}
                             </Button>
                           )}
-                          {autoAssign.isSuccess && autoAssign.variables?.runId === run.run_id && (
-                            <span className="text-xs text-emerald-400 ml-2">
-                              {autoAssign.data?.data?.created ?? 0} assigned
-                            </span>
-                          )}
+                          {autoAssign.isSuccess &&
+                            autoAssign.variables?.runId === run.run_id && (
+                              <span className="text-xs text-emerald-400 ml-2">
+                                {autoAssign.data?.data?.created ?? 0} assigned
+                              </span>
+                            )}
                         </div>
                         {/* Device results table with checkboxes */}
                         <Table>
@@ -1254,17 +1785,33 @@ function EligibilityTab({
                                   title="Select all eligible on this page"
                                 />
                               </TableHead>
-                              <TableHead className="text-[11px] py-1">Device</TableHead>
-                              <TableHead className="text-[11px] py-1">Address</TableHead>
-                              <TableHead className="text-[11px] py-1">Result</TableHead>
-                              <TableHead className="text-[11px] py-1">Details</TableHead>
+                              <TableHead className="text-[11px] py-1">
+                                Device
+                              </TableHead>
+                              <TableHead className="text-[11px] py-1">
+                                Address
+                              </TableHead>
+                              <TableHead className="text-[11px] py-1">
+                                Result
+                              </TableHead>
+                              <TableHead className="text-[11px] py-1">
+                                Details
+                              </TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
                             {visibleDevices.map((d) => {
-                              const selectable = d.eligible === 1 && !d.already_assigned;
+                              const selectable =
+                                d.eligible === 1 && !d.already_assigned;
                               return (
-                                <TableRow key={d.device_id} className={selectedIds.has(d.device_id) ? "bg-emerald-500/5" : ""}>
+                                <TableRow
+                                  key={d.device_id}
+                                  className={
+                                    selectedIds.has(d.device_id)
+                                      ? "bg-emerald-500/5"
+                                      : ""
+                                  }
+                                >
                                   <TableCell className="py-1 px-2">
                                     <input
                                       type="checkbox"
@@ -1274,21 +1821,41 @@ function EligibilityTab({
                                       className="accent-emerald-500 h-3 w-3 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
                                     />
                                   </TableCell>
-                                  <TableCell className="py-1 text-xs font-mono text-zinc-200">{d.device_name}</TableCell>
-                                  <TableCell className="py-1 text-xs font-mono text-zinc-400">{d.device_address}</TableCell>
-                                  <TableCell className="py-1 text-xs">
-                                    {d.already_assigned
-                                      ? <span className="text-zinc-500">Assigned</span>
-                                      : eligLabel(d.eligible)}
+                                  <TableCell className="py-1 text-xs font-mono text-zinc-200">
+                                    {d.device_name}
                                   </TableCell>
-                                  <TableCell className="py-1 text-xs text-zinc-500">{d.reason || (d.eligible === 1 ? "All checks passed" : "")}</TableCell>
+                                  <TableCell className="py-1 text-xs font-mono text-zinc-400">
+                                    {d.device_address}
+                                  </TableCell>
+                                  <TableCell className="py-1 text-xs">
+                                    {d.already_assigned ? (
+                                      <span className="text-zinc-500">
+                                        Assigned
+                                      </span>
+                                    ) : (
+                                      eligLabel(d.eligible)
+                                    )}
+                                  </TableCell>
+                                  <TableCell className="py-1 text-xs text-zinc-500">
+                                    {d.reason ||
+                                      (d.eligible === 1
+                                        ? "All checks passed"
+                                        : "")}
+                                  </TableCell>
                                 </TableRow>
                               );
                             })}
                             {visibleDevices.length === 0 && (
                               <TableRow>
-                                <TableCell colSpan={5} className="py-3 text-center text-xs text-zinc-500">
-                                  {detailQuery.isLoading ? "Loading..." : deviceSearch ? "No matches" : "No results"}
+                                <TableCell
+                                  colSpan={5}
+                                  className="py-3 text-center text-xs text-zinc-500"
+                                >
+                                  {detailQuery.isLoading
+                                    ? "Loading..."
+                                    : deviceSearch
+                                      ? "No matches"
+                                      : "No results"}
                                 </TableCell>
                               </TableRow>
                             )}
@@ -1298,14 +1865,39 @@ function EligibilityTab({
                         <div className="flex items-center justify-between mt-2 text-xs text-zinc-500">
                           <span>
                             {selectedCount > 0 && (
-                              <span className="text-emerald-400 mr-3">{selectedCount} selected</span>
+                              <span className="text-emerald-400 mr-3">
+                                {selectedCount} selected
+                              </span>
                             )}
-                            Page {eligPage} of {Math.max(1, Math.ceil((detail?.meta.total ?? 0) / 25))}
+                            Page {eligPage} of{" "}
+                            {Math.max(
+                              1,
+                              Math.ceil((detail?.meta.total ?? 0) / 25),
+                            )}
                           </span>
                           {(detail?.meta.total ?? 0) > 25 && (
                             <div className="flex gap-1">
-                              <Button size="sm" variant="outline" className="h-6" disabled={eligPage <= 1} onClick={() => setEligPage(eligPage - 1)}>Prev</Button>
-                              <Button size="sm" variant="outline" className="h-6" disabled={eligPage >= Math.ceil((detail?.meta.total ?? 0) / 25)} onClick={() => setEligPage(eligPage + 1)}>Next</Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-6"
+                                disabled={eligPage <= 1}
+                                onClick={() => setEligPage(eligPage - 1)}
+                              >
+                                Prev
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-6"
+                                disabled={
+                                  eligPage >=
+                                  Math.ceil((detail?.meta.total ?? 0) / 25)
+                                }
+                                onClick={() => setEligPage(eligPage + 1)}
+                              >
+                                Next
+                              </Button>
                             </div>
                           )}
                         </div>
@@ -1322,20 +1914,32 @@ function EligibilityTab({
   );
 }
 
-
 // ── Eligibility OIDs Editor ─────────────────────────────
 
-function EligibilityOidsEditor({ value, onChange }: { value: EligibilityOidCheck[]; onChange: (v: EligibilityOidCheck[]) => void }) {
+function EligibilityOidsEditor({
+  value,
+  onChange,
+}: {
+  value: EligibilityOidCheck[];
+  onChange: (v: EligibilityOidCheck[]) => void;
+}) {
   return (
     <div className="space-y-2">
       <Label>Eligibility OIDs</Label>
-      <p className="text-[11px] text-zinc-500">OID checks that must pass before auto-assigning via discovery. Leave empty for no requirements.</p>
+      <p className="text-[11px] text-zinc-500">
+        OID checks that must pass before auto-assigning via discovery. Leave
+        empty for no requirements.
+      </p>
       {value.map((entry, i) => (
         <div key={i} className="flex items-center gap-2">
           <Input
             placeholder="1.3.6.1.4.1.9.9.168.1.1.1.0"
             value={entry.oid}
-            onChange={(e) => { const u = [...value]; u[i] = { ...u[i], oid: e.target.value }; onChange(u); }}
+            onChange={(e) => {
+              const u = [...value];
+              u[i] = { ...u[i], oid: e.target.value };
+              onChange(u);
+            }}
             className="flex-1"
           />
           <Select
@@ -1343,7 +1947,10 @@ function EligibilityOidsEditor({ value, onChange }: { value: EligibilityOidCheck
             onChange={(e) => {
               const u = [...value];
               const check = e.target.value as "exists" | "equals";
-              u[i] = check === "exists" ? { oid: u[i].oid, check } : { ...u[i], check };
+              u[i] =
+                check === "exists"
+                  ? { oid: u[i].oid, check }
+                  : { ...u[i], check };
               onChange(u);
             }}
             className="w-28"
@@ -1355,22 +1962,35 @@ function EligibilityOidsEditor({ value, onChange }: { value: EligibilityOidCheck
             <Input
               placeholder="Expected value"
               value={entry.value || ""}
-              onChange={(e) => { const u = [...value]; u[i] = { ...u[i], value: e.target.value }; onChange(u); }}
+              onChange={(e) => {
+                const u = [...value];
+                u[i] = { ...u[i], value: e.target.value };
+                onChange(u);
+              }}
               className="w-48"
             />
           )}
-          <Button type="button" variant="ghost" size="icon" onClick={() => onChange(value.filter((_, j) => j !== i))}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={() => onChange(value.filter((_, j) => j !== i))}
+          >
             <X className="h-4 w-4" />
           </Button>
         </div>
       ))}
-      <Button type="button" variant="outline" size="sm" onClick={() => onChange([...value, { oid: "", check: "exists" }])}>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={() => onChange([...value, { oid: "", check: "exists" }])}
+      >
         <Plus className="mr-1.5 h-3 w-3" /> Add OID Check
       </Button>
     </div>
   );
 }
-
 
 // ── Thresholds Tab ──────────────────────────────────────
 
@@ -1386,10 +2006,19 @@ const BUILT_IN_UNITS = [
   { value: "bps", label: "bps (bitrate)" },
 ];
 
-function UnitSelector({ value, onChange }: { value: string | null; onChange: (v: string | null) => void }) {
-  const isCustom = value != null && value !== "" && !BUILT_IN_UNITS.some((u) => u.value === value);
+function UnitSelector({
+  value,
+  onChange,
+}: {
+  value: string | null;
+  onChange: (v: string | null) => void;
+}) {
+  const isCustom =
+    value != null &&
+    value !== "" &&
+    !BUILT_IN_UNITS.some((u) => u.value === value);
   const [showCustom, setShowCustom] = useState(isCustom);
-  const [customValue, setCustomValue] = useState(isCustom ? value ?? "" : "");
+  const [customValue, setCustomValue] = useState(isCustom ? (value ?? "") : "");
 
   return (
     <div className="space-y-1">
@@ -1410,7 +2039,9 @@ function UnitSelector({ value, onChange }: { value: string | null; onChange: (v:
       >
         <option value="">None</option>
         {BUILT_IN_UNITS.map((u) => (
-          <option key={u.value} value={u.value}>{u.label}</option>
+          <option key={u.value} value={u.value}>
+            {u.label}
+          </option>
         ))}
         <option value="__custom__">Custom\u2026</option>
       </select>
@@ -1430,7 +2061,10 @@ function UnitSelector({ value, onChange }: { value: string | null; onChange: (v:
   );
 }
 
-function formatThresholdValue(value: number | null | undefined, unit: string | null): string {
+function formatThresholdValue(
+  value: number | null | undefined,
+  unit: string | null,
+): string {
   if (value == null) return "\u2014";
   if (unit === "percent") return `${value}%`;
   if (unit === "ms") return `${value} ms`;
@@ -1438,13 +2072,15 @@ function formatThresholdValue(value: number | null | undefined, unit: string | n
   if (unit === "dBm") return `${value} dBm`;
   if (unit === "pps") return `${value} pps`;
   if (unit === "bps") {
-    if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)} Gbps`;
+    if (value >= 1_000_000_000)
+      return `${(value / 1_000_000_000).toFixed(1)} Gbps`;
     if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)} Mbps`;
     if (value >= 1_000) return `${(value / 1_000).toFixed(1)} kbps`;
     return `${value} bps`;
   }
   if (unit === "bytes") {
-    if (value >= 1_073_741_824) return `${(value / 1_073_741_824).toFixed(1)} GB`;
+    if (value >= 1_073_741_824)
+      return `${(value / 1_073_741_824).toFixed(1)} GB`;
     if (value >= 1_048_576) return `${(value / 1_048_576).toFixed(1)} MB`;
     if (value >= 1_024) return `${(value / 1_024).toFixed(1)} KB`;
     return `${value} B`;
@@ -1479,7 +2115,10 @@ function ThresholdsTab({ appId }: { appId: string }) {
 
   // Build a map: variable name -> list of definitions that reference the variable
   const variableUsage = useMemo(() => {
-    const usage: Record<string, { definition_id: string; definition_name: string }[]> = {};
+    const usage: Record<
+      string,
+      { definition_id: string; definition_name: string }[]
+    > = {};
     if (variables && definitions) {
       for (const v of variables) {
         const refs: { definition_id: string; definition_name: string }[] = [];
@@ -1497,7 +2136,12 @@ function ThresholdsTab({ appId }: { appId: string }) {
     return usage;
   }, [variables, definitions]);
 
-  if (isLoading) return <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-zinc-500" /></div>;
+  if (isLoading)
+    return (
+      <div className="flex justify-center py-12">
+        <Loader2 className="h-6 w-6 animate-spin text-zinc-500" />
+      </div>
+    );
 
   const handleSaveDefault = (varId: string) => {
     const val = parseFloat(defaultDraft);
@@ -1522,37 +2166,56 @@ function ThresholdsTab({ appId }: { appId: string }) {
   const handleCreate = () => {
     setCreateError(null);
     const name = newName.trim();
-    if (!name) { setCreateError("Name is required"); return; }
-    if (!/^[a-z][a-z0-9_]*$/.test(name)) { setCreateError("Name must be lowercase alphanumeric with underscores, starting with a letter"); return; }
+    if (!name) {
+      setCreateError("Name is required");
+      return;
+    }
+    if (!/^[a-z][a-z0-9_]*$/.test(name)) {
+      setCreateError(
+        "Name must be lowercase alphanumeric with underscores, starting with a letter",
+      );
+      return;
+    }
     const defaultVal = parseFloat(newDefault);
-    if (isNaN(defaultVal) || !isFinite(defaultVal)) { setCreateError("Default value must be a valid number"); return; }
-    createVar.mutate({
-      appId,
-      name,
-      default_value: defaultVal,
-      display_name: newDisplayName.trim() || undefined,
-      description: newDescription.trim() || undefined,
-      unit: newUnit || undefined,
-    }, {
-      onSuccess: () => {
-        setCreating(false);
-        setNewName("");
-        setNewDefault("");
-        setNewUnit(null);
-        setNewDisplayName("");
-        setNewDescription("");
-        setCreateError(null);
+    if (isNaN(defaultVal) || !isFinite(defaultVal)) {
+      setCreateError("Default value must be a valid number");
+      return;
+    }
+    createVar.mutate(
+      {
+        appId,
+        name,
+        default_value: defaultVal,
+        display_name: newDisplayName.trim() || undefined,
+        description: newDescription.trim() || undefined,
+        unit: newUnit || undefined,
       },
-      onError: (err: unknown) => {
-        setCreateError(err instanceof Error ? err.message : "Failed to create variable");
+      {
+        onSuccess: () => {
+          setCreating(false);
+          setNewName("");
+          setNewDefault("");
+          setNewUnit(null);
+          setNewDisplayName("");
+          setNewDescription("");
+          setCreateError(null);
+        },
+        onError: (err: unknown) => {
+          setCreateError(
+            err instanceof Error ? err.message : "Failed to create variable",
+          );
+        },
       },
-    });
+    );
   };
 
   const handleDelete = (varId: string) => {
-    deleteVar.mutate({ appId, varId }, {
-      onSuccess: () => setConfirmDeleteId(null),
-    });
+    deleteVar.mutate(
+      { appId, varId },
+      {
+        onSuccess: () => setConfirmDeleteId(null),
+      },
+    );
   };
 
   const isEmpty = !variables || variables.length === 0;
@@ -1562,8 +2225,17 @@ function ThresholdsTab({ appId }: { appId: string }) {
       <CardHeader>
         <CardTitle className="text-sm flex items-center gap-2">
           <SlidersHorizontal className="h-4 w-4" />
-          Threshold Variables {variables && variables.length > 0 ? `(${variables.length})` : ""}
-          <Button size="sm" variant="secondary" className="ml-auto gap-1.5" onClick={() => { setCreating(true); setCreateError(null); }}>
+          Threshold Variables{" "}
+          {variables && variables.length > 0 ? `(${variables.length})` : ""}
+          <Button
+            size="sm"
+            variant="secondary"
+            className="ml-auto gap-1.5"
+            onClick={() => {
+              setCreating(true);
+              setCreateError(null);
+            }}
+          >
             <Plus className="h-3 w-3" /> New Variable
           </Button>
         </CardTitle>
@@ -1572,8 +2244,13 @@ function ThresholdsTab({ appId }: { appId: string }) {
         {isEmpty && !creating ? (
           <div className="py-8 text-center">
             <SlidersHorizontal className="h-8 w-8 text-zinc-600 mx-auto mb-2" />
-            <p className="text-sm text-zinc-500">No threshold variables defined.</p>
-            <p className="text-xs text-zinc-600 mt-1">Variables are auto-created when alert definitions use $variable syntax, or create one manually.</p>
+            <p className="text-sm text-zinc-500">
+              No threshold variables defined.
+            </p>
+            <p className="text-xs text-zinc-600 mt-1">
+              Variables are auto-created when alert definitions use $variable
+              syntax, or create one manually.
+            </p>
           </div>
         ) : (
           <Table>
@@ -1596,10 +2273,14 @@ function ThresholdsTab({ appId }: { appId: string }) {
                     <TableCell className="font-medium text-zinc-100">
                       <span className="font-mono text-sm">{v.name}</span>
                       {v.display_name && (
-                        <span className="text-zinc-400 text-xs ml-2">({v.display_name})</span>
+                        <span className="text-zinc-400 text-xs ml-2">
+                          ({v.display_name})
+                        </span>
                       )}
                       {v.description && (
-                        <p className="text-xs text-zinc-500 mt-0.5">{v.description}</p>
+                        <p className="text-xs text-zinc-500 mt-0.5">
+                          {v.description}
+                        </p>
                       )}
                     </TableCell>
                     <TableCell>
@@ -1617,12 +2298,17 @@ function ThresholdsTab({ appId }: { appId: string }) {
                             }}
                             onBlur={() => handleSaveDefault(v.id)}
                           />
-                          <span className="text-xs text-zinc-400">{v.unit || ""}</span>
+                          <span className="text-xs text-zinc-400">
+                            {v.unit || ""}
+                          </span>
                         </div>
                       ) : (
                         <button
                           className="font-mono text-sm text-zinc-300 hover:text-zinc-100 flex items-center gap-1 group"
-                          onClick={() => { setEditingDefault(v.id); setDefaultDraft(String(v.default_value)); }}
+                          onClick={() => {
+                            setEditingDefault(v.id);
+                            setDefaultDraft(String(v.default_value));
+                          }}
                         >
                           {formatThresholdValue(v.default_value, v.unit)}
                           <Pencil className="h-3 w-3 opacity-0 group-hover:opacity-50" />
@@ -1644,13 +2330,18 @@ function ThresholdsTab({ appId }: { appId: string }) {
                             }}
                             onBlur={() => handleSaveAppValue(v.id)}
                           />
-                          <span className="text-xs text-zinc-400">{v.unit || ""}</span>
+                          <span className="text-xs text-zinc-400">
+                            {v.unit || ""}
+                          </span>
                         </div>
                       ) : v.app_value != null ? (
                         <div className="flex items-center gap-2">
                           <button
                             className="font-mono text-sm text-brand-400 hover:text-brand-300 flex items-center gap-1 group"
-                            onClick={() => { setEditingAppValue(v.id); setAppValueDraft(String(v.app_value)); }}
+                            onClick={() => {
+                              setEditingAppValue(v.id);
+                              setAppValueDraft(String(v.app_value));
+                            }}
                           >
                             {formatThresholdValue(v.app_value, v.unit)}
                             <Pencil className="h-3 w-3 opacity-0 group-hover:opacity-50" />
@@ -1665,19 +2356,28 @@ function ThresholdsTab({ appId }: { appId: string }) {
                       ) : (
                         <button
                           className="text-zinc-500 hover:text-zinc-300 flex items-center gap-1 group text-sm"
-                          onClick={() => { setEditingAppValue(v.id); setAppValueDraft(""); }}
+                          onClick={() => {
+                            setEditingAppValue(v.id);
+                            setAppValueDraft("");
+                          }}
                         >
                           <span>{"\u2014"}</span>
                           <Pencil className="h-3 w-3 opacity-0 group-hover:opacity-50" />
                         </button>
                       )}
                     </TableCell>
-                    <TableCell className="text-zinc-500 text-xs">{v.unit || "\u2014"}</TableCell>
+                    <TableCell className="text-zinc-500 text-xs">
+                      {v.unit || "\u2014"}
+                    </TableCell>
                     <TableCell>
                       {usedBy.length > 0 ? (
                         <div className="flex flex-wrap gap-1">
                           {usedBy.map((u) => (
-                            <Badge key={u.definition_id} variant="default" className="text-xs">
+                            <Badge
+                              key={u.definition_id}
+                              variant="default"
+                              className="text-xs"
+                            >
                               {u.definition_name}
                             </Badge>
                           ))}
@@ -1690,10 +2390,19 @@ function ThresholdsTab({ appId }: { appId: string }) {
                       <div className="flex items-center gap-1">
                         {confirmDeleteId === v.id ? (
                           <div className="flex items-center gap-1">
-                            <Button size="sm" variant="destructive" onClick={() => handleDelete(v.id)} disabled={deleteVar.isPending}>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => handleDelete(v.id)}
+                              disabled={deleteVar.isPending}
+                            >
                               Confirm
                             </Button>
-                            <Button size="sm" variant="ghost" onClick={() => setConfirmDeleteId(null)}>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => setConfirmDeleteId(null)}
+                            >
                               Cancel
                             </Button>
                           </div>
@@ -1702,7 +2411,11 @@ function ThresholdsTab({ appId }: { appId: string }) {
                             size="sm"
                             variant="ghost"
                             className="text-zinc-500 hover:text-red-400"
-                            title={isReferenced ? `Cannot delete: used by ${usedBy.map(u => u.definition_name).join(", ")}` : "Delete variable"}
+                            title={
+                              isReferenced
+                                ? `Cannot delete: used by ${usedBy.map((u) => u.definition_name).join(", ")}`
+                                : "Delete variable"
+                            }
                             disabled={isReferenced}
                             onClick={() => setConfirmDeleteId(v.id)}
                           >
@@ -1746,7 +2459,10 @@ function ThresholdsTab({ appId }: { appId: string }) {
                       value={newDefault}
                       onChange={(e) => setNewDefault(e.target.value)}
                       className="w-24 h-7 text-sm"
-                      onKeyDown={(e) => { if (e.key === "Enter") handleCreate(); if (e.key === "Escape") setCreating(false); }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleCreate();
+                        if (e.key === "Escape") setCreating(false);
+                      }}
                     />
                   </TableCell>
                   <TableCell />
@@ -1756,10 +2472,27 @@ function ThresholdsTab({ appId }: { appId: string }) {
                   <TableCell />
                   <TableCell>
                     <div className="flex items-center gap-1">
-                      <Button size="sm" onClick={handleCreate} disabled={createVar.isPending}>
-                        {createVar.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                      <Button
+                        size="sm"
+                        onClick={handleCreate}
+                        disabled={createVar.isPending}
+                      >
+                        {createVar.isPending ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Check className="h-3.5 w-3.5" />
+                        )}
                       </Button>
-                      <Button size="sm" variant="ghost" onClick={() => { setCreating(false); setCreateError(null); }}>Cancel</Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          setCreating(false);
+                          setCreateError(null);
+                        }}
+                      >
+                        Cancel
+                      </Button>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -1767,16 +2500,26 @@ function ThresholdsTab({ appId }: { appId: string }) {
             </TableBody>
           </Table>
         )}
-        {createError && <p className="text-sm text-red-400 mt-2">{createError}</p>}
+        {createError && (
+          <p className="text-sm text-red-400 mt-2">{createError}</p>
+        )}
       </CardContent>
     </Card>
   );
 }
 
-
 // ── Alerts Tab ──────────────────────────────────────────
 
-function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string; versions: Array<{ id: string; version: string; is_latest: boolean }> } }) {
+function AlertsTab({
+  appId,
+  app,
+}: {
+  appId: string;
+  app: {
+    target_table?: string;
+    versions: Array<{ id: string; version: string; is_latest: boolean }>;
+  };
+}) {
   const { data: definitionsResp, isLoading } = useAlertDefinitions(appId);
   const definitions = definitionsResp?.data ?? [];
   const { data: metrics } = useAlertMetrics(appId);
@@ -1787,7 +2530,9 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
   const invertDef = useInvertAlertDefinition();
 
   // Form state — used for both create and edit
-  const [formMode, setFormMode] = useState<"closed" | "create" | "edit">("closed");
+  const [formMode, setFormMode] = useState<"closed" | "create" | "edit">(
+    "closed",
+  );
   const [editId, setEditId] = useState<string | null>(null);
   const formNameField = useField("", validateName);
   const [formExpression, setFormExpression] = useState("");
@@ -1796,7 +2541,11 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
   const [formMessageTemplate, setFormMessageTemplate] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
 
-  const openCreate = (prefill?: { name?: string; expression?: string; window?: string }) => {
+  const openCreate = (prefill?: {
+    name?: string;
+    expression?: string;
+    window?: string;
+  }) => {
     setFormMode("create");
     setEditId(null);
     formNameField.reset(prefill?.name ?? "");
@@ -1865,7 +2614,9 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
         expression: d.inverted_expression,
         window: d.window,
       });
-    } catch { /* noop */ }
+    } catch {
+      /* noop */
+    }
   };
 
   const isPending = createDef.isPending || updateDef.isPending;
@@ -1883,14 +2634,22 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Bell className="h-4 w-4" /> Alert Definitions
-          <Button size="sm" variant="secondary" className="ml-auto" onClick={() => openCreate()}>
+          <Button
+            size="sm"
+            variant="secondary"
+            className="ml-auto"
+            onClick={() => openCreate()}
+          >
             <Plus className="h-3.5 w-3.5" /> New Alert
           </Button>
         </CardTitle>
       </CardHeader>
       <CardContent>
         {formMode !== "closed" && (
-          <form onSubmit={handleSubmit} className="mb-6 space-y-3 rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
+          <form
+            onSubmit={handleSubmit}
+            className="mb-6 space-y-3 rounded-lg border border-zinc-800 bg-zinc-900/50 p-4"
+          >
             <div className="flex items-center gap-2 mb-1">
               <span className="text-xs font-medium text-zinc-500 uppercase tracking-wide">
                 {formMode === "edit" ? "Edit Alert" : "New Alert"}
@@ -1899,8 +2658,18 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label htmlFor="alert-name">Name</Label>
-                <Input id="alert-name" value={formNameField.value} onChange={formNameField.onChange} onBlur={formNameField.onBlur} required />
-                {formNameField.error && <p className="text-xs text-red-400 mt-0.5">{formNameField.error}</p>}
+                <Input
+                  id="alert-name"
+                  value={formNameField.value}
+                  onChange={formNameField.onChange}
+                  onBlur={formNameField.onBlur}
+                  required
+                />
+                {formNameField.error && (
+                  <p className="text-xs text-red-400 mt-0.5">
+                    {formNameField.error}
+                  </p>
+                )}
               </div>
             </div>
             <div className="space-y-1.5">
@@ -1909,7 +2678,7 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
                 id="alert-expr"
                 value={formExpression}
                 onChange={(e) => setFormExpression(e.target.value)}
-                placeholder='e.g. avg(rtt_ms) > 100'
+                placeholder="e.g. avg(rtt_ms) > 100"
                 className="font-mono text-sm"
                 required
               />
@@ -1926,16 +2695,23 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
                         className="inline-flex items-center gap-1 rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs font-mono text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100 cursor-pointer transition-colors"
                         onClick={() => {
                           const fn = m.type === "string" ? "" : "avg";
-                          const snippet = m.type === "string"
-                            ? `${m.name} != ''`
-                            : `${fn}(${m.name}) > `;
+                          const snippet =
+                            m.type === "string"
+                              ? `${m.name} != ''`
+                              : `${fn}(${m.name}) > `;
                           setFormExpression((prev) =>
-                            prev ? `${prev} AND ${snippet}` : snippet
+                            prev ? `${prev} AND ${snippet}` : snippet,
                           );
                         }}
                         title={m.description}
                       >
-                        <span className={m.type === "string" ? "text-amber-400" : "text-brand-400"}>
+                        <span
+                          className={
+                            m.type === "string"
+                              ? "text-amber-400"
+                              : "text-brand-400"
+                          }
+                        >
                           {m.type === "string" ? "Aa" : "#"}
                         </span>
                         {m.name}
@@ -1943,12 +2719,35 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
                     ))}
                   </div>
                   <p className="text-[10px] text-zinc-600 leading-tight">
-                    Functions: <span className="font-mono text-zinc-500">avg</span>, <span className="font-mono text-zinc-500">max</span>, <span className="font-mono text-zinc-500">min</span>, <span className="font-mono text-zinc-500">sum</span>, <span className="font-mono text-zinc-500">count</span>, <span className="font-mono text-zinc-500">last</span>
-                    {" · "}Operators: <span className="font-mono text-zinc-500">{">"}</span>, <span className="font-mono text-zinc-500">{"<"}</span>, <span className="font-mono text-zinc-500">{">="}</span>, <span className="font-mono text-zinc-500">{"<="}</span>, <span className="font-mono text-zinc-500">==</span>, <span className="font-mono text-zinc-500">!=</span>
-                    {" · "}Combine: <span className="font-mono text-zinc-500">AND</span>, <span className="font-mono text-zinc-500">OR</span>
-                    {" · "}Thresholds: <span className="font-mono text-zinc-500">name</span>
+                    Functions:{" "}
+                    <span className="font-mono text-zinc-500">avg</span>,{" "}
+                    <span className="font-mono text-zinc-500">max</span>,{" "}
+                    <span className="font-mono text-zinc-500">min</span>,{" "}
+                    <span className="font-mono text-zinc-500">sum</span>,{" "}
+                    <span className="font-mono text-zinc-500">count</span>,{" "}
+                    <span className="font-mono text-zinc-500">last</span>
+                    {" · "}Operators:{" "}
+                    <span className="font-mono text-zinc-500">{">"}</span>,{" "}
+                    <span className="font-mono text-zinc-500">{"<"}</span>,{" "}
+                    <span className="font-mono text-zinc-500">{">="}</span>,{" "}
+                    <span className="font-mono text-zinc-500">{"<="}</span>,{" "}
+                    <span className="font-mono text-zinc-500">==</span>,{" "}
+                    <span className="font-mono text-zinc-500">!=</span>
+                    {" · "}Combine:{" "}
+                    <span className="font-mono text-zinc-500">AND</span>,{" "}
+                    <span className="font-mono text-zinc-500">OR</span>
+                    {" · "}Thresholds:{" "}
+                    <span className="font-mono text-zinc-500">name</span>
                     {app.target_table === "config" && (
-                      <> · String: <span className="font-mono text-zinc-500">CHANGED</span>, <span className="font-mono text-zinc-500">IN ('a', 'b')</span></>
+                      <>
+                        {" "}
+                        · String:{" "}
+                        <span className="font-mono text-zinc-500">CHANGED</span>
+                        ,{" "}
+                        <span className="font-mono text-zinc-500">
+                          IN ('a', 'b')
+                        </span>
+                      </>
                     )}
                   </p>
                 </div>
@@ -1960,18 +2759,26 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
                     Available thresholds — click to insert
                   </p>
                   <div className="flex flex-wrap gap-1.5">
-                    {variables.map(v => (
+                    {variables.map((v) => (
                       <button
                         key={v.id}
                         type="button"
                         className="inline-flex items-center gap-1 rounded-md border border-amber-500/30 bg-zinc-800 px-2 py-1 text-xs font-mono text-amber-300 hover:bg-amber-500/10 hover:text-amber-200 cursor-pointer transition-colors"
                         onClick={() => {
-                          setFormExpression(prev => prev ? `${prev}${v.name}` : v.name);
+                          setFormExpression((prev) =>
+                            prev ? `${prev}${v.name}` : v.name,
+                          );
                         }}
                       >
                         {v.name}
                         <span className="text-zinc-500 text-[10px] ml-0.5">
-                          ({v.default_value}{v.unit === "percent" ? "%" : v.unit === "ms" ? "ms" : ""})
+                          ({v.default_value}
+                          {v.unit === "percent"
+                            ? "%"
+                            : v.unit === "ms"
+                              ? "ms"
+                              : ""}
+                          )
                         </span>
                       </button>
                     ))}
@@ -1982,19 +2789,34 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
               {formExpression && variables && variables.length > 0 && (
                 <div className="mt-2 space-y-0.5">
                   {variables
-                    .filter(v => {
-                      const regex = new RegExp(`(?<![a-z_])${v.name}(?![a-z0-9_(])`, 'i');
+                    .filter((v) => {
+                      const regex = new RegExp(
+                        `(?<![a-z_])${v.name}(?![a-z0-9_(])`,
+                        "i",
+                      );
                       return regex.test(formExpression);
                     })
-                    .map(v => (
-                      <div key={v.id} className="flex items-center gap-1.5 text-xs">
+                    .map((v) => (
+                      <div
+                        key={v.id}
+                        className="flex items-center gap-1.5 text-xs"
+                      >
                         <span className="text-emerald-500 font-mono">ok</span>
-                        <span className="text-amber-400 font-mono">{v.name}</span>
+                        <span className="text-amber-400 font-mono">
+                          {v.name}
+                        </span>
                         <span className="text-zinc-500">&rarr;</span>
-                        <span className="text-zinc-300">{v.display_name || v.name}</span>
+                        <span className="text-zinc-300">
+                          {v.display_name || v.name}
+                        </span>
                         <span className="text-zinc-500">=</span>
                         <span className="text-zinc-200 font-medium">
-                          {v.default_value}{v.unit === "percent" ? "%" : v.unit === "ms" ? " ms" : ""}
+                          {v.default_value}
+                          {v.unit === "percent"
+                            ? "%"
+                            : v.unit === "ms"
+                              ? " ms"
+                              : ""}
                         </span>
                       </div>
                     ))}
@@ -2039,7 +2861,8 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
             {/* Message Template */}
             <div className="space-y-1.5">
               <Label htmlFor="alert-template">
-                Message Template <span className="font-normal text-zinc-600">(optional)</span>
+                Message Template{" "}
+                <span className="font-normal text-zinc-600">(optional)</span>
               </Label>
               <textarea
                 id="alert-template"
@@ -2052,54 +2875,81 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
               {/* Variable badges */}
               <div className="flex flex-wrap gap-1 mt-1">
                 {[
-                  { label: "{device_name}", cls: "text-cyan-400 border-cyan-500/30" },
-                  { label: "{if_name}", cls: "text-cyan-400 border-cyan-500/30" },
+                  {
+                    label: "{device_name}",
+                    cls: "text-cyan-400 border-cyan-500/30",
+                  },
+                  {
+                    label: "{if_name}",
+                    cls: "text-cyan-400 border-cyan-500/30",
+                  },
                   { label: "{value}", cls: "text-zinc-300 border-zinc-600" },
-                  { label: "{fire_count}", cls: "text-zinc-300 border-zinc-600" },
-                  { label: "{alert_name}", cls: "text-zinc-300 border-zinc-600" },
+                  {
+                    label: "{fire_count}",
+                    cls: "text-zinc-300 border-zinc-600",
+                  },
+                  {
+                    label: "{alert_name}",
+                    cls: "text-zinc-300 border-zinc-600",
+                  },
                 ].map(({ label, cls }) => (
                   <button
                     key={label}
                     type="button"
                     className={`rounded border bg-zinc-900 px-1.5 py-0.5 text-[10px] font-mono cursor-pointer hover:bg-zinc-800 transition-colors ${cls}`}
-                    onClick={() => setFormMessageTemplate(prev => prev + label)}
+                    onClick={() =>
+                      setFormMessageTemplate((prev) => prev + label)
+                    }
                   >
                     {label}
                   </button>
                 ))}
                 {/* Metric variables from expression */}
-                {metrics?.filter(m => {
-                  const re = new RegExp(`\\b${m.name}\\b`);
-                  return m.type !== "string" && re.test(formExpression);
-                }).map(m => (
-                  <button
-                    key={`m-${m.name}`}
-                    type="button"
-                    className="rounded border border-brand-500/30 bg-zinc-900 px-1.5 py-0.5 text-[10px] font-mono text-brand-400 cursor-pointer hover:bg-zinc-800 transition-colors"
-                    onClick={() => setFormMessageTemplate(prev => prev + `{${m.name}}`)}
-                  >
-                    {`{${m.name}}`}
-                  </button>
-                ))}
+                {metrics
+                  ?.filter((m) => {
+                    const re = new RegExp(`\\b${m.name}\\b`);
+                    return m.type !== "string" && re.test(formExpression);
+                  })
+                  .map((m) => (
+                    <button
+                      key={`m-${m.name}`}
+                      type="button"
+                      className="rounded border border-brand-500/30 bg-zinc-900 px-1.5 py-0.5 text-[10px] font-mono text-brand-400 cursor-pointer hover:bg-zinc-800 transition-colors"
+                      onClick={() =>
+                        setFormMessageTemplate((prev) => prev + `{${m.name}}`)
+                      }
+                    >
+                      {`{${m.name}}`}
+                    </button>
+                  ))}
                 {/* Threshold variables */}
-                {variables?.filter(v => {
-                  const re = new RegExp(`(?<![a-z_])${v.name}(?![a-z0-9_(])`, 'i');
-                  return re.test(formExpression);
-                }).map(v => (
-                  <button
-                    key={`t-${v.id}`}
-                    type="button"
-                    className="rounded border border-amber-500/30 bg-zinc-900 px-1.5 py-0.5 text-[10px] font-mono text-amber-400 cursor-pointer hover:bg-zinc-800 transition-colors"
-                    onClick={() => setFormMessageTemplate(prev => prev + `{$${v.name}}`)}
-                  >
-                    {`{$${v.name}}`}
-                  </button>
-                ))}
+                {variables
+                  ?.filter((v) => {
+                    const re = new RegExp(
+                      `(?<![a-z_])${v.name}(?![a-z0-9_(])`,
+                      "i",
+                    );
+                    return re.test(formExpression);
+                  })
+                  .map((v) => (
+                    <button
+                      key={`t-${v.id}`}
+                      type="button"
+                      className="rounded border border-amber-500/30 bg-zinc-900 px-1.5 py-0.5 text-[10px] font-mono text-amber-400 cursor-pointer hover:bg-zinc-800 transition-colors"
+                      onClick={() =>
+                        setFormMessageTemplate((prev) => prev + `{$${v.name}}`)
+                      }
+                    >
+                      {`{$${v.name}}`}
+                    </button>
+                  ))}
               </div>
               {/* Live preview */}
               {formMessageTemplate && (
                 <div className="rounded border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-xs">
-                  <span className="text-zinc-600 text-[10px] uppercase tracking-wider">Preview: </span>
+                  <span className="text-zinc-600 text-[10px] uppercase tracking-wider">
+                    Preview:{" "}
+                  </span>
                   <span className="text-zinc-300">
                     {formMessageTemplate
                       .replace(/\{device_name\}/g, "switch-01")
@@ -2108,23 +2958,32 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
                       .replace(/\{entity_key\}/g, "device|iface")
                       .replace(/\{value\}/g, "83.2")
                       .replace(/\{fire_count\}/g, "5")
-                      .replace(/\{alert_name\}/g, formNameField.value || "Alert")
+                      .replace(
+                        /\{alert_name\}/g,
+                        formNameField.value || "Alert",
+                      )
                       .replace(/\{(\$[^}]+)\}/g, (_, name) => {
-                        const v = variables?.find(v => `$${v.name}` === name);
+                        const v = variables?.find((v) => `$${v.name}` === name);
                         return v ? String(v.default_value) : name;
                       })
                       .replace(/\{([^}]+)\}/g, (match, name) => {
-                        const m = metrics?.find(m => m.name === name);
+                        const m = metrics?.find((m) => m.name === name);
                         return m ? "50" : match;
-                      })
-                    }
+                      })}
                   </span>
                 </div>
               )}
             </div>
             {formError && <p className="text-sm text-red-400">{formError}</p>}
             <div className="flex gap-2">
-              <Button type="button" variant="secondary" size="sm" onClick={closeForm}>Cancel</Button>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={closeForm}
+              >
+                Cancel
+              </Button>
               <Button type="submit" size="sm" disabled={isPending}>
                 {isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                 {formMode === "edit" ? "Save" : "Create"}
@@ -2156,8 +3015,12 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
                   className={`cursor-pointer ${editId === defn.id ? "bg-zinc-800/50" : "hover:bg-zinc-800/30"}`}
                   onClick={() => openEdit(defn)}
                 >
-                  <TableCell className="font-medium text-zinc-100">{defn.name}</TableCell>
-                  <TableCell className="text-zinc-400 font-mono text-xs max-w-xs truncate">{defn.expression}</TableCell>
+                  <TableCell className="font-medium text-zinc-100">
+                    {defn.name}
+                  </TableCell>
+                  <TableCell className="text-zinc-400 font-mono text-xs max-w-xs truncate">
+                    {defn.expression}
+                  </TableCell>
                   <TableCell className="text-zinc-400">{defn.window}</TableCell>
                   <TableCell>
                     <Badge variant={defn.enabled ? "success" : "default"}>
@@ -2166,7 +3029,8 @@ function AlertsTab({ appId, app }: { appId: string; app: { target_table?: string
                   </TableCell>
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <div className="flex gap-0.5">
-                      {(!/\bCHANGED\b/.test(defn.expression) || /[><=!]/.test(defn.expression)) && (
+                      {(!/\bCHANGED\b/.test(defn.expression) ||
+                        /[><=!]/.test(defn.expression)) && (
                         <Button
                           size="sm"
                           variant="ghost"

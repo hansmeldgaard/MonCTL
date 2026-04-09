@@ -8,7 +8,12 @@ import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from "@/components/ui/table.tsx";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import {
@@ -39,9 +44,18 @@ export function TemplatesPage() {
     defaultPageSize: pageSize,
     scrollMode,
   });
-  const { data: response, isLoading, isFetching } = useTemplates(listState.params);
+  const {
+    data: response,
+    isLoading,
+    isFetching,
+  } = useTemplates(listState.params);
   const templates = response?.data ?? [];
-  const meta = (response as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
+  const meta = (response as any)?.meta ?? {
+    limit: 50,
+    offset: 0,
+    count: 0,
+    total: 0,
+  };
   const createTemplate = useCreateTemplate();
   const updateTemplate = useUpdateTemplate();
   const deleteTemplate = useDeleteTemplate();
@@ -70,9 +84,14 @@ export function TemplatesPage() {
         description: addDesc.trim() || undefined,
         config: addConfigObj as Record<string, unknown>,
       });
-      addNameField.reset(); setAddDesc(""); setAddConfigObj({}); setAddOpen(false);
+      addNameField.reset();
+      setAddDesc("");
+      setAddConfigObj({});
+      setAddOpen(false);
     } catch (err) {
-      setAddError(err instanceof Error ? err.message : "Failed to create template");
+      setAddError(
+        err instanceof Error ? err.message : "Failed to create template",
+      );
     }
   }
 
@@ -92,17 +111,28 @@ export function TemplatesPage() {
     try {
       await updateTemplate.mutateAsync({
         id: editTarget.id,
-        data: { name: editNameField.value.trim(), description: editDesc.trim(), config: editConfigObj as Record<string, unknown> },
+        data: {
+          name: editNameField.value.trim(),
+          description: editDesc.trim(),
+          config: editConfigObj as Record<string, unknown>,
+        },
       });
       setEditTarget(null);
     } catch (err) {
-      setEditError(err instanceof Error ? err.message : "Failed to update template");
+      setEditError(
+        err instanceof Error ? err.message : "Failed to update template",
+      );
     }
   }
 
   async function handleDelete() {
     if (!deleteTarget) return;
-    try { await deleteTemplate.mutateAsync(deleteTarget.id); setDeleteTarget(null); } catch { /* silent */ }
+    try {
+      await deleteTemplate.mutateAsync(deleteTarget.id);
+      setDeleteTarget(null);
+    } catch {
+      /* silent */
+    }
   }
 
   function countItems(config: TemplateConfig): number {
@@ -117,7 +147,11 @@ export function TemplatesPage() {
   }
 
   if (isLoading) {
-    return <div className="flex h-64 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-brand-500" /></div>;
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
+      </div>
+    );
   }
 
   return (
@@ -125,10 +159,22 @@ export function TemplatesPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-lg font-semibold text-zinc-100">Templates</h1>
-          <p className="text-sm text-zinc-500">Reusable monitoring configurations for bulk device setup.</p>
+          <p className="text-sm text-zinc-500">
+            Reusable monitoring configurations for bulk device setup.
+          </p>
         </div>
         {canCreate("template") && (
-          <Button size="sm" onClick={() => { addNameField.reset(); setAddDesc(""); setAddConfigObj({}); setAddError(null); setAddOpen(true); }} className="gap-1.5">
+          <Button
+            size="sm"
+            onClick={() => {
+              addNameField.reset();
+              setAddDesc("");
+              setAddConfigObj({});
+              setAddError(null);
+              setAddOpen(true);
+            }}
+            className="gap-1.5"
+          >
             <Plus className="h-4 w-4" /> New Template
           </Button>
         )}
@@ -145,44 +191,91 @@ export function TemplatesPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <FilterableSortHead col="name" label="Name" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.name} onFilterChange={(v) => listState.setFilter("name", v)} />
-                  <FilterableSortHead col="description" label="Description" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} sortable={false} filterValue={listState.filters.description} onFilterChange={(v) => listState.setFilter("description", v)} />
+                  <FilterableSortHead
+                    col="name"
+                    label="Name"
+                    sortBy={listState.sortBy}
+                    sortDir={listState.sortDir}
+                    onSort={listState.handleSort}
+                    filterValue={listState.filters.name}
+                    onFilterChange={(v) => listState.setFilter("name", v)}
+                  />
+                  <FilterableSortHead
+                    col="description"
+                    label="Description"
+                    sortBy={listState.sortBy}
+                    sortDir={listState.sortDir}
+                    onSort={listState.handleSort}
+                    sortable={false}
+                    filterValue={listState.filters.description}
+                    onFilterChange={(v) =>
+                      listState.setFilter("description", v)
+                    }
+                  />
                   <TableHead>Items</TableHead>
-                  <FilterableSortHead col="created_at" label="Created" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterable={false} />
+                  <FilterableSortHead
+                    col="created_at"
+                    label="Created"
+                    sortBy={listState.sortBy}
+                    sortDir={listState.sortDir}
+                    onSort={listState.handleSort}
+                    filterable={false}
+                  />
                   <TableHead className="w-20"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {templates.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center text-zinc-500 py-8">
+                    <TableCell
+                      colSpan={5}
+                      className="text-center text-zinc-500 py-8"
+                    >
                       No templates match your filters
                     </TableCell>
                   </TableRow>
-                ) : templates.map((t) => (
-                  <TableRow key={t.id}>
-                    <TableCell className="font-medium text-zinc-100">{t.name}</TableCell>
-                    <TableCell className="text-zinc-400 max-w-[300px] truncate">{t.description ?? "\u2014"}</TableCell>
-                    <TableCell>
-                      <Badge variant="default">{countItems(t.config || {})} items</Badge>
-                    </TableCell>
-                    <TableCell className="text-zinc-500">{formatDate(t.created_at, tz)}</TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1">
-                        {canEdit("template") && (
-                        <button onClick={() => openEdit(t)} className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer" title="Edit">
-                          <Pencil className="h-4 w-4" />
-                        </button>
-                        )}
-                        {canDelete("template") && (
-                          <button onClick={() => setDeleteTarget(t)} className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer" title="Delete">
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                ) : (
+                  templates.map((t) => (
+                    <TableRow key={t.id}>
+                      <TableCell className="font-medium text-zinc-100">
+                        {t.name}
+                      </TableCell>
+                      <TableCell className="text-zinc-400 max-w-[300px] truncate">
+                        {t.description ?? "\u2014"}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="default">
+                          {countItems(t.config || {})} items
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-zinc-500">
+                        {formatDate(t.created_at, tz)}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-1">
+                          {canEdit("template") && (
+                            <button
+                              onClick={() => openEdit(t)}
+                              className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer"
+                              title="Edit"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </button>
+                          )}
+                          {canDelete("template") && (
+                            <button
+                              onClick={() => setDeleteTarget(t)}
+                              className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                              title="Delete"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
               </TableBody>
             </Table>
           )}
@@ -201,58 +294,143 @@ export function TemplatesPage() {
       </Card>
 
       {/* Add Dialog */}
-      <Dialog open={addOpen} onClose={() => setAddOpen(false)} title="New Template" size="lg">
+      <Dialog
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        title="New Template"
+        size="lg"
+      >
         <form onSubmit={handleCreate} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="tpl-name">Name</Label>
-            <Input id="tpl-name" placeholder="e.g. Standard Server" value={addNameField.value} onChange={addNameField.onChange} onBlur={addNameField.onBlur} autoFocus />
-            {addNameField.error && <p className="text-xs text-red-400 mt-0.5">{addNameField.error}</p>}
+            <Input
+              id="tpl-name"
+              placeholder="e.g. Standard Server"
+              value={addNameField.value}
+              onChange={addNameField.onChange}
+              onBlur={addNameField.onBlur}
+              autoFocus
+            />
+            {addNameField.error && (
+              <p className="text-xs text-red-400 mt-0.5">
+                {addNameField.error}
+              </p>
+            )}
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="tpl-desc">Description <span className="font-normal text-zinc-500">(optional)</span></Label>
-            <Input id="tpl-desc" value={addDesc} onChange={e => setAddDesc(e.target.value)} />
+            <Label htmlFor="tpl-desc">
+              Description{" "}
+              <span className="font-normal text-zinc-500">(optional)</span>
+            </Label>
+            <Input
+              id="tpl-desc"
+              value={addDesc}
+              onChange={(e) => setAddDesc(e.target.value)}
+            />
           </div>
-          <TemplateConfigEditor value={addConfigObj} onChange={setAddConfigObj} />
+          <TemplateConfigEditor
+            value={addConfigObj}
+            onChange={setAddConfigObj}
+          />
           {addError && <p className="text-sm text-red-400">{addError}</p>}
           <DialogFooter>
-            <Button type="button" variant="secondary" onClick={() => setAddOpen(false)}>Cancel</Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setAddOpen(false)}
+            >
+              Cancel
+            </Button>
             <Button type="submit" disabled={createTemplate.isPending}>
-              {createTemplate.isPending && <Loader2 className="h-4 w-4 animate-spin" />} Create
+              {createTemplate.isPending && (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              )}{" "}
+              Create
             </Button>
           </DialogFooter>
         </form>
       </Dialog>
 
       {/* Edit Dialog */}
-      <Dialog open={!!editTarget} onClose={() => setEditTarget(null)} title={`Edit: ${editTarget?.name ?? ""}`} size="lg">
+      <Dialog
+        open={!!editTarget}
+        onClose={() => setEditTarget(null)}
+        title={`Edit: ${editTarget?.name ?? ""}`}
+        size="lg"
+      >
         <form onSubmit={handleEdit} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="tpl-edit-name">Name</Label>
-            <Input id="tpl-edit-name" value={editNameField.value} onChange={editNameField.onChange} onBlur={editNameField.onBlur} autoFocus />
-            {editNameField.error && <p className="text-xs text-red-400 mt-0.5">{editNameField.error}</p>}
+            <Input
+              id="tpl-edit-name"
+              value={editNameField.value}
+              onChange={editNameField.onChange}
+              onBlur={editNameField.onBlur}
+              autoFocus
+            />
+            {editNameField.error && (
+              <p className="text-xs text-red-400 mt-0.5">
+                {editNameField.error}
+              </p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="tpl-edit-desc">Description</Label>
-            <Input id="tpl-edit-desc" value={editDesc} onChange={e => setEditDesc(e.target.value)} />
+            <Input
+              id="tpl-edit-desc"
+              value={editDesc}
+              onChange={(e) => setEditDesc(e.target.value)}
+            />
           </div>
-          <TemplateConfigEditor value={editConfigObj} onChange={setEditConfigObj} />
+          <TemplateConfigEditor
+            value={editConfigObj}
+            onChange={setEditConfigObj}
+          />
           {editError && <p className="text-sm text-red-400">{editError}</p>}
           <DialogFooter>
-            <Button type="button" variant="secondary" onClick={() => setEditTarget(null)}>Cancel</Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setEditTarget(null)}
+            >
+              Cancel
+            </Button>
             <Button type="submit" disabled={updateTemplate.isPending}>
-              {updateTemplate.isPending && <Loader2 className="h-4 w-4 animate-spin" />} Save
+              {updateTemplate.isPending && (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              )}{" "}
+              Save
             </Button>
           </DialogFooter>
         </form>
       </Dialog>
 
       {/* Delete Dialog */}
-      <Dialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)} title="Delete Template">
-        <p className="text-sm text-zinc-400">Delete template <span className="font-semibold text-zinc-200">{deleteTarget?.name}</span>?</p>
+      <Dialog
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete Template"
+      >
+        <p className="text-sm text-zinc-400">
+          Delete template{" "}
+          <span className="font-semibold text-zinc-200">
+            {deleteTarget?.name}
+          </span>
+          ?
+        </p>
         <DialogFooter>
-          <Button variant="secondary" onClick={() => setDeleteTarget(null)}>Cancel</Button>
-          <Button variant="destructive" onClick={handleDelete} disabled={deleteTemplate.isPending}>
-            {deleteTemplate.isPending && <Loader2 className="h-4 w-4 animate-spin" />} Delete
+          <Button variant="secondary" onClick={() => setDeleteTarget(null)}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={handleDelete}
+            disabled={deleteTemplate.isPending}
+          >
+            {deleteTemplate.isPending && (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            )}{" "}
+            Delete
           </Button>
         </DialogFooter>
       </Dialog>

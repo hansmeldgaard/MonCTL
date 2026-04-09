@@ -2,7 +2,12 @@ import { useState } from "react";
 import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
 import { validateName, validateOid } from "@/lib/validation.ts";
 import { Loader2, Network, Pencil, Plus, Trash2 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
@@ -67,7 +72,9 @@ export function SnmpOidsPage() {
         oid: addOidField.value.trim(),
         description: addDescription.trim() || undefined,
       });
-      addNameField.reset(); addOidField.reset(); setAddDescription("");
+      addNameField.reset();
+      addOidField.reset();
+      setAddDescription("");
       setAddOpen(false);
     } catch (err) {
       setAddError(err instanceof Error ? err.message : "Failed to create OID");
@@ -116,13 +123,19 @@ export function SnmpOidsPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-lg font-semibold text-zinc-100">SNMP OID Catalog</h1>
+          <h1 className="text-lg font-semibold text-zinc-100">
+            SNMP OID Catalog
+          </h1>
           <p className="text-sm text-zinc-500">
             Define SNMP OIDs that can be selected for device monitoring checks.
           </p>
         </div>
         {canCreate("device") && (
-          <Button size="sm" onClick={() => setAddOpen(true)} className="gap-1.5">
+          <Button
+            size="sm"
+            onClick={() => setAddOpen(true)}
+            className="gap-1.5"
+          >
             <Plus className="h-4 w-4" />
             Add OID
           </Button>
@@ -169,10 +182,16 @@ export function SnmpOidsPage() {
               <TableBody>
                 {oids.map((o) => (
                   <TableRow key={o.id}>
-                    <TableCell className="font-medium text-zinc-200">{o.name}</TableCell>
-                    <TableCell className="font-mono text-xs text-zinc-400">{o.oid}</TableCell>
+                    <TableCell className="font-medium text-zinc-200">
+                      {o.name}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs text-zinc-400">
+                      {o.oid}
+                    </TableCell>
                     <TableCell className="text-zinc-400 text-sm">
-                      {o.description ?? <span className="text-zinc-600 italic">—</span>}
+                      {o.description ?? (
+                        <span className="text-zinc-600 italic">—</span>
+                      )}
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1">
@@ -205,7 +224,14 @@ export function SnmpOidsPage() {
       </Card>
 
       {/* Add OID Dialog */}
-      <Dialog open={addOpen} onClose={() => { setAddOpen(false); setAddError(null); }} title="Add SNMP OID">
+      <Dialog
+        open={addOpen}
+        onClose={() => {
+          setAddOpen(false);
+          setAddError(null);
+        }}
+        title="Add SNMP OID"
+      >
         <form onSubmit={handleCreate} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="add-name">Name</Label>
@@ -217,7 +243,11 @@ export function SnmpOidsPage() {
               onBlur={addNameField.onBlur}
               autoFocus
             />
-            {addNameField.error && <p className="text-xs text-red-400 mt-0.5">{addNameField.error}</p>}
+            {addNameField.error && (
+              <p className="text-xs text-red-400 mt-0.5">
+                {addNameField.error}
+              </p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="add-oid">OID</Label>
@@ -229,11 +259,14 @@ export function SnmpOidsPage() {
               onBlur={addOidField.onBlur}
               className="font-mono text-sm"
             />
-            {addOidField.error && <p className="text-xs text-red-400 mt-0.5">{addOidField.error}</p>}
+            {addOidField.error && (
+              <p className="text-xs text-red-400 mt-0.5">{addOidField.error}</p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="add-desc">
-              Description <span className="font-normal text-zinc-500">(optional)</span>
+              Description{" "}
+              <span className="font-normal text-zinc-500">(optional)</span>
             </Label>
             <Input
               id="add-desc"
@@ -244,11 +277,20 @@ export function SnmpOidsPage() {
           </div>
           {addError && <p className="text-sm text-red-400">{addError}</p>}
           <DialogFooter>
-            <Button type="button" variant="secondary" onClick={() => { setAddOpen(false); setAddError(null); }}>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                setAddOpen(false);
+                setAddError(null);
+              }}
+            >
               Cancel
             </Button>
             <Button type="submit" disabled={createOid.isPending}>
-              {createOid.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              {createOid.isPending && (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              )}
               Add OID
             </Button>
           </DialogFooter>
@@ -256,7 +298,14 @@ export function SnmpOidsPage() {
       </Dialog>
 
       {/* Edit OID Dialog */}
-      <Dialog open={!!editTarget} onClose={() => { setEditTarget(null); setEditError(null); }} title="Edit SNMP OID">
+      <Dialog
+        open={!!editTarget}
+        onClose={() => {
+          setEditTarget(null);
+          setEditError(null);
+        }}
+        title="Edit SNMP OID"
+      >
         <form onSubmit={handleUpdate} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="edit-name">Name</Label>
@@ -267,7 +316,11 @@ export function SnmpOidsPage() {
               onBlur={editNameField.onBlur}
               autoFocus
             />
-            {editNameField.error && <p className="text-xs text-red-400 mt-0.5">{editNameField.error}</p>}
+            {editNameField.error && (
+              <p className="text-xs text-red-400 mt-0.5">
+                {editNameField.error}
+              </p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="edit-oid">OID</Label>
@@ -278,11 +331,16 @@ export function SnmpOidsPage() {
               onBlur={editOidField.onBlur}
               className="font-mono text-sm"
             />
-            {editOidField.error && <p className="text-xs text-red-400 mt-0.5">{editOidField.error}</p>}
+            {editOidField.error && (
+              <p className="text-xs text-red-400 mt-0.5">
+                {editOidField.error}
+              </p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="edit-desc">
-              Description <span className="font-normal text-zinc-500">(optional)</span>
+              Description{" "}
+              <span className="font-normal text-zinc-500">(optional)</span>
             </Label>
             <Input
               id="edit-desc"
@@ -292,11 +350,20 @@ export function SnmpOidsPage() {
           </div>
           {editError && <p className="text-sm text-red-400">{editError}</p>}
           <DialogFooter>
-            <Button type="button" variant="secondary" onClick={() => { setEditTarget(null); setEditError(null); }}>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                setEditTarget(null);
+                setEditError(null);
+              }}
+            >
               Cancel
             </Button>
             <Button type="submit" disabled={updateOid.isPending}>
-              {updateOid.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              {updateOid.isPending && (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              )}
               Save Changes
             </Button>
           </DialogFooter>
@@ -304,17 +371,34 @@ export function SnmpOidsPage() {
       </Dialog>
 
       {/* Delete Confirm Dialog */}
-      <Dialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)} title="Delete SNMP OID">
+      <Dialog
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete SNMP OID"
+      >
         <p className="text-sm text-zinc-400">
           Delete OID{" "}
-          <span className="font-medium text-zinc-200">{deleteTarget?.name}</span>{" "}
-          (<span className="font-mono text-xs text-zinc-300">{deleteTarget?.oid}</span>)?
-          Devices using this OID will lose their SNMP check configuration.
+          <span className="font-medium text-zinc-200">
+            {deleteTarget?.name}
+          </span>{" "}
+          (
+          <span className="font-mono text-xs text-zinc-300">
+            {deleteTarget?.oid}
+          </span>
+          )? Devices using this OID will lose their SNMP check configuration.
         </p>
         <DialogFooter>
-          <Button variant="secondary" onClick={() => setDeleteTarget(null)}>Cancel</Button>
-          <Button variant="destructive" onClick={handleDelete} disabled={deleteOid.isPending}>
-            {deleteOid.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+          <Button variant="secondary" onClick={() => setDeleteTarget(null)}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={handleDelete}
+            disabled={deleteOid.isPending}
+          >
+            {deleteOid.isPending && (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            )}
             Delete
           </Button>
         </DialogFooter>

@@ -14,7 +14,7 @@ This guide covers deploying a MonCTL collector node from scratch — including h
 ### Hardware (minimum per collector node)
 
 | Resource | Minimum | Recommended |
-|----------|---------|-------------|
+| -------- | ------- | ----------- |
 | CPU      | 2 vCPU  | 4 vCPU      |
 | RAM      | 2 GB    | 4 GB        |
 | Disk     | 20 GB   | 40 GB       |
@@ -32,6 +32,7 @@ sudo usermod -aG docker monctl
 ```
 
 Verify:
+
 ```bash
 docker info
 docker compose version   # must be v2+
@@ -76,13 +77,13 @@ chronyc tracking
 
 The collector needs outbound access to:
 
-| Destination              | Port | Protocol | Purpose                                |
-|--------------------------|------|----------|----------------------------------------|
-| Central VIP (10.145.210.40) | 443  | HTTPS    | API (jobs, results, credentials, apps)  |
+| Destination                 | Port | Protocol | Purpose                                |
+| --------------------------- | ---- | -------- | -------------------------------------- |
+| Central VIP (10.145.210.40) | 443  | HTTPS    | API (jobs, results, credentials, apps) |
 | Central VIP (10.145.210.40) | 443  | WSS      | WebSocket command channel              |
-| Monitored devices        | ICMP | —        | Ping checks                            |
-| Monitored devices        | 161  | UDP      | SNMP polling                           |
-| Monitored devices        | *    | TCP      | Port checks, HTTP checks               |
+| Monitored devices           | ICMP | —        | Ping checks                            |
+| Monitored devices           | 161  | UDP      | SNMP polling                           |
+| Monitored devices           | \*   | TCP      | Port checks, HTTP checks               |
 
 No inbound ports need to be open from the internet. Port 50051 (gRPC) is only used internally within each collector's Docker network.
 
@@ -157,6 +158,7 @@ From the MonCTL repo on the build server:
 ```
 
 The deploy script:
+
 1. Builds `monctl-collector:latest` from `Dockerfile.collector-v2`
 2. Saves the image to a tar file
 3. Transfers to all worker nodes in parallel via SCP
@@ -211,12 +213,12 @@ After deployment, verify:
 
 Each collector node runs 4 containers:
 
-| Container          | Role                                           | Resource Limit |
-|--------------------|-------------------------------------------------|----------------|
-| `cache-node`       | Cluster brain — job scheduling, credential cache | —              |
-| `poll-worker-1`    | Executes monitoring checks (ping, SNMP, HTTP)   | 1 GB RAM       |
-| `forwarder`        | Batches and ships results to central             | —              |
-| `monctl-docker-stats` | Reports Docker host stats to central          | —              |
+| Container             | Role                                             | Resource Limit |
+| --------------------- | ------------------------------------------------ | -------------- |
+| `cache-node`          | Cluster brain — job scheduling, credential cache | —              |
+| `poll-worker-1`       | Executes monitoring checks (ping, SNMP, HTTP)    | 1 GB RAM       |
+| `forwarder`           | Batches and ships results to central             | —              |
+| `monctl-docker-stats` | Reports Docker host stats to central             | —              |
 
 ### Memory Management
 
@@ -227,15 +229,18 @@ Poll workers have a known memory growth pattern. The `mem_limit: 1g` in compose 
 ## 8. Troubleshooting
 
 ### Collector not appearing in UI
+
 - Check `docker logs cache-node` for registration errors
 - Verify `CENTRAL_URL` and `CENTRAL_API_KEY` in `.env`
 - Ensure the collector can reach central: `curl -k https://10.145.210.40/v1/health`
 
 ### Jobs not being assigned
+
 - Ensure the collector is **approved** (not just registered)
 - Ensure `MONCTL_COLLECTOR_ID` is set in `.env` (without it, job filtering won't work)
 - Check that the collector is assigned to a **Collector Group** with devices
 
 ### Time drift
+
 - Large time drift causes ClickHouse insert issues (results appear at wrong timestamps)
 - Fix: `sudo chronyc makestep` for immediate sync, then verify with `chronyc tracking`

@@ -1,25 +1,41 @@
 import { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { Loader2, Play, ChevronRight, ChevronDown, Table2, Database, Save } from "lucide-react";
+import {
+  Loader2,
+  Play,
+  ChevronRight,
+  ChevronDown,
+  Table2,
+  Database,
+  Save,
+} from "lucide-react";
 import { Button } from "@/components/ui/button.tsx";
 import { SqlEditor } from "@/components/SqlEditor.tsx";
 import { QueryResultTable } from "@/components/QueryResultTable.tsx";
 import { QueryResultChart } from "@/components/QueryResultChart.tsx";
 import {
-  useAnalyticsTables, useExecuteQuery,
-  useAnalyticsDashboards, useCreateAnalyticsDashboard, useAppendDashboardWidget,
+  useAnalyticsTables,
+  useExecuteQuery,
+  useAnalyticsDashboards,
+  useCreateAnalyticsDashboard,
+  useAppendDashboardWidget,
 } from "@/api/hooks.ts";
 import type { QueryResult } from "@/types/api.ts";
 
 export function SQLExplorerPage() {
   const navigate = useNavigate();
   const [sqlText, setSqlText] = useState(
-    "SELECT device_name, state, rtt_ms, executed_at\nFROM availability_latency_latest FINAL\nWHERE device_name != ''\nORDER BY executed_at DESC\nLIMIT 100"
+    "SELECT device_name, state, rtt_ms, executed_at\nFROM availability_latency_latest FINAL\nWHERE device_name != ''\nORDER BY executed_at DESC\nLIMIT 100",
   );
   const [resultTab, setResultTab] = useState<"table" | "chart">("table");
   const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
   const [showSaveMenu, setShowSaveMenu] = useState(false);
-  const [chartSettings, setChartSettings] = useState<{ chartType: string; xColumn: string; yColumns: string[]; groupBy: string }>({ chartType: "line", xColumn: "", yColumns: [], groupBy: "" });
+  const [chartSettings, setChartSettings] = useState<{
+    chartType: string;
+    xColumn: string;
+    yColumns: string[];
+    groupBy: string;
+  }>({ chartType: "line", xColumn: "", yColumns: [], groupBy: "" });
 
   const { data: tables } = useAnalyticsTables();
   const executeMut = useExecuteQuery();
@@ -55,7 +71,12 @@ export function SQLExplorerPage() {
   function insertTableName(name: string) {
     setSqlText((prev) => {
       const trimmed = prev.trimEnd();
-      if (trimmed.endsWith("FROM") || trimmed.endsWith("JOIN") || trimmed.endsWith("from") || trimmed.endsWith("join")) {
+      if (
+        trimmed.endsWith("FROM") ||
+        trimmed.endsWith("JOIN") ||
+        trimmed.endsWith("from") ||
+        trimmed.endsWith("join")
+      ) {
         return `${trimmed} ${name}`;
       }
       return prev + name;
@@ -65,7 +86,8 @@ export function SQLExplorerPage() {
   function formatBytes(bytes: number): string {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    if (bytes < 1024 * 1024 * 1024)
+      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
     return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
   }
 
@@ -75,7 +97,9 @@ export function SQLExplorerPage() {
       <div className="w-64 shrink-0 border-r border-zinc-800 overflow-y-auto bg-zinc-950 p-3">
         <div className="flex items-center gap-2 mb-3">
           <Database className="h-4 w-4 text-zinc-500" />
-          <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wide">Schema</span>
+          <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wide">
+            Schema
+          </span>
         </div>
         {tables?.map((t) => (
           <div key={t.name} className="mb-1">
@@ -83,14 +107,18 @@ export function SQLExplorerPage() {
               onClick={() => toggleTable(t.name)}
               className="flex items-center gap-1 w-full text-left text-xs hover:text-zinc-200 text-zinc-400 py-0.5"
             >
-              {expandedTables.has(t.name)
-                ? <ChevronDown className="h-3 w-3 shrink-0" />
-                : <ChevronRight className="h-3 w-3 shrink-0" />
-              }
+              {expandedTables.has(t.name) ? (
+                <ChevronDown className="h-3 w-3 shrink-0" />
+              ) : (
+                <ChevronRight className="h-3 w-3 shrink-0" />
+              )}
               <Table2 className="h-3 w-3 shrink-0 text-zinc-600" />
               <span
                 className="truncate cursor-pointer hover:text-brand-400"
-                onClick={(e) => { e.stopPropagation(); insertTableName(t.name); }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  insertTableName(t.name);
+                }}
                 title={`${t.total_rows?.toLocaleString() || 0} rows, ${formatBytes(t.total_bytes || 0)}`}
               >
                 {t.name}
@@ -106,7 +134,9 @@ export function SQLExplorerPage() {
                     title={col.type}
                   >
                     <span className="truncate">{col.name}</span>
-                    <span className="text-zinc-700 text-[9px] ml-auto shrink-0">{col.type}</span>
+                    <span className="text-zinc-700 text-[9px] ml-auto shrink-0">
+                      {col.type}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -133,10 +163,17 @@ export function SQLExplorerPage() {
               )}
               Run
             </Button>
-            <span className="text-[10px] text-zinc-600">Ctrl+Enter to execute</span>
+            <span className="text-[10px] text-zinc-600">
+              Ctrl+Enter to execute
+            </span>
             {result && (
               <div className="relative ml-auto">
-                <Button size="sm" variant="outline" onClick={() => setShowSaveMenu(!showSaveMenu)} className="gap-1">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setShowSaveMenu(!showSaveMenu)}
+                  className="gap-1"
+                >
                   <Save className="h-3.5 w-3.5" />
                   Save to Dashboard
                 </Button>
@@ -151,10 +188,22 @@ export function SQLExplorerPage() {
                             title: sqlText.slice(0, 50),
                             config: {
                               sql: sqlText,
-                              chart_type: resultTab === "chart" ? chartSettings.chartType : "table",
-                              x_column: resultTab === "chart" ? chartSettings.xColumn : undefined,
-                              y_columns: resultTab === "chart" ? chartSettings.yColumns : undefined,
-                              group_by: resultTab === "chart" ? chartSettings.groupBy : undefined,
+                              chart_type:
+                                resultTab === "chart"
+                                  ? chartSettings.chartType
+                                  : "table",
+                              x_column:
+                                resultTab === "chart"
+                                  ? chartSettings.xColumn
+                                  : undefined,
+                              y_columns:
+                                resultTab === "chart"
+                                  ? chartSettings.yColumns
+                                  : undefined,
+                              group_by:
+                                resultTab === "chart"
+                                  ? chartSettings.groupBy
+                                  : undefined,
                             },
                             layout: { x: 0, y: 99, w: 12, h: 6 },
                           });
@@ -178,10 +227,22 @@ export function SQLExplorerPage() {
                             title: sqlText.slice(0, 50),
                             config: {
                               sql: sqlText,
-                              chart_type: resultTab === "chart" ? chartSettings.chartType : "table",
-                              x_column: resultTab === "chart" ? chartSettings.xColumn : undefined,
-                              y_columns: resultTab === "chart" ? chartSettings.yColumns : undefined,
-                              group_by: resultTab === "chart" ? chartSettings.groupBy : undefined,
+                              chart_type:
+                                resultTab === "chart"
+                                  ? chartSettings.chartType
+                                  : "table",
+                              x_column:
+                                resultTab === "chart"
+                                  ? chartSettings.xColumn
+                                  : undefined,
+                              y_columns:
+                                resultTab === "chart"
+                                  ? chartSettings.yColumns
+                                  : undefined,
+                              group_by:
+                                resultTab === "chart"
+                                  ? chartSettings.groupBy
+                                  : undefined,
                             },
                             layout: { x: 0, y: 0, w: 12, h: 6 },
                           });

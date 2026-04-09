@@ -6,13 +6,21 @@ import { Label } from "@/components/ui/label.tsx";
 import { Select } from "@/components/ui/select.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { LabelEditor } from "@/components/LabelEditor.tsx";
-import { useBulkImportDevices, useCollectorGroups, useCredentials, useTenants } from "@/api/hooks.ts";
+import {
+  useBulkImportDevices,
+  useCollectorGroups,
+  useCredentials,
+  useTenants,
+} from "@/api/hooks.ts";
 
 const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
 const IPV6_RE = /^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$/;
 
 function parseAddresses(raw: string): { valid: string[]; invalid: string[] } {
-  const tokens = raw.split(/[\n,;\s]+/).map((t) => t.trim()).filter(Boolean);
+  const tokens = raw
+    .split(/[\n,;\s]+/)
+    .map((t) => t.trim())
+    .filter(Boolean);
   const valid: string[] = [];
   const invalid: string[] = [];
   const seen = new Set<string>();
@@ -20,7 +28,11 @@ function parseAddresses(raw: string): { valid: string[]; invalid: string[] } {
     if (seen.has(t)) continue;
     seen.add(t);
     if (
-      (IPV4_RE.test(t) && t.split(".").map(Number).every((n) => n <= 255)) ||
+      (IPV4_RE.test(t) &&
+        t
+          .split(".")
+          .map(Number)
+          .every((n) => n <= 255)) ||
       IPV6_RE.test(t)
     ) {
       valid.push(t);
@@ -43,7 +55,10 @@ interface BulkImportDevicesDialogProps {
   onClose: () => void;
 }
 
-export function BulkImportDevicesDialog({ open, onClose }: BulkImportDevicesDialogProps) {
+export function BulkImportDevicesDialog({
+  open,
+  onClose,
+}: BulkImportDevicesDialogProps) {
   const { data: tenants } = useTenants();
   const { data: collectorGroups } = useCollectorGroups();
   const { data: credentials } = useCredentials();
@@ -55,7 +70,10 @@ export function BulkImportDevicesDialog({ open, onClose }: BulkImportDevicesDial
   const [deviceCreds, setDeviceCreds] = useState<Record<string, string>>({});
   const [labels, setLabels] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<{ created: number; discovery_queued: number } | null>(null);
+  const [result, setResult] = useState<{
+    created: number;
+    discovery_queued: number;
+  } | null>(null);
 
   const parsed = useMemo(() => parseAddresses(rawInput), [rawInput]);
 
@@ -69,7 +87,7 @@ export function BulkImportDevicesDialog({ open, onClose }: BulkImportDevicesDial
 
   const availableTypes = useMemo(
     () => Object.keys(credsByType).filter((t) => !(t in deviceCreds)),
-    [credsByType, deviceCreds]
+    [credsByType, deviceCreds],
   );
 
   function reset() {
@@ -97,8 +115,11 @@ export function BulkImportDevicesDialog({ open, onClose }: BulkImportDevicesDial
     }
     if (parsed.invalid.length > 0) {
       const preview = parsed.invalid.slice(0, 5).join(", ");
-      const extra = parsed.invalid.length > 5 ? ` +${parsed.invalid.length - 5} more` : "";
-      setError(`Fix ${parsed.invalid.length} invalid address(es) before importing: ${preview}${extra}`);
+      const extra =
+        parsed.invalid.length > 5 ? ` +${parsed.invalid.length - 5} more` : "";
+      setError(
+        `Fix ${parsed.invalid.length} invalid address(es) before importing: ${preview}${extra}`,
+      );
       return;
     }
     if (!tenantId) {
@@ -111,7 +132,7 @@ export function BulkImportDevicesDialog({ open, onClose }: BulkImportDevicesDial
     }
 
     const cleanCreds = Object.fromEntries(
-      Object.entries(deviceCreds).filter(([, v]) => v !== "")
+      Object.entries(deviceCreds).filter(([, v]) => v !== ""),
     );
 
     try {
@@ -122,7 +143,10 @@ export function BulkImportDevicesDialog({ open, onClose }: BulkImportDevicesDial
         credentials: cleanCreds,
         labels: Object.keys(labels).length > 0 ? labels : undefined,
       });
-      setResult({ created: resp.data.created, discovery_queued: resp.data.discovery_queued });
+      setResult({
+        created: resp.data.created,
+        discovery_queued: resp.data.discovery_queued,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Import failed");
     }
@@ -133,12 +157,15 @@ export function BulkImportDevicesDialog({ open, onClose }: BulkImportDevicesDial
       {result ? (
         <div className="py-2 space-y-4">
           <p className="text-sm text-zinc-300">
-            <span className="text-green-400 font-semibold">{result.created}</span> device
+            <span className="text-green-400 font-semibold">
+              {result.created}
+            </span>{" "}
+            device
             {result.created !== 1 ? "s" : ""} created.
             {result.discovery_queued > 0 && (
               <span className="text-zinc-400 ml-1">
-                SNMP discovery queued for {result.discovery_queued} — names will update
-                automatically once discovery completes.
+                SNMP discovery queued for {result.discovery_queued} — names will
+                update automatically once discovery completes.
               </span>
             )}
           </p>
@@ -169,13 +196,17 @@ export function BulkImportDevicesDialog({ open, onClose }: BulkImportDevicesDial
             {rawInput.trim() && (
               <div className="flex gap-3 text-xs">
                 {parsed.valid.length > 0 && (
-                  <span className="text-green-400">{parsed.valid.length} valid</span>
+                  <span className="text-green-400">
+                    {parsed.valid.length} valid
+                  </span>
                 )}
                 {parsed.invalid.length > 0 && (
                   <span className="text-red-400">
                     {parsed.invalid.length} invalid:{" "}
                     {parsed.invalid.slice(0, 5).join(", ")}
-                    {parsed.invalid.length > 5 ? ` +${parsed.invalid.length - 5} more` : ""}
+                    {parsed.invalid.length > 5
+                      ? ` +${parsed.invalid.length - 5} more`
+                      : ""}
                   </span>
                 )}
               </div>
@@ -190,7 +221,9 @@ export function BulkImportDevicesDialog({ open, onClose }: BulkImportDevicesDial
               value={tenantId}
               onChange={(e) => setTenantId(e.target.value)}
             >
-              <option value="">{"\u2014"} Select tenant {"\u2014"}</option>
+              <option value="">
+                {"\u2014"} Select tenant {"\u2014"}
+              </option>
               {(tenants ?? []).map((t) => (
                 <option key={t.id} value={t.id}>
                   {t.name}
@@ -207,7 +240,9 @@ export function BulkImportDevicesDialog({ open, onClose }: BulkImportDevicesDial
               value={collectorGroupId}
               onChange={(e) => setCollectorGroupId(e.target.value)}
             >
-              <option value="">{"\u2014"} Select collector group {"\u2014"}</option>
+              <option value="">
+                {"\u2014"} Select collector group {"\u2014"}
+              </option>
               {(collectorGroups ?? []).map((g) => (
                 <option key={g.id} value={g.id}>
                   {g.name}
@@ -227,14 +262,20 @@ export function BulkImportDevicesDialog({ open, onClose }: BulkImportDevicesDial
               <div className="space-y-2">
                 {Object.entries(deviceCreds).map(([ctype, credId]) => (
                   <div key={ctype} className="flex items-center gap-2">
-                    <Badge variant="default" className="text-xs min-w-[110px] justify-center">
+                    <Badge
+                      variant="default"
+                      className="text-xs min-w-[110px] justify-center"
+                    >
                       {formatCredentialType(ctype)}
                     </Badge>
                     <Select
                       className="flex-1"
                       value={credId}
                       onChange={(e) =>
-                        setDeviceCreds((prev) => ({ ...prev, [ctype]: e.target.value }))
+                        setDeviceCreds((prev) => ({
+                          ...prev,
+                          [ctype]: e.target.value,
+                        }))
                       }
                     >
                       <option value="">-- Select --</option>
@@ -267,7 +308,10 @@ export function BulkImportDevicesDialog({ open, onClose }: BulkImportDevicesDial
                     value=""
                     onChange={(e) => {
                       if (e.target.value) {
-                        setDeviceCreds((prev) => ({ ...prev, [e.target.value]: "" }));
+                        setDeviceCreds((prev) => ({
+                          ...prev,
+                          [e.target.value]: "",
+                        }));
                       }
                     }}
                   >
@@ -286,7 +330,8 @@ export function BulkImportDevicesDialog({ open, onClose }: BulkImportDevicesDial
           {/* Labels */}
           <div className="space-y-1.5">
             <Label>
-              Labels <span className="text-zinc-500 font-normal">(optional)</span>
+              Labels{" "}
+              <span className="text-zinc-500 font-normal">(optional)</span>
             </Label>
             <LabelEditor labels={labels} onChange={setLabels} />
           </div>
@@ -299,8 +344,13 @@ export function BulkImportDevicesDialog({ open, onClose }: BulkImportDevicesDial
               Cancel
             </Button>
             <Button type="submit" disabled={bulkImport.isPending}>
-              {bulkImport.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-              Import {parsed.valid.length > 0 ? `${parsed.valid.length} Device${parsed.valid.length !== 1 ? "s" : ""}` : "Devices"}
+              {bulkImport.isPending && (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              )}
+              Import{" "}
+              {parsed.valid.length > 0
+                ? `${parsed.valid.length} Device${parsed.valid.length !== 1 ? "s" : ""}`
+                : "Devices"}
             </Button>
           </DialogFooter>
         </form>

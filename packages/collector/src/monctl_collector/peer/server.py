@@ -78,7 +78,11 @@ class CollectorPeerServicer(pb_grpc.CollectorPeerServicer):
                 role=job_def.role or "",
                 connector_bindings=pb_bindings,
             ))
-        return pb.GetJobsResponse(jobs=pb_jobs)
+        # Check for immediate trigger requests
+        worker_job_ids = {j.job_id for j, _ in jobs}
+        immediate = self._scheduler.pop_immediate_triggers(worker_job_ids) if jobs else []
+
+        return pb.GetJobsResponse(jobs=pb_jobs, immediate_job_ids=immediate)
 
     async def RegisterWorker(self, request, context):
         if self._scheduler:

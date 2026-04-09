@@ -1,0 +1,26 @@
+# MonCTL Device Simulator
+# Usage: docker compose -f docker/docker-compose.simulator.yml up -d
+#
+# Simulates 50 SNMP/HTTP/TCP devices for stress testing.
+# SNMP ports: 11000-11049 (UDP)
+# HTTP ports: 12000-12004 (TCP, linux-host devices only)
+# TCP  ports: 13000-13009 (TCP, linux-host devices only)
+# Control API: http://localhost:9999/api/devices
+
+services:
+  simulator:
+    build:
+      context: ..
+      dockerfile: simulator/Dockerfile
+    container_name: monctl-simulator
+    network_mode: host
+    volumes:
+      - ../simulator/config.yaml:/app/simulator/config.yaml:ro
+    environment:
+      SIM_CONFIG: /app/simulator/config.yaml
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

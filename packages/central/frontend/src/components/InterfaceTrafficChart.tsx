@@ -16,14 +16,14 @@ import { formatChartDateTime } from "@/lib/utils.ts";
 // ── Shared helpers ──────────────────────────────────────────
 
 const CHART_COLOR_PAIRS = [
-  { in: "#06b6d4", out: "#6366f1" },  // cyan / indigo
-  { in: "#22c55e", out: "#f97316" },  // green / orange
-  { in: "#a855f7", out: "#eab308" },  // purple / yellow
-  { in: "#ec4899", out: "#14b8a6" },  // pink / teal
-  { in: "#ef4444", out: "#3b82f6" },  // red / blue
-  { in: "#84cc16", out: "#d946ef" },  // lime / fuchsia
-  { in: "#f59e0b", out: "#8b5cf6" },  // amber / violet
-  { in: "#10b981", out: "#f43f5e" },  // emerald / rose
+  { in: "#06b6d4", out: "#6366f1" }, // cyan / indigo
+  { in: "#22c55e", out: "#f97316" }, // green / orange
+  { in: "#a855f7", out: "#eab308" }, // purple / yellow
+  { in: "#ec4899", out: "#14b8a6" }, // pink / teal
+  { in: "#ef4444", out: "#3b82f6" }, // red / blue
+  { in: "#84cc16", out: "#d946ef" }, // lime / fuchsia
+  { in: "#f59e0b", out: "#8b5cf6" }, // amber / violet
+  { in: "#10b981", out: "#f43f5e" }, // emerald / rose
 ];
 
 export type TrafficUnit = "auto" | "kbps" | "mbps" | "gbps" | "pct";
@@ -37,36 +37,58 @@ export function formatBpsShort(bps: number): string {
   return `${bps.toFixed(0)}`;
 }
 
-export function convertBpsToUnit(bps: number, unit: TrafficUnit, speedMbps: number): number {
+export function convertBpsToUnit(
+  bps: number,
+  unit: TrafficUnit,
+  speedMbps: number,
+): number {
   switch (unit) {
-    case "kbps": return bps / 1e3;
-    case "mbps": return bps / 1e6;
-    case "gbps": return bps / 1e9;
-    case "pct": return speedMbps > 0 ? (bps / (speedMbps * 1e6)) * 100 : 0;
-    default: return bps;
+    case "kbps":
+      return bps / 1e3;
+    case "mbps":
+      return bps / 1e6;
+    case "gbps":
+      return bps / 1e9;
+    case "pct":
+      return speedMbps > 0 ? (bps / (speedMbps * 1e6)) * 100 : 0;
+    default:
+      return bps;
   }
 }
 
-export function formatTraffic(bps: number, unit: TrafficUnit, speedMbps: number): string {
+export function formatTraffic(
+  bps: number,
+  unit: TrafficUnit,
+  speedMbps: number,
+): string {
   switch (unit) {
-    case "kbps": return `${(bps / 1e3).toFixed(1)} Kbps`;
-    case "mbps": return `${(bps / 1e6).toFixed(2)} Mbps`;
-    case "gbps": return `${(bps / 1e9).toFixed(3)} Gbps`;
+    case "kbps":
+      return `${(bps / 1e3).toFixed(1)} Kbps`;
+    case "mbps":
+      return `${(bps / 1e6).toFixed(2)} Mbps`;
+    case "gbps":
+      return `${(bps / 1e9).toFixed(3)} Gbps`;
     case "pct": {
       if (speedMbps <= 0) return "\u2014";
       return `${((bps / (speedMbps * 1e6)) * 100).toFixed(1)}%`;
     }
-    default: return formatBpsShort(bps);
+    default:
+      return formatBpsShort(bps);
   }
 }
 
 export function unitLabel(unit: TrafficUnit): string {
   switch (unit) {
-    case "kbps": return "Kbps";
-    case "mbps": return "Mbps";
-    case "gbps": return "Gbps";
-    case "pct": return "%";
-    default: return "bps";
+    case "kbps":
+      return "Kbps";
+    case "mbps":
+      return "Mbps";
+    case "gbps":
+      return "Gbps";
+    case "pct":
+      return "%";
+    default:
+      return "bps";
   }
 }
 
@@ -100,16 +122,37 @@ function useChartZoom(onZoom?: (fromMs: number, toMs: number) => void) {
   const [refAreaRight, setRefAreaRight] = useState<number | null>(null);
   const isDragging = useRef(false);
 
-  const handleMouseDown = useCallback((e: { activeLabel?: string | number }) => {
-    if (e?.activeLabel != null) { setRefAreaLeft(Number(e.activeLabel)); isDragging.current = true; }
-  }, []);
-  const handleMouseMove = useCallback((e: { activeLabel?: string | number }) => {
-    if (isDragging.current && e?.activeLabel != null) setRefAreaRight(Number(e.activeLabel));
-  }, []);
+  const handleMouseDown = useCallback(
+    (e: { activeLabel?: string | number }) => {
+      if (e?.activeLabel != null) {
+        setRefAreaLeft(Number(e.activeLabel));
+        isDragging.current = true;
+      }
+    },
+    [],
+  );
+  const handleMouseMove = useCallback(
+    (e: { activeLabel?: string | number }) => {
+      if (isDragging.current && e?.activeLabel != null)
+        setRefAreaRight(Number(e.activeLabel));
+    },
+    [],
+  );
   const handleMouseUp = useCallback(() => {
-    if (refAreaLeft != null && refAreaRight != null && refAreaLeft !== refAreaRight) {
-      const [l, r] = refAreaLeft < refAreaRight ? [refAreaLeft, refAreaRight] : [refAreaRight, refAreaLeft];
-      if (onZoom) { onZoom(l, r); } else { setZoomDomain([l, r]); }
+    if (
+      refAreaLeft != null &&
+      refAreaRight != null &&
+      refAreaLeft !== refAreaRight
+    ) {
+      const [l, r] =
+        refAreaLeft < refAreaRight
+          ? [refAreaLeft, refAreaRight]
+          : [refAreaRight, refAreaLeft];
+      if (onZoom) {
+        onZoom(l, r);
+      } else {
+        setZoomDomain([l, r]);
+      }
     }
     setRefAreaLeft(null);
     setRefAreaRight(null);
@@ -117,16 +160,43 @@ function useChartZoom(onZoom?: (fromMs: number, toMs: number) => void) {
   }, [refAreaLeft, refAreaRight, onZoom]);
   const resetZoom = useCallback(() => setZoomDomain(null), []);
 
-  return { zoomDomain, refAreaLeft, refAreaRight, handleMouseDown, handleMouseMove, handleMouseUp, resetZoom, hasExternalZoom: !!onZoom };
+  return {
+    zoomDomain,
+    refAreaLeft,
+    refAreaRight,
+    handleMouseDown,
+    handleMouseMove,
+    handleMouseUp,
+    resetZoom,
+    hasExternalZoom: !!onZoom,
+  };
 }
 
-function ZoomHint({ zoomDomain, resetZoom, external }: { zoomDomain: [number, number] | null; resetZoom: () => void; external?: boolean }) {
-  if (!external && zoomDomain) return (
+function ZoomHint({
+  zoomDomain,
+  resetZoom,
+  external,
+}: {
+  zoomDomain: [number, number] | null;
+  resetZoom: () => void;
+  external?: boolean;
+}) {
+  if (!external && zoomDomain)
+    return (
+      <div className="flex justify-end mb-1">
+        <button
+          onClick={resetZoom}
+          className="text-[10px] text-brand-400 hover:text-brand-300 cursor-pointer"
+        >
+          Reset zoom
+        </button>
+      </div>
+    );
+  return (
     <div className="flex justify-end mb-1">
-      <button onClick={resetZoom} className="text-[10px] text-brand-400 hover:text-brand-300 cursor-pointer">Reset zoom</button>
+      <span className="text-[10px] text-zinc-600">Drag to zoom</span>
     </div>
   );
-  return <div className="flex justify-end mb-1"><span className="text-[10px] text-zinc-600">Drag to zoom</span></div>;
 }
 
 // ── Single-interface chart ──────────────────────────────────
@@ -137,9 +207,14 @@ interface Props {
   onZoom?: (fromMs: number, toMs: number) => void;
 }
 
-export function InterfaceTrafficChart({ data, timezone = "UTC", onZoom }: Props) {
+export function InterfaceTrafficChart({
+  data,
+  timezone = "UTC",
+  onZoom,
+}: Props) {
   const sorted = [...data].sort(
-    (a, b) => new Date(a.executed_at).getTime() - new Date(b.executed_at).getTime()
+    (a, b) =>
+      new Date(a.executed_at).getTime() - new Date(b.executed_at).getTime(),
   );
 
   const rateData = sorted
@@ -159,7 +234,9 @@ export function InterfaceTrafficChart({ data, timezone = "UTC", onZoom }: Props)
       const prev = sorted[i - 1];
       const curr = sorted[i];
       const dtSec =
-        (new Date(curr.executed_at).getTime() - new Date(prev.executed_at).getTime()) / 1000;
+        (new Date(curr.executed_at).getTime() -
+          new Date(prev.executed_at).getTime()) /
+        1000;
       if (dtSec <= 0) continue;
       const inDelta = curr.in_octets - prev.in_octets;
       const outDelta = curr.out_octets - prev.out_octets;
@@ -187,37 +264,93 @@ export function InterfaceTrafficChart({ data, timezone = "UTC", onZoom }: Props)
   }
 
   const domainPadding = chartData.length === 1 ? 60_000 : 0;
-  const fullDomain: [number, number] = [chartData[0].ts - domainPadding, chartData[chartData.length - 1].ts + domainPadding];
+  const fullDomain: [number, number] = [
+    chartData[0].ts - domainPadding,
+    chartData[chartData.length - 1].ts + domainPadding,
+  ];
   const domain = zoom.zoomDomain ?? fullDomain;
 
   return (
     <div>
       {isFallback && (
         <div className="text-xs text-amber-500/70 mb-1">
-          Showing estimated rates from counter deltas — central rate calculation warming up
+          Showing estimated rates from counter deltas — central rate calculation
+          warming up
         </div>
       )}
-      <ZoomHint zoomDomain={zoom.zoomDomain} resetZoom={zoom.resetZoom} external={zoom.hasExternalZoom} />
+      <ZoomHint
+        zoomDomain={zoom.zoomDomain}
+        resetZoom={zoom.resetZoom}
+        external={zoom.hasExternalZoom}
+      />
       <div className="select-none">
         <ResponsiveContainer width="100%" height={250}>
-          <AreaChart data={chartData} throttleDelay={0}
-            onMouseDown={zoom.handleMouseDown} onMouseMove={zoom.handleMouseMove} onMouseUp={zoom.handleMouseUp}>
+          <AreaChart
+            data={chartData}
+            throttleDelay={0}
+            onMouseDown={zoom.handleMouseDown}
+            onMouseMove={zoom.handleMouseMove}
+            onMouseUp={zoom.handleMouseUp}
+          >
             <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-            <XAxis dataKey="ts" type="number" scale="time" domain={domain} allowDataOverflow={!!zoom.zoomDomain}
-              tick={{ fill: "#71717a", fontSize: 11 }} tickFormatter={(ts) => formatTimeLabel(ts, timezone)} />
-            <YAxis tick={{ fill: "#71717a", fontSize: 11 }} tickFormatter={formatBpsShort} />
-            <Tooltip contentStyle={{ backgroundColor: "#18181b", border: "1px solid #3f3f46", borderRadius: "0.5rem", fontSize: "0.75rem" }}
+            <XAxis
+              dataKey="ts"
+              type="number"
+              scale="time"
+              domain={domain}
+              allowDataOverflow={!!zoom.zoomDomain}
+              tick={{ fill: "#71717a", fontSize: 11 }}
+              tickFormatter={(ts) => formatTimeLabel(ts, timezone)}
+            />
+            <YAxis
+              tick={{ fill: "#71717a", fontSize: 11 }}
+              tickFormatter={formatBpsShort}
+            />
+            <Tooltip
+              contentStyle={{
+                backgroundColor: "#18181b",
+                border: "1px solid #3f3f46",
+                borderRadius: "0.5rem",
+                fontSize: "0.75rem",
+              }}
               labelFormatter={(ts) => formatChartDateTime(Number(ts), timezone)}
-              formatter={(value, name) => [formatBpsShort(Number(value)), name === "in_bps" ? "Inbound" : "Outbound"]}
-              isAnimationActive={false} />
+              formatter={(value, name) => [
+                formatBpsShort(Number(value)),
+                name === "in_bps" ? "Inbound" : "Outbound",
+              ]}
+              isAnimationActive={false}
+            />
             <Legend />
             {zoom.refAreaLeft != null && zoom.refAreaRight != null && (
-              <ReferenceArea x1={zoom.refAreaLeft} x2={zoom.refAreaRight} fill="#3b82f6" fillOpacity={0.15} />
+              <ReferenceArea
+                x1={zoom.refAreaLeft}
+                x2={zoom.refAreaRight}
+                fill="#3b82f6"
+                fillOpacity={0.15}
+              />
             )}
-            <Area type="monotone" dataKey="in_bps" name="Inbound" stroke="#06b6d4" fill="#06b6d4"
-              fillOpacity={0.15} strokeWidth={1.5} isAnimationActive={false} connectNulls={false} />
-            <Area type="monotone" dataKey="out_bps" name="Outbound" stroke="#6366f1" fill="#6366f1"
-              fillOpacity={0.15} strokeWidth={1.5} isAnimationActive={false} connectNulls={false} />
+            <Area
+              type="monotone"
+              dataKey="in_bps"
+              name="Inbound"
+              stroke="#06b6d4"
+              fill="#06b6d4"
+              fillOpacity={0.15}
+              strokeWidth={1.5}
+              isAnimationActive={false}
+              connectNulls={false}
+            />
+            <Area
+              type="monotone"
+              dataKey="out_bps"
+              name="Outbound"
+              stroke="#6366f1"
+              fill="#6366f1"
+              fillOpacity={0.15}
+              strokeWidth={1.5}
+              isAnimationActive={false}
+              connectNulls={false}
+            />
           </AreaChart>
         </ResponsiveContainer>
       </div>
@@ -240,9 +373,12 @@ interface MultiProps {
 
 function getMetricFields(metric: ChartMetric): [string, string] {
   switch (metric) {
-    case "traffic": return ["in_rate_bps", "out_rate_bps"];
-    case "errors": return ["in_errors", "out_errors"];
-    case "discards": return ["in_discards", "out_discards"];
+    case "traffic":
+      return ["in_rate_bps", "out_rate_bps"];
+    case "errors":
+      return ["in_errors", "out_errors"];
+    case "discards":
+      return ["in_discards", "out_discards"];
   }
 }
 
@@ -251,13 +387,19 @@ function calculateDeltas(
   inField: string,
   outField: string,
 ): { ts: number; in_val: number; out_val: number }[] {
-  const sorted = [...data].sort((a, b) => a.executed_at.localeCompare(b.executed_at));
+  const sorted = [...data].sort((a, b) =>
+    a.executed_at.localeCompare(b.executed_at),
+  );
   const result: { ts: number; in_val: number; out_val: number }[] = [];
   for (let i = 1; i < sorted.length; i++) {
     const prev = sorted[i - 1];
     const curr = sorted[i];
-    const inDelta = (curr[inField as keyof InterfaceRecord] as number) - (prev[inField as keyof InterfaceRecord] as number);
-    const outDelta = (curr[outField as keyof InterfaceRecord] as number) - (prev[outField as keyof InterfaceRecord] as number);
+    const inDelta =
+      (curr[inField as keyof InterfaceRecord] as number) -
+      (prev[inField as keyof InterfaceRecord] as number);
+    const outDelta =
+      (curr[outField as keyof InterfaceRecord] as number) -
+      (prev[outField as keyof InterfaceRecord] as number);
     if (inDelta < 0 || outDelta < 0) continue;
     result.push({
       ts: new Date(curr.executed_at).getTime(),
@@ -279,20 +421,30 @@ function mergeTimeSeries(
 
   interfaceIds.forEach((id, idx) => {
     const data = historyPerInterface[idx] ?? [];
-    const points = metric === "traffic"
-      ? data.map((r) => ({
-          ts: new Date(r.executed_at).getTime(),
-          in_val: r[inField as keyof InterfaceRecord] as number,
-          out_val: r[outField as keyof InterfaceRecord] as number,
-          speed: r.if_speed_mbps,
-        }))
-      : calculateDeltas(data, inField, outField).map((p) => ({ ...p, speed: 0 }));
+    const points =
+      metric === "traffic"
+        ? data.map((r) => ({
+            ts: new Date(r.executed_at).getTime(),
+            in_val: r[inField as keyof InterfaceRecord] as number,
+            out_val: r[outField as keyof InterfaceRecord] as number,
+            speed: r.if_speed_mbps,
+          }))
+        : calculateDeltas(data, inField, outField).map((p) => ({
+            ...p,
+            speed: 0,
+          }));
 
     for (const pt of points) {
       if (!tsMap.has(pt.ts)) tsMap.set(pt.ts, { ts: pt.ts });
       const row = tsMap.get(pt.ts)!;
-      const inVal = metric === "traffic" ? convertBpsToUnit(pt.in_val, unit, pt.speed) : pt.in_val;
-      const outVal = metric === "traffic" ? convertBpsToUnit(pt.out_val, unit, pt.speed) : pt.out_val;
+      const inVal =
+        metric === "traffic"
+          ? convertBpsToUnit(pt.in_val, unit, pt.speed)
+          : pt.in_val;
+      const outVal =
+        metric === "traffic"
+          ? convertBpsToUnit(pt.out_val, unit, pt.speed)
+          : pt.out_val;
       row[`${id}_in`] = inVal;
       row[`${id}_out`] = outVal;
     }
@@ -302,14 +454,25 @@ function mergeTimeSeries(
 }
 
 export function MultiInterfaceChart({
-  interfaceIds, interfaceNames, historyPerInterface,
-  metric, unit, mode, timezone, onZoom,
+  interfaceIds,
+  interfaceNames,
+  historyPerInterface,
+  metric,
+  unit,
+  mode,
+  timezone,
+  onZoom,
 }: MultiProps) {
   if (!historyPerInterface?.length) {
-    return <div className="flex items-center justify-center h-48 text-zinc-600 text-sm">Loading chart data...</div>;
+    return (
+      <div className="flex items-center justify-center h-48 text-zinc-600 text-sm">
+        Loading chart data...
+      </div>
+    );
   }
 
-  const yFormatter = (v: number) => metric === "traffic" ? formatUnitShort(v, unit) : String(Math.round(v));
+  const yFormatter = (v: number) =>
+    metric === "traffic" ? formatUnitShort(v, unit) : String(Math.round(v));
 
   if (mode === "stacked") {
     const [inField, outField] = getMetricFields(metric);
@@ -317,20 +480,44 @@ export function MultiInterfaceChart({
       <div className="space-y-2">
         {interfaceIds.map((id, idx) => {
           const rawData = historyPerInterface[idx] ?? [];
-          const points = metric === "traffic"
-            ? [...rawData].sort((a, b) => a.executed_at.localeCompare(b.executed_at))
-                .filter((r) => (r[inField as keyof InterfaceRecord] as number) > 0 || (r[outField as keyof InterfaceRecord] as number) > 0)
-                .map((r) => ({
-                  ts: new Date(r.executed_at).getTime(),
-                  in_val: convertBpsToUnit(r[inField as keyof InterfaceRecord] as number, unit, r.if_speed_mbps),
-                  out_val: convertBpsToUnit(r[outField as keyof InterfaceRecord] as number, unit, r.if_speed_mbps),
-                }))
-            : calculateDeltas(rawData, inField, outField).map((p) => ({ ...p }));
+          const points =
+            metric === "traffic"
+              ? [...rawData]
+                  .sort((a, b) => a.executed_at.localeCompare(b.executed_at))
+                  .filter(
+                    (r) =>
+                      (r[inField as keyof InterfaceRecord] as number) > 0 ||
+                      (r[outField as keyof InterfaceRecord] as number) > 0,
+                  )
+                  .map((r) => ({
+                    ts: new Date(r.executed_at).getTime(),
+                    in_val: convertBpsToUnit(
+                      r[inField as keyof InterfaceRecord] as number,
+                      unit,
+                      r.if_speed_mbps,
+                    ),
+                    out_val: convertBpsToUnit(
+                      r[outField as keyof InterfaceRecord] as number,
+                      unit,
+                      r.if_speed_mbps,
+                    ),
+                  }))
+              : calculateDeltas(rawData, inField, outField).map((p) => ({
+                  ...p,
+                }));
 
           if (points.length === 0) return null;
           return (
-            <StackedInterfaceChart key={id} points={points} idx={idx} name={interfaceNames[idx]}
-              yFormatter={yFormatter} unit={unit} timezone={timezone} onZoom={onZoom} />
+            <StackedInterfaceChart
+              key={id}
+              points={points}
+              idx={idx}
+              name={interfaceNames[idx]}
+              yFormatter={yFormatter}
+              unit={unit}
+              timezone={timezone}
+              onZoom={onZoom}
+            />
           );
         })}
       </div>
@@ -338,52 +525,133 @@ export function MultiInterfaceChart({
   }
 
   // Overlaid mode
-  return <OverlaidInterfaceChart interfaceIds={interfaceIds} interfaceNames={interfaceNames}
-    historyPerInterface={historyPerInterface} metric={metric} unit={unit} timezone={timezone}
-    yFormatter={yFormatter} onZoom={onZoom} />;
+  return (
+    <OverlaidInterfaceChart
+      interfaceIds={interfaceIds}
+      interfaceNames={interfaceNames}
+      historyPerInterface={historyPerInterface}
+      metric={metric}
+      unit={unit}
+      timezone={timezone}
+      yFormatter={yFormatter}
+      onZoom={onZoom}
+    />
+  );
 }
 
 // Stacked sub-chart (one per interface) with drag-to-zoom
-function StackedInterfaceChart({ points, idx, name, yFormatter, unit, timezone, onZoom }: {
+function StackedInterfaceChart({
+  points,
+  idx,
+  name,
+  yFormatter,
+  unit,
+  timezone,
+  onZoom,
+}: {
   points: { ts: number; in_val: number; out_val: number }[];
-  idx: number; name: string; yFormatter: (v: number) => string;
-  unit: TrafficUnit; timezone: string; onZoom?: (fromMs: number, toMs: number) => void;
+  idx: number;
+  name: string;
+  yFormatter: (v: number) => string;
+  unit: TrafficUnit;
+  timezone: string;
+  onZoom?: (fromMs: number, toMs: number) => void;
 }) {
   const zoom = useChartZoom(onZoom);
   const sPad = points.length <= 2 ? 60_000 : 0;
-  const fullDomain: [number, number] = [points[0].ts - sPad, points[points.length - 1].ts + sPad];
+  const fullDomain: [number, number] = [
+    points[0].ts - sPad,
+    points[points.length - 1].ts + sPad,
+  ];
   const domain = zoom.zoomDomain ?? fullDomain;
 
   return (
     <div>
       <div className="text-xs text-zinc-400 mb-1 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: CHART_COLOR_PAIRS[idx % CHART_COLOR_PAIRS.length].in }} />
+          <div
+            className="w-3 h-3 rounded-sm"
+            style={{
+              backgroundColor:
+                CHART_COLOR_PAIRS[idx % CHART_COLOR_PAIRS.length].in,
+            }}
+          />
           {name}
         </div>
         {!zoom.hasExternalZoom && zoom.zoomDomain ? (
-          <button onClick={zoom.resetZoom} className="text-[10px] text-brand-400 hover:text-brand-300 cursor-pointer">Reset</button>
+          <button
+            onClick={zoom.resetZoom}
+            className="text-[10px] text-brand-400 hover:text-brand-300 cursor-pointer"
+          >
+            Reset
+          </button>
         ) : null}
       </div>
       <div className="select-none">
         <ResponsiveContainer width="100%" height={120}>
-          <AreaChart data={points} throttleDelay={0}
-            onMouseDown={zoom.handleMouseDown} onMouseMove={zoom.handleMouseMove} onMouseUp={zoom.handleMouseUp}>
+          <AreaChart
+            data={points}
+            throttleDelay={0}
+            onMouseDown={zoom.handleMouseDown}
+            onMouseMove={zoom.handleMouseMove}
+            onMouseUp={zoom.handleMouseUp}
+          >
             <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-            <XAxis dataKey="ts" type="number" scale="time" domain={domain} allowDataOverflow={!!zoom.zoomDomain}
-              tick={{ fill: "#71717a", fontSize: 10 }} tickFormatter={(ts) => formatTimeLabel(ts, timezone)} />
-            <YAxis tick={{ fill: "#71717a", fontSize: 10 }} tickFormatter={yFormatter} width={50} />
-            <Tooltip contentStyle={{ backgroundColor: "#18181b", border: "1px solid #3f3f46", borderRadius: "0.5rem", fontSize: "0.7rem" }}
+            <XAxis
+              dataKey="ts"
+              type="number"
+              scale="time"
+              domain={domain}
+              allowDataOverflow={!!zoom.zoomDomain}
+              tick={{ fill: "#71717a", fontSize: 10 }}
+              tickFormatter={(ts) => formatTimeLabel(ts, timezone)}
+            />
+            <YAxis
+              tick={{ fill: "#71717a", fontSize: 10 }}
+              tickFormatter={yFormatter}
+              width={50}
+            />
+            <Tooltip
+              contentStyle={{
+                backgroundColor: "#18181b",
+                border: "1px solid #3f3f46",
+                borderRadius: "0.5rem",
+                fontSize: "0.7rem",
+              }}
               labelFormatter={(ts) => formatChartDateTime(Number(ts), timezone)}
-              formatter={(value: number | undefined) => [formatTooltipValue(value ?? 0, unit)]}
-              isAnimationActive={false} />
+              formatter={(value: number | undefined) => [
+                formatTooltipValue(value ?? 0, unit),
+              ]}
+              isAnimationActive={false}
+            />
             {zoom.refAreaLeft != null && zoom.refAreaRight != null && (
-              <ReferenceArea x1={zoom.refAreaLeft} x2={zoom.refAreaRight} fill="#3b82f6" fillOpacity={0.15} />
+              <ReferenceArea
+                x1={zoom.refAreaLeft}
+                x2={zoom.refAreaRight}
+                fill="#3b82f6"
+                fillOpacity={0.15}
+              />
             )}
-            <Area type="monotone" dataKey="in_val" name="In" stroke={CHART_COLOR_PAIRS[idx % CHART_COLOR_PAIRS.length].in}
-              fill={CHART_COLOR_PAIRS[idx % CHART_COLOR_PAIRS.length].in} fillOpacity={0.15} strokeWidth={1.5} isAnimationActive={false} />
-            <Area type="monotone" dataKey="out_val" name="Out" stroke={CHART_COLOR_PAIRS[idx % CHART_COLOR_PAIRS.length].out}
-              fill={CHART_COLOR_PAIRS[idx % CHART_COLOR_PAIRS.length].out} fillOpacity={0.1} strokeWidth={1.5} isAnimationActive={false} />
+            <Area
+              type="monotone"
+              dataKey="in_val"
+              name="In"
+              stroke={CHART_COLOR_PAIRS[idx % CHART_COLOR_PAIRS.length].in}
+              fill={CHART_COLOR_PAIRS[idx % CHART_COLOR_PAIRS.length].in}
+              fillOpacity={0.15}
+              strokeWidth={1.5}
+              isAnimationActive={false}
+            />
+            <Area
+              type="monotone"
+              dataKey="out_val"
+              name="Out"
+              stroke={CHART_COLOR_PAIRS[idx % CHART_COLOR_PAIRS.length].out}
+              fill={CHART_COLOR_PAIRS[idx % CHART_COLOR_PAIRS.length].out}
+              fillOpacity={0.1}
+              strokeWidth={1.5}
+              isAnimationActive={false}
+            />
           </AreaChart>
         </ResponsiveContainer>
       </div>
@@ -392,50 +660,125 @@ function StackedInterfaceChart({ points, idx, name, yFormatter, unit, timezone, 
 }
 
 // Overlaid multi-interface chart with drag-to-zoom
-function OverlaidInterfaceChart({ interfaceIds, interfaceNames, historyPerInterface, metric, unit, timezone, yFormatter, onZoom }: {
-  interfaceIds: string[]; interfaceNames: string[]; historyPerInterface: InterfaceRecord[][];
-  metric: ChartMetric; unit: TrafficUnit; timezone: string; yFormatter: (v: number) => string;
+function OverlaidInterfaceChart({
+  interfaceIds,
+  interfaceNames,
+  historyPerInterface,
+  metric,
+  unit,
+  timezone,
+  yFormatter,
+  onZoom,
+}: {
+  interfaceIds: string[];
+  interfaceNames: string[];
+  historyPerInterface: InterfaceRecord[][];
+  metric: ChartMetric;
+  unit: TrafficUnit;
+  timezone: string;
+  yFormatter: (v: number) => string;
   onZoom?: (fromMs: number, toMs: number) => void;
 }) {
   const zoom = useChartZoom(onZoom);
-  const merged = mergeTimeSeries(interfaceIds, historyPerInterface, metric, unit);
+  const merged = mergeTimeSeries(
+    interfaceIds,
+    historyPerInterface,
+    metric,
+    unit,
+  );
   if (merged.length === 0) {
-    return <div className="flex items-center justify-center h-48 text-zinc-600 text-sm">Not enough data points.</div>;
+    return (
+      <div className="flex items-center justify-center h-48 text-zinc-600 text-sm">
+        Not enough data points.
+      </div>
+    );
   }
 
   const domainPad = merged.length <= 2 ? 60_000 : 0;
-  const fullDomain: [number, number] = [merged[0].ts - domainPad, merged[merged.length - 1].ts + domainPad];
+  const fullDomain: [number, number] = [
+    merged[0].ts - domainPad,
+    merged[merged.length - 1].ts + domainPad,
+  ];
   const domain = zoom.zoomDomain ?? fullDomain;
 
   return (
     <div>
-      <ZoomHint zoomDomain={zoom.zoomDomain} resetZoom={zoom.resetZoom} external={zoom.hasExternalZoom} />
+      <ZoomHint
+        zoomDomain={zoom.zoomDomain}
+        resetZoom={zoom.resetZoom}
+        external={zoom.hasExternalZoom}
+      />
       <div className="select-none">
         <ResponsiveContainer width="100%" height={300}>
-          <AreaChart data={merged} throttleDelay={0}
-            onMouseDown={zoom.handleMouseDown} onMouseMove={zoom.handleMouseMove} onMouseUp={zoom.handleMouseUp}>
+          <AreaChart
+            data={merged}
+            throttleDelay={0}
+            onMouseDown={zoom.handleMouseDown}
+            onMouseMove={zoom.handleMouseMove}
+            onMouseUp={zoom.handleMouseUp}
+          >
             <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-            <XAxis dataKey="ts" type="number" scale="time" domain={domain} allowDataOverflow={!!zoom.zoomDomain}
-              tick={{ fill: "#71717a", fontSize: 11 }} tickFormatter={(ts) => formatTimeLabel(ts, timezone)} />
-            <YAxis tick={{ fill: "#71717a", fontSize: 11 }} tickFormatter={yFormatter} />
-            <Tooltip contentStyle={{ backgroundColor: "#18181b", border: "1px solid #3f3f46", borderRadius: "0.5rem", fontSize: "0.75rem" }}
+            <XAxis
+              dataKey="ts"
+              type="number"
+              scale="time"
+              domain={domain}
+              allowDataOverflow={!!zoom.zoomDomain}
+              tick={{ fill: "#71717a", fontSize: 11 }}
+              tickFormatter={(ts) => formatTimeLabel(ts, timezone)}
+            />
+            <YAxis
+              tick={{ fill: "#71717a", fontSize: 11 }}
+              tickFormatter={yFormatter}
+            />
+            <Tooltip
+              contentStyle={{
+                backgroundColor: "#18181b",
+                border: "1px solid #3f3f46",
+                borderRadius: "0.5rem",
+                fontSize: "0.75rem",
+              }}
               labelFormatter={(ts) => formatChartDateTime(Number(ts), timezone)}
-              formatter={(value: number | undefined) => [formatTooltipValue(value ?? 0, unit)]}
-              isAnimationActive={false} />
+              formatter={(value: number | undefined) => [
+                formatTooltipValue(value ?? 0, unit),
+              ]}
+              isAnimationActive={false}
+            />
             <Legend />
             {zoom.refAreaLeft != null && zoom.refAreaRight != null && (
-              <ReferenceArea x1={zoom.refAreaLeft} x2={zoom.refAreaRight} fill="#3b82f6" fillOpacity={0.15} />
+              <ReferenceArea
+                x1={zoom.refAreaLeft}
+                x2={zoom.refAreaRight}
+                fill="#3b82f6"
+                fillOpacity={0.15}
+              />
             )}
             {interfaceIds.map((id, idx) => {
               const pair = CHART_COLOR_PAIRS[idx % CHART_COLOR_PAIRS.length];
               return (
                 <React.Fragment key={id}>
-                  <Area type="monotone" dataKey={`${id}_in`} name={`${interfaceNames[idx]} In`}
-                    stroke={pair.in} fill={pair.in}
-                    fillOpacity={0.1} strokeWidth={1.5} isAnimationActive={false} connectNulls={false} />
-                  <Area type="monotone" dataKey={`${id}_out`} name={`${interfaceNames[idx]} Out`}
-                    stroke={pair.out} fill={pair.out}
-                    fillOpacity={0.1} strokeWidth={1.5} isAnimationActive={false} connectNulls={false} />
+                  <Area
+                    type="monotone"
+                    dataKey={`${id}_in`}
+                    name={`${interfaceNames[idx]} In`}
+                    stroke={pair.in}
+                    fill={pair.in}
+                    fillOpacity={0.1}
+                    strokeWidth={1.5}
+                    isAnimationActive={false}
+                    connectNulls={false}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey={`${id}_out`}
+                    name={`${interfaceNames[idx]} Out`}
+                    stroke={pair.out}
+                    fill={pair.out}
+                    fillOpacity={0.1}
+                    strokeWidth={1.5}
+                    isAnimationActive={false}
+                    connectNulls={false}
+                  />
                 </React.Fragment>
               );
             })}

@@ -48,7 +48,7 @@ from monctl_collector.peer.client import PeerChannelPool
 
 logger = structlog.get_logger()
 
-_REFRESH_INTERVAL = 30.0  # seconds between job-list refresh from cache-node
+_REFRESH_INTERVAL = 10.0  # seconds between job-list refresh from cache-node
 
 
 @dataclass
@@ -140,7 +140,7 @@ class PollEngine:
         try:
             client = await self._pool.get(self._cache_address)
             await client.register_worker(self._worker_id, list(self._loaded_apps))
-            raw_jobs = await client.get_my_jobs(self._worker_id, list(self._loaded_apps))
+            raw_jobs, immediate_ids = await client.get_my_jobs(self._worker_id, list(self._loaded_apps))
         except Exception as exc:
             logger.warning("job_refresh_failed", error=str(exc))
             return
@@ -214,6 +214,20 @@ class PollEngine:
 
         # Update loaded_apps from current heap
         self._loaded_apps = {(sj.job.app_id, sj.job.app_version) for sj in self._heap}
+
+        # Apply immediate triggers — set deadline to 0 for flagged jobs
+        if immediate_ids:
+            trigger_set = set(immediate_ids)
+            for i, sj in enumerate(self._heap):
+                if sj.job_id in trigger_set:
+                    self._heap[i] = ScheduledJob(
+                        next_deadline=0.0, job_id=sj.job_id,
+                        job=sj.job, profile=sj.profile,
+                    )
+                    logger.info("job_triggered_immediate", job_id=sj.job_id)
+            if trigger_set:
+                heapq.heapify(self._heap)
+
         logger.debug("job_list_refreshed", total=len(self._heap))
 
     async def _dispatch_ready(self) -> None:
@@ -417,6 +431,21 @@ class PollEngine:
                 execution_time,
                 error=result.status == "error",
             )
+
+    async def trigger_immediate(self, job_id: str) -> bool:
+        """Move a scheduled job to the front of the heap so it runs at the next dispatch cycle."""
+        for i, sj in enumerate(self._heap):
+            if sj.job_id == job_id:
+                self._heap[i] = ScheduledJob(
+                    next_deadline=0.0,
+                    job_id=sj.job_id,
+                    job=sj.job,
+                    profile=sj.profile,
+                )
+                heapq.heapify(self._heap)
+                logger.info("job_triggered_immediate", job_id=job_id)
+                return True
+        return False
 
     async def _submit_result(self, result: PollResult) -> None:
         """Send poll result to cache-node for forwarding to central."""

@@ -195,7 +195,10 @@ export interface Device {
   collector_group_name: string | null;
   labels: Record<string, string>;
   is_enabled: boolean;
-  credentials: Record<string, { id: string; name: string; credential_type: string }>;
+  credentials: Record<
+    string,
+    { id: string; name: string; credential_type: string }
+  >;
   metadata: Record<string, unknown> | null;
   retention_overrides: Record<string, string>;
   interface_rules: InterfaceRule[] | null;
@@ -367,7 +370,11 @@ export interface Assignment {
   use_latest: boolean;
   credential_id: string | null;
   credential_name: string | null;
-  credential_overrides?: { alias: string; credential_id: string; credential_name: string }[];
+  credential_overrides?: {
+    alias: string;
+    credential_id: string;
+    credential_name: string;
+  }[];
   device_default_credential_name: string | null;
   created_at: string;
   updated_at?: string | null;
@@ -389,7 +396,11 @@ export interface DeviceAssignment {
   role: string | null;
   credential_id: string | null;
   credential_name: string | null;
-  credential_overrides?: { alias: string; credential_id: string; credential_name: string }[];
+  credential_overrides?: {
+    alias: string;
+    credential_id: string;
+    credential_name: string;
+  }[];
   device_default_credential_name: string | null;
   connector_bindings?: ConnectorBindingInfo[];
   created_at: string;
@@ -436,7 +447,11 @@ export interface AppSummary {
   app_type: string;
   target_table: string;
   vendor_oid_prefix?: string | null;
-  connector_bindings?: { alias: string; connector_id: string; connector_name: string }[];
+  connector_bindings?: {
+    alias: string;
+    connector_id: string;
+    connector_name: string;
+  }[];
 }
 
 export interface AppVersion {
@@ -614,9 +629,13 @@ export interface ExpressionValidation {
   valid: boolean;
   errors: string[];
   warnings: string[];
-  error: string | null;  // backward compat
+  error: string | null; // backward compat
   referenced_metrics: string[];
-  threshold_params: { name: string; default_value: number | string; param_key?: string }[];
+  threshold_params: {
+    name: string;
+    default_value: number | string;
+    param_key?: string;
+  }[];
   has_aggregation: boolean;
   has_arithmetic: boolean;
   has_division: boolean;
@@ -739,7 +758,12 @@ export interface HealthStatus {
 
 // ── System Health ────────────────────────────────────────
 
-export type SubsystemStatus = "healthy" | "degraded" | "critical" | "unknown" | "unconfigured";
+export type SubsystemStatus =
+  | "healthy"
+  | "degraded"
+  | "critical"
+  | "unknown"
+  | "unconfigured";
 
 export interface SubsystemHealth {
   status: SubsystemStatus;
@@ -1349,7 +1373,11 @@ export interface DockerSystemInfo {
     swap_total_bytes: number | null;
     swap_free_bytes: number | null;
     uptime_seconds: number | null;
-    ntp?: { synchronized: boolean; server: string | null; offset_ms: number | null };
+    ntp?: {
+      synchronized: boolean;
+      server: string | null;
+      offset_ms: number | null;
+    };
     disk_total_bytes: number | null;
     disk_used_bytes: number | null;
     disk_free_bytes: number | null;
@@ -1600,7 +1628,12 @@ export interface OsCheckResult {
   [hostname: string]: {
     status: string;
     update_count?: number;
-    updates?: Array<{ package: string; current: string; new: string; severity: string }>;
+    updates?: Array<{
+      package: string;
+      current: string;
+      new: string;
+      severity: string;
+    }>;
     error?: string;
   };
 }

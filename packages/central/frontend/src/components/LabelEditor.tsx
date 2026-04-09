@@ -18,8 +18,12 @@ export function LabelEditor({ labels, onChange, disabled }: LabelEditorProps) {
   const uid = useId();
 
   // Fetch suggested values for currently typed key
-  const matchedKey = (labelKeys ?? []).find((lk) => lk.key === newKey.trim().toLowerCase());
-  const { data: suggestedValues } = useLabelValues(matchedKey ? matchedKey.key : null);
+  const matchedKey = (labelKeys ?? []).find(
+    (lk) => lk.key === newKey.trim().toLowerCase(),
+  );
+  const { data: suggestedValues } = useLabelValues(
+    matchedKey ? matchedKey.key : null,
+  );
 
   // Keys not already used in current labels
   const availableKeys = (labelKeys ?? []).filter((lk) => !(lk.key in labels));
@@ -33,7 +37,9 @@ export function LabelEditor({ labels, onChange, disabled }: LabelEditorProps) {
       return;
     }
     if (!/^[a-z][a-z0-9_-]*$/.test(key)) {
-      setError("Key must be lowercase, start with a letter, only a-z, 0-9, hyphens, underscores.");
+      setError(
+        "Key must be lowercase, start with a letter, only a-z, 0-9, hyphens, underscores.",
+      );
       return;
     }
     if (key in labels) {
@@ -58,9 +64,10 @@ export function LabelEditor({ labels, onChange, disabled }: LabelEditorProps) {
         <div className="rounded-md border border-zinc-800 divide-y divide-zinc-800">
           {Object.entries(labels).map(([key, val]) => {
             const keyDef = (labelKeys ?? []).find((lk) => lk.key === key);
-            const displayKey = keyDef?.show_description && keyDef?.description
-              ? keyDef.description
-              : key;
+            const displayKey =
+              keyDef?.show_description && keyDef?.description
+                ? keyDef.description
+                : key;
             const lColor = keyDef?.color;
             return (
               <div
@@ -74,12 +81,18 @@ export function LabelEditor({ labels, onChange, disabled }: LabelEditorProps) {
                 >
                   <span
                     className={lColor ? "font-medium" : "text-zinc-400"}
-                    title={keyDef?.description ? `${keyDef.description} (${key})` : key}
+                    title={
+                      keyDef?.description
+                        ? `${keyDef.description} (${key})`
+                        : key
+                    }
                   >
                     {displayKey}
                   </span>
                   <span className="text-zinc-600">=</span>
-                  <span className={lColor ? "text-zinc-200" : "text-zinc-200"}>{val}</span>
+                  <span className={lColor ? "text-zinc-200" : "text-zinc-200"}>
+                    {val}
+                  </span>
                 </span>
                 {!disabled && (
                   <button
@@ -108,7 +121,12 @@ export function LabelEditor({ labels, onChange, disabled }: LabelEditorProps) {
                 placeholder="key"
                 value={newKey}
                 onChange={(e) => setNewKey(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleAdd(); } }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleAdd();
+                  }
+                }}
                 className="font-mono text-xs"
                 list={`${uid}-key-suggestions`}
               />
@@ -125,7 +143,12 @@ export function LabelEditor({ labels, onChange, disabled }: LabelEditorProps) {
                 placeholder="value"
                 value={newValue}
                 onChange={(e) => setNewValue(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleAdd(); } }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleAdd();
+                  }
+                }}
                 className="font-mono text-xs"
                 list={`${uid}-value-suggestions`}
               />
@@ -135,7 +158,12 @@ export function LabelEditor({ labels, onChange, disabled }: LabelEditorProps) {
                 ))}
               </datalist>
             </div>
-            <Button type="button" size="sm" variant="secondary" onClick={handleAdd}>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={handleAdd}
+            >
               <Plus className="h-3.5 w-3.5" />
               Add
             </Button>

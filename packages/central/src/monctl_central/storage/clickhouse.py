@@ -1811,6 +1811,8 @@ class ClickHouseClient:
         *,
         app_id: str | None = None,
         config_key: str | None = None,
+        component: str | None = None,
+        value: str | None = None,
         from_ts: datetime | None = None,
         to_ts: datetime | None = None,
         limit: int = 200,
@@ -1834,8 +1836,14 @@ class ClickHouseClient:
             sql += " AND app_id = {app_id:UUID}"
             params["app_id"] = app_id
         if config_key:
-            sql += " AND config_key = {config_key:String}"
-            params["config_key"] = config_key
+            sql += " AND ilike(config_key, {config_key:String})"
+            params["config_key"] = f"%{config_key}%"
+        if component:
+            sql += " AND ilike(component, {component:String})"
+            params["component"] = f"%{component}%"
+        if value:
+            sql += " AND ilike(config_value, {value:String})"
+            params["value"] = f"%{value}%"
         if from_ts:
             sql += " AND executed_at >= {from_ts:DateTime64(3)}"
             params["from_ts"] = from_ts.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
@@ -1865,6 +1873,8 @@ class ClickHouseClient:
         *,
         app_id: str | None = None,
         config_key: str | None = None,
+        component: str | None = None,
+        value: str | None = None,
         from_ts: datetime | None = None,
         to_ts: datetime | None = None,
     ) -> int:
@@ -1876,8 +1886,14 @@ class ClickHouseClient:
             sql += " AND app_id = {app_id:UUID}"
             params["app_id"] = app_id
         if config_key:
-            sql += " AND config_key = {config_key:String}"
-            params["config_key"] = config_key
+            sql += " AND ilike(config_key, {config_key:String})"
+            params["config_key"] = f"%{config_key}%"
+        if component:
+            sql += " AND ilike(component, {component:String})"
+            params["component"] = f"%{component}%"
+        if value:
+            sql += " AND ilike(config_value, {value:String})"
+            params["value"] = f"%{value}%"
         if from_ts:
             sql += " AND executed_at >= {from_ts:DateTime64(3)}"
             params["from_ts"] = from_ts.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]

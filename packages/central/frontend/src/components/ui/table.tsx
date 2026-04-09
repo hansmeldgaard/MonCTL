@@ -1,10 +1,7 @@
 import { cn } from "@/lib/utils.ts";
 import type { HTMLAttributes, TdHTMLAttributes, ThHTMLAttributes } from "react";
 
-function Table({
-  className,
-  ...props
-}: HTMLAttributes<HTMLTableElement>) {
+function Table({ className, ...props }: HTMLAttributes<HTMLTableElement>) {
   return (
     <div className="w-full overflow-auto">
       <table
@@ -20,10 +17,7 @@ function TableHeader({
   ...props
 }: HTMLAttributes<HTMLTableSectionElement>) {
   return (
-    <thead
-      className={cn("border-b border-zinc-800", className)}
-      {...props}
-    />
+    <thead className={cn("border-b border-zinc-800", className)} {...props} />
   );
 }
 
@@ -31,7 +25,9 @@ function TableBody({
   className,
   ...props
 }: HTMLAttributes<HTMLTableSectionElement>) {
-  return <tbody className={cn("[&_tr:last-child]:border-0", className)} {...props} />;
+  return (
+    <tbody className={cn("[&_tr:last-child]:border-0", className)} {...props} />
+  );
 }
 
 function TableRow({

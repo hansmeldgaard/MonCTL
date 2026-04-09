@@ -28,7 +28,10 @@ export function DisplayTemplateEditor({
   onSave,
   readOnly = false,
 }: DisplayTemplateEditorProps) {
-  const { data: configKeys, isLoading: keysLoading } = useAppConfigKeys(appId, versionId);
+  const { data: configKeys, isLoading: keysLoading } = useAppConfigKeys(
+    appId,
+    versionId,
+  );
 
   const [html, setHtml] = useState(initialTemplate?.html ?? DEFAULT_HTML);
   const [css, setCss] = useState(initialTemplate?.css ?? DEFAULT_CSS);
@@ -53,12 +56,9 @@ export function DisplayTemplateEditor({
     return [...new Set([...matches].map((m) => m[1]))];
   }, [html]);
 
-  const insertKey = useCallback(
-    (key: string) => {
-      setHtml((prev) => prev + `{{${key}}}`);
-    },
-    [],
-  );
+  const insertKey = useCallback((key: string) => {
+    setHtml((prev) => prev + `{{${key}}}`);
+  }, []);
 
   const addCustomKey = useCallback(() => {
     const k = newKey.trim();
@@ -76,7 +76,8 @@ export function DisplayTemplateEditor({
   const previewHtml = useMemo(() => {
     const replaced = html.replace(
       /\{\{([a-zA-Z_][a-zA-Z0-9_.-]*)\}\}/g,
-      (_match, key) => `<span style="background:#3b82f6;color:white;padding:1px 4px;border-radius:3px;font-size:12px">[${key}]</span>`,
+      (_match, key) =>
+        `<span style="background:#3b82f6;color:white;padding:1px 4px;border-radius:3px;font-size:12px">[${key}]</span>`,
     );
     return `<!DOCTYPE html><html><head><style>
       body { margin: 8px; background: #18181b; color: #e4e4e7; }
@@ -118,8 +119,8 @@ export function DisplayTemplateEditor({
           </div>
         ) : allKeys.length === 0 && customKeys.length === 0 ? (
           <p className="text-sm text-zinc-600 py-2">
-            No keys detected yet. Add keys manually or write config_key references in the source
-            code.
+            No keys detected yet. Add keys manually or write config_key
+            references in the source code.
           </p>
         ) : (
           <div className="flex flex-wrap gap-1.5 mb-2">
@@ -179,7 +180,13 @@ export function DisplayTemplateEditor({
                 }
               }}
             />
-            <Button type="button" size="sm" variant="ghost" onClick={addCustomKey} className="h-7">
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={addCustomKey}
+              className="h-7"
+            >
               <Plus className="h-3 w-3" />
             </Button>
           </div>
@@ -192,13 +199,21 @@ export function DisplayTemplateEditor({
           <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
             HTML Template
           </p>
-          <CodeEditor value={html} onChange={readOnly ? undefined : setHtml} readOnly={readOnly} height="calc(100vh - 400px)" />
+          <CodeEditor
+            value={html}
+            onChange={readOnly ? undefined : setHtml}
+            readOnly={readOnly}
+            height="calc(100vh - 400px)"
+          />
         </div>
         <div className="space-y-1.5">
           <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
             Live Preview
           </p>
-          <div className="rounded-md border border-zinc-700 overflow-hidden" style={{ height: "calc(100vh - 400px)" }}>
+          <div
+            className="rounded-md border border-zinc-700 overflow-hidden"
+            style={{ height: "calc(100vh - 400px)" }}
+          >
             <iframe
               ref={iframeRef}
               sandbox="allow-scripts allow-same-origin"
@@ -210,12 +225,20 @@ export function DisplayTemplateEditor({
       </div>
 
       {/* CSS (collapsible) */}
-      <details open={cssOpen} onToggle={(e) => setCssOpen((e.target as HTMLDetailsElement).open)}>
+      <details
+        open={cssOpen}
+        onToggle={(e) => setCssOpen((e.target as HTMLDetailsElement).open)}
+      >
         <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wider text-zinc-500 select-none">
           CSS {cssOpen ? "▾" : "▸"}
         </summary>
         <div className="mt-1.5">
-          <CodeEditor value={css} onChange={readOnly ? undefined : setCss} readOnly={readOnly} height="150px" />
+          <CodeEditor
+            value={css}
+            onChange={readOnly ? undefined : setCss}
+            readOnly={readOnly}
+            height="150px"
+          />
         </div>
       </details>
 

@@ -32,8 +32,7 @@ export function useField(initialValue: string, validator?: ValidatorFn) {
     ) => {
       const newValue = e.target.value;
       setState((prev) => {
-        const error =
-          prev.touched && validator ? validator(newValue) : null;
+        const error = prev.touched && validator ? validator(newValue) : null;
         return { value: newValue, error, touched: prev.touched };
       });
     },
@@ -43,8 +42,7 @@ export function useField(initialValue: string, validator?: ValidatorFn) {
   const setValue = useCallback(
     (newValue: string) => {
       setState((prev) => {
-        const error =
-          prev.touched && validator ? validator(newValue) : null;
+        const error = prev.touched && validator ? validator(newValue) : null;
         return { value: newValue, error, touched: prev.touched };
       });
     },
@@ -94,8 +92,6 @@ export function useField(initialValue: string, validator?: ValidatorFn) {
  * Validate all fields and return true if all valid.
  * Usage: if (validateAll(nameField, addressField)) { submit(); }
  */
-export function validateAll(
-  ...fields: { validate: () => boolean }[]
-): boolean {
+export function validateAll(...fields: { validate: () => boolean }[]): boolean {
   return fields.map((f) => f.validate()).every(Boolean);
 }

@@ -137,7 +137,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // Update user data from refresh response (e.g. idle_timeout may have changed)
           const body = await res.json();
           if (body?.data?.idle_timeout_minutes !== undefined) {
-            setUser((prev) => prev ? { ...prev, idle_timeout_minutes: body.data.idle_timeout_minutes } : prev);
+            setUser((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    idle_timeout_minutes: body.data.idle_timeout_minutes,
+                  }
+                : prev,
+            );
           }
         } else {
           // Refresh failed — token expired

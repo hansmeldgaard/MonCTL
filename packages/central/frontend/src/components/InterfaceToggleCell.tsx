@@ -45,21 +45,62 @@ export function InterfaceToggleCell({
     }
   }, []);
 
-  const toggleItems: { label: string; active: boolean; onToggle: () => void; color: string }[] = [
-    { label: "Poll", active: state.polling_enabled, onToggle: onTogglePolling, color: "bg-brand-500" },
-    { label: "Alert", active: state.alerting_enabled, onToggle: onToggleAlerting, color: "bg-amber-500" },
-    { label: "Traffic", active: state.traffic, onToggle: () => onToggleMetric("traffic"), color: "bg-emerald-500" },
-    { label: "Errors", active: state.errors, onToggle: () => onToggleMetric("errors"), color: "bg-emerald-500" },
-    { label: "Discards", active: state.discards, onToggle: () => onToggleMetric("discards"), color: "bg-emerald-500" },
-    { label: "Status", active: state.status, onToggle: () => onToggleMetric("status"), color: "bg-emerald-500" },
+  const toggleItems: {
+    label: string;
+    active: boolean;
+    onToggle: () => void;
+    color: string;
+  }[] = [
+    {
+      label: "Poll",
+      active: state.polling_enabled,
+      onToggle: onTogglePolling,
+      color: "bg-brand-500",
+    },
+    {
+      label: "Alert",
+      active: state.alerting_enabled,
+      onToggle: onToggleAlerting,
+      color: "bg-amber-500",
+    },
+    {
+      label: "Traffic",
+      active: state.traffic,
+      onToggle: () => onToggleMetric("traffic"),
+      color: "bg-emerald-500",
+    },
+    {
+      label: "Errors",
+      active: state.errors,
+      onToggle: () => onToggleMetric("errors"),
+      color: "bg-emerald-500",
+    },
+    {
+      label: "Discards",
+      active: state.discards,
+      onToggle: () => onToggleMetric("discards"),
+      color: "bg-emerald-500",
+    },
+    {
+      label: "Status",
+      active: state.status,
+      onToggle: () => onToggleMetric("status"),
+      color: "bg-emerald-500",
+    },
   ];
 
   return (
     <div
       className="relative"
-      onMouseEnter={() => { cancelClose(); setOpen(true); }}
+      onMouseEnter={() => {
+        cancelClose();
+        setOpen(true);
+      }}
       onMouseLeave={scheduleClose}
-      onClick={(e) => { e.stopPropagation(); setOpen((prev) => !prev); }}
+      onClick={(e) => {
+        e.stopPropagation();
+        setOpen((prev) => !prev);
+      }}
     >
       {/* Collapsed: dot strip */}
       <div className="flex items-center gap-1 cursor-pointer px-1 py-0.5 rounded hover:bg-zinc-800 transition-colors">
@@ -87,7 +128,10 @@ export function InterfaceToggleCell({
               {i === 2 && <div className="border-t border-zinc-600 my-1" />}
               <button
                 className="flex items-center gap-2 w-full px-2 py-1 rounded text-xs hover:bg-zinc-600 transition-colors cursor-pointer"
-                onClick={(e) => { e.stopPropagation(); item.onToggle(); }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  item.onToggle();
+                }}
               >
                 <div
                   className={`h-3 w-3 rounded border transition-colors ${
@@ -96,7 +140,9 @@ export function InterfaceToggleCell({
                       : "bg-transparent border-zinc-400"
                   }`}
                 />
-                <span className={item.active ? "text-zinc-100" : "text-zinc-300"}>
+                <span
+                  className={item.active ? "text-zinc-100" : "text-zinc-300"}
+                >
                   {item.label}
                 </span>
               </button>

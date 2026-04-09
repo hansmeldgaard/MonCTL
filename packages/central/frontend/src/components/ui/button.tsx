@@ -3,14 +3,11 @@ import type { ButtonHTMLAttributes } from "react";
 import { cn } from "@/lib/utils.ts";
 
 const variants = {
-  default:
-    "bg-brand-600 text-white hover:bg-brand-500 active:bg-brand-700",
+  default: "bg-brand-600 text-white hover:bg-brand-500 active:bg-brand-700",
   secondary:
     "bg-zinc-800 text-zinc-100 hover:bg-zinc-700 active:bg-zinc-800 border border-zinc-700",
-  ghost:
-    "bg-transparent text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100",
-  destructive:
-    "bg-red-600 text-white hover:bg-red-500 active:bg-red-700",
+  ghost: "bg-transparent text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100",
+  destructive: "bg-red-600 text-white hover:bg-red-500 active:bg-red-700",
   outline:
     "bg-transparent text-zinc-300 border border-zinc-700 hover:bg-zinc-800 hover:text-zinc-100",
 } as const;

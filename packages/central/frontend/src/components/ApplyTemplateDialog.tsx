@@ -15,7 +15,12 @@ interface Props {
   deviceName?: string;
 }
 
-export function ApplyTemplateDialog({ open, onClose, deviceIds, deviceName }: Props) {
+export function ApplyTemplateDialog({
+  open,
+  onClose,
+  deviceIds,
+  deviceName,
+}: Props) {
   const { data: templatesResp } = useTemplates();
   const templates = templatesResp?.data ?? [];
   const applyTemplate = useApplyTemplate();
@@ -24,11 +29,16 @@ export function ApplyTemplateDialog({ open, onClose, deviceIds, deviceName }: Pr
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const selectedTemplate = templates?.find((t: Template) => t.id === selectedTemplateId);
+  const selectedTemplate = templates?.find(
+    (t: Template) => t.id === selectedTemplateId,
+  );
   const apps = selectedTemplate?.config?.apps ?? [];
   const monitoring = selectedTemplate?.config?.monitoring;
   const monitoringChecks = monitoring
-    ? Object.entries(monitoring).filter(([, v]) => v != null) as [string, { app_name: string; interval_seconds: number }][]
+    ? (Object.entries(monitoring).filter(([, v]) => v != null) as [
+        string,
+        { app_name: string; interval_seconds: number },
+      ][])
     : [];
   const hasContent = apps.length > 0 || monitoringChecks.length > 0;
 
@@ -49,8 +59,12 @@ export function ApplyTemplateDialog({ open, onClose, deviceIds, deviceName }: Pr
         templateId: selectedTemplateId,
         deviceIds,
       });
-      const count = (res as { data?: { applied?: number } })?.data?.applied ?? deviceIds.length;
-      setResult(`Template applied to ${count} device${count !== 1 ? "s" : ""}.`);
+      const count =
+        (res as { data?: { applied?: number } })?.data?.applied ??
+        deviceIds.length;
+      setResult(
+        `Template applied to ${count} device${count !== 1 ? "s" : ""}.`,
+      );
       setTimeout(handleClose, 1500);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to apply template");
@@ -58,16 +72,26 @@ export function ApplyTemplateDialog({ open, onClose, deviceIds, deviceName }: Pr
   }
 
   return (
-    <Dialog open={open} onClose={handleClose} title="Apply Template" size="lg" className="min-h-[28rem]">
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      title="Apply Template"
+      size="lg"
+      className="min-h-[28rem]"
+    >
       <div className="space-y-4">
         {deviceName && (
           <p className="text-sm text-zinc-400">
-            Apply a template to <span className="font-medium text-zinc-200">{deviceName}</span>
+            Apply a template to{" "}
+            <span className="font-medium text-zinc-200">{deviceName}</span>
           </p>
         )}
         {!deviceName && deviceIds.length > 1 && (
           <p className="text-sm text-zinc-400">
-            Apply a template to <span className="font-medium text-zinc-200">{deviceIds.length} devices</span>
+            Apply a template to{" "}
+            <span className="font-medium text-zinc-200">
+              {deviceIds.length} devices
+            </span>
           </p>
         )}
 
@@ -78,7 +102,10 @@ export function ApplyTemplateDialog({ open, onClose, deviceIds, deviceName }: Pr
             onChange={setSelectedTemplateId}
             options={[
               { value: "", label: "Select a template..." },
-              ...(templates ?? []).map((t: Template) => ({ value: t.id, label: t.name })),
+              ...(templates ?? []).map((t: Template) => ({
+                value: t.id,
+                label: t.name,
+              })),
             ]}
             placeholder="Select a template..."
           />
@@ -89,31 +116,63 @@ export function ApplyTemplateDialog({ open, onClose, deviceIds, deviceName }: Pr
             <Label className="text-xs text-zinc-500">Apps to be assigned</Label>
             <div className="rounded-md border border-zinc-700 bg-zinc-800/50 p-3 space-y-1.5">
               {monitoringChecks.map(([role, check]) => (
-                <div key={role} className="flex items-center justify-between text-sm">
-                  <span className="font-mono text-zinc-200">{check.app_name}</span>
+                <div
+                  key={role}
+                  className="flex items-center justify-between text-sm"
+                >
+                  <span className="font-mono text-zinc-200">
+                    {check.app_name}
+                  </span>
                   <div className="flex items-center gap-2">
-                    <Badge variant="info" className="text-[10px]">{role}</Badge>
-                    <span className="text-xs text-zinc-500">{check.interval_seconds}s</span>
+                    <Badge variant="info" className="text-[10px]">
+                      {role}
+                    </Badge>
+                    <span className="text-xs text-zinc-500">
+                      {check.interval_seconds}s
+                    </span>
                   </div>
                 </div>
               ))}
-              {apps.map((app: { app_id?: string; app_name?: string; role?: string; schedule_value?: string }, idx: number) => (
-                <div key={idx} className="flex items-center justify-between text-sm">
-                  <span className="font-mono text-zinc-200">{app.app_name ?? app.app_id ?? "unknown"}</span>
-                  <div className="flex items-center gap-2">
-                    {app.role && <Badge variant="info" className="text-[10px]">{app.role}</Badge>}
-                    {app.schedule_value && (
-                      <span className="text-xs text-zinc-500">{app.schedule_value}s</span>
-                    )}
+              {apps.map(
+                (
+                  app: {
+                    app_id?: string;
+                    app_name?: string;
+                    role?: string;
+                    schedule_value?: string;
+                  },
+                  idx: number,
+                ) => (
+                  <div
+                    key={idx}
+                    className="flex items-center justify-between text-sm"
+                  >
+                    <span className="font-mono text-zinc-200">
+                      {app.app_name ?? app.app_id ?? "unknown"}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      {app.role && (
+                        <Badge variant="info" className="text-[10px]">
+                          {app.role}
+                        </Badge>
+                      )}
+                      {app.schedule_value && (
+                        <span className="text-xs text-zinc-500">
+                          {app.schedule_value}s
+                        </span>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                ),
+              )}
             </div>
           </div>
         )}
 
         {selectedTemplate && !hasContent && (
-          <p className="text-sm text-zinc-500 italic">This template has no apps configured.</p>
+          <p className="text-sm text-zinc-500 italic">
+            This template has no apps configured.
+          </p>
         )}
 
         {error && <p className="text-sm text-red-400">{error}</p>}
@@ -121,10 +180,14 @@ export function ApplyTemplateDialog({ open, onClose, deviceIds, deviceName }: Pr
       </div>
 
       <DialogFooter>
-        <Button variant="secondary" onClick={handleClose}>Cancel</Button>
+        <Button variant="secondary" onClick={handleClose}>
+          Cancel
+        </Button>
         <Button
           onClick={handleApply}
-          disabled={!selectedTemplateId || !hasContent || applyTemplate.isPending}
+          disabled={
+            !selectedTemplateId || !hasContent || applyTemplate.isPending
+          }
         >
           {applyTemplate.isPending ? (
             <Loader2 className="h-4 w-4 animate-spin mr-1.5" />

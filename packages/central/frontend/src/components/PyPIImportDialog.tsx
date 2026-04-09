@@ -1,5 +1,12 @@
 import { useState } from "react";
-import { Search, Loader2, Download, CheckCircle2, AlertTriangle, Package } from "lucide-react";
+import {
+  Search,
+  Loader2,
+  Download,
+  CheckCircle2,
+  AlertTriangle,
+  Package,
+} from "lucide-react";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
@@ -23,10 +30,13 @@ interface PyPIImportDialogProps {
 export function PyPIImportDialog({ open, onClose }: PyPIImportDialogProps) {
   const [query, setQuery] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
-  const { data: searchResults, isLoading: searching } = useSearchPyPI(searchQuery);
+  const { data: searchResults, isLoading: searching } =
+    useSearchPyPI(searchQuery);
   const importPyPI = useImportFromPyPI();
 
-  const [importResult, setImportResult] = useState<WheelUploadResult | null>(null);
+  const [importResult, setImportResult] = useState<WheelUploadResult | null>(
+    null,
+  );
   const [importError, setImportError] = useState<string | null>(null);
 
   function handleClose() {
@@ -57,10 +67,16 @@ export function PyPIImportDialog({ open, onClose }: PyPIImportDialogProps) {
     }
   }
 
-  const missingDeps: MissingDependency[] = importResult?.missing_dependencies ?? [];
+  const missingDeps: MissingDependency[] =
+    importResult?.missing_dependencies ?? [];
 
   return (
-    <Dialog open={open} onClose={handleClose} title="Import from PyPI" size="lg">
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      title="Import from PyPI"
+      size="lg"
+    >
       <div className="space-y-4">
         {!importResult ? (
           <>
@@ -102,17 +118,25 @@ export function PyPIImportDialog({ open, onClose }: PyPIImportDialogProps) {
                       <TableRow key={r.name}>
                         <TableCell>
                           <div className="flex items-center gap-2">
-                            <span className="font-mono text-sm text-zinc-200">{r.name}</span>
+                            <span className="font-mono text-sm text-zinc-200">
+                              {r.name}
+                            </span>
                             {r.registered && (
-                              <Badge variant="info" className="text-[10px]">Registered</Badge>
+                              <Badge variant="info" className="text-[10px]">
+                                Registered
+                              </Badge>
                             )}
                           </div>
                         </TableCell>
                         <TableCell className="text-sm text-zinc-400 max-w-[250px] truncate">
-                          {r.summary ?? <span className="text-zinc-600 italic">--</span>}
+                          {r.summary ?? (
+                            <span className="text-zinc-600 italic">--</span>
+                          )}
                         </TableCell>
                         <TableCell>
-                          <span className="font-mono text-xs text-zinc-300">{r.latest_version}</span>
+                          <span className="font-mono text-xs text-zinc-300">
+                            {r.latest_version}
+                          </span>
                         </TableCell>
                         <TableCell>
                           <Button
@@ -138,10 +162,14 @@ export function PyPIImportDialog({ open, onClose }: PyPIImportDialogProps) {
               </div>
             ) : null}
 
-            {importError && <p className="text-sm text-red-400">{importError}</p>}
+            {importError && (
+              <p className="text-sm text-red-400">{importError}</p>
+            )}
 
             <DialogFooter>
-              <Button variant="secondary" onClick={handleClose}>Cancel</Button>
+              <Button variant="secondary" onClick={handleClose}>
+                Cancel
+              </Button>
             </DialogFooter>
           </>
         ) : (
@@ -150,7 +178,8 @@ export function PyPIImportDialog({ open, onClose }: PyPIImportDialogProps) {
               <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0" />
               <div>
                 <p className="text-sm font-medium text-emerald-400">
-                  Successfully imported {importResult.module_name} {importResult.version}
+                  Successfully imported {importResult.module_name}{" "}
+                  {importResult.version}
                 </p>
                 <p className="text-xs text-zinc-400 mt-0.5">
                   {importResult.wheel_filename}
@@ -168,14 +197,21 @@ export function PyPIImportDialog({ open, onClose }: PyPIImportDialogProps) {
                 </div>
                 <div className="space-y-1">
                   {missingDeps.map((d) => (
-                    <div key={d.name} className="flex items-center justify-between text-xs">
+                    <div
+                      key={d.name}
+                      className="flex items-center justify-between text-xs"
+                    >
                       <span className="font-mono text-zinc-300">{d.name}</span>
                       <div className="flex items-center gap-2">
                         <span className="text-zinc-500">{d.version_spec}</span>
                         {d.registered ? (
-                          <Badge variant="info" className="text-[10px]">Registered</Badge>
+                          <Badge variant="info" className="text-[10px]">
+                            Registered
+                          </Badge>
                         ) : (
-                          <Badge variant="warning" className="text-[10px]">Not in registry</Badge>
+                          <Badge variant="warning" className="text-[10px]">
+                            Not in registry
+                          </Badge>
                         )}
                       </div>
                     </div>
@@ -185,7 +221,13 @@ export function PyPIImportDialog({ open, onClose }: PyPIImportDialogProps) {
             )}
 
             <DialogFooter>
-              <Button variant="secondary" onClick={() => { setImportResult(null); setImportError(null); }}>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setImportResult(null);
+                  setImportError(null);
+                }}
+              >
                 Import Another
               </Button>
               <Button onClick={handleClose}>Done</Button>

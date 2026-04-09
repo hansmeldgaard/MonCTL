@@ -18,7 +18,8 @@ services:
         hard: 262144
     restart: always
     healthcheck:
-      test: ["CMD", "clickhouse-client", "--port", "9000", "--query", "SELECT 1"]
+      test:
+        ["CMD", "clickhouse-client", "--port", "9000", "--query", "SELECT 1"]
       interval: 10s
       timeout: 5s
       retries: 3

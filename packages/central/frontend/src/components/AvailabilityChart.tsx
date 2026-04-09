@@ -25,10 +25,10 @@ const LINE_COLORS = [
 ];
 
 interface ChartPoint {
-  time: string;          // formatted label for X axis
-  ts: number;            // epoch ms for sorting
-  up: number;            // 1 = up, 0 = down
-  noData?: boolean;      // true = monitoring gap (no data at all) — strip gray + latency overlay
+  time: string; // formatted label for X axis
+  ts: number; // epoch ms for sorting
+  up: number; // 1 = up, 0 = down
+  noData?: boolean; // true = monitoring gap (no data at all) — strip gray + latency overlay
   availNoData?: boolean; // true = no availability check in this bucket — strip gray only, latency lines unaffected
   [key: string]: number | string | boolean | undefined; // {appName}_ms values
 }
@@ -47,11 +47,11 @@ interface AvailabilityChartProps {
 function chooseBucketMs(spanMs: number): number {
   const DAY = 86400_000;
   const HOUR = 3_600_000;
-  if (spanMs >= 7 * DAY) return HOUR;              // 1 hour buckets for >= 7 days
-  if (spanMs > 1 * DAY)  return 15 * 60_000;     // 15 min buckets for > 24h
-  if (spanMs > 6 * HOUR) return 5 * 60_000;      // 5 min buckets for > 6h
-  if (spanMs > 1 * HOUR) return 60_000;           // 1 min buckets for > 1h
-  return 30_000;                                   // 30 sec buckets otherwise
+  if (spanMs >= 7 * DAY) return HOUR; // 1 hour buckets for >= 7 days
+  if (spanMs > 1 * DAY) return 15 * 60_000; // 15 min buckets for > 24h
+  if (spanMs > 6 * HOUR) return 5 * 60_000; // 5 min buckets for > 6h
+  if (spanMs > 1 * HOUR) return 60_000; // 1 min buckets for > 1h
+  return 30_000; // 30 sec buckets otherwise
 }
 
 /**
@@ -61,13 +61,26 @@ function formatAxisLabel(ts: number, spanMs: number, timezone = "UTC"): string {
   const d = new Date(ts);
   const DAY = 86400_000;
   if (spanMs > 7 * DAY) {
-    return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: timezone });
+    return d.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      timeZone: timezone,
+    });
   }
   if (spanMs > 1 * DAY) {
     return (
-      d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: timezone }) +
+      d.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        timeZone: timezone,
+      }) +
       " " +
-      d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: timezone })
+      d.toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+        timeZone: timezone,
+      })
     );
   }
   return d.toLocaleTimeString("en-US", {
@@ -104,14 +117,19 @@ function buildChartData(
   // Only include results from availability and latency monitoring roles.
   // General assignments (role="" or null) and interface assignments should NOT
   // appear on this chart — they have their own dedicated views.
-  results = results.filter((r) => r.role === "availability" || r.role === "latency");
+  results = results.filter(
+    (r) => r.role === "availability" || r.role === "latency",
+  );
   if (!results.length) return { data: [], appNames: [] };
 
   // Collect unique app names for series
   const assignmentToApp = new Map<string, string>();
   for (const r of results) {
     if (r.assignment_id && r.app_name) {
-      assignmentToApp.set(r.assignment_id, r.app_name ?? r.assignment_id.slice(0, 8));
+      assignmentToApp.set(
+        r.assignment_id,
+        r.app_name ?? r.assignment_id.slice(0, 8),
+      );
     }
   }
   const appNames = [...new Set(assignmentToApp.values())];
@@ -132,7 +150,8 @@ function buildChartData(
   const byAssignment = new Map<string, number[]>();
   for (const r of results) {
     const ts = new Date(r.executed_at).getTime();
-    if (!byAssignment.has(r.assignment_id)) byAssignment.set(r.assignment_id, []);
+    if (!byAssignment.has(r.assignment_id))
+      byAssignment.set(r.assignment_id, []);
     byAssignment.get(r.assignment_id)!.push(ts);
   }
   const perAssignmentMedians: number[] = [];
@@ -161,7 +180,10 @@ function buildChartData(
   // due to a failing latency check.
   const availCheckpoints = results
     .filter((r) => r.role === "availability")
-    .map((r) => ({ ts: new Date(r.executed_at).getTime(), reachable: r.reachable }))
+    .map((r) => ({
+      ts: new Date(r.executed_at).getTime(),
+      reachable: r.reachable,
+    }))
     .sort((a, b) => a.ts - b.ts);
 
   // Return the last known reachable state at or before `atTs`; null = no data yet.
@@ -298,7 +320,9 @@ function buildChartData(
  * Group consecutive noData buckets into contiguous time ranges for use as
  * ReferenceArea overlays on the latency chart.
  */
-function getNoDataRanges(data: ChartPoint[]): Array<{ x1: string; x2: string }> {
+function getNoDataRanges(
+  data: ChartPoint[],
+): Array<{ x1: string; x2: string }> {
   const ranges: Array<{ x1: string; x2: string }> = [];
   let rangeStart: string | null = null;
   let lastTime: string | null = null;
@@ -327,7 +351,12 @@ function LatencyTooltip({
   timezone,
 }: {
   active?: boolean;
-  payload?: { name: string; value: number; color: string; payload?: { ts?: number } }[];
+  payload?: {
+    name: string;
+    value: number;
+    color: string;
+    payload?: { ts?: number };
+  }[];
   label?: string;
   timezone?: string;
 }) {
@@ -356,7 +385,13 @@ function LatencyTooltip({
  * Each bucket is a colored segment: green = UP, red = DOWN, gray = no data.
  * Mouse hover shows a floating tooltip with time + status.
  */
-function StatusStrip({ data, timezone }: { data: ChartPoint[]; timezone?: string }) {
+function StatusStrip({
+  data,
+  timezone,
+}: {
+  data: ChartPoint[];
+  timezone?: string;
+}) {
   const stripRef = useRef<HTMLDivElement>(null);
   const [hovered, setHovered] = useState<{
     idx: number;
@@ -441,15 +476,19 @@ function StatusStrip({ data, timezone }: { data: ChartPoint[]; timezone?: string
           className="pointer-events-none fixed z-50 rounded border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-xs shadow-xl"
           style={{ left: hovered.x + 14, top: hovered.y - 10 }}
         >
-          <div className="text-zinc-400">{hoveredPt.ts ? formatChartDateTime(hoveredPt.ts, timezone) : hoveredPt.time}</div>
+          <div className="text-zinc-400">
+            {hoveredPt.ts
+              ? formatChartDateTime(hoveredPt.ts, timezone)
+              : hoveredPt.time}
+          </div>
           <div
             className="mt-0.5 font-semibold"
             style={{
               color: hoveredPt.noData
-                ? "#71717a"   // zinc-500
+                ? "#71717a" // zinc-500
                 : hoveredPt.up === 1
-                ? "#22c55e"   // green
-                : "#ef4444",  // red
+                  ? "#22c55e" // green
+                  : "#ef4444", // red
             }}
           >
             {hoveredPt.noData ? "No data" : hoveredPt.up === 1 ? "UP" : "DOWN"}
@@ -460,7 +499,13 @@ function StatusStrip({ data, timezone }: { data: ChartPoint[]; timezone?: string
   );
 }
 
-export function AvailabilityChart({ results, fromTs, toTs, timezone = "UTC", onZoom }: AvailabilityChartProps) {
+export function AvailabilityChart({
+  results,
+  fromTs,
+  toTs,
+  timezone = "UTC",
+  onZoom,
+}: AvailabilityChartProps) {
   const { data, appNames } = buildChartData(results, fromTs, toTs, timezone);
 
   // Drag-to-zoom for latency chart (index-based for categorical X axis)
@@ -469,18 +514,29 @@ export function AvailabilityChart({ results, fromTs, toTs, timezone = "UTC", onZ
   const [dragEnd, setDragEnd] = useState<string | null>(null);
   const isDragging = useRef(false);
 
-  const handleMouseDown = useCallback((e: { activeLabel?: string | number }) => {
-    if (e?.activeLabel != null) { setDragStart(String(e.activeLabel)); isDragging.current = true; }
-  }, []);
-  const handleMouseMove = useCallback((e: { activeLabel?: string | number }) => {
-    if (isDragging.current && e?.activeLabel != null) setDragEnd(String(e.activeLabel));
-  }, []);
+  const handleMouseDown = useCallback(
+    (e: { activeLabel?: string | number }) => {
+      if (e?.activeLabel != null) {
+        setDragStart(String(e.activeLabel));
+        isDragging.current = true;
+      }
+    },
+    [],
+  );
+  const handleMouseMove = useCallback(
+    (e: { activeLabel?: string | number }) => {
+      if (isDragging.current && e?.activeLabel != null)
+        setDragEnd(String(e.activeLabel));
+    },
+    [],
+  );
   const handleMouseUp = useCallback(() => {
     if (dragStart && dragEnd && dragStart !== dragEnd) {
       const startIdx = data.findIndex((d) => d.time === dragStart);
       const endIdx = data.findIndex((d) => d.time === dragEnd);
       if (startIdx >= 0 && endIdx >= 0) {
-        const [l, r] = startIdx < endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
+        const [l, r] =
+          startIdx < endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
         if (onZoom && data[l]?.ts && data[r]?.ts) {
           onZoom(data[l].ts, data[r].ts);
         } else {
@@ -507,7 +563,9 @@ export function AvailabilityChart({ results, fromTs, toTs, timezone = "UTC", onZ
   );
 
   // Contiguous no-data ranges for the latency chart overlay
-  const visibleData = zoomRange ? data.slice(zoomRange[0], zoomRange[1] + 1) : data;
+  const visibleData = zoomRange
+    ? data.slice(zoomRange[0], zoomRange[1] + 1)
+    : data;
   const noDataRanges = getNoDataRanges(visibleData);
 
   return (
@@ -542,7 +600,10 @@ export function AvailabilityChart({ results, fromTs, toTs, timezone = "UTC", onZ
               Latency
             </p>
             {!onZoom && zoomRange ? (
-              <button onClick={resetZoom} className="text-[10px] text-brand-400 hover:text-brand-300 cursor-pointer">
+              <button
+                onClick={resetZoom}
+                className="text-[10px] text-brand-400 hover:text-brand-300 cursor-pointer"
+              >
                 Reset zoom
               </button>
             ) : (
@@ -551,9 +612,19 @@ export function AvailabilityChart({ results, fromTs, toTs, timezone = "UTC", onZ
           </div>
           <div className="h-44 select-none">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={visibleData} margin={{ top: 4, right: 16, bottom: 0, left: 0 }} throttleDelay={0}
-                onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+              <LineChart
+                data={visibleData}
+                margin={{ top: 4, right: 16, bottom: 0, left: 0 }}
+                throttleDelay={0}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+              >
+                <CartesianGrid
+                  strokeDasharray="3 3"
+                  stroke="#27272a"
+                  vertical={false}
+                />
                 <XAxis
                   dataKey="time"
                   stroke="#52525b"
@@ -570,9 +641,16 @@ export function AvailabilityChart({ results, fromTs, toTs, timezone = "UTC", onZ
                   tickFormatter={(v: number) => `${v}ms`}
                   width={48}
                 />
-                <Tooltip content={<LatencyTooltip timezone={timezone} />} isAnimationActive={false} />
+                <Tooltip
+                  content={<LatencyTooltip timezone={timezone} />}
+                  isAnimationActive={false}
+                />
                 <Legend
-                  wrapperStyle={{ fontSize: 11, color: "#a1a1aa", paddingTop: 8 }}
+                  wrapperStyle={{
+                    fontSize: 11,
+                    color: "#a1a1aa",
+                    paddingTop: 8,
+                  }}
                 />
                 {/* Gray shaded bands for no-data periods */}
                 {noDataRanges.map((range, i) => (
@@ -586,7 +664,12 @@ export function AvailabilityChart({ results, fromTs, toTs, timezone = "UTC", onZ
                 ))}
                 {/* Drag selection highlight */}
                 {dragStart && dragEnd && (
-                  <ReferenceArea x1={dragStart} x2={dragEnd} fill="#3b82f6" fillOpacity={0.15} />
+                  <ReferenceArea
+                    x1={dragStart}
+                    x2={dragEnd}
+                    fill="#3b82f6"
+                    fillOpacity={0.15}
+                  />
                 )}
                 {appNames.map((appName, i) => (
                   <Line

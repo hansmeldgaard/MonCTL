@@ -52,11 +52,11 @@ tests/
 
 ## Markers
 
-| Marker | Beskrivelse | Kørsel |
-|--------|-------------|--------|
-| `unit` | SQLite in-memory, ingen Docker-services | Default (kører automatisk) |
-| `pg_only` | Kræver PostgreSQL (constraint-tests) | `pytest -m pg_only` |
-| `integration` | Kræver PG + ClickHouse + Redis | `pytest -m integration` |
+| Marker        | Beskrivelse                             | Kørsel                     |
+| ------------- | --------------------------------------- | -------------------------- |
+| `unit`        | SQLite in-memory, ingen Docker-services | Default (kører automatisk) |
+| `pg_only`     | Kræver PostgreSQL (constraint-tests)    | `pytest -m pg_only`        |
+| `integration` | Kræver PG + ClickHouse + Redis          | `pytest -m integration`    |
 
 Default kørsel filtrerer `pg_only` og `integration` fra.
 

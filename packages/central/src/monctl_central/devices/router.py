@@ -989,6 +989,60 @@ async def refresh_interface_metadata(
     return {"status": "success", "data": {"message": "Interface metadata refresh queued.", "ws_notified": ws_notified}}
 
 
+class PollNowRequest(BaseModel):
+    assignment_id: str
+
+
+@router.post("/{device_id}/poll-now")
+async def poll_device_now(
+    device_id: str,
+    body: PollNowRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_permission("device", "edit")),
+):
+    """Send an adhoc poll_device command to the collector(s) running this assignment."""
+    device = await db.get(Device, uuid.UUID(device_id))
+    if device is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+    if not check_tenant_access(auth, device.tenant_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    from monctl_central.ws.router import manager as ws_manager
+    from monctl_central.storage.models import AppAssignment
+    ws_notified = 0
+    payload = {"assignment_id": body.assignment_id, "device_id": device_id}
+
+    # Collect collector IDs to try
+    collector_ids: list[uuid.UUID] = []
+
+    # Pinned assignment → try that specific collector first
+    assignment = await db.get(AppAssignment, uuid.UUID(body.assignment_id))
+    if assignment and assignment.collector_id:
+        collector_ids.append(assignment.collector_id)
+
+    # Group-level → try all approved collectors in the group
+    if device.collector_group_id:
+        result = await db.execute(
+            select(Collector.id).where(
+                Collector.group_id == device.collector_group_id,
+                Collector.status == "APPROVED",
+            )
+        )
+        for cid in result.scalars().all():
+            if cid not in collector_ids:
+                collector_ids.append(cid)
+
+    # Try sending to each — skip non-local connections (KeyError)
+    for cid in collector_ids:
+        try:
+            await ws_manager.send_command(cid, "poll_device", payload, timeout=10)
+            ws_notified += 1
+        except (KeyError, Exception):
+            pass
+
+    return {"status": "success", "data": {"ws_notified": ws_notified}}
+
+
 # ── Interface Rules ─────────────────────────────────────────
 
 

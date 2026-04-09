@@ -10,17 +10,9 @@ export interface FieldErrors {
 export function parseApiFieldErrors(error: unknown): FieldErrors | null {
   if (error instanceof Error && "response" in error) {
     const resp = (error as Record<string, unknown>).response;
-    if (
-      resp &&
-      typeof resp === "object" &&
-      "error" in resp
-    ) {
+    if (resp && typeof resp === "object" && "error" in resp) {
       const errObj = (resp as Record<string, unknown>).error;
-      if (
-        errObj &&
-        typeof errObj === "object" &&
-        "details" in errObj
-      ) {
+      if (errObj && typeof errObj === "object" && "details" in errObj) {
         const details = (errObj as Record<string, unknown>).details;
         if (details && typeof details === "object" && "fields" in details) {
           return (details as { fields: FieldErrors }).fields;

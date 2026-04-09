@@ -24,26 +24,26 @@ Collectors (worker1-4) → poll jobs fra central → eksekver checks → forward
 
 ## Tech Stack
 
-| Layer | Teknologi |
-|-------|-----------|
-| Backend | Python 3.11, FastAPI, SQLAlchemy 2.0 async, Alembic, Pydantic 2 |
-| Frontend | React 19, TypeScript 5.9, Vite 7, Tailwind CSS v4, React Query (TanStack) 5 |
-| Time-series | ClickHouse (ReplicatedMergeTree, replicated cluster) |
-| Relational DB | PostgreSQL 16 (Patroni HA) |
-| Cache | Redis (single node) |
-| Proxy | HAProxy (TLS termination) + Keepalived (VIP failover) |
-| Collector | Python 3.12, gRPC, SQLite (lokal buffer) |
-| Icons | Lucide React |
-| Charts | Recharts |
-| Code editor | CodeMirror 6 (Python syntax) |
+| Layer         | Teknologi                                                                   |
+| ------------- | --------------------------------------------------------------------------- |
+| Backend       | Python 3.11, FastAPI, SQLAlchemy 2.0 async, Alembic, Pydantic 2             |
+| Frontend      | React 19, TypeScript 5.9, Vite 7, Tailwind CSS v4, React Query (TanStack) 5 |
+| Time-series   | ClickHouse (ReplicatedMergeTree, replicated cluster)                        |
+| Relational DB | PostgreSQL 16 (Patroni HA)                                                  |
+| Cache         | Redis (single node)                                                         |
+| Proxy         | HAProxy (TLS termination) + Keepalived (VIP failover)                       |
+| Collector     | Python 3.12, gRPC, SQLite (lokal buffer)                                    |
+| Icons         | Lucide React                                                                |
+| Charts        | Recharts                                                                    |
+| Code editor   | CodeMirror 6 (Python syntax)                                                |
 
 ## Serverinventar
 
-| Rolle | Hosts | IPs |
-|-------|-------|-----|
-| Central | central1-4 | 10.145.210.41-.44 |
-| Workers | worker1-4 | 10.145.210.31-.34 |
-| VIP | (keepalived) | 10.145.210.40 |
+| Rolle   | Hosts        | IPs               |
+| ------- | ------------ | ----------------- |
+| Central | central1-4   | 10.145.210.41-.44 |
+| Workers | worker1-4    | 10.145.210.31-.34 |
+| VIP     | (keepalived) | 10.145.210.40     |
 
 SSH bruger: `monctl` på alle servere. Compose files: `/opt/monctl/{central,collector}/docker-compose.yml`.
 
@@ -154,51 +154,51 @@ packages/
 
 ## PostgreSQL-modeller (storage/models.py) — 42 modeller
 
-| Model | Tabel | Nøglefelter |
-|-------|-------|-------------|
-| CollectorCluster | collector_clusters | id, name, replication_factor, peer_port, settings (JSONB) |
-| Collector | collectors | id, name, hostname, ip_addresses, status (PENDING/ACTIVE/DOWN/REJECTED), load_score, effective_load, total_jobs, deadline_miss_rate, group_id, cluster_id, fingerprint |
-| CollectorGroup | collector_groups | id, name, description, label_selector (JSONB) |
-| App | apps | id, name, description, app_type (script/sdk), config_schema (JSONB), target_table |
-| AppVersion | app_versions | id, app_id, version, source_code, requirements (JSONB), entry_class, is_latest, checksum, display_template, volatile_keys (JSONB) |
-| AppAssignment | app_assignments | id, app_id, app_version_id, collector_id, device_id, config (JSONB), schedule_type, schedule_value, resource_limits, role, use_latest, enabled, credential_id |
-| AppConnectorBinding | app_connector_bindings | id, app_id, connector_id, alias, use_latest, settings (JSONB) |
-| AssignmentConnectorBinding | assignment_connector_bindings | id, assignment_id, connector_id, connector_version_id, alias, credential_id, use_latest, settings (JSONB) |
-| AssignmentCredentialOverride | assignment_credential_overrides | id, assignment_id, alias, credential_id |
-| Device | devices | id, name, address, device_type, is_enabled, tenant_id, collector_group_id, default_credential_id, credentials (JSONB), labels (JSONB), metadata (JSONB) |
-| DeviceType | device_types | id, name, description, category |
-| Credential | credentials | id, name, credential_type, secret_data (AES-256-GCM encrypted), template_id |
-| CredentialKey | credential_keys | id, name, description, key_type (plain/secret/enum), is_secret, enum_values |
-| CredentialValue | credential_values | id, credential_id, key_id, value |
-| CredentialTemplate | credential_templates | id, name, description |
-| CredentialType | credential_types | id, name, description |
-| User | users | id, username, password_hash, role (admin/viewer), role_id, timezone, all_tenants, is_active |
-| Tenant | tenants | id, name, metadata (JSONB) |
-| UserTenant | user_tenants | (user_id, tenant_id) composite PK |
-| Role | roles | id, name, description, is_system |
-| RolePermission | role_permissions | id, role_id, resource, action |
-| AlertDefinition | alert_definitions | id, app_id, name, expression, window, severity, enabled, message_template |
-| AlertEntity | alert_entities | id, definition_id, assignment_id, device_id, state (ok/firing/resolved), enabled, entity_key, entity_labels, fire_count, fire_history |
-| ThresholdVariable | threshold_variables | id, app_id, name, display_name, description, default_value, app_value, unit (free-text, max 50 chars) |
-| ThresholdOverride | threshold_overrides | id, variable_id, device_id, entity_key, value |
-| EventPolicy | event_policies | id, name, definition_id, mode, fire_count_threshold, window_size, event_severity, auto_clear_on_resolve |
-| ActiveEvent | active_events | id, policy_id, entity_key, clickhouse_event_id |
-| ApiKey | api_keys | id, key_hash, key_type (collector/management), collector_id, user_id, scopes |
-| RegistrationToken | registration_tokens | id, token_hash, short_code, one_time, used, cluster_id |
-| TlsCertificate | tls_certificates | id, name, cert_pem, key_pem_encrypted, is_active |
-| Template | templates | id, name, description, config (JSONB) |
-| SnmpOid | snmp_oids | id, name, oid, description |
-| SystemSetting | system_settings | key (PK), value |
-| InterfaceMetadata | interface_metadata | id, device_id, if_name, current_if_index, if_descr, if_alias, if_speed_mbps, polling_enabled, alerting_enabled, poll_metrics |
-| LabelKey | label_keys | id, key, description, color, show_description, predefined_values |
-| PythonModule | python_modules | id, name, description, homepage_url, is_approved |
-| PythonModuleVersion | python_module_versions | id, module_id, version, dependencies, python_requires |
-| WheelFile | wheel_files | id, version_id, filename, file_data, sha256_hash, file_size, python_tag, abi_tag, platform_tag |
-| Connector | connectors | id, name, description, connector_type, is_builtin |
-| ConnectorVersion | connector_versions | id, connector_id, version, source_code, requirements, entry_class, is_latest, checksum |
-| Pack | packs | id, pack_uid, name, description, author, current_version |
-| PackVersion | pack_versions | id, pack_id, version, manifest (JSONB), changelog |
-| AppCache | app_cache | id, app_name, cache_key, cache_value, ttl_seconds, device_id |
+| Model                        | Tabel                           | Nøglefelter                                                                                                                                                            |
+| ---------------------------- | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CollectorCluster             | collector_clusters              | id, name, replication_factor, peer_port, settings (JSONB)                                                                                                              |
+| Collector                    | collectors                      | id, name, hostname, ip_addresses, status (PENDING/ACTIVE/DOWN/REJECTED), load_score, effective_load, total_jobs, deadline_miss_rate, group_id, cluster_id, fingerprint |
+| CollectorGroup               | collector_groups                | id, name, description, label_selector (JSONB)                                                                                                                          |
+| App                          | apps                            | id, name, description, app_type (script/sdk), config_schema (JSONB), target_table                                                                                      |
+| AppVersion                   | app_versions                    | id, app_id, version, source_code, requirements (JSONB), entry_class, is_latest, checksum, display_template, volatile_keys (JSONB)                                      |
+| AppAssignment                | app_assignments                 | id, app_id, app_version_id, collector_id, device_id, config (JSONB), schedule_type, schedule_value, resource_limits, role, use_latest, enabled, credential_id          |
+| AppConnectorBinding          | app_connector_bindings          | id, app_id, connector_id, alias, use_latest, settings (JSONB)                                                                                                          |
+| AssignmentConnectorBinding   | assignment_connector_bindings   | id, assignment_id, connector_id, connector_version_id, alias, credential_id, use_latest, settings (JSONB)                                                              |
+| AssignmentCredentialOverride | assignment_credential_overrides | id, assignment_id, alias, credential_id                                                                                                                                |
+| Device                       | devices                         | id, name, address, device_type, is_enabled, tenant_id, collector_group_id, default_credential_id, credentials (JSONB), labels (JSONB), metadata (JSONB)                |
+| DeviceType                   | device_types                    | id, name, description, category                                                                                                                                        |
+| Credential                   | credentials                     | id, name, credential_type, secret_data (AES-256-GCM encrypted), template_id                                                                                            |
+| CredentialKey                | credential_keys                 | id, name, description, key_type (plain/secret/enum), is_secret, enum_values                                                                                            |
+| CredentialValue              | credential_values               | id, credential_id, key_id, value                                                                                                                                       |
+| CredentialTemplate           | credential_templates            | id, name, description                                                                                                                                                  |
+| CredentialType               | credential_types                | id, name, description                                                                                                                                                  |
+| User                         | users                           | id, username, password_hash, role (admin/viewer), role_id, timezone, all_tenants, is_active                                                                            |
+| Tenant                       | tenants                         | id, name, metadata (JSONB)                                                                                                                                             |
+| UserTenant                   | user_tenants                    | (user_id, tenant_id) composite PK                                                                                                                                      |
+| Role                         | roles                           | id, name, description, is_system                                                                                                                                       |
+| RolePermission               | role_permissions                | id, role_id, resource, action                                                                                                                                          |
+| AlertDefinition              | alert_definitions               | id, app_id, name, expression, window, severity, enabled, message_template                                                                                              |
+| AlertEntity                  | alert_entities                  | id, definition_id, assignment_id, device_id, state (ok/firing/resolved), enabled, entity_key, entity_labels, fire_count, fire_history                                  |
+| ThresholdVariable            | threshold_variables             | id, app_id, name, display_name, description, default_value, app_value, unit (free-text, max 50 chars)                                                                  |
+| ThresholdOverride            | threshold_overrides             | id, variable_id, device_id, entity_key, value                                                                                                                          |
+| EventPolicy                  | event_policies                  | id, name, definition_id, mode, fire_count_threshold, window_size, event_severity, auto_clear_on_resolve                                                                |
+| ActiveEvent                  | active_events                   | id, policy_id, entity_key, clickhouse_event_id                                                                                                                         |
+| ApiKey                       | api_keys                        | id, key_hash, key_type (collector/management), collector_id, user_id, scopes                                                                                           |
+| RegistrationToken            | registration_tokens             | id, token_hash, short_code, one_time, used, cluster_id                                                                                                                 |
+| TlsCertificate               | tls_certificates                | id, name, cert_pem, key_pem_encrypted, is_active                                                                                                                       |
+| Template                     | templates                       | id, name, description, config (JSONB)                                                                                                                                  |
+| SnmpOid                      | snmp_oids                       | id, name, oid, description                                                                                                                                             |
+| SystemSetting                | system_settings                 | key (PK), value                                                                                                                                                        |
+| InterfaceMetadata            | interface_metadata              | id, device_id, if_name, current_if_index, if_descr, if_alias, if_speed_mbps, polling_enabled, alerting_enabled, poll_metrics                                           |
+| LabelKey                     | label_keys                      | id, key, description, color, show_description, predefined_values                                                                                                       |
+| PythonModule                 | python_modules                  | id, name, description, homepage_url, is_approved                                                                                                                       |
+| PythonModuleVersion          | python_module_versions          | id, module_id, version, dependencies, python_requires                                                                                                                  |
+| WheelFile                    | wheel_files                     | id, version_id, filename, file_data, sha256_hash, file_size, python_tag, abi_tag, platform_tag                                                                         |
+| Connector                    | connectors                      | id, name, description, connector_type, is_builtin                                                                                                                      |
+| ConnectorVersion             | connector_versions              | id, connector_id, version, source_code, requirements, entry_class, is_latest, checksum                                                                                 |
+| Pack                         | packs                           | id, pack_uid, name, description, author, current_version                                                                                                               |
+| PackVersion                  | pack_versions                   | id, pack_id, version, manifest (JSONB), changelog                                                                                                                      |
+| AppCache                     | app_cache                       | id, app_name, cache_key, cache_value, ttl_seconds, device_id                                                                                                           |
 
 ### Konventioner
 
@@ -214,15 +214,15 @@ packages/
 
 5 domænetabeller + materialized views (ReplacingMergeTree for `_latest`):
 
-| Tabel | Indhold | ORDER BY | Nøglekolonner |
-|-------|---------|----------|---------------|
-| availability_latency | Ping, HTTP, port checks | (assignment_id, executed_at) | state, rtt_ms, response_time_ms, reachable, status_code |
-| performance | CPU, memory, custom metrics | (device_id, component_type, component, executed_at) | component, component_type, metric_names[], metric_values[] |
-| interface | Network interface stats | (device_id, interface_id, executed_at) | interface_id, if_name, if_speed_mbps, in/out rates, errors, discards, utilization |
-| config | Config/discovery data (change-only writes) | (device_id, component_type, component, config_key, executed_at) | config_key, config_value, config_hash |
-| alert_log | Alert fire/clear history | (tenant_id, definition_id, entity_key, occurred_at) | action, current_value, threshold_value, fire_count |
-| events | Event lifecycle (active/ack/cleared) | (tenant_id, severity, occurred_at, id) | event_type, definition_id, policy_id, state |
-| logs | Centralized Docker/app logs | (collector_name, container_name, timestamp) | level, stream, message, host_label, image_name |
+| Tabel                | Indhold                                    | ORDER BY                                                        | Nøglekolonner                                                                     |
+| -------------------- | ------------------------------------------ | --------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| availability_latency | Ping, HTTP, port checks                    | (assignment_id, executed_at)                                    | state, rtt_ms, response_time_ms, reachable, status_code                           |
+| performance          | CPU, memory, custom metrics                | (device_id, component_type, component, executed_at)             | component, component_type, metric_names[], metric_values[]                        |
+| interface            | Network interface stats                    | (device_id, interface_id, executed_at)                          | interface_id, if_name, if_speed_mbps, in/out rates, errors, discards, utilization |
+| config               | Config/discovery data (change-only writes) | (device_id, component_type, component, config_key, executed_at) | config_key, config_value, config_hash                                             |
+| alert_log            | Alert fire/clear history                   | (tenant_id, definition_id, entity_key, occurred_at)             | action, current_value, threshold_value, fire_count                                |
+| events               | Event lifecycle (active/ack/cleared)       | (tenant_id, severity, occurred_at, id)                          | event_type, definition_id, policy_id, state                                       |
+| logs                 | Centralized Docker/app logs                | (collector_name, container_name, timestamp)                     | level, stream, message, host_label, image_name                                    |
 
 Alle tabeller har: assignment_id, collector_id, app_id, device_id, executed_at, received_at + denormaliserede felter: collector_name, device_name, app_name, tenant_id.
 
@@ -245,6 +245,7 @@ Hver tabel har en `_latest` materialized view (ReplacingMergeTree) der holder se
 **Templates**: `CredentialTemplate` + felter definerer hvilke keys en credential-type kræver.
 
 **Resolution chain** (for connector bindings, i prioritetsrækkefølge):
+
 1. `AssignmentCredentialOverride` — per-assignment, per-connector-alias override
 2. `AppAssignment.credential_id` — assignment-level credential
 3. `Device.default_credential_id` — device-level fallback
@@ -284,6 +285,7 @@ Hver tabel har en `_latest` materialized view (ReplacingMergeTree) der holder se
 **Volatile keys**: `AppVersion.volatile_keys` JSONB felt — keys der ændres hvert poll (fx uptime). Bypasser suppression.
 
 **Change history API** (`config_history/router.py`): 4 endpoints under `/v1/devices/{id}/config/`:
+
 - `GET /changelog` — paginated ændringshistorik
 - `GET /snapshot` — nuværende config (fra `config_latest FINAL`)
 - `GET /diff?config_key=...` — værdihistorik for specifik key
@@ -303,7 +305,7 @@ Hver tabel har en `_latest` materialized view (ReplacingMergeTree) der holder se
 
 **Two-tier architecture**: Alerts (per-entity, high-volume) → Events (policy-promoted, lower-volume).
 
-**Alert Definitions** (`AlertDefinition`): App-level (NOT version-level). DSL expression language with arithmetic (+, -, *, /), `rate()`, safety limits (2000 chars, 200 tokens, 10 nesting). Auto-extracts threshold parameters.
+**Alert Definitions** (`AlertDefinition`): App-level (NOT version-level). DSL expression language with arithmetic (+, -, \*, /), `rate()`, safety limits (2000 chars, 200 tokens, 10 nesting). Auto-extracts threshold parameters.
 
 **DSL Examples**: `avg(in_utilization_pct) > 80`, `rate(in_octets) * 8 / 1000000 > 500`, `firmware_version CHANGED`, `state IN ('down')`.
 
@@ -347,11 +349,11 @@ Query: `GET /v1/logs` (filter, paginate, sort), `GET /v1/logs/filters` (distinct
 
 **Ingen hardcodede IP-adresser i applikationskoden.** Patroni, etcd og Redis Sentinel node-lister konfigureres via env vars:
 
-| Env var | Format | Eksempel |
-|---------|--------|----------|
-| `MONCTL_PATRONI_NODES` | `name:ip,name:ip,...` | `central1:10.145.210.41,central2:10.145.210.42` |
-| `MONCTL_ETCD_NODES` | `name:ip,name:ip,...` | `central1:10.145.210.41,central2:10.145.210.42,central3:10.145.210.43` |
-| `MONCTL_REDIS_SENTINEL_HOSTS` | `host:port,host:port,...` | `10.145.210.41:26379,10.145.210.42:26379,10.145.210.43:26379` |
+| Env var                       | Format                    | Eksempel                                                               |
+| ----------------------------- | ------------------------- | ---------------------------------------------------------------------- |
+| `MONCTL_PATRONI_NODES`        | `name:ip,name:ip,...`     | `central1:10.145.210.41,central2:10.145.210.42`                        |
+| `MONCTL_ETCD_NODES`           | `name:ip,name:ip,...`     | `central1:10.145.210.41,central2:10.145.210.42,central3:10.145.210.43` |
+| `MONCTL_REDIS_SENTINEL_HOSTS` | `host:port,host:port,...` | `10.145.210.41:26379,10.145.210.42:26379,10.145.210.43:26379`          |
 
 `parse_node_list()` i `config.py` parser `name:ip`-formatet. Health checks returnerer "unconfigured" status hvis ikke sat.
 
@@ -387,54 +389,54 @@ Import/export af monitoring packs (apps + connectors + alert definitions + crede
 
 ### Web API (`/v1/`) — 30 routers
 
-| Router | Prefix | Endpoints | Auth |
-|--------|--------|-----------|------|
-| auth | /v1/auth | POST login, logout, refresh; GET me | Public (login) |
-| devices | /v1/devices | GET list (sort/filter/paginate), POST create, POST bulk-patch, POST bulk-delete, GET/:id, PUT/:id, DELETE/:id, monitoring CRUD, interface-metadata CRUD | require_auth |
-| collectors | /v1/collectors | POST register, approve, reject, heartbeat; GET list, /:id, config; PUT/:id, DELETE/:id | Mixed |
-| collector_groups | /v1/collector-groups | CRUD | require_auth |
-| apps | /v1/apps | CRUD apps + versions + assignments + connector bindings | require_auth |
-| results | /v1/results | GET list, /latest, /by-device/:id, /interfaces, /interface-history | require_auth |
-| config_history | /v1/devices/:id/config | GET /changelog, /snapshot, /diff, /change-timestamps | require_auth |
-| credentials | /v1/credentials | CRUD + types CRUD (secrets aldrig returneret) | require_auth |
-| credential_keys | /v1/credential-keys | CRUD | require_auth |
-| credential_templates | /v1/credential-templates | CRUD | require_auth |
-| connectors | /v1/connectors | CRUD connectors + versions | require_auth |
-| alerting | /v1/alerts | Definitions, instances, evaluation, metrics, thresholds | require_auth |
-| events | /v1/events | GET list, POST acknowledge, POST clear | require_auth |
-| tenants | /v1/tenants | CRUD | require_auth |
-| users | /v1/users | CRUD + PUT /me/timezone + tenant assignments | require_admin (mest) |
-| roles | /v1/roles | CRUD + permissions | require_admin |
-| device_types | /v1/device-types | CRUD | require_auth |
-| snmp_oids | /v1/snmp-oids | CRUD | require_auth |
-| label_keys | /v1/label-keys | CRUD | require_auth |
-| registration_tokens | /v1/registration-tokens | POST create, GET list | require_auth |
-| templates | /v1/templates | CRUD + POST /:id/apply | require_auth |
-| packs | /v1/packs | Import, export, preview, CRUD | require_auth |
-| python_modules | /v1/python-modules | Registry + PyPI import + wheel upload/download | require_auth |
-| user_api_keys | /v1/user-api-keys | CRUD | require_auth |
-| settings | /v1/settings | GET, PUT | require_admin |
-| tls | /v1/settings/tls | GET, POST generate/upload/deploy | require_admin |
-| system | /v1/system | GET /health (concurrent subsystem checks) | require_admin |
-| docker_infra | /v1/docker-infra | GET overview, stats, containers, logs, events, images | require_auth |
-| dashboard | /v1/dashboard | GET /summary (aggregated dashboard data) | require_auth |
-| logs | /v1/logs | GET (query+filter+paginate), GET /filters, POST /ingest | require_auth |
-| ws_command | /v1/collectors | GET /{id}/ws-status, GET /ws-connections, POST /{id}/command/{type} | require_auth |
-| ws | /ws/collector | WebSocket endpoint (persistent bidirectional) | token query param |
-| ingestion | /v1 | POST /ingest (legacy) | require_collector_auth |
+| Router               | Prefix                   | Endpoints                                                                                                                                               | Auth                   |
+| -------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| auth                 | /v1/auth                 | POST login, logout, refresh; GET me                                                                                                                     | Public (login)         |
+| devices              | /v1/devices              | GET list (sort/filter/paginate), POST create, POST bulk-patch, POST bulk-delete, GET/:id, PUT/:id, DELETE/:id, monitoring CRUD, interface-metadata CRUD | require_auth           |
+| collectors           | /v1/collectors           | POST register, approve, reject, heartbeat; GET list, /:id, config; PUT/:id, DELETE/:id                                                                  | Mixed                  |
+| collector_groups     | /v1/collector-groups     | CRUD                                                                                                                                                    | require_auth           |
+| apps                 | /v1/apps                 | CRUD apps + versions + assignments + connector bindings                                                                                                 | require_auth           |
+| results              | /v1/results              | GET list, /latest, /by-device/:id, /interfaces, /interface-history                                                                                      | require_auth           |
+| config_history       | /v1/devices/:id/config   | GET /changelog, /snapshot, /diff, /change-timestamps                                                                                                    | require_auth           |
+| credentials          | /v1/credentials          | CRUD + types CRUD (secrets aldrig returneret)                                                                                                           | require_auth           |
+| credential_keys      | /v1/credential-keys      | CRUD                                                                                                                                                    | require_auth           |
+| credential_templates | /v1/credential-templates | CRUD                                                                                                                                                    | require_auth           |
+| connectors           | /v1/connectors           | CRUD connectors + versions                                                                                                                              | require_auth           |
+| alerting             | /v1/alerts               | Definitions, instances, evaluation, metrics, thresholds                                                                                                 | require_auth           |
+| events               | /v1/events               | GET list, POST acknowledge, POST clear                                                                                                                  | require_auth           |
+| tenants              | /v1/tenants              | CRUD                                                                                                                                                    | require_auth           |
+| users                | /v1/users                | CRUD + PUT /me/timezone + tenant assignments                                                                                                            | require_admin (mest)   |
+| roles                | /v1/roles                | CRUD + permissions                                                                                                                                      | require_admin          |
+| device_types         | /v1/device-types         | CRUD                                                                                                                                                    | require_auth           |
+| snmp_oids            | /v1/snmp-oids            | CRUD                                                                                                                                                    | require_auth           |
+| label_keys           | /v1/label-keys           | CRUD                                                                                                                                                    | require_auth           |
+| registration_tokens  | /v1/registration-tokens  | POST create, GET list                                                                                                                                   | require_auth           |
+| templates            | /v1/templates            | CRUD + POST /:id/apply                                                                                                                                  | require_auth           |
+| packs                | /v1/packs                | Import, export, preview, CRUD                                                                                                                           | require_auth           |
+| python_modules       | /v1/python-modules       | Registry + PyPI import + wheel upload/download                                                                                                          | require_auth           |
+| user_api_keys        | /v1/user-api-keys        | CRUD                                                                                                                                                    | require_auth           |
+| settings             | /v1/settings             | GET, PUT                                                                                                                                                | require_admin          |
+| tls                  | /v1/settings/tls         | GET, POST generate/upload/deploy                                                                                                                        | require_admin          |
+| system               | /v1/system               | GET /health (concurrent subsystem checks)                                                                                                               | require_admin          |
+| docker_infra         | /v1/docker-infra         | GET overview, stats, containers, logs, events, images                                                                                                   | require_auth           |
+| dashboard            | /v1/dashboard            | GET /summary (aggregated dashboard data)                                                                                                                | require_auth           |
+| logs                 | /v1/logs                 | GET (query+filter+paginate), GET /filters, POST /ingest                                                                                                 | require_auth           |
+| ws_command           | /v1/collectors           | GET /{id}/ws-status, GET /ws-connections, POST /{id}/command/{type}                                                                                     | require_auth           |
+| ws                   | /ws/collector            | WebSocket endpoint (persistent bidirectional)                                                                                                           | token query param      |
+| ingestion            | /v1                      | POST /ingest (legacy)                                                                                                                                   | require_collector_auth |
 
 ### Collector API (`/api/v1/`)
 
-| Endpoint | Metode | Formål |
-|----------|--------|--------|
-| /api/v1/jobs | GET | Hent job assignments (server-side weighted partitioning, excludes disabled devices) |
-| /api/v1/apps/:id/metadata | GET | App metadata |
-| /api/v1/apps/:id/code | GET | App source code + requirements |
-| /api/v1/connectors/:id/code | GET | Connector source code + requirements |
-| /api/v1/credentials/:name | GET | Dekrypteret credential |
-| /api/v1/results | POST | Push check resultater |
-| /api/v1/logs/ingest | POST | Batch log ingestion (collector → ClickHouse) |
-| /api/v1/app-cache | GET/PUT | App-level persistent cache |
+| Endpoint                    | Metode  | Formål                                                                              |
+| --------------------------- | ------- | ----------------------------------------------------------------------------------- |
+| /api/v1/jobs                | GET     | Hent job assignments (server-side weighted partitioning, excludes disabled devices) |
+| /api/v1/apps/:id/metadata   | GET     | App metadata                                                                        |
+| /api/v1/apps/:id/code       | GET     | App source code + requirements                                                      |
+| /api/v1/connectors/:id/code | GET     | Connector source code + requirements                                                |
+| /api/v1/credentials/:name   | GET     | Dekrypteret credential                                                              |
+| /api/v1/results             | POST    | Push check resultater                                                               |
+| /api/v1/logs/ingest         | POST    | Batch log ingestion (collector → ClickHouse)                                        |
+| /api/v1/app-cache           | GET/PUT | App-level persistent cache                                                          |
 
 ### API Response-format
 
@@ -462,62 +464,62 @@ stmt = apply_tenant_filter(stmt, auth, Device.tenant_id)
 
 ### Sider (28)
 
-| Side | Route | Formål |
-|------|-------|--------|
-| LoginPage | /login | Username/password login |
-| DashboardPage | / | 4 stat cards (alerts/up/down/collectors) + active alerts tabel + worst devices + performance top-N (CPU/memory/bandwidth) + collector issues |
-| SystemHealthPage | /system-health | Subsystem-kort (PG, CH, Redis, Collectors, Scheduler) + collector-tabel med filter |
-| DockerInfraPage | /docker-infrastructure | Docker host overview, containers, logs, events, images |
-| DevicesPage | /devices | Server-side pagination/sort/filter, bulk actions (enable/disable/move/delete/template), status dots |
-| DeviceDetailPage | /devices/:id | Tabs: Overview (staleness warning + availability chart), Checks, Assignments, Interfaces, Performance, Config (poll status badge), Alerts, Thresholds (flat variable list with effective value highlighting) |
-| AppsPage | /apps | App liste med type/target_table/version count |
-| AppDetailPage | /apps/:id | Tabs: Overview (edit), Versions (CodeEditor+VersionActions), Connector Bindings, Alerts, Thresholds (inline-editable Default+App Value, UnitSelector, Description) |
-| ConnectorsPage | /connectors | Connector liste |
-| ConnectorDetailPage | /connectors/:id | Connector versions + code editor |
-| PythonModulesPage | /python-modules | Package registry, PyPI import, wheel upload |
-| AssignmentsPage | /assignments | Assignment liste med per-column filter, bulk actions (schedule, credential, enabled) |
-| TemplatesPage | /templates | Template CRUD |
-| PacksPage | /packs | Monitoring pack liste |
-| PackDetailPage | /packs/:id | Pack versions, entities, export |
-| AlertsPage | /alerts | Tabs: Active Alerts, Alert Log (ClickHouse), Alert Definitions |
-| EventsPage | /events | Active/cleared events med acknowledge/clear |
-| AnalyticsPage | /analytics | Grafana dashboard links, reads grafana_url fra system settings |
-| UpgradesPage | /upgrades | OS upgrades, package management, rolling upgrade orchestration |
-| SettingsPage | /settings/:tab | Tabs: Profile, System, Device Types, Collectors, Credentials, SNMP OIDs, Labels, Roles, Users, Tenants |
-| CollectorsPage | (settings tab) | Pending/Active collectors, Groups, Registration Tokens |
-| CredentialsPage | (settings tab) | Credential Keys + Templates + Types + Credentials CRUD |
-| UsersPage | (settings tab) | User CRUD + tenant assignments |
-| TenantsPage | (settings tab) | Tenant CRUD med metadata editor |
-| DeviceTypesPage | (settings tab) | Device type CRUD |
-| LabelKeysPage | (settings tab) | Label key CRUD med farver og predefined values |
-| RolesPage | (settings tab) | RBAC role CRUD + permissions |
-| SnmpOidsPage | (settings tab) | SNMP OID catalog CRUD |
+| Side                | Route                  | Formål                                                                                                                                                                                                       |
+| ------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| LoginPage           | /login                 | Username/password login                                                                                                                                                                                      |
+| DashboardPage       | /                      | 4 stat cards (alerts/up/down/collectors) + active alerts tabel + worst devices + performance top-N (CPU/memory/bandwidth) + collector issues                                                                 |
+| SystemHealthPage    | /system-health         | Subsystem-kort (PG, CH, Redis, Collectors, Scheduler) + collector-tabel med filter                                                                                                                           |
+| DockerInfraPage     | /docker-infrastructure | Docker host overview, containers, logs, events, images                                                                                                                                                       |
+| DevicesPage         | /devices               | Server-side pagination/sort/filter, bulk actions (enable/disable/move/delete/template), status dots                                                                                                          |
+| DeviceDetailPage    | /devices/:id           | Tabs: Overview (staleness warning + availability chart), Checks, Assignments, Interfaces, Performance, Config (poll status badge), Alerts, Thresholds (flat variable list with effective value highlighting) |
+| AppsPage            | /apps                  | App liste med type/target_table/version count                                                                                                                                                                |
+| AppDetailPage       | /apps/:id              | Tabs: Overview (edit), Versions (CodeEditor+VersionActions), Connector Bindings, Alerts, Thresholds (inline-editable Default+App Value, UnitSelector, Description)                                           |
+| ConnectorsPage      | /connectors            | Connector liste                                                                                                                                                                                              |
+| ConnectorDetailPage | /connectors/:id        | Connector versions + code editor                                                                                                                                                                             |
+| PythonModulesPage   | /python-modules        | Package registry, PyPI import, wheel upload                                                                                                                                                                  |
+| AssignmentsPage     | /assignments           | Assignment liste med per-column filter, bulk actions (schedule, credential, enabled)                                                                                                                         |
+| TemplatesPage       | /templates             | Template CRUD                                                                                                                                                                                                |
+| PacksPage           | /packs                 | Monitoring pack liste                                                                                                                                                                                        |
+| PackDetailPage      | /packs/:id             | Pack versions, entities, export                                                                                                                                                                              |
+| AlertsPage          | /alerts                | Tabs: Active Alerts, Alert Log (ClickHouse), Alert Definitions                                                                                                                                               |
+| EventsPage          | /events                | Active/cleared events med acknowledge/clear                                                                                                                                                                  |
+| AnalyticsPage       | /analytics             | Grafana dashboard links, reads grafana_url fra system settings                                                                                                                                               |
+| UpgradesPage        | /upgrades              | OS upgrades, package management, rolling upgrade orchestration                                                                                                                                               |
+| SettingsPage        | /settings/:tab         | Tabs: Profile, System, Device Types, Collectors, Credentials, SNMP OIDs, Labels, Roles, Users, Tenants                                                                                                       |
+| CollectorsPage      | (settings tab)         | Pending/Active collectors, Groups, Registration Tokens                                                                                                                                                       |
+| CredentialsPage     | (settings tab)         | Credential Keys + Templates + Types + Credentials CRUD                                                                                                                                                       |
+| UsersPage           | (settings tab)         | User CRUD + tenant assignments                                                                                                                                                                               |
+| TenantsPage         | (settings tab)         | Tenant CRUD med metadata editor                                                                                                                                                                              |
+| DeviceTypesPage     | (settings tab)         | Device type CRUD                                                                                                                                                                                             |
+| LabelKeysPage       | (settings tab)         | Label key CRUD med farver og predefined values                                                                                                                                                               |
+| RolesPage           | (settings tab)         | RBAC role CRUD + permissions                                                                                                                                                                                 |
+| SnmpOidsPage        | (settings tab)         | SNMP OID catalog CRUD                                                                                                                                                                                        |
 
 ### Feature-komponenter (23)
 
-| Komponent | Formål |
-|-----------|--------|
-| AddDeviceDialog | Form dialog: name, address, type, tenant, group, credential |
-| ApplyTemplateDialog | Bulk apply monitoring template til valgte devices |
-| AvailabilityChart | Recharts: availability strip + latency lines, adaptive buckets, gap detection |
-| CodeEditor | CodeMirror 6: Python syntax, one-dark theme, resizable |
-| ConfigDataRenderer | Renders config key-value data med diff highlighting |
-| CredentialCell | Viser credential chain (override → assignment → device default) |
-| CreatePackDialog | Dialog til at oprette monitoring packs |
-| DisplayTemplateEditor | Editor for app display templates (HTML/CSS) |
-| FilterableSortHead | Sort label + inline ClearableInput filter i TableHead |
-| PaginationBar | Reusable pagination controls (X-Y of Z + prev/next) |
-| InterfaceTrafficChart | Recharts: In/Out traffic chart for network interfaces |
-| KeyValueEditor | Key-value pair editor for metadata/labels |
-| LabelEditor | Label editor med auto-complete fra LabelKey definitions |
-| ModulePicker | Python module version picker for app requirements |
-| PerformanceChart | Recharts: Multi-metric performance chart |
-| PyPIImportDialog | Dialog til at importere packages fra PyPI |
-| StatusBadge | State → farve+label mapping (OK, WARNING, CRITICAL, DOWN, etc.) |
-| TimePicker | Time picker component |
-| TimeRangePicker | Dropdown: presets (15m-30d-all) + relative + absolute custom ranges |
-| VersionActions | Reusable icon-only action buttons for version rows (fixed-width slots) |
-| WheelUploadDialog | Dialog til at uploade Python wheel files |
+| Komponent             | Formål                                                                        |
+| --------------------- | ----------------------------------------------------------------------------- |
+| AddDeviceDialog       | Form dialog: name, address, type, tenant, group, credential                   |
+| ApplyTemplateDialog   | Bulk apply monitoring template til valgte devices                             |
+| AvailabilityChart     | Recharts: availability strip + latency lines, adaptive buckets, gap detection |
+| CodeEditor            | CodeMirror 6: Python syntax, one-dark theme, resizable                        |
+| ConfigDataRenderer    | Renders config key-value data med diff highlighting                           |
+| CredentialCell        | Viser credential chain (override → assignment → device default)               |
+| CreatePackDialog      | Dialog til at oprette monitoring packs                                        |
+| DisplayTemplateEditor | Editor for app display templates (HTML/CSS)                                   |
+| FilterableSortHead    | Sort label + inline ClearableInput filter i TableHead                         |
+| PaginationBar         | Reusable pagination controls (X-Y of Z + prev/next)                           |
+| InterfaceTrafficChart | Recharts: In/Out traffic chart for network interfaces                         |
+| KeyValueEditor        | Key-value pair editor for metadata/labels                                     |
+| LabelEditor           | Label editor med auto-complete fra LabelKey definitions                       |
+| ModulePicker          | Python module version picker for app requirements                             |
+| PerformanceChart      | Recharts: Multi-metric performance chart                                      |
+| PyPIImportDialog      | Dialog til at importere packages fra PyPI                                     |
+| StatusBadge           | State → farve+label mapping (OK, WARNING, CRITICAL, DOWN, etc.)               |
+| TimePicker            | Time picker component                                                         |
+| TimeRangePicker       | Dropdown: presets (15m-30d-all) + relative + absolute custom ranges           |
+| VersionActions        | Reusable icon-only action buttons for version rows (fixed-width slots)        |
+| WheelUploadDialog     | Dialog til at uploade Python wheel files                                      |
 
 ### UI-primitiver (10)
 

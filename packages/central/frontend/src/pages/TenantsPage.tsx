@@ -2,7 +2,12 @@ import { useState } from "react";
 import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
 import { validateName } from "@/lib/validation.ts";
 import { Building2, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
@@ -49,7 +54,10 @@ export function TenantsPage() {
   const [editError, setEditError] = useState<string | null>(null);
 
   // Delete dialog
-  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -60,7 +68,9 @@ export function TenantsPage() {
       addNameField.reset();
       setAddOpen(false);
     } catch (err) {
-      setAddError(err instanceof Error ? err.message : "Failed to create tenant");
+      setAddError(
+        err instanceof Error ? err.message : "Failed to create tenant",
+      );
     }
   }
 
@@ -83,7 +93,9 @@ export function TenantsPage() {
       });
       setEditTarget(null);
     } catch (err) {
-      setEditError(err instanceof Error ? err.message : "Failed to update tenant");
+      setEditError(
+        err instanceof Error ? err.message : "Failed to update tenant",
+      );
     }
   }
 
@@ -115,7 +127,15 @@ export function TenantsPage() {
           </p>
         </div>
         {isAdmin && (
-          <Button size="sm" onClick={() => { addNameField.reset(); setAddError(null); setAddOpen(true); }} className="gap-1.5">
+          <Button
+            size="sm"
+            onClick={() => {
+              addNameField.reset();
+              setAddError(null);
+              setAddOpen(true);
+            }}
+            className="gap-1.5"
+          >
             <Plus className="h-4 w-4" />
             New Tenant
           </Button>
@@ -184,7 +204,9 @@ export function TenantsPage() {
                               <Pencil className="h-4 w-4" />
                             </button>
                             <button
-                              onClick={() => setDeleteTarget({ id: t.id, name: t.name })}
+                              onClick={() =>
+                                setDeleteTarget({ id: t.id, name: t.name })
+                              }
                               className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
                               title="Delete"
                             >
@@ -205,7 +227,10 @@ export function TenantsPage() {
       {/* Add Tenant Dialog */}
       <Dialog
         open={addOpen}
-        onClose={() => { setAddOpen(false); setAddError(null); }}
+        onClose={() => {
+          setAddOpen(false);
+          setAddError(null);
+        }}
         title="New Tenant"
       >
         <form onSubmit={handleCreate} className="space-y-4">
@@ -219,19 +244,28 @@ export function TenantsPage() {
               onBlur={addNameField.onBlur}
               autoFocus
             />
-            {addNameField.error && <p className="text-xs text-red-400 mt-0.5">{addNameField.error}</p>}
+            {addNameField.error && (
+              <p className="text-xs text-red-400 mt-0.5">
+                {addNameField.error}
+              </p>
+            )}
           </div>
           {addError && <p className="text-sm text-red-400">{addError}</p>}
           <DialogFooter>
             <Button
               type="button"
               variant="secondary"
-              onClick={() => { setAddOpen(false); setAddError(null); }}
+              onClick={() => {
+                setAddOpen(false);
+                setAddError(null);
+              }}
             >
               Cancel
             </Button>
             <Button type="submit" disabled={createTenant.isPending}>
-              {createTenant.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              {createTenant.isPending && (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              )}
               Create
             </Button>
           </DialogFooter>
@@ -254,7 +288,11 @@ export function TenantsPage() {
               onBlur={editNameField.onBlur}
               autoFocus
             />
-            {editNameField.error && <p className="text-xs text-red-400 mt-0.5">{editNameField.error}</p>}
+            {editNameField.error && (
+              <p className="text-xs text-red-400 mt-0.5">
+                {editNameField.error}
+              </p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label>Metadata</Label>
@@ -262,11 +300,17 @@ export function TenantsPage() {
           </div>
           {editError && <p className="text-sm text-red-400">{editError}</p>}
           <DialogFooter>
-            <Button type="button" variant="secondary" onClick={() => setEditTarget(null)}>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setEditTarget(null)}
+            >
               Cancel
             </Button>
             <Button type="submit" disabled={updateTenant.isPending}>
-              {updateTenant.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              {updateTenant.isPending && (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              )}
               Save
             </Button>
           </DialogFooter>
@@ -281,8 +325,11 @@ export function TenantsPage() {
       >
         <p className="text-sm text-zinc-400">
           Are you sure you want to delete tenant{" "}
-          <span className="font-semibold text-zinc-200">{deleteTarget?.name}</span>?
-          Devices assigned to this tenant will be unlinked (their tenant will be cleared).
+          <span className="font-semibold text-zinc-200">
+            {deleteTarget?.name}
+          </span>
+          ? Devices assigned to this tenant will be unlinked (their tenant will
+          be cleared).
         </p>
         <DialogFooter>
           <Button variant="secondary" onClick={() => setDeleteTarget(null)}>
@@ -293,7 +340,9 @@ export function TenantsPage() {
             onClick={handleDelete}
             disabled={deleteTenant.isPending}
           >
-            {deleteTenant.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+            {deleteTenant.isPending && (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            )}
             Delete
           </Button>
         </DialogFooter>

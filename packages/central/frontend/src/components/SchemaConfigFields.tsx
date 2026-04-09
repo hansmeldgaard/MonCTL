@@ -96,7 +96,9 @@ export function SchemaConfigFields({
   const { data: credentials } = useCredentials();
 
   if (!schema || typeof schema !== "object") return null;
-  const properties = (schema as { properties?: Record<string, Record<string, unknown>> }).properties;
+  const properties = (
+    schema as { properties?: Record<string, Record<string, unknown>> }
+  ).properties;
   if (!properties) return null;
 
   const setField = (key: string, value: unknown) => {
@@ -129,13 +131,16 @@ export function SchemaConfigFields({
 
         // Credential selector
         if (widget === "credential") {
-          const credName = typeof currentVal === "string" && currentVal.startsWith("$credential:")
-            ? currentVal.slice("$credential:".length)
-            : String(currentVal);
+          const credName =
+            typeof currentVal === "string" &&
+            currentVal.startsWith("$credential:")
+              ? currentVal.slice("$credential:".length)
+              : String(currentVal);
           // Derive credential type from property key (e.g. "snmp_credential" → "snmp")
           // or from explicit x-credential-type in schema
-          const credType = (prop["x-credential-type"] as string)
-            ?? key.replace(/_credential$/, "");
+          const credType =
+            (prop["x-credential-type"] as string) ??
+            key.replace(/_credential$/, "");
           const deviceCred = deviceCredentials?.[credType];
           return (
             <div key={key} className="space-y-1">
@@ -143,7 +148,12 @@ export function SchemaConfigFields({
               <Select
                 id={`${prefix}-${key}`}
                 value={credName}
-                onChange={(e) => setField(key, e.target.value ? `$credential:${e.target.value}` : "")}
+                onChange={(e) =>
+                  setField(
+                    key,
+                    e.target.value ? `$credential:${e.target.value}` : "",
+                  )
+                }
                 disabled={disabled}
               >
                 <option value="">-- None --</option>
@@ -153,10 +163,14 @@ export function SchemaConfigFields({
                     : "Use Device Default Credential"}
                 </option>
                 {(credentials ?? [])
-                  .filter((c) => !credType || c.credential_type.startsWith(credType))
+                  .filter(
+                    (c) => !credType || c.credential_type.startsWith(credType),
+                  )
                   .map((c) => (
-                  <option key={c.id} value={c.name}>{c.name}</option>
-                ))}
+                    <option key={c.id} value={c.name}>
+                      {c.name}
+                    </option>
+                  ))}
               </Select>
             </div>
           );
@@ -172,8 +186,17 @@ export function SchemaConfigFields({
                 type="number"
                 min={prop.minimum as number | undefined}
                 max={prop.maximum as number | undefined}
-                value={currentVal !== "" ? String(currentVal) : String(defaultVal ?? "")}
-                onChange={(e) => setField(key, e.target.value ? parseInt(e.target.value, 10) : undefined)}
+                value={
+                  currentVal !== ""
+                    ? String(currentVal)
+                    : String(defaultVal ?? "")
+                }
+                onChange={(e) =>
+                  setField(
+                    key,
+                    e.target.value ? parseInt(e.target.value, 10) : undefined,
+                  )
+                }
                 className="w-28"
                 disabled={disabled}
               />

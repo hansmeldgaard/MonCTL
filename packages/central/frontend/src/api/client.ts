@@ -88,7 +88,9 @@ async function request<T>(
     try {
       const body = await res.json();
       detail = body.detail ?? detail;
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     throw new ApiError(403, detail);
   }
 
@@ -190,7 +192,9 @@ export async function apiPostFormData<T>(
     try {
       const body = await res.json();
       detail = body.detail ?? detail;
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     throw new ApiError(403, detail);
   }
 

@@ -65,14 +65,14 @@ class PollContext:
 
 **Commonly used fields:**
 
-| Field | What to use it for |
-|---|---|
-| `context.device_host` | Target IP/hostname — prefer this over `parameters.get("host")` |
-| `context.parameters` | App-specific config values (from `config_schema`) |
-| `context.connectors.get("alias")` | Get a connector (e.g. SNMP, SSH) |
-| `context.job.job_id` | Required for all PollResult constructors |
-| `context.job.device_id` | Required for all PollResult constructors |
-| `context.node_id` | Required for all PollResult constructors |
+| Field                             | What to use it for                                             |
+| --------------------------------- | -------------------------------------------------------------- |
+| `context.device_host`             | Target IP/hostname — prefer this over `parameters.get("host")` |
+| `context.parameters`              | App-specific config values (from `config_schema`)              |
+| `context.connectors.get("alias")` | Get a connector (e.g. SNMP, SSH)                               |
+| `context.job.job_id`              | Required for all PollResult constructors                       |
+| `context.job.device_id`           | Required for all PollResult constructors                       |
+| `context.node_id`                 | Required for all PollResult constructors                       |
 
 ---
 
@@ -110,12 +110,12 @@ class PollResult:
 
 ### target_table and what to put in metrics / special fields
 
-| `target_table` | Put data in | Use case |
-|---|---|---|
-| `"availability_latency"` | `metrics` | Ping, port, SNMP reachability, HTTP |
-| `"performance"` | `metrics` | Uptime, CPU, memory, temperature |
-| `"interface"` | `interface_rows` | SNMP ifTable counters |
-| `"config"` | `config_data` | Discovery results, sysDescr, sysName |
+| `target_table`           | Put data in      | Use case                             |
+| ------------------------ | ---------------- | ------------------------------------ |
+| `"availability_latency"` | `metrics`        | Ping, port, SNMP reachability, HTTP  |
+| `"performance"`          | `metrics`        | Uptime, CPU, memory, temperature     |
+| `"interface"`            | `interface_rows` | SNMP ifTable counters                |
+| `"config"`               | `config_data`    | Discovery results, sysDescr, sysName |
 
 ---
 
@@ -124,12 +124,12 @@ class PollResult:
 **Every error PollResult MUST set `error_category`.** The engine auto-fills `"device"`
 if omitted, but explicit is always correct.
 
-| `error_category` | When to use |
-|---|---|
-| `"device"` | Target unreachable, ping timeout, SNMP timeout, TCP refused |
-| `"config"` | Missing connector (`connectors.get("snmp") is None`), missing required parameter, bad credential format |
-| `"app"` | Bug or crash in app logic (parse error, key error, logic failure) |
-| `""` | No error — status is `"ok"` |
+| `error_category` | When to use                                                                                             |
+| ---------------- | ------------------------------------------------------------------------------------------------------- |
+| `"device"`       | Target unreachable, ping timeout, SNMP timeout, TCP refused                                             |
+| `"config"`       | Missing connector (`connectors.get("snmp") is None`), missing required parameter, bad credential format |
+| `"app"`          | Bug or crash in app logic (parse error, key error, logic failure)                                       |
+| `""`             | No error — status is `"ok"`                                                                             |
 
 ---
 
@@ -423,17 +423,17 @@ File naming: `packs/{pack_uid}-v{version}.json`
 
 ### Pack field reference
 
-| Field | Notes |
-|---|---|
-| `pack_uid` | Unique identifier, kebab-case (e.g. `"my-pack"`) |
-| `app_type` | Always `"script"` for BasePoller apps |
-| `target_table` | `"availability_latency"` \| `"performance"` \| `"interface"` \| `"config"` |
-| `config_schema` | JSON Schema — properties become `context.parameters` keys |
-| `connector_bindings` | Omit entirely if the app uses no connectors |
-| `requirements` | pip requirements list — prefer `[]` unless an external library is needed |
-| `entry_class` | Always `"Poller"` |
-| `is_latest` | `true` on the newest version; `false` on all older ones |
-| `source_code` | Complete Python source as a single string (escape `\n`, `\"` etc. as JSON requires) |
+| Field                | Notes                                                                               |
+| -------------------- | ----------------------------------------------------------------------------------- |
+| `pack_uid`           | Unique identifier, kebab-case (e.g. `"my-pack"`)                                    |
+| `app_type`           | Always `"script"` for BasePoller apps                                               |
+| `target_table`       | `"availability_latency"` \| `"performance"` \| `"interface"` \| `"config"`          |
+| `config_schema`      | JSON Schema — properties become `context.parameters` keys                           |
+| `connector_bindings` | Omit entirely if the app uses no connectors                                         |
+| `requirements`       | pip requirements list — prefer `[]` unless an external library is needed            |
+| `entry_class`        | Always `"Poller"`                                                                   |
+| `is_latest`          | `true` on the newest version; `false` on all older ones                             |
+| `source_code`        | Complete Python source as a single string (escape `\n`, `\"` etc. as JSON requires) |
 
 ---
 
@@ -492,14 +492,14 @@ Omit `config_schema` entirely if the app has no configurable parameters.
 
 Read the source code embedded in the pack JSON files instead:
 
-| App | Pack file | Pattern shown |
-|---|---|---|
-| `ping_check` | `packs/basic-checks-v1.0.0.json` | asyncio subprocess, two error paths |
-| `port_check` | `packs/basic-checks-v1.0.0.json` | asyncio TCP, OSError handling |
-| `http_check` | `packs/basic-checks-v1.0.0.json` | aiohttp + urllib fallback, verify_ssl |
-| `snmp_check` | `packs/snmp-core-v1.0.0.json` | connector guard, `time.monotonic()`, metric labels |
-| `snmp_uptime` | `packs/snmp-core-v1.0.0.json` | fallback OID logic, helper parse function |
-| `snmp_interface_poller` | `packs/snmp-core-v1.0.0.json` | walk + targeted GET, `interface_rows` |
-| `snmp_discovery` | `packs/snmp-core-v1.0.0.json` | one-shot, `config_data`, hex-decode helper |
+| App                     | Pack file                        | Pattern shown                                      |
+| ----------------------- | -------------------------------- | -------------------------------------------------- |
+| `ping_check`            | `packs/basic-checks-v1.0.0.json` | asyncio subprocess, two error paths                |
+| `port_check`            | `packs/basic-checks-v1.0.0.json` | asyncio TCP, OSError handling                      |
+| `http_check`            | `packs/basic-checks-v1.0.0.json` | aiohttp + urllib fallback, verify_ssl              |
+| `snmp_check`            | `packs/snmp-core-v1.0.0.json`    | connector guard, `time.monotonic()`, metric labels |
+| `snmp_uptime`           | `packs/snmp-core-v1.0.0.json`    | fallback OID logic, helper parse function          |
+| `snmp_interface_poller` | `packs/snmp-core-v1.0.0.json`    | walk + targeted GET, `interface_rows`              |
+| `snmp_discovery`        | `packs/snmp-core-v1.0.0.json`    | one-shot, `config_data`, hex-decode helper         |
 
 To read a specific app's source: `jq '.contents.apps[] | select(.name=="ping_check") | .versions[0].source_code' packs/basic-checks-v1.0.0.json`

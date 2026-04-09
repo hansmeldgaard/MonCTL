@@ -1,6 +1,11 @@
 import { useState } from "react";
 import { Bell, FileText, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import {
@@ -25,10 +30,13 @@ import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
 import { usePermissions } from "@/hooks/usePermissions.ts";
 import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
-import type { AlertEntity, AlertDefinition, AlertLogEntry } from "@/types/api.ts";
+import type {
+  AlertEntity,
+  AlertDefinition,
+  AlertLogEntry,
+} from "@/types/api.ts";
 
 type Tab = "active" | "log" | "definitions";
-
 
 export function AlertsPage() {
   const [tab, setTab] = useState<Tab>("active");
@@ -42,9 +50,18 @@ export function AlertsPage() {
     defaultPageSize: pageSize,
     scrollMode,
   });
-  const { data: defsResponse, isLoading: defsLoading, isFetching: defsFetching } = useAlertRules(defsListState.params);
+  const {
+    data: defsResponse,
+    isLoading: defsLoading,
+    isFetching: defsFetching,
+  } = useAlertRules(defsListState.params);
   const definitions = defsResponse?.data ?? [];
-  const defsMeta = (defsResponse as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
+  const defsMeta = (defsResponse as any)?.meta ?? {
+    limit: 50,
+    offset: 0,
+    count: 0,
+    total: 0,
+  };
 
   // Alert log state
   const [logPage, setLogPage] = useState(0);
@@ -56,12 +73,15 @@ export function AlertsPage() {
     offset: logPage * LOG_PAGE_SIZE,
   });
   const logEntries = logResponse?.data ?? [];
-  const logMeta = (logResponse as any)?.meta ?? { limit: LOG_PAGE_SIZE, offset: 0, count: 0, total: 0 };
+  const logMeta = (logResponse as any)?.meta ?? {
+    limit: LOG_PAGE_SIZE,
+    offset: 0,
+    count: 0,
+    total: 0,
+  };
 
   const isLoading =
-    tab === "active" ? alertsLoading :
-    tab === "log" ? logLoading :
-    defsLoading;
+    tab === "active" ? alertsLoading : tab === "log" ? logLoading : defsLoading;
 
   return (
     <div className="space-y-4">
@@ -111,10 +131,18 @@ export function AlertsPage() {
           page={logPage}
           onPageChange={setLogPage}
           action={logAction}
-          onActionChange={(v) => { setLogAction(v); setLogPage(0); }}
+          onActionChange={(v) => {
+            setLogAction(v);
+            setLogPage(0);
+          }}
         />
       ) : (
-        <DefinitionsTab definitions={definitions} listState={defsListState} meta={defsMeta} isFetching={defsFetching} />
+        <DefinitionsTab
+          definitions={definitions}
+          listState={defsListState}
+          meta={defsMeta}
+          isFetching={defsFetching}
+        />
       )}
     </div>
   );
@@ -153,7 +181,11 @@ function ActiveAlertsTab({ alerts }: { alerts: AlertEntity[] }) {
               {alerts.map((alert) => (
                 <TableRow key={alert.id}>
                   <TableCell>
-                    <Badge variant={alert.state === "firing" ? "destructive" : "success"}>
+                    <Badge
+                      variant={
+                        alert.state === "firing" ? "destructive" : "success"
+                      }
+                    >
                       {alert.state === "firing" ? "ACTIVE" : "CLEARED"}
                     </Badge>
                   </TableCell>
@@ -181,7 +213,9 @@ function ActiveAlertsTab({ alerts }: { alerts: AlertEntity[] }) {
                     {alert.fire_count}
                   </TableCell>
                   <TableCell className="text-zinc-500">
-                    {alert.started_firing_at ? timeAgo(alert.started_firing_at) : "—"}
+                    {alert.started_firing_at
+                      ? timeAgo(alert.started_firing_at)
+                      : "—"}
                   </TableCell>
                 </TableRow>
               ))}
@@ -253,15 +287,21 @@ function AlertLogTab({
               </TableHeader>
               <TableBody>
                 {entries.map((entry, i) => {
-                  const labels = typeof entry.entity_labels === "string"
-                    ? JSON.parse(entry.entity_labels) : entry.entity_labels || {};
+                  const labels =
+                    typeof entry.entity_labels === "string"
+                      ? JSON.parse(entry.entity_labels)
+                      : entry.entity_labels || {};
                   return (
                     <TableRow key={`${entry.id ?? i}`}>
                       <TableCell className="text-zinc-500 text-xs whitespace-nowrap">
                         {formatDate(entry.occurred_at, tz)}
                       </TableCell>
                       <TableCell>
-                        <Badge variant={entry.action === "fire" ? "destructive" : "success"}>
+                        <Badge
+                          variant={
+                            entry.action === "fire" ? "destructive" : "success"
+                          }
+                        >
                           {entry.action}
                         </Badge>
                       </TableCell>
@@ -272,7 +312,10 @@ function AlertLogTab({
                         {entry.device_name}
                       </TableCell>
                       <TableCell className="text-zinc-400 text-xs font-mono">
-                        {labels.if_name || labels.component || entry.entity_key || "—"}
+                        {labels.if_name ||
+                          labels.component ||
+                          entry.entity_key ||
+                          "—"}
                       </TableCell>
                       <TableCell className="text-zinc-300">
                         {entry.action === "fire" && entry.current_value != null
@@ -354,10 +397,34 @@ function DefinitionsTab({
         <Table>
           <TableHeader>
             <TableRow>
-              <FilterableSortHead col="name" label="Name" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.name} onFilterChange={(v) => listState.setFilter("name", v)} />
-              <FilterableSortHead col="expression" label="Expression" sortable={false} sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.expression} onFilterChange={(v) => listState.setFilter("expression", v)} />
+              <FilterableSortHead
+                col="name"
+                label="Name"
+                sortBy={listState.sortBy}
+                sortDir={listState.sortDir}
+                onSort={listState.handleSort}
+                filterValue={listState.filters.name}
+                onFilterChange={(v) => listState.setFilter("name", v)}
+              />
+              <FilterableSortHead
+                col="expression"
+                label="Expression"
+                sortable={false}
+                sortBy={listState.sortBy}
+                sortDir={listState.sortDir}
+                onSort={listState.handleSort}
+                filterValue={listState.filters.expression}
+                onFilterChange={(v) => listState.setFilter("expression", v)}
+              />
               <TableHead>Window</TableHead>
-              <FilterableSortHead col="enabled" label="Enabled" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterable={false} />
+              <FilterableSortHead
+                col="enabled"
+                label="Enabled"
+                sortBy={listState.sortBy}
+                sortDir={listState.sortDir}
+                onSort={listState.handleSort}
+                filterable={false}
+              />
               <TableHead>Instances</TableHead>
               <TableHead>Active</TableHead>
               <TableHead className="w-12"></TableHead>
@@ -366,8 +433,13 @@ function DefinitionsTab({
           <TableBody>
             {definitions.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center text-zinc-500 py-8">
-                  {listState.hasActiveFilters ? "No definitions match your filters" : "No alert definitions configured"}
+                <TableCell
+                  colSpan={7}
+                  className="text-center text-zinc-500 py-8"
+                >
+                  {listState.hasActiveFilters
+                    ? "No definitions match your filters"
+                    : "No alert definitions configured"}
                 </TableCell>
               </TableRow>
             ) : (
@@ -379,9 +451,7 @@ function DefinitionsTab({
                   <TableCell className="text-zinc-400 font-mono text-xs max-w-xs truncate">
                     {defn.expression}
                   </TableCell>
-                  <TableCell className="text-zinc-400">
-                    {defn.window}
-                  </TableCell>
+                  <TableCell className="text-zinc-400">{defn.window}</TableCell>
                   <TableCell>
                     <Badge variant={defn.enabled ? "success" : "default"}>
                       {defn.enabled ? "Enabled" : "Disabled"}
