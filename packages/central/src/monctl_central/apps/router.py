@@ -9,7 +9,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 logger = structlog.get_logger()
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 import sqlalchemy as sa
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +33,31 @@ router = APIRouter()
 
 
 VALID_TARGET_TABLES = {"availability_latency", "performance", "interface", "config"}
+
+# ── Interval parsing & formatting ──
+
+_INTERVAL_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+_INTERVAL_RE = re.compile(r"^\s*(\d+)\s*([smhd])?\s*$", re.IGNORECASE)
+
+
+def parse_interval(value: str) -> int:
+    """Parse interval string to seconds.  Accepts '300', '300s', '5m', '2h', '1d'."""
+    m = _INTERVAL_RE.match(value)
+    if not m:
+        raise ValueError(f"Invalid interval: '{value}'. Use a number with optional unit (s/m/h/d)")
+    num = int(m.group(1))
+    unit = (m.group(2) or "s").lower()
+    return num * _INTERVAL_UNITS[unit]
+
+
+def format_interval(seconds: int) -> str:
+    """Format seconds to optimal human string: 90→'90s', 300→'5m', 7200→'2h', 86400→'1d'."""
+    if seconds <= 0:
+        return f"{seconds}s"
+    for unit, divisor in [("d", 86400), ("h", 3600), ("m", 60)]:
+        if seconds >= divisor and seconds % divisor == 0:
+            return f"{seconds // divisor}{unit}"
+    return f"{seconds}s"
 
 
 def _next_patch_version(source_version: str, existing_versions: set[str]) -> str:
@@ -198,8 +223,8 @@ class CreateAssignmentRequest(BaseModel):
             "the decrypted secret before the config is sent to the collector."
         ),
     )
-    schedule_type: str = Field(default="interval", max_length=32, description="'interval' (seconds) or 'cron' (cron expression)")
-    schedule_value: str = Field(min_length=1, max_length=32, description="Seconds for interval (e.g. '60') or cron expression (e.g. '*/5 * * * *')")
+    schedule_type: str = Field(default="interval", max_length=32, description="'interval' or 'cron'")
+    schedule_value: str = Field(min_length=1, max_length=32, description="Interval with unit (e.g. '60s', '5m', '2h', '1d') or cron expression")
     resource_limits: dict = Field(default_factory=lambda: {"timeout_seconds": 30, "memory_mb": 256})
     role: str | None = Field(default=None, description="Optional role: 'availability' or 'latency'")
     use_latest: bool = Field(default=False, description="Follow latest app version dynamically")
@@ -228,6 +253,15 @@ class CreateAssignmentRequest(BaseModel):
         if v not in {"interval", "cron"}:
             raise ValueError("schedule_type must be 'interval' or 'cron'")
         return v
+
+    @model_validator(mode="after")
+    def normalize_interval(self):
+        if self.schedule_type == "interval":
+            seconds = parse_interval(self.schedule_value)
+            if seconds < 10 or seconds > 604800:
+                raise ValueError("Interval must be between 10s and 7d (604800s)")
+            self.schedule_value = str(seconds)
+        return self
 
 
 @router.get("")
@@ -672,7 +706,7 @@ async def list_assignments(
                 "schedule_type": row.AppAssignment.schedule_type,
                 "schedule_value": row.AppAssignment.schedule_value,
                 "schedule_human": (
-                    f"every {row.AppAssignment.schedule_value}s"
+                    f"every {format_interval(int(row.AppAssignment.schedule_value))}"
                     if row.AppAssignment.schedule_type == "interval"
                     else row.AppAssignment.schedule_value
                 ),
@@ -732,6 +766,16 @@ class BulkUpdateAssignmentsRequest(BaseModel):
             except ValueError:
                 raise ValueError(f"Invalid UUID for app_version_id: '{v}'")
         return v
+
+    @model_validator(mode="after")
+    def normalize_interval(self):
+        if self.schedule_value is not None and (self.schedule_type or "interval") == "interval":
+            if not any(c.isspace() for c in self.schedule_value):
+                seconds = parse_interval(self.schedule_value)
+                if seconds < 10 or seconds > 604800:
+                    raise ValueError("Interval must be between 10s and 7d (604800s)")
+                self.schedule_value = str(seconds)
+        return self
 
 
 @router.put("/assignments/bulk-update")
@@ -1242,6 +1286,16 @@ class UpdateAssignmentRequest(BaseModel):
         if v is not None and v not in {"interval", "cron"}:
             raise ValueError("schedule_type must be 'interval' or 'cron'")
         return v
+
+    @model_validator(mode="after")
+    def normalize_interval(self):
+        if self.schedule_value is not None and (self.schedule_type or "interval") == "interval":
+            if not any(c.isspace() for c in self.schedule_value):  # skip cron
+                seconds = parse_interval(self.schedule_value)
+                if seconds < 10 or seconds > 604800:
+                    raise ValueError("Interval must be between 10s and 7d (604800s)")
+                self.schedule_value = str(seconds)
+        return self
 
     @field_validator("app_version_id", "credential_id")
     @classmethod
