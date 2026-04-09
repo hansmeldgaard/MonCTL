@@ -11,7 +11,12 @@ import {
   Zap,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import {
@@ -84,16 +89,36 @@ export function EventsPage() {
     defaultPageSize: pageSize,
     scrollMode,
   });
-  const { data: activeResponse, isLoading: activeLoading, isFetching: activeFetching } = useActiveEvents(activeListState.params);
+  const {
+    data: activeResponse,
+    isLoading: activeLoading,
+    isFetching: activeFetching,
+  } = useActiveEvents(activeListState.params);
   const activeEvents = activeResponse?.data ?? [];
-  const activeMeta = (activeResponse as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
-  const { data: clearedResponse, isLoading: clearedLoading, isFetching: clearedFetching } = useClearedEvents(clearedListState.params);
+  const activeMeta = (activeResponse as any)?.meta ?? {
+    limit: 50,
+    offset: 0,
+    count: 0,
+    total: 0,
+  };
+  const {
+    data: clearedResponse,
+    isLoading: clearedLoading,
+    isFetching: clearedFetching,
+  } = useClearedEvents(clearedListState.params);
   const clearedEvents = clearedResponse?.data ?? [];
-  const clearedMeta = (clearedResponse as any)?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
+  const clearedMeta = (clearedResponse as any)?.meta ?? {
+    limit: 50,
+    offset: 0,
+    count: 0,
+    total: 0,
+  };
   const isLoading =
-    tab === "active" ? activeLoading :
-    tab === "cleared" ? clearedLoading :
-    false;
+    tab === "active"
+      ? activeLoading
+      : tab === "cleared"
+        ? clearedLoading
+        : false;
 
   return (
     <div className="space-y-4">
@@ -134,9 +159,19 @@ export function EventsPage() {
           <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
         </div>
       ) : tab === "active" ? (
-        <ActiveEventsTab events={activeEvents} listState={activeListState} meta={activeMeta} isFetching={activeFetching} />
+        <ActiveEventsTab
+          events={activeEvents}
+          listState={activeListState}
+          meta={activeMeta}
+          isFetching={activeFetching}
+        />
       ) : tab === "cleared" ? (
-        <ClearedEventsTab events={clearedEvents} listState={clearedListState} meta={clearedMeta} isFetching={clearedFetching} />
+        <ClearedEventsTab
+          events={clearedEvents}
+          listState={clearedListState}
+          meta={clearedMeta}
+          isFetching={clearedFetching}
+        />
       ) : (
         <PoliciesTab />
       )}
@@ -190,8 +225,12 @@ function ActiveEventsTab({
   const handleCreateAutomation = () => {
     // Collect unique severities and device IDs from selected events
     const selectedEvents = events.filter((e) => selected.has(e.id));
-    const severities = [...new Set(selectedEvents.map((e) => e.severity).filter(Boolean))];
-    const deviceIds = [...new Set(selectedEvents.map((e) => e.device_id).filter(Boolean))];
+    const severities = [
+      ...new Set(selectedEvents.map((e) => e.severity).filter(Boolean)),
+    ];
+    const deviceIds = [
+      ...new Set(selectedEvents.map((e) => e.device_id).filter(Boolean)),
+    ];
     const severity = severities.length === 1 ? severities[0] : "";
 
     // Navigate to automations page with prefilled state
@@ -258,19 +297,54 @@ function ActiveEventsTab({
                   className="rounded border-zinc-700"
                 />
               </TableHead>
-              <FilterableSortHead col="severity" label="Severity" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterable={false} />
-              <FilterableSortHead col="source" label="Source" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.source} onFilterChange={(v) => listState.setFilter("source", v)} />
+              <FilterableSortHead
+                col="severity"
+                label="Severity"
+                sortBy={listState.sortBy}
+                sortDir={listState.sortDir}
+                onSort={listState.handleSort}
+                filterable={false}
+              />
+              <FilterableSortHead
+                col="source"
+                label="Source"
+                sortBy={listState.sortBy}
+                sortDir={listState.sortDir}
+                onSort={listState.handleSort}
+                filterValue={listState.filters.source}
+                onFilterChange={(v) => listState.setFilter("source", v)}
+              />
               <TableHead>Policy</TableHead>
-              <FilterableSortHead col="message" label="Message" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.message} onFilterChange={(v) => listState.setFilter("message", v)} />
+              <FilterableSortHead
+                col="message"
+                label="Message"
+                sortBy={listState.sortBy}
+                sortDir={listState.sortDir}
+                onSort={listState.handleSort}
+                filterValue={listState.filters.message}
+                onFilterChange={(v) => listState.setFilter("message", v)}
+              />
               <TableHead>Device</TableHead>
-              <FilterableSortHead col="occurred_at" label="Occurred" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterable={false} />
+              <FilterableSortHead
+                col="occurred_at"
+                label="Occurred"
+                sortBy={listState.sortBy}
+                sortDir={listState.sortDir}
+                onSort={listState.handleSort}
+                filterable={false}
+              />
             </TableRow>
           </TableHeader>
           <TableBody>
             {events.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center text-zinc-500 py-8">
-                  {listState.hasActiveFilters ? "No events match your filters" : "No active events"}
+                <TableCell
+                  colSpan={7}
+                  className="text-center text-zinc-500 py-8"
+                >
+                  {listState.hasActiveFilters
+                    ? "No events match your filters"
+                    : "No active events"}
                 </TableCell>
               </TableRow>
             ) : (
@@ -350,11 +424,41 @@ function ClearedEventsTab({
         <Table>
           <TableHeader>
             <TableRow>
-              <FilterableSortHead col="severity" label="Severity" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterable={false} />
-              <FilterableSortHead col="source" label="Source" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.source} onFilterChange={(v) => listState.setFilter("source", v)} />
-              <FilterableSortHead col="message" label="Message" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.message} onFilterChange={(v) => listState.setFilter("message", v)} />
+              <FilterableSortHead
+                col="severity"
+                label="Severity"
+                sortBy={listState.sortBy}
+                sortDir={listState.sortDir}
+                onSort={listState.handleSort}
+                filterable={false}
+              />
+              <FilterableSortHead
+                col="source"
+                label="Source"
+                sortBy={listState.sortBy}
+                sortDir={listState.sortDir}
+                onSort={listState.handleSort}
+                filterValue={listState.filters.source}
+                onFilterChange={(v) => listState.setFilter("source", v)}
+              />
+              <FilterableSortHead
+                col="message"
+                label="Message"
+                sortBy={listState.sortBy}
+                sortDir={listState.sortDir}
+                onSort={listState.handleSort}
+                filterValue={listState.filters.message}
+                onFilterChange={(v) => listState.setFilter("message", v)}
+              />
               <TableHead>Device</TableHead>
-              <FilterableSortHead col="occurred_at" label="Occurred" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterable={false} />
+              <FilterableSortHead
+                col="occurred_at"
+                label="Occurred"
+                sortBy={listState.sortBy}
+                sortDir={listState.sortDir}
+                onSort={listState.handleSort}
+                filterable={false}
+              />
               <TableHead>Cleared At</TableHead>
               <TableHead>Cleared By</TableHead>
             </TableRow>
@@ -362,8 +466,13 @@ function ClearedEventsTab({
           <TableBody>
             {events.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center text-zinc-500 py-8">
-                  {listState.hasActiveFilters ? "No events match your filters" : "No cleared events"}
+                <TableCell
+                  colSpan={7}
+                  className="text-center text-zinc-500 py-8"
+                >
+                  {listState.hasActiveFilters
+                    ? "No events match your filters"
+                    : "No cleared events"}
                 </TableCell>
               </TableRow>
             ) : (
@@ -432,7 +541,11 @@ function PoliciesTab() {
     scrollMode,
   });
 
-  const { data: response, isLoading, isFetching } = useEventPolicies(listState.params);
+  const {
+    data: response,
+    isLoading,
+    isFetching,
+  } = useEventPolicies(listState.params);
   const policies = response?.data ?? [];
   const meta = response?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
 
@@ -471,20 +584,65 @@ function PoliciesTab() {
           <Table>
             <TableHeader>
               <TableRow>
-                <FilterableSortHead col="name" label="Name" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.name} onFilterChange={(v) => listState.setFilter("name", v)} />
-                <FilterableSortHead col="definition_name" label="Alert Definition" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.definition_name} onFilterChange={(v) => listState.setFilter("definition_name", v)} />
-                <FilterableSortHead col="mode" label="Mode" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterable={false} />
+                <FilterableSortHead
+                  col="name"
+                  label="Name"
+                  sortBy={listState.sortBy}
+                  sortDir={listState.sortDir}
+                  onSort={listState.handleSort}
+                  filterValue={listState.filters.name}
+                  onFilterChange={(v) => listState.setFilter("name", v)}
+                />
+                <FilterableSortHead
+                  col="definition_name"
+                  label="Alert Definition"
+                  sortBy={listState.sortBy}
+                  sortDir={listState.sortDir}
+                  onSort={listState.handleSort}
+                  filterValue={listState.filters.definition_name}
+                  onFilterChange={(v) =>
+                    listState.setFilter("definition_name", v)
+                  }
+                />
+                <FilterableSortHead
+                  col="mode"
+                  label="Mode"
+                  sortBy={listState.sortBy}
+                  sortDir={listState.sortDir}
+                  onSort={listState.handleSort}
+                  filterable={false}
+                />
                 <TableHead>Threshold</TableHead>
-                <FilterableSortHead col="event_severity" label="Severity" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.event_severity} onFilterChange={(v) => listState.setFilter("event_severity", v)} />
+                <FilterableSortHead
+                  col="event_severity"
+                  label="Severity"
+                  sortBy={listState.sortBy}
+                  sortDir={listState.sortDir}
+                  onSort={listState.handleSort}
+                  filterValue={listState.filters.event_severity}
+                  onFilterChange={(v) =>
+                    listState.setFilter("event_severity", v)
+                  }
+                />
                 <TableHead>Auto-clear</TableHead>
-                <FilterableSortHead col="enabled" label="Enabled" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterable={false} />
+                <FilterableSortHead
+                  col="enabled"
+                  label="Enabled"
+                  sortBy={listState.sortBy}
+                  sortDir={listState.sortDir}
+                  onSort={listState.handleSort}
+                  filterable={false}
+                />
                 <TableHead className="w-12"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {policies.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center text-zinc-500 py-8">
+                  <TableCell
+                    colSpan={8}
+                    className="text-center text-zinc-500 py-8"
+                  >
                     {listState.hasActiveFilters
                       ? "No policies match your filters"
                       : "No event policies configured — create a policy to promote alerts to events"}
@@ -500,9 +658,7 @@ function PoliciesTab() {
                       {p.definition_name || p.definition_id}
                     </TableCell>
                     <TableCell>
-                      <Badge variant="default">
-                        {p.mode}
-                      </Badge>
+                      <Badge variant="default">{p.mode}</Badge>
                     </TableCell>
                     <TableCell className="text-zinc-300">
                       {p.mode === "consecutive"
@@ -515,7 +671,11 @@ function PoliciesTab() {
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <Badge variant={p.auto_clear_on_resolve ? "success" : "default"}>
+                      <Badge
+                        variant={
+                          p.auto_clear_on_resolve ? "success" : "default"
+                        }
+                      >
                         {p.auto_clear_on_resolve ? "Yes" : "No"}
                       </Badge>
                     </TableCell>
@@ -566,8 +726,11 @@ function PoliciesTab() {
       >
         <p className="text-sm text-zinc-400">
           Are you sure you want to delete the policy{" "}
-          <span className="font-medium text-zinc-200">{deleteTarget?.name}</span>?
-          Active events created by this policy will remain but no new events will be promoted.
+          <span className="font-medium text-zinc-200">
+            {deleteTarget?.name}
+          </span>
+          ? Active events created by this policy will remain but no new events
+          will be promoted.
         </p>
         <DialogFooter>
           <Button variant="secondary" onClick={() => setDeleteTarget(null)}>
@@ -578,7 +741,9 @@ function PoliciesTab() {
             onClick={() => void handleDelete()}
             disabled={deleteMut.isPending}
           >
-            {deleteMut.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            {deleteMut.isPending && (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            )}
             Delete
           </Button>
         </DialogFooter>
@@ -621,12 +786,19 @@ function CreatePolicyDialog({ onClose }: { onClose: () => void }) {
       <div className="space-y-4">
         <div className="space-y-1.5">
           <Label>Name</Label>
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Interface Util Sustained" />
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. Interface Util Sustained"
+          />
         </div>
 
         <div className="space-y-1.5">
           <Label>Alert Definition</Label>
-          <Select value={definitionId} onChange={(e) => setDefinitionId(e.target.value)}>
+          <Select
+            value={definitionId}
+            onChange={(e) => setDefinitionId(e.target.value)}
+          >
             <option value="">Select alert definition</option>
             {(definitions ?? []).map((d) => (
               <option key={d.id} value={d.id}>
@@ -646,7 +818,10 @@ function CreatePolicyDialog({ onClose }: { onClose: () => void }) {
           </div>
           <div className="space-y-1.5">
             <Label>Severity</Label>
-            <Select value={severity} onChange={(e) => setSeverity(e.target.value)}>
+            <Select
+              value={severity}
+              onChange={(e) => setSeverity(e.target.value)}
+            >
               <option value="info">Info</option>
               <option value="warning">Warning</option>
               <option value="critical">Critical</option>
@@ -705,7 +880,9 @@ function CreatePolicyDialog({ onClose }: { onClose: () => void }) {
           onClick={() => void handleSubmit()}
           disabled={!name || !definitionId || createMut.isPending}
         >
-          {createMut.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+          {createMut.isPending && (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          )}
           Create
         </Button>
       </DialogFooter>

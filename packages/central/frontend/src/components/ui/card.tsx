@@ -22,7 +22,10 @@ function CardHeader({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   );
 }
 
-function CardTitle({ className, ...props }: HTMLAttributes<HTMLHeadingElement>) {
+function CardTitle({
+  className,
+  ...props
+}: HTMLAttributes<HTMLHeadingElement>) {
   return (
     <h3
       className={cn("text-sm font-medium text-zinc-400", className)}
@@ -32,9 +35,7 @@ function CardTitle({ className, ...props }: HTMLAttributes<HTMLHeadingElement>) 
 }
 
 function CardContent({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
-  return (
-    <div className={cn("px-5 pb-5 pt-0", className)} {...props} />
-  );
+  return <div className={cn("px-5 pb-5 pt-0", className)} {...props} />;
 }
 
 function CardFooter({ className, ...props }: HTMLAttributes<HTMLDivElement>) {

@@ -13,7 +13,6 @@
 #   CENTRAL_API_KEY  — API key from central admin
 
 services:
-
   # ── Cache-node — cluster brain ────────────────────────────────────────────
   cache-node:
     build: .
@@ -24,13 +23,13 @@ services:
     ports:
       - "127.0.0.1:50052:50052" # HTTP: status/health endpoints (localhost only)
     environment:
-      MONCTL_NODE_ID:           ${NODE_ID}
-      MONCTL_CENTRAL_URL:       ${CENTRAL_URL}
-      MONCTL_CENTRAL_API_KEY:   ${CENTRAL_API_KEY}
-      MONCTL_VERIFY_SSL:        ${VERIFY_SSL:-true}
-      MONCTL_GRPC_ADDRESS:      0.0.0.0:50051
-      MONCTL_DB_PATH:           /data/cache.db
-      MONCTL_SETUP_YAML:        /etc/monctl/setup.yaml
+      MONCTL_NODE_ID: ${NODE_ID}
+      MONCTL_CENTRAL_URL: ${CENTRAL_URL}
+      MONCTL_CENTRAL_API_KEY: ${CENTRAL_API_KEY}
+      MONCTL_VERIFY_SSL: ${VERIFY_SSL:-true}
+      MONCTL_GRPC_ADDRESS: 0.0.0.0:50051
+      MONCTL_DB_PATH: /data/cache.db
+      MONCTL_SETUP_YAML: /etc/monctl/setup.yaml
     volumes:
       - cache_data:/data
       - /etc/monctl/setup.yaml:/etc/monctl/setup.yaml:rw
@@ -39,8 +38,13 @@ services:
     restart: unless-stopped
     healthcheck:
       # Python socket check — works in python:3.12-slim (no ss/nc needed)
-      test: ["CMD", "python", "-c",
-             "import socket,sys; s=socket.socket(); s.settimeout(1); r=s.connect_ex(('127.0.0.1',50051)); s.close(); sys.exit(r)"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import socket,sys; s=socket.socket(); s.settimeout(1); r=s.connect_ex(('127.0.0.1',50051)); s.close(); sys.exit(r)",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -53,16 +57,16 @@ services:
     command: monctl-poll-worker
     container_name: poll-worker-1
     environment:
-      MONCTL_CACHE_NODE:        cache-node:50051
-      MONCTL_WORKER_ID:         ${NODE_ID:-node}-worker-1
-      MONCTL_CENTRAL_URL:       ${CENTRAL_URL}
-      MONCTL_CENTRAL_API_KEY:   ${CENTRAL_API_KEY}
-      MONCTL_VERIFY_SSL:        ${VERIFY_SSL:-true}
-      MONCTL_APPS_DIR:          /data/apps
-      MONCTL_VENVS_DIR:         /data/venvs
-      MONCTL_DB_PATH:           /data/worker.db
+      MONCTL_CACHE_NODE: cache-node:50051
+      MONCTL_WORKER_ID: ${NODE_ID:-node}-worker-1
+      MONCTL_CENTRAL_URL: ${CENTRAL_URL}
+      MONCTL_CENTRAL_API_KEY: ${CENTRAL_API_KEY}
+      MONCTL_VERIFY_SSL: ${VERIFY_SSL:-true}
+      MONCTL_APPS_DIR: /data/apps
+      MONCTL_VENVS_DIR: /data/venvs
+      MONCTL_DB_PATH: /data/worker.db
     volumes:
-      - app_data:/data          # shared venv volume (pip only runs once per requirements-hash)
+      - app_data:/data # shared venv volume (pip only runs once per requirements-hash)
     depends_on:
       cache-node:
         condition: service_healthy
@@ -75,14 +79,14 @@ services:
     command: monctl-poll-worker
     container_name: poll-worker-2
     environment:
-      MONCTL_CACHE_NODE:        cache-node:50051
-      MONCTL_WORKER_ID:         ${NODE_ID:-node}-worker-2
-      MONCTL_CENTRAL_URL:       ${CENTRAL_URL}
-      MONCTL_CENTRAL_API_KEY:   ${CENTRAL_API_KEY}
-      MONCTL_VERIFY_SSL:        ${VERIFY_SSL:-true}
-      MONCTL_APPS_DIR:          /data/apps
-      MONCTL_VENVS_DIR:         /data/venvs
-      MONCTL_DB_PATH:           /data/worker.db
+      MONCTL_CACHE_NODE: cache-node:50051
+      MONCTL_WORKER_ID: ${NODE_ID:-node}-worker-2
+      MONCTL_CENTRAL_URL: ${CENTRAL_URL}
+      MONCTL_CENTRAL_API_KEY: ${CENTRAL_API_KEY}
+      MONCTL_VERIFY_SSL: ${VERIFY_SSL:-true}
+      MONCTL_APPS_DIR: /data/apps
+      MONCTL_VENVS_DIR: /data/venvs
+      MONCTL_DB_PATH: /data/worker.db
     volumes:
       - app_data:/data
     depends_on:
@@ -97,18 +101,18 @@ services:
     command: monctl-forwarder
     container_name: forwarder
     environment:
-      MONCTL_NODE_ID:           ${NODE_ID}
-      MONCTL_CENTRAL_URL:       ${CENTRAL_URL}
-      MONCTL_CENTRAL_API_KEY:   ${CENTRAL_API_KEY}
-      MONCTL_VERIFY_SSL:        ${VERIFY_SSL:-true}
-      MONCTL_DB_PATH:           /data/cache.db   # same DB as cache-node
+      MONCTL_NODE_ID: ${NODE_ID}
+      MONCTL_CENTRAL_URL: ${CENTRAL_URL}
+      MONCTL_CENTRAL_API_KEY: ${CENTRAL_API_KEY}
+      MONCTL_VERIFY_SSL: ${VERIFY_SSL:-true}
+      MONCTL_DB_PATH: /data/cache.db # same DB as cache-node
     volumes:
-      - cache_data:/data        # shared with cache-node to read results buffer
+      - cache_data:/data # shared with cache-node to read results buffer
     depends_on:
       cache-node:
         condition: service_healthy
     restart: unless-stopped
 
 volumes:
-  cache_data:      # cache-node SQLite + results buffer (shared with forwarder)
-  app_data:        # downloaded apps + shared venvs (shared between workers)
+  cache_data: # cache-node SQLite + results buffer (shared with forwarder)
+  app_data: # downloaded apps + shared venvs (shared between workers)

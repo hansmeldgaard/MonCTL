@@ -1,6 +1,11 @@
 import { useState, useMemo } from "react";
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from "@/components/ui/table.tsx";
 import { cn } from "@/lib/utils.ts";
 
@@ -32,7 +37,14 @@ function isNumericType(type: string): boolean {
   return /^(U?Int|Float|Decimal)/i.test(type);
 }
 
-export function QueryResultTable({ columns, rows, rowCount, truncated, executionTimeMs, onRowClick }: Props) {
+export function QueryResultTable({
+  columns,
+  rows,
+  rowCount,
+  truncated,
+  executionTimeMs,
+  onRowClick,
+}: Props) {
   const [sortCol, setSortCol] = useState<number | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
@@ -76,9 +88,13 @@ export function QueryResultTable({ columns, rows, rowCount, truncated, execution
                 >
                   {col.name}
                   {sortCol === i && (
-                    <span className="ml-1 text-brand-400">{sortDir === "asc" ? "\u2191" : "\u2193"}</span>
+                    <span className="ml-1 text-brand-400">
+                      {sortDir === "asc" ? "\u2191" : "\u2193"}
+                    </span>
                   )}
-                  <span className="ml-1 text-[10px] text-zinc-600">{col.type}</span>
+                  <span className="ml-1 text-[10px] text-zinc-600">
+                    {col.type}
+                  </span>
                 </TableHead>
               ))}
             </TableRow>
@@ -88,7 +104,9 @@ export function QueryResultTable({ columns, rows, rowCount, truncated, execution
               <TableRow
                 key={ri}
                 onClick={onRowClick ? () => onRowClick(row) : undefined}
-                className={onRowClick ? "cursor-pointer hover:bg-zinc-800/60" : ""}
+                className={
+                  onRowClick ? "cursor-pointer hover:bg-zinc-800/60" : ""
+                }
               >
                 {row.map((val, ci) => (
                   <TableCell

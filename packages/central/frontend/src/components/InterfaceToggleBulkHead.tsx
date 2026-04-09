@@ -65,13 +65,23 @@ export function InterfaceToggleBulkHead({
     <TableHead className="text-center w-20 relative">
       <div
         className={`text-xs ${hasSelection ? "cursor-pointer hover:text-zinc-200" : ""}`}
-        onMouseEnter={() => { if (hasSelection) { cancelClose(); setOpen(true); } }}
+        onMouseEnter={() => {
+          if (hasSelection) {
+            cancelClose();
+            setOpen(true);
+          }
+        }}
         onMouseLeave={scheduleClose}
-        onClick={(e) => { e.stopPropagation(); if (hasSelection) setOpen((prev) => !prev); }}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (hasSelection) setOpen((prev) => !prev);
+        }}
       >
         Toggles
         {hasSelection && (
-          <span className="ml-1 text-brand-400 text-[10px]">({activeSelectedCount})</span>
+          <span className="ml-1 text-brand-400 text-[10px]">
+            ({activeSelectedCount})
+          </span>
         )}
       </div>
 
@@ -90,12 +100,17 @@ export function InterfaceToggleBulkHead({
               {i === 2 && <div className="border-t border-zinc-600 my-1" />}
               <button
                 className="flex items-center gap-2 w-full px-2 py-1 rounded text-xs hover:bg-zinc-600 transition-colors cursor-pointer"
-                onClick={(e) => { e.stopPropagation(); handleToggle(item.field); }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleToggle(item.field);
+                }}
               >
                 <input
                   type="checkbox"
                   checked={state[item.field] === true}
-                  ref={(el) => { if (el) el.indeterminate = state[item.field] === "mixed"; }}
+                  ref={(el) => {
+                    if (el) el.indeterminate = state[item.field] === "mixed";
+                  }}
                   readOnly
                   className="accent-brand-500 pointer-events-none h-3 w-3"
                 />

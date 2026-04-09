@@ -6,7 +6,10 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export function formatDate(dateStr: string | null | undefined, timezone = "UTC"): string {
+export function formatDate(
+  dateStr: string | null | undefined,
+  timezone = "UTC",
+): string {
   if (!dateStr) return "—";
   const date = new Date(dateStr);
   if (isNaN(date.getTime())) return "—";
@@ -69,16 +72,36 @@ export function formatUptime(seconds: number): string {
 /** Format epoch ms as "Mar 31, 14:32" for chart tooltips (always includes date). */
 export function formatChartDateTime(ts: number, timezone = "UTC"): string {
   const d = new Date(ts);
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: timezone }) +
+  return (
+    d.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      timeZone: timezone,
+    }) +
     ", " +
-    d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: timezone });
+    d.toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: timezone,
+    })
+  );
 }
 
 export function formatLogTimestamp(ts: string, timezone = "UTC"): string {
   const d = new Date(ts);
   if (isNaN(d.getTime())) return ts.replace("T", " ").slice(0, 19);
-  return d.toLocaleDateString("sv-SE", { timeZone: timezone }) + " " +
-    d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: timezone });
+  return (
+    d.toLocaleDateString("sv-SE", { timeZone: timezone }) +
+    " " +
+    d.toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+      timeZone: timezone,
+    })
+  );
 }
 
 export function formatNumber(n: number): string {

@@ -69,7 +69,10 @@ export function App() {
         <Route path="events" element={<EventsPage />} />
         <Route path="analytics/explorer" element={<SQLExplorerPage />} />
         <Route path="analytics/dashboards" element={<CustomDashboardsPage />} />
-        <Route path="analytics/dashboards/:id" element={<DashboardEditorPage />} />
+        <Route
+          path="analytics/dashboards/:id"
+          element={<DashboardEditorPage />}
+        />
         <Route path="automations" element={<AutomationsPage />} />
         <Route path="upgrades" element={<UpgradesPage />} />
         <Route path="device-types" element={<DeviceTypesPage />} />

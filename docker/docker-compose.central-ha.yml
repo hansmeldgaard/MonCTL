@@ -9,7 +9,6 @@
 # MONCTL_ROLE, CLICKHOUSE_HOSTS
 
 services:
-
   # ── Patroni PostgreSQL (central1 + central2 only) ──────────────────────────
   patroni:
     image: timescale/timescaledb:latest-pg16

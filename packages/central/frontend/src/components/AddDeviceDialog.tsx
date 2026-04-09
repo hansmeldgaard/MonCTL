@@ -9,7 +9,13 @@ import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { Select } from "@/components/ui/select.tsx";
 import { SearchableSelect } from "@/components/ui/searchable-select.tsx";
-import { useCreateDevice, useCollectorGroups, useCredentials, useDeviceTypes, useTenants } from "@/api/hooks.ts";
+import {
+  useCreateDevice,
+  useCollectorGroups,
+  useCredentials,
+  useDeviceTypes,
+  useTenants,
+} from "@/api/hooks.ts";
 import { LabelEditor } from "@/components/LabelEditor.tsx";
 
 function formatCredentialType(type: string): string {
@@ -117,7 +123,9 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
             onBlur={nameField.onBlur}
             autoFocus
           />
-          {nameField.error && <p className="text-xs text-red-400 mt-0.5">{nameField.error}</p>}
+          {nameField.error && (
+            <p className="text-xs text-red-400 mt-0.5">{nameField.error}</p>
+          )}
         </div>
 
         {/* Address */}
@@ -130,7 +138,9 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
             onChange={addressField.onChange}
             onBlur={addressField.onBlur}
           />
-          {addressField.error && <p className="text-xs text-red-400 mt-0.5">{addressField.error}</p>}
+          {addressField.error && (
+            <p className="text-xs text-red-400 mt-0.5">{addressField.error}</p>
+          )}
         </div>
 
         {/* Tenant */}
@@ -141,7 +151,9 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
             value={tenantId}
             onChange={(e) => setTenantId(e.target.value)}
           >
-            <option value="">{"\u2014"} Select tenant {"\u2014"}</option>
+            <option value="">
+              {"\u2014"} Select tenant {"\u2014"}
+            </option>
             {(tenants ?? []).map((t) => (
               <option key={t.id} value={t.id}>
                 {t.name}
@@ -158,7 +170,9 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
             value={collectorGroupId}
             onChange={(e) => setCollectorGroupId(e.target.value)}
           >
-            <option value="">{"\u2014"} Select collector group {"\u2014"}</option>
+            <option value="">
+              {"\u2014"} Select collector group {"\u2014"}
+            </option>
             {(collectorGroups ?? []).map((g) => (
               <option key={g.id} value={g.id}>
                 {g.name}
@@ -170,7 +184,8 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
         {/* Device Type */}
         <div className="space-y-1.5">
           <Label htmlFor="device-type">
-            Device Type <span className="text-zinc-500 font-normal">(optional)</span>
+            Device Type{" "}
+            <span className="text-zinc-500 font-normal">(optional)</span>
           </Label>
           <SearchableSelect
             id="device-type"
@@ -180,7 +195,11 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
               { value: "", label: "Auto-detect via SNMP" },
               ...deviceTypes.map((dt) => ({
                 value: dt.id,
-                label: dt.name + (dt.vendor ? ` (${dt.vendor}${dt.model ? ` ${dt.model}` : ""})` : ""),
+                label:
+                  dt.name +
+                  (dt.vendor
+                    ? ` (${dt.vendor}${dt.model ? ` ${dt.model}` : ""})`
+                    : ""),
               })),
             ]}
             placeholder="Auto-detect via SNMP"
@@ -192,24 +211,33 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
           <div className="space-y-1.5">
             <Label className="flex items-center gap-1.5">
               <Key className="h-3.5 w-3.5" />
-              Default Credentials <span className="text-zinc-500 font-normal">(optional)</span>
+              Default Credentials{" "}
+              <span className="text-zinc-500 font-normal">(optional)</span>
             </Label>
             <div className="space-y-2">
               {Object.entries(deviceCreds).map(([ctype, credId]) => (
                 <div key={ctype} className="flex items-center gap-2">
-                  <Badge variant="default" className="text-xs min-w-[110px] justify-center">
+                  <Badge
+                    variant="default"
+                    className="text-xs min-w-[110px] justify-center"
+                  >
                     {formatCredentialType(ctype)}
                   </Badge>
                   <Select
                     className="flex-1"
                     value={credId}
                     onChange={(e) =>
-                      setDeviceCreds((prev) => ({ ...prev, [ctype]: e.target.value }))
+                      setDeviceCreds((prev) => ({
+                        ...prev,
+                        [ctype]: e.target.value,
+                      }))
                     }
                   >
                     <option value="">-- Select --</option>
                     {(credsByType[ctype] ?? []).map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
                     ))}
                   </Select>
                   <Button
@@ -235,13 +263,18 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
                   value=""
                   onChange={(e) => {
                     if (e.target.value) {
-                      setDeviceCreds((prev) => ({ ...prev, [e.target.value]: "" }));
+                      setDeviceCreds((prev) => ({
+                        ...prev,
+                        [e.target.value]: "",
+                      }));
                     }
                   }}
                 >
                   <option value="">+ Add credential...</option>
                   {availableTypes.map((t) => (
-                    <option key={t} value={t}>{formatCredentialType(t)}</option>
+                    <option key={t} value={t}>
+                      {formatCredentialType(t)}
+                    </option>
                   ))}
                 </Select>
               )}
@@ -251,14 +284,14 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
 
         {/* Labels */}
         <div className="space-y-1.5">
-          <Label>Labels <span className="text-zinc-500 font-normal">(optional)</span></Label>
+          <Label>
+            Labels <span className="text-zinc-500 font-normal">(optional)</span>
+          </Label>
           <LabelEditor labels={labels} onChange={setLabels} />
         </div>
 
         {/* Error */}
-        {error && (
-          <p className="text-sm text-red-400">{error}</p>
-        )}
+        {error && <p className="text-sm text-red-400">{error}</p>}
 
         <DialogFooter>
           <Button type="button" variant="secondary" onClick={handleClose}>

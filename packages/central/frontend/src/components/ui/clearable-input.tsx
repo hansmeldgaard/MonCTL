@@ -31,6 +31,6 @@ export const ClearableInput = forwardRef<HTMLInputElement, ClearableInputProps>(
         </button>
       </div>
     );
-  }
+  },
 );
 ClearableInput.displayName = "ClearableInput";

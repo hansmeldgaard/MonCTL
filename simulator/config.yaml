@@ -1,0 +1,54 @@
+# MonCTL Device Simulator — 100 devices, all protocols
+
+simulator:
+  host_ip: "10.145.210.10"
+  snmp_port_start: 11000
+  http_port_start: 12000
+  tcp_port_start: 13000
+  default_community: "public"
+  control_port: 9999
+
+device_profiles:
+  # 40 Cisco switches — 24 ports each, medium traffic
+  - count: 40
+    type: cisco-switch
+    interfaces: 24
+    traffic_profile: medium
+    error_rate: 0.002
+
+  # 20 Cisco routers — 8 ports each, high traffic
+  - count: 20
+    type: cisco-router
+    interfaces: 8
+    traffic_profile: high
+    error_rate: 0.003
+
+  # 20 Juniper switches — 48 ports each, medium traffic
+  - count: 20
+    type: juniper-switch
+    interfaces: 48
+    traffic_profile: medium
+    error_rate: 0.002
+
+  # 10 Juniper routers — 12 ports each, high traffic + bursty
+  - count: 10
+    type: juniper-router
+    interfaces: 12
+    traffic_profile: bursty
+    error_rate: 0.003
+
+  # 10 Linux hosts — 4 ports each, mixed traffic + HTTP + TCP
+  - count: 10
+    type: linux-host
+    interfaces: 4
+    traffic_profile: medium
+    error_rate: 0.001
+    http: true
+    tcp_ports: [22, 80, 443]
+
+# Failure injection — ~15% of devices
+failure_injection:
+  slow: [5, 15, 25, 35, 45, 55, 65, 75, 85, 95] # 3s delay
+  partial: [8, 18, 28, 38, 48, 58, 68, 78, 88, 98] # 30% drop
+  timeout: [10, 20, 50, 60, 80, 90] # blackhole
+  flapping: [30, 70] # 5-min cycle

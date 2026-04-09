@@ -10,7 +10,6 @@ import {
   FileText,
   HeartPulse,
   KeyRound,
-
   ListChecks,
   Monitor,
   Package,
@@ -36,7 +35,7 @@ interface NavItem {
   icon: typeof Monitor;
   label: string;
   end?: boolean;
-  resource?: string;  // permission resource required to see this item
+  resource?: string; // permission resource required to see this item
   adminOnly?: boolean;
 }
 
@@ -48,25 +47,60 @@ interface NavGroup {
 const navGroups: NavGroup[] = [
   {
     items: [
-      { to: "/system-health", icon: HeartPulse, label: "System Health", adminOnly: true },
+      {
+        to: "/system-health",
+        icon: HeartPulse,
+        label: "System Health",
+        adminOnly: true,
+      },
     ],
   },
   {
     label: "Monitoring",
     items: [
       { to: "/devices", icon: Monitor, label: "Devices", resource: "device" },
-      { to: "/device-types", icon: Search, label: "Device Types", resource: "device" },
-      { to: "/assignments", icon: ListChecks, label: "Assignments", resource: "assignment" },
+      {
+        to: "/device-types",
+        icon: Search,
+        label: "Device Types",
+        resource: "device",
+      },
+      {
+        to: "/assignments",
+        icon: ListChecks,
+        label: "Assignments",
+        resource: "assignment",
+      },
     ],
   },
   {
     label: "Configuration",
     items: [
       { to: "/apps", icon: AppWindow, label: "Apps", resource: "app" },
-      { to: "/connectors", icon: Plug, label: "Connectors", resource: "connector" },
-      { to: "/python-modules", icon: Package, label: "Modules", adminOnly: true },
-      { to: "/templates", icon: FileText, label: "Templates", resource: "template" },
-      { to: "/credentials", icon: KeyRound, label: "Credentials", resource: "credential" },
+      {
+        to: "/connectors",
+        icon: Plug,
+        label: "Connectors",
+        resource: "connector",
+      },
+      {
+        to: "/python-modules",
+        icon: Package,
+        label: "Modules",
+        adminOnly: true,
+      },
+      {
+        to: "/templates",
+        icon: FileText,
+        label: "Templates",
+        resource: "template",
+      },
+      {
+        to: "/credentials",
+        icon: KeyRound,
+        label: "Credentials",
+        resource: "credential",
+      },
       { to: "/labels", icon: Tags, label: "Labels", resource: "device" },
       { to: "/packs", icon: Boxes, label: "Packs", resource: "app" },
     ],
@@ -76,20 +110,41 @@ const navGroups: NavGroup[] = [
     items: [
       { to: "/alerts", icon: Bell, label: "Alerts", resource: "alert" },
       { to: "/events", icon: Zap, label: "Events", resource: "event" },
-      { to: "/automations", icon: Play, label: "Automations", resource: "automation" },
+      {
+        to: "/automations",
+        icon: Play,
+        label: "Automations",
+        resource: "automation",
+      },
     ],
   },
   {
     label: "Analytics",
     items: [
-      { to: "/analytics/explorer", icon: Terminal, label: "SQL Explorer", end: true, resource: "result" },
-      { to: "/analytics/dashboards", icon: BarChart3, label: "Dashboards", resource: "dashboard" },
+      {
+        to: "/analytics/explorer",
+        icon: Terminal,
+        label: "SQL Explorer",
+        end: true,
+        resource: "result",
+      },
+      {
+        to: "/analytics/dashboards",
+        icon: BarChart3,
+        label: "Dashboards",
+        resource: "dashboard",
+      },
     ],
   },
   {
     label: "System",
     items: [
-      { to: "/upgrades", icon: ArrowUpCircle, label: "Upgrades", adminOnly: true },
+      {
+        to: "/upgrades",
+        icon: ArrowUpCircle,
+        label: "Upgrades",
+        adminOnly: true,
+      },
       { to: "/settings", icon: Settings, label: "Settings" },
     ],
   },
@@ -136,7 +191,9 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
                 {group.label}
               </div>
             )}
-            {group.label && collapsed && <div className="my-1.5 mx-3 border-t border-zinc-800" />}
+            {group.label && collapsed && (
+              <div className="my-1.5 mx-3 border-t border-zinc-800" />
+            )}
             <div className="space-y-0.5">
               {group.items.map((item) => (
                 <NavLink
@@ -155,14 +212,18 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
                 >
                   <item.icon className="h-4.5 w-4.5 shrink-0" />
                   {!collapsed && <span>{item.label}</span>}
-                  {item.to === "/upgrades" && osUpdateCount > 0 && !collapsed && (
-                    <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500/20 px-1.5 text-[10px] font-semibold text-amber-400">
-                      {osUpdateCount}
-                    </span>
-                  )}
-                  {item.to === "/upgrades" && osUpdateCount > 0 && collapsed && (
-                    <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-amber-500" />
-                  )}
+                  {item.to === "/upgrades" &&
+                    osUpdateCount > 0 &&
+                    !collapsed && (
+                      <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500/20 px-1.5 text-[10px] font-semibold text-amber-400">
+                        {osUpdateCount}
+                      </span>
+                    )}
+                  {item.to === "/upgrades" &&
+                    osUpdateCount > 0 &&
+                    collapsed && (
+                      <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-amber-500" />
+                    )}
                 </NavLink>
               ))}
             </div>

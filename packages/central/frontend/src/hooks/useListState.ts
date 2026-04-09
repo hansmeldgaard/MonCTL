@@ -37,15 +37,17 @@ export function useListState(options: UseListStateOptions) {
   const sentinelRef = useRef<HTMLDivElement>(null);
 
   // Per-column filter values (immediate — drives Input value)
-  const filterableKeys = columns.filter((c) => c.filterable !== false).map((c) => c.key);
-  const [filters, setFilters] = useState<Record<string, string>>(
-    () => Object.fromEntries(filterableKeys.map((k) => [k, ""]))
+  const filterableKeys = columns
+    .filter((c) => c.filterable !== false)
+    .map((c) => c.key);
+  const [filters, setFilters] = useState<Record<string, string>>(() =>
+    Object.fromEntries(filterableKeys.map((k) => [k, ""])),
   );
 
   // Debounced filter values (sent to API)
-  const [debouncedFilters, setDebouncedFilters] = useState<Record<string, string>>(
-    () => Object.fromEntries(filterableKeys.map((k) => [k, ""]))
-  );
+  const [debouncedFilters, setDebouncedFilters] = useState<
+    Record<string, string>
+  >(() => Object.fromEntries(filterableKeys.map((k) => [k, ""])));
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -97,7 +99,15 @@ export function useListState(options: UseListStateOptions) {
       if (val) p[key] = val;
     }
     return p;
-  }, [sortBy, sortDir, page, pageSize, debouncedFilters, isInfinite, infinitePages]);
+  }, [
+    sortBy,
+    sortDir,
+    page,
+    pageSize,
+    debouncedFilters,
+    isInfinite,
+    infinitePages,
+  ]);
 
   const loadMore = useCallback(() => {
     setInfinitePages((p) => p + 1);

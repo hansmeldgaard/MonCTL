@@ -7,14 +7,22 @@ import { QueryResultTable } from "@/components/QueryResultTable.tsx";
 import { QueryResultChart } from "@/components/QueryResultChart.tsx";
 import { useExecuteQuery } from "@/api/hooks.ts";
 import { resolveSQL } from "@/components/DashboardWidget.tsx";
-import type { AnalyticsWidgetConfig, QueryResult, DashboardVariable } from "@/types/api.ts";
+import type {
+  AnalyticsWidgetConfig,
+  QueryResult,
+  DashboardVariable,
+} from "@/types/api.ts";
 
 type ChartType = AnalyticsWidgetConfig["chart_type"];
 
 interface Props {
   open: boolean;
   onClose: () => void;
-  onSave: (widget: { title: string; config: AnalyticsWidgetConfig; layout?: { w: number } }) => void;
+  onSave: (widget: {
+    title: string;
+    config: AnalyticsWidgetConfig;
+    layout?: { w: number };
+  }) => void;
   initial?: { title: string; config: AnalyticsWidgetConfig };
   schema?: Record<string, string[]>;
   variableDefs?: DashboardVariable[];
@@ -28,17 +36,34 @@ const REFRESH_OPTIONS = [
   { label: "5m", value: 300 },
 ];
 
-export function AddWidgetDialog({ open, onClose, onSave, initial, schema, variableDefs }: Props) {
+export function AddWidgetDialog({
+  open,
+  onClose,
+  onSave,
+  initial,
+  schema,
+  variableDefs,
+}: Props) {
   const [title, setTitle] = useState(initial?.title || "");
   const [sqlText, setSqlText] = useState(initial?.config.sql || "SELECT 1");
-  const [chartType, setChartType] = useState<ChartType>(initial?.config.chart_type || "table");
+  const [chartType, setChartType] = useState<ChartType>(
+    initial?.config.chart_type || "table",
+  );
   const [xColumn, setXColumn] = useState(initial?.config.x_column || "");
-  const [yColumns, setYColumns] = useState<string[]>(initial?.config.y_columns || []);
+  const [yColumns, setYColumns] = useState<string[]>(
+    initial?.config.y_columns || [],
+  );
   const [groupByCol, setGroupByCol] = useState(initial?.config.group_by || "");
-  const [refreshSeconds, setRefreshSeconds] = useState(initial?.config.refresh_seconds || 0);
+  const [refreshSeconds, setRefreshSeconds] = useState(
+    initial?.config.refresh_seconds || 0,
+  );
   const [widgetWidth, setWidgetWidth] = useState<12 | 24>(12);
-  const [publishColumn, setPublishColumn] = useState(initial?.config.publishes?.column || "");
-  const [publishVariable, setPublishVariable] = useState(initial?.config.publishes?.variable || "");
+  const [publishColumn, setPublishColumn] = useState(
+    initial?.config.publishes?.column || "",
+  );
+  const [publishVariable, setPublishVariable] = useState(
+    initial?.config.publishes?.variable || "",
+  );
 
   const executeMut = useExecuteQuery();
   const result: QueryResult | undefined = executeMut.data?.data;
@@ -52,9 +77,10 @@ export function AddWidgetDialog({ open, onClose, onSave, initial, schema, variab
   }
 
   function handleSave() {
-    const publishes = publishColumn && publishVariable
-      ? { column: publishColumn, variable: publishVariable }
-      : undefined;
+    const publishes =
+      publishColumn && publishVariable
+        ? { column: publishColumn, variable: publishVariable }
+        : undefined;
     onSave({
       title: title.trim() || "Untitled",
       config: {
@@ -95,16 +121,38 @@ export function AddWidgetDialog({ open, onClose, onSave, initial, schema, variab
           <div className="space-y-1">
             <div className="flex items-center justify-between">
               <label className="text-xs text-zinc-500">SQL Query</label>
-              <Button size="sm" variant="outline" onClick={handleTest} disabled={executeMut.isPending} className="gap-1">
-                {executeMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleTest}
+                disabled={executeMut.isPending}
+                className="gap-1"
+              >
+                {executeMut.isPending ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Play className="h-3 w-3" />
+                )}
                 Test
               </Button>
             </div>
-            <SqlEditor value={sqlText} onChange={setSqlText} onExecute={handleTest} schema={schema} height="150px" />
+            <SqlEditor
+              value={sqlText}
+              onChange={setSqlText}
+              onExecute={handleTest}
+              schema={schema}
+              height="150px"
+            />
             <p className="text-[10px] text-zinc-600">
-              Use <code className="text-zinc-500">{"{time_from}"}</code> and <code className="text-zinc-500">{"{time_to}"}</code> for dashboard time range.
+              Use <code className="text-zinc-500">{"{time_from}"}</code> and{" "}
+              <code className="text-zinc-500">{"{time_to}"}</code> for dashboard
+              time range.
               {variableDefs && variableDefs.length > 0 && (
-                <> Use <code className="text-zinc-500">{"{var:name}"}</code> for dashboard variables.</>
+                <>
+                  {" "}
+                  Use <code className="text-zinc-500">{"{var:name}"}</code> for
+                  dashboard variables.
+                </>
               )}
             </p>
           </div>
@@ -121,19 +169,21 @@ export function AddWidgetDialog({ open, onClose, onSave, initial, schema, variab
             <div className="space-y-1">
               <label className="text-xs text-zinc-500">Visualization</label>
               <div className="flex gap-1">
-                {(["table", "line", "bar", "area", "pie"] as ChartType[]).map((t) => (
-                  <button
-                    key={t}
-                    onClick={() => setChartType(t)}
-                    className={`px-2 py-1 text-xs rounded capitalize ${
-                      chartType === t
-                        ? "bg-brand-600/20 text-brand-400 border border-brand-600/40"
-                        : "text-zinc-500 hover:text-zinc-300 border border-zinc-700"
-                    }`}
-                  >
-                    {t}
-                  </button>
-                ))}
+                {(["table", "line", "bar", "area", "pie"] as ChartType[]).map(
+                  (t) => (
+                    <button
+                      key={t}
+                      onClick={() => setChartType(t)}
+                      className={`px-2 py-1 text-xs rounded capitalize ${
+                        chartType === t
+                          ? "bg-brand-600/20 text-brand-400 border border-brand-600/40"
+                          : "text-zinc-500 hover:text-zinc-300 border border-zinc-700"
+                      }`}
+                    >
+                      {t}
+                    </button>
+                  ),
+                )}
               </div>
             </div>
 
@@ -150,28 +200,36 @@ export function AddWidgetDialog({ open, onClose, onSave, initial, schema, variab
                       >
                         <option value="">Auto</option>
                         {result.columns.map((c) => (
-                          <option key={c.name} value={c.name}>{c.name}</option>
+                          <option key={c.name} value={c.name}>
+                            {c.name}
+                          </option>
                         ))}
                       </select>
                     </div>
                     <div className="space-y-1">
                       <label className="text-xs text-zinc-500">Y Axis</label>
                       <div className="flex flex-wrap gap-1">
-                        {result.columns.filter((c) => /^(U?Int|Float|Decimal)/i.test(c.type)).map((c) => (
-                          <button
-                            key={c.name}
-                            onClick={() => setYColumns((prev) =>
-                              prev.includes(c.name) ? prev.filter((x) => x !== c.name) : [...prev, c.name]
-                            )}
-                            className={`px-2 py-0.5 rounded text-[11px] ${
-                              yColumns.includes(c.name)
-                                ? "bg-brand-600/20 text-brand-400 border border-brand-600/40"
-                                : "text-zinc-500 hover:text-zinc-300 border border-zinc-700"
-                            }`}
-                          >
-                            {c.name}
-                          </button>
-                        ))}
+                        {result.columns
+                          .filter((c) => /^(U?Int|Float|Decimal)/i.test(c.type))
+                          .map((c) => (
+                            <button
+                              key={c.name}
+                              onClick={() =>
+                                setYColumns((prev) =>
+                                  prev.includes(c.name)
+                                    ? prev.filter((x) => x !== c.name)
+                                    : [...prev, c.name],
+                                )
+                              }
+                              className={`px-2 py-0.5 rounded text-[11px] ${
+                                yColumns.includes(c.name)
+                                  ? "bg-brand-600/20 text-brand-400 border border-brand-600/40"
+                                  : "text-zinc-500 hover:text-zinc-300 border border-zinc-700"
+                              }`}
+                            >
+                              {c.name}
+                            </button>
+                          ))}
                       </div>
                     </div>
                     <div className="space-y-1">
@@ -182,14 +240,24 @@ export function AddWidgetDialog({ open, onClose, onSave, initial, schema, variab
                         className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-300"
                       >
                         <option value="">None</option>
-                        {result.columns.filter((c) => !/^(U?Int|Float|Decimal)/i.test(c.type) && c.name !== xColumn).map((c) => (
-                          <option key={c.name} value={c.name}>{c.name}</option>
-                        ))}
+                        {result.columns
+                          .filter(
+                            (c) =>
+                              !/^(U?Int|Float|Decimal)/i.test(c.type) &&
+                              c.name !== xColumn,
+                          )
+                          .map((c) => (
+                            <option key={c.name} value={c.name}>
+                              {c.name}
+                            </option>
+                          ))}
                       </select>
                     </div>
                   </>
                 ) : (
-                  <p className="text-xs text-zinc-500 italic">Click Test to configure X/Y axes and Group By</p>
+                  <p className="text-xs text-zinc-500 italic">
+                    Click Test to configure X/Y axes and Group By
+                  </p>
                 )}
               </>
             )}
@@ -202,7 +270,9 @@ export function AddWidgetDialog({ open, onClose, onSave, initial, schema, variab
                 className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-300"
               >
                 {REFRESH_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
                 ))}
               </select>
             </div>
@@ -237,7 +307,9 @@ export function AddWidgetDialog({ open, onClose, onSave, initial, schema, variab
           {/* Publishes to variable (for table widgets) */}
           {chartType === "table" && variableDefs && variableDefs.length > 0 && (
             <div className="space-y-1">
-              <label className="text-xs text-zinc-500">Publishes to Variable (click row to set)</label>
+              <label className="text-xs text-zinc-500">
+                Publishes to Variable (click row to set)
+              </label>
               <div className="flex gap-2 items-center">
                 <select
                   value={publishColumn}
@@ -246,7 +318,9 @@ export function AddWidgetDialog({ open, onClose, onSave, initial, schema, variab
                 >
                   <option value="">Column...</option>
                   {result?.columns.map((c) => (
-                    <option key={c.name} value={c.name}>{c.name}</option>
+                    <option key={c.name} value={c.name}>
+                      {c.name}
+                    </option>
                   ))}
                 </select>
                 <span className="text-zinc-600 text-xs">&rarr;</span>
@@ -257,7 +331,9 @@ export function AddWidgetDialog({ open, onClose, onSave, initial, schema, variab
                 >
                   <option value="">Variable...</option>
                   {variableDefs.map((v) => (
-                    <option key={v.name} value={v.name}>{v.name}</option>
+                    <option key={v.name} value={v.name}>
+                      {v.name}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -292,7 +368,9 @@ export function AddWidgetDialog({ open, onClose, onSave, initial, schema, variab
 
         {/* Footer */}
         <div className="flex justify-end gap-2 p-4 border-t border-zinc-800">
-          <Button size="sm" variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button size="sm" variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
           <Button size="sm" onClick={handleSave} disabled={!sqlText.trim()}>
             {initial ? "Save" : "Add Widget"}
           </Button>

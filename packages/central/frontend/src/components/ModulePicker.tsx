@@ -14,7 +14,9 @@ export function ModulePicker({ value, onChange }: ModulePickerProps) {
   const { data: modulesResp } = usePythonModules();
   const modules = modulesResp?.data ?? [];
   const [selectedModuleId, setSelectedModuleId] = useState("");
-  const { data: moduleDetail } = usePythonModuleDetail(selectedModuleId || undefined);
+  const { data: moduleDetail } = usePythonModuleDetail(
+    selectedModuleId || undefined,
+  );
   const [selectedVersion, setSelectedVersion] = useState("");
 
   // Parse existing requirements to track what's already added
@@ -60,7 +62,11 @@ export function ModulePicker({ value, onChange }: ModulePickerProps) {
           >
             <option value="">Select a module...</option>
             {availableModules.map((m) => (
-              <option key={m.id} value={m.id} disabled={existingNames.has(m.name.toLowerCase())}>
+              <option
+                key={m.id}
+                value={m.id}
+                disabled={existingNames.has(m.name.toLowerCase())}
+              >
                 {m.name} ({m.version_count} versions)
                 {existingNames.has(m.name.toLowerCase()) ? " (added)" : ""}
               </option>
@@ -98,10 +104,16 @@ export function ModulePicker({ value, onChange }: ModulePickerProps) {
       {/* Selected requirements list */}
       {value.length > 0 ? (
         <div className="space-y-1">
-          <label className="text-xs text-zinc-500">Requirements ({value.length})</label>
+          <label className="text-xs text-zinc-500">
+            Requirements ({value.length})
+          </label>
           <div className="flex flex-wrap gap-1.5">
             {value.map((req, i) => (
-              <Badge key={i} variant="default" className="gap-1 font-mono text-xs">
+              <Badge
+                key={i}
+                variant="default"
+                className="gap-1 font-mono text-xs"
+              >
                 {req}
                 <button
                   onClick={() => handleRemove(i)}

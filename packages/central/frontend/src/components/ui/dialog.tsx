@@ -23,7 +23,14 @@ interface DialogProps {
   size?: DialogSize;
 }
 
-export function Dialog({ open, onClose, title, children, className, size = "md" }: DialogProps) {
+export function Dialog({
+  open,
+  onClose,
+  title,
+  children,
+  className,
+  size = "md",
+}: DialogProps) {
   // Close on Escape key
   useEffect(() => {
     if (!open) return;
@@ -48,16 +55,15 @@ export function Dialog({ open, onClose, title, children, className, size = "md" 
   const isFullscreen = size === "fullscreen";
 
   return createPortal(
-    <div className={cn(
-      "fixed inset-0 z-50 flex",
-      isFullscreen ? "" : "items-center justify-center p-4",
-    )}>
+    <div
+      className={cn(
+        "fixed inset-0 z-50 flex",
+        isFullscreen ? "" : "items-center justify-center p-4",
+      )}
+    >
       {/* Backdrop */}
       {!isFullscreen && (
-        <div
-          className="absolute inset-0 bg-black/60"
-          onClick={onClose}
-        />
+        <div className="absolute inset-0 bg-black/60" onClick={onClose} />
       )}
       {/* Panel */}
       <div
@@ -69,10 +75,12 @@ export function Dialog({ open, onClose, title, children, className, size = "md" 
         )}
       >
         {title && (
-          <div className={cn(
-            "flex items-center justify-between border-b border-zinc-800 px-6 py-4",
-            "shrink-0",
-          )}>
+          <div
+            className={cn(
+              "flex items-center justify-between border-b border-zinc-800 px-6 py-4",
+              "shrink-0",
+            )}
+          >
             <h2 className="text-base font-semibold text-zinc-100">{title}</h2>
             <button
               onClick={onClose}
@@ -82,9 +90,7 @@ export function Dialog({ open, onClose, title, children, className, size = "md" 
             </button>
           </div>
         )}
-        <div className={cn(
-          "flex-1 overflow-y-auto px-6 py-5",
-        )}>{children}</div>
+        <div className={cn("flex-1 overflow-y-auto px-6 py-5")}>{children}</div>
       </div>
     </div>,
     document.body,
@@ -98,7 +104,12 @@ interface DialogFooterProps {
 
 export function DialogFooter({ children, className }: DialogFooterProps) {
   return (
-    <div className={cn("flex items-center justify-end gap-3 pt-4 mt-2 border-t border-zinc-800", className)}>
+    <div
+      className={cn(
+        "flex items-center justify-end gap-3 pt-4 mt-2 border-t border-zinc-800",
+        className,
+      )}
+    >
       {children}
     </div>
   );

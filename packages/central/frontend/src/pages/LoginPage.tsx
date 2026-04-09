@@ -35,7 +35,10 @@ export function LoginPage() {
     setIsSubmitting(true);
 
     try {
-      await login({ username: usernameField.value, password: passwordField.value });
+      await login({
+        username: usernameField.value,
+        password: passwordField.value,
+      });
     } catch (err) {
       if (err instanceof ApiError) {
         setError(
@@ -65,9 +68,7 @@ export function LoginPage() {
           <h1 className="text-2xl font-bold tracking-tight text-zinc-100">
             MonCTL
           </h1>
-          <p className="mt-1 text-sm text-zinc-500">
-            Monitoring Platform
-          </p>
+          <p className="mt-1 text-sm text-zinc-500">Monitoring Platform</p>
         </div>
 
         {/* Card */}
@@ -85,7 +86,11 @@ export function LoginPage() {
                 onBlur={usernameField.onBlur}
                 required
               />
-              {usernameField.error && <p className="text-xs text-red-400 mt-0.5">{usernameField.error}</p>}
+              {usernameField.error && (
+                <p className="text-xs text-red-400 mt-0.5">
+                  {usernameField.error}
+                </p>
+              )}
             </div>
             <div>
               <Input
@@ -99,7 +104,11 @@ export function LoginPage() {
                 onBlur={passwordField.onBlur}
                 required
               />
-              {passwordField.error && <p className="text-xs text-red-400 mt-0.5">{passwordField.error}</p>}
+              {passwordField.error && (
+                <p className="text-xs text-red-400 mt-0.5">
+                  {passwordField.error}
+                </p>
+              )}
             </div>
 
             {error && (
@@ -108,14 +117,8 @@ export function LoginPage() {
               </div>
             )}
 
-            <Button
-              type="submit"
-              className="w-full"
-              disabled={isSubmitting}
-            >
-              {isSubmitting && (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              )}
+            <Button type="submit" className="w-full" disabled={isSubmitting}>
+              {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
               Sign in
             </Button>
           </form>

@@ -16,7 +16,12 @@ import {
   CircleOff,
   Minus,
 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
@@ -44,7 +49,11 @@ import {
   useCreateRegistrationToken,
   useDeleteRegistrationToken,
 } from "@/api/hooks.ts";
-import type { Collector, CollectorGroup, RegistrationToken } from "@/types/api.ts";
+import type {
+  Collector,
+  CollectorGroup,
+  RegistrationToken,
+} from "@/types/api.ts";
 import { timeAgo, formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 import { usePermissions } from "@/hooks/usePermissions.ts";
@@ -60,7 +69,12 @@ function StatusDot({ status }: { status: string }) {
         : status === "REJECTED"
           ? "bg-red-500"
           : "bg-zinc-500"; // DOWN or unknown
-  return <span className={`inline-block h-2.5 w-2.5 rounded-full ${cls}`} title={status} />;
+  return (
+    <span
+      className={`inline-block h-2.5 w-2.5 rounded-full ${cls}`}
+      title={status}
+    />
+  );
 }
 
 // ── Pending Collectors Section ────────────────────────────────────────────────
@@ -92,11 +106,16 @@ function PendingCollectorsCard() {
       return;
     }
     try {
-      await approveCollector.mutateAsync({ id: approveTarget.id, group_id: approveGroupId });
+      await approveCollector.mutateAsync({
+        id: approveTarget.id,
+        group_id: approveGroupId,
+      });
       setApproveTarget(null);
       setApproveGroupId("");
     } catch (err) {
-      setApproveError(err instanceof Error ? err.message : "Failed to approve collector");
+      setApproveError(
+        err instanceof Error ? err.message : "Failed to approve collector",
+      );
     }
   }
 
@@ -109,7 +128,9 @@ function PendingCollectorsCard() {
       });
       setRejectTarget(null);
       setRejectReason("");
-    } catch { /* silent */ }
+    } catch {
+      /* silent */
+    }
   }
 
   return (
@@ -119,7 +140,10 @@ function PendingCollectorsCard() {
           <CardTitle className="flex items-center gap-2 text-amber-400">
             <Clock className="h-4 w-4" />
             Pending Approval
-            <Badge variant="default" className="ml-auto bg-amber-500/20 text-amber-400">
+            <Badge
+              variant="default"
+              className="ml-auto bg-amber-500/20 text-amber-400"
+            >
               {pending.length}
             </Badge>
           </CardTitle>
@@ -138,11 +162,15 @@ function PendingCollectorsCard() {
             <TableBody>
               {pending.map((c) => (
                 <TableRow key={c.id}>
-                  <TableCell className="font-medium text-zinc-100">{c.hostname ?? c.name}</TableCell>
+                  <TableCell className="font-medium text-zinc-100">
+                    {c.hostname ?? c.name}
+                  </TableCell>
                   <TableCell className="font-mono text-xs text-zinc-400">
-                    {c.ip_addresses && c.ip_addresses.length > 0
-                      ? c.ip_addresses.join(", ")
-                      : <span className="italic text-zinc-600">—</span>}
+                    {c.ip_addresses && c.ip_addresses.length > 0 ? (
+                      c.ip_addresses.join(", ")
+                    ) : (
+                      <span className="italic text-zinc-600">—</span>
+                    )}
                   </TableCell>
                   <TableCell>
                     {c.fingerprint ? (
@@ -154,38 +182,40 @@ function PendingCollectorsCard() {
                     )}
                   </TableCell>
                   <TableCell className="text-zinc-500 text-sm">
-                    {c.registered_at ? timeAgo(c.registered_at) : timeAgo(c.last_seen_at)}
+                    {c.registered_at
+                      ? timeAgo(c.registered_at)
+                      : timeAgo(c.last_seen_at)}
                   </TableCell>
                   {isAdmin && (
-                  <TableCell>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        className="gap-1 text-emerald-400 hover:text-emerald-300 h-7 text-xs"
-                        onClick={() => {
-                          setApproveTarget(c);
-                          setApproveGroupId("");
-                          setApproveError(null);
-                        }}
-                      >
-                        <CheckCircle2 className="h-3.5 w-3.5" />
-                        Approve
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        className="gap-1 text-red-400 hover:text-red-300 h-7 text-xs"
-                        onClick={() => {
-                          setRejectTarget(c);
-                          setRejectReason("");
-                        }}
-                      >
-                        <XCircle className="h-3.5 w-3.5" />
-                        Reject
-                      </Button>
-                    </div>
-                  </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          className="gap-1 text-emerald-400 hover:text-emerald-300 h-7 text-xs"
+                          onClick={() => {
+                            setApproveTarget(c);
+                            setApproveGroupId("");
+                            setApproveError(null);
+                          }}
+                        >
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                          Approve
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          className="gap-1 text-red-400 hover:text-red-300 h-7 text-xs"
+                          onClick={() => {
+                            setRejectTarget(c);
+                            setRejectReason("");
+                          }}
+                        >
+                          <XCircle className="h-3.5 w-3.5" />
+                          Reject
+                        </Button>
+                      </div>
+                    </TableCell>
                   )}
                 </TableRow>
               ))}
@@ -195,14 +225,21 @@ function PendingCollectorsCard() {
       </Card>
 
       {/* Approve Dialog */}
-      <Dialog open={!!approveTarget} onClose={() => setApproveTarget(null)} title="Approve Collector">
+      <Dialog
+        open={!!approveTarget}
+        onClose={() => setApproveTarget(null)}
+        title="Approve Collector"
+      >
         <form onSubmit={handleApprove} className="space-y-4">
           <p className="text-sm text-zinc-400">
             Approve collector{" "}
-            <span className="font-semibold text-zinc-200">{approveTarget?.hostname ?? approveTarget?.name}</span>
+            <span className="font-semibold text-zinc-200">
+              {approveTarget?.hostname ?? approveTarget?.name}
+            </span>
             {approveTarget?.fingerprint && (
               <>
-                {" "}with fingerprint{" "}
+                {" "}
+                with fingerprint{" "}
                 <code className="rounded bg-zinc-800 px-1 py-0.5 text-xs font-mono text-zinc-300">
                   {approveTarget.fingerprint}
                 </code>
@@ -221,15 +258,27 @@ function PendingCollectorsCard() {
             >
               <option value="">— Select group —</option>
               {(groups ?? []).map((g) => (
-                <option key={g.id} value={g.id}>{g.name}</option>
+                <option key={g.id} value={g.id}>
+                  {g.name}
+                </option>
               ))}
             </select>
           </div>
-          {approveError && <p className="text-sm text-red-400">{approveError}</p>}
+          {approveError && (
+            <p className="text-sm text-red-400">{approveError}</p>
+          )}
           <DialogFooter>
-            <Button type="button" variant="secondary" onClick={() => setApproveTarget(null)}>Cancel</Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setApproveTarget(null)}
+            >
+              Cancel
+            </Button>
             <Button type="submit" disabled={approveCollector.isPending}>
-              {approveCollector.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              {approveCollector.isPending && (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              )}
               Approve
             </Button>
           </DialogFooter>
@@ -237,15 +286,23 @@ function PendingCollectorsCard() {
       </Dialog>
 
       {/* Reject Dialog */}
-      <Dialog open={!!rejectTarget} onClose={() => setRejectTarget(null)} title="Reject Collector">
+      <Dialog
+        open={!!rejectTarget}
+        onClose={() => setRejectTarget(null)}
+        title="Reject Collector"
+      >
         <div className="space-y-4">
           <p className="text-sm text-zinc-400">
             Reject collector{" "}
-            <span className="font-semibold text-zinc-200">{rejectTarget?.hostname ?? rejectTarget?.name}</span>?
+            <span className="font-semibold text-zinc-200">
+              {rejectTarget?.hostname ?? rejectTarget?.name}
+            </span>
+            ?
           </p>
           <div className="space-y-1.5">
             <Label htmlFor="reject-reason">
-              Reason <span className="font-normal text-zinc-500">(optional)</span>
+              Reason{" "}
+              <span className="font-normal text-zinc-500">(optional)</span>
             </Label>
             <textarea
               id="reject-reason"
@@ -257,9 +314,17 @@ function PendingCollectorsCard() {
           </div>
         </div>
         <DialogFooter>
-          <Button variant="secondary" onClick={() => setRejectTarget(null)}>Cancel</Button>
-          <Button variant="destructive" onClick={handleReject} disabled={rejectCollector.isPending}>
-            {rejectCollector.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+          <Button variant="secondary" onClick={() => setRejectTarget(null)}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={handleReject}
+            disabled={rejectCollector.isPending}
+          >
+            {rejectCollector.isPending && (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            )}
             Reject
           </Button>
         </DialogFooter>
@@ -270,18 +335,41 @@ function PendingCollectorsCard() {
 
 // ── Group Health Indicator ────────────────────────────────────────────────────
 
-function GroupHealthBadge({ health }: { health: { status: string; message: string } }) {
+function GroupHealthBadge({
+  health,
+}: {
+  health: { status: string; message: string };
+}) {
   const cfg = {
-    healthy:  { icon: HeartPulse,    cls: "text-emerald-400 bg-emerald-500/10", label: "Healthy" },
-    degraded: { icon: AlertTriangle, cls: "text-amber-400 bg-amber-500/10",     label: "Degraded" },
-    critical: { icon: XCircle,       cls: "text-red-400 bg-red-500/10",         label: "Critical" },
-    empty:    { icon: Minus,         cls: "text-zinc-500 bg-zinc-500/10",       label: "Empty" },
-  }[health.status] ?? { icon: CircleOff, cls: "text-zinc-500 bg-zinc-500/10", label: health.status };
+    healthy: {
+      icon: HeartPulse,
+      cls: "text-emerald-400 bg-emerald-500/10",
+      label: "Healthy",
+    },
+    degraded: {
+      icon: AlertTriangle,
+      cls: "text-amber-400 bg-amber-500/10",
+      label: "Degraded",
+    },
+    critical: {
+      icon: XCircle,
+      cls: "text-red-400 bg-red-500/10",
+      label: "Critical",
+    },
+    empty: { icon: Minus, cls: "text-zinc-500 bg-zinc-500/10", label: "Empty" },
+  }[health.status] ?? {
+    icon: CircleOff,
+    cls: "text-zinc-500 bg-zinc-500/10",
+    label: health.status,
+  };
 
   const Icon = cfg.icon;
 
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${cfg.cls}`} title={health.message}>
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${cfg.cls}`}
+      title={health.message}
+    >
       <Icon className="h-3.5 w-3.5" />
       {cfg.label}
     </span>
@@ -315,10 +403,17 @@ function CollectorGroupsCard() {
     setAddError(null);
     if (!validateAll(addNameField)) return;
     try {
-      await createGroup.mutateAsync({ name: addNameField.value.trim(), description: addDesc.trim() || undefined });
-      addNameField.reset(); setAddDesc(""); setAddOpen(false);
+      await createGroup.mutateAsync({
+        name: addNameField.value.trim(),
+        description: addDesc.trim() || undefined,
+      });
+      addNameField.reset();
+      setAddDesc("");
+      setAddOpen(false);
     } catch (err) {
-      setAddError(err instanceof Error ? err.message : "Failed to create group");
+      setAddError(
+        err instanceof Error ? err.message : "Failed to create group",
+      );
     }
   }
 
@@ -337,11 +432,16 @@ function CollectorGroupsCard() {
     try {
       await updateGroup.mutateAsync({
         id: editTarget.id,
-        data: { name: editNameField.value.trim(), description: editDesc.trim() || undefined },
+        data: {
+          name: editNameField.value.trim(),
+          description: editDesc.trim() || undefined,
+        },
       });
       setEditTarget(null);
     } catch (err) {
-      setEditError(err instanceof Error ? err.message : "Failed to update group");
+      setEditError(
+        err instanceof Error ? err.message : "Failed to update group",
+      );
     }
   }
 
@@ -350,7 +450,9 @@ function CollectorGroupsCard() {
     try {
       await deleteGroup.mutateAsync(deleteTarget.id);
       setDeleteTarget(null);
-    } catch { /* silent */ }
+    } catch {
+      /* silent */
+    }
   }
 
   // Count collectors per group from the collectors list
@@ -395,33 +497,39 @@ function CollectorGroupsCard() {
                   const cnt = countByGroup(g.id);
                   return (
                     <TableRow key={g.id}>
-                      <TableCell className="font-medium text-zinc-100">{g.name}</TableCell>
+                      <TableCell className="font-medium text-zinc-100">
+                        {g.name}
+                      </TableCell>
                       <TableCell className="text-zinc-400 text-sm">
-                        {g.description ?? <span className="italic text-zinc-600">—</span>}
+                        {g.description ?? (
+                          <span className="italic text-zinc-600">—</span>
+                        )}
                       </TableCell>
                       <TableCell>
                         <GroupHealthBadge health={g.health} />
                       </TableCell>
-                      <TableCell className="text-right text-zinc-400 text-sm">{cnt}</TableCell>
-                      {isAdmin && (
-                      <TableCell>
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => openEdit(g)}
-                            className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer"
-                            title="Edit"
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </button>
-                          <button
-                            onClick={() => setDeleteTarget(g)}
-                            className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                            title="Delete"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </div>
+                      <TableCell className="text-right text-zinc-400 text-sm">
+                        {cnt}
                       </TableCell>
+                      {isAdmin && (
+                        <TableCell>
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => openEdit(g)}
+                              className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer"
+                              title="Edit"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </button>
+                            <button
+                              onClick={() => setDeleteTarget(g)}
+                              className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                              title="Delete"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </TableCell>
                       )}
                     </TableRow>
                   );
@@ -431,23 +539,32 @@ function CollectorGroupsCard() {
           )}
 
           {isAdmin && (
-          <div className="mt-4 flex justify-end border-t border-zinc-800 pt-4">
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => { addNameField.reset(); setAddDesc(""); setAddError(null); setAddOpen(true); }}
-              className="gap-1.5"
-            >
-              <Plus className="h-4 w-4" />
-              New Group
-            </Button>
-          </div>
+            <div className="mt-4 flex justify-end border-t border-zinc-800 pt-4">
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  addNameField.reset();
+                  setAddDesc("");
+                  setAddError(null);
+                  setAddOpen(true);
+                }}
+                className="gap-1.5"
+              >
+                <Plus className="h-4 w-4" />
+                New Group
+              </Button>
+            </div>
           )}
         </CardContent>
       </Card>
 
       {/* Add Group Dialog */}
-      <Dialog open={addOpen} onClose={() => setAddOpen(false)} title="New Collector Group">
+      <Dialog
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        title="New Collector Group"
+      >
         <form onSubmit={handleCreate} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="cg-name">Name</Label>
@@ -459,11 +576,16 @@ function CollectorGroupsCard() {
               onBlur={addNameField.onBlur}
               autoFocus
             />
-            {addNameField.error && <p className="text-xs text-red-400 mt-0.5">{addNameField.error}</p>}
+            {addNameField.error && (
+              <p className="text-xs text-red-400 mt-0.5">
+                {addNameField.error}
+              </p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="cg-desc">
-              Description <span className="font-normal text-zinc-500">(optional)</span>
+              Description{" "}
+              <span className="font-normal text-zinc-500">(optional)</span>
             </Label>
             <Input
               id="cg-desc"
@@ -474,9 +596,17 @@ function CollectorGroupsCard() {
           </div>
           {addError && <p className="text-sm text-red-400">{addError}</p>}
           <DialogFooter>
-            <Button type="button" variant="secondary" onClick={() => setAddOpen(false)}>Cancel</Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setAddOpen(false)}
+            >
+              Cancel
+            </Button>
             <Button type="submit" disabled={createGroup.isPending}>
-              {createGroup.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              {createGroup.isPending && (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              )}
               Create
             </Button>
           </DialogFooter>
@@ -484,7 +614,11 @@ function CollectorGroupsCard() {
       </Dialog>
 
       {/* Edit Group Dialog */}
-      <Dialog open={!!editTarget} onClose={() => setEditTarget(null)} title="Edit Collector Group">
+      <Dialog
+        open={!!editTarget}
+        onClose={() => setEditTarget(null)}
+        title="Edit Collector Group"
+      >
         <form onSubmit={handleEdit} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="cg-edit-name">Name</Label>
@@ -495,7 +629,11 @@ function CollectorGroupsCard() {
               onBlur={editNameField.onBlur}
               autoFocus
             />
-            {editNameField.error && <p className="text-xs text-red-400 mt-0.5">{editNameField.error}</p>}
+            {editNameField.error && (
+              <p className="text-xs text-red-400 mt-0.5">
+                {editNameField.error}
+              </p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="cg-edit-desc">Description</Label>
@@ -507,9 +645,17 @@ function CollectorGroupsCard() {
           </div>
           {editError && <p className="text-sm text-red-400">{editError}</p>}
           <DialogFooter>
-            <Button type="button" variant="secondary" onClick={() => setEditTarget(null)}>Cancel</Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setEditTarget(null)}
+            >
+              Cancel
+            </Button>
             <Button type="submit" disabled={updateGroup.isPending}>
-              {updateGroup.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              {updateGroup.isPending && (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              )}
               Save
             </Button>
           </DialogFooter>
@@ -517,17 +663,31 @@ function CollectorGroupsCard() {
       </Dialog>
 
       {/* Delete Group Dialog */}
-      <Dialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)} title="Delete Collector Group">
+      <Dialog
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete Collector Group"
+      >
         <p className="text-sm text-zinc-400">
           Delete group{" "}
-          <span className="font-semibold text-zinc-200">{deleteTarget?.name}</span>?
-          Collectors in this group will be unassigned. Devices targeting this group
-          will lose their group assignment.
+          <span className="font-semibold text-zinc-200">
+            {deleteTarget?.name}
+          </span>
+          ? Collectors in this group will be unassigned. Devices targeting this
+          group will lose their group assignment.
         </p>
         <DialogFooter>
-          <Button variant="secondary" onClick={() => setDeleteTarget(null)}>Cancel</Button>
-          <Button variant="destructive" onClick={handleDelete} disabled={deleteGroup.isPending}>
-            {deleteGroup.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+          <Button variant="secondary" onClick={() => setDeleteTarget(null)}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={handleDelete}
+            disabled={deleteGroup.isPending}
+          >
+            {deleteGroup.isPending && (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            )}
             Delete
           </Button>
         </DialogFooter>
@@ -562,7 +722,9 @@ function EditCollectorDialog({
       });
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update collector");
+      setError(
+        err instanceof Error ? err.message : "Failed to update collector",
+      );
     }
   }
 
@@ -587,15 +749,21 @@ function EditCollectorDialog({
         >
           <option value="">— No group —</option>
           {groups.map((g) => (
-            <option key={g.id} value={g.id}>{g.name}</option>
+            <option key={g.id} value={g.id}>
+              {g.name}
+            </option>
           ))}
         </select>
       </div>
       {error && <p className="text-sm text-red-400">{error}</p>}
       <DialogFooter>
-        <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+        <Button type="button" variant="secondary" onClick={onClose}>
+          Cancel
+        </Button>
         <Button type="submit" disabled={updateCollector.isPending}>
-          {updateCollector.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+          {updateCollector.isPending && (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          )}
           Save
         </Button>
       </DialogFooter>
@@ -622,7 +790,9 @@ function CollectorsCard() {
     try {
       await deleteCollector.mutateAsync(deleteTarget.id);
       setDeleteTarget(null);
-    } catch { /* silent */ }
+    } catch {
+      /* silent */
+    }
   }
 
   return (
@@ -635,7 +805,9 @@ function CollectorsCard() {
             <span className="ml-2 text-sm font-normal text-zinc-500">
               {online}/{total} online
             </span>
-            <Badge variant="default" className="ml-auto">{total}</Badge>
+            <Badge variant="default" className="ml-auto">
+              {total}
+            </Badge>
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -677,23 +849,31 @@ function CollectorsCard() {
                         className={`inline-block h-2 w-2 rounded-full ${
                           c.ws_connected ? "bg-emerald-400" : "bg-zinc-600"
                         }`}
-                        title={c.ws_connected
-                          ? `WS connected since ${c.ws_connection?.connected_at ?? "—"}`
-                          : "WS not connected"}
+                        title={
+                          c.ws_connected
+                            ? `WS connected since ${c.ws_connection?.connected_at ?? "—"}`
+                            : "WS not connected"
+                        }
                       />
                     </TableCell>
-                    <TableCell className="font-medium text-zinc-100">{c.name}</TableCell>
+                    <TableCell className="font-medium text-zinc-100">
+                      {c.name}
+                    </TableCell>
                     <TableCell className="font-mono text-xs text-zinc-400">
                       {c.hostname ?? "—"}
                     </TableCell>
                     <TableCell className="font-mono text-xs text-zinc-400">
-                      {c.ip_addresses && c.ip_addresses.length > 0
-                        ? c.ip_addresses.join(", ")
-                        : <span className="italic text-zinc-600">—</span>}
+                      {c.ip_addresses && c.ip_addresses.length > 0 ? (
+                        c.ip_addresses.join(", ")
+                      ) : (
+                        <span className="italic text-zinc-600">—</span>
+                      )}
                     </TableCell>
                     <TableCell>
                       {c.group_name ? (
-                        <Badge variant="info" className="text-xs">{c.group_name}</Badge>
+                        <Badge variant="info" className="text-xs">
+                          {c.group_name}
+                        </Badge>
                       ) : (
                         <span className="text-zinc-600 text-xs italic">—</span>
                       )}
@@ -711,24 +891,24 @@ function CollectorsCard() {
                       {timeAgo(c.last_seen_at)}
                     </TableCell>
                     {isAdmin && (
-                    <TableCell>
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => setEditTarget(c)}
-                          className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer"
-                          title="Edit"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </button>
-                        <button
-                          onClick={() => setDeleteTarget(c)}
-                          className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                          title="Delete"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => setEditTarget(c)}
+                            className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer"
+                            title="Edit"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={() => setDeleteTarget(c)}
+                            className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                            title="Delete"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </TableCell>
                     )}
                   </TableRow>
                 ))}
@@ -761,13 +941,24 @@ function CollectorsCard() {
       >
         <p className="text-sm text-zinc-400">
           Delete collector{" "}
-          <span className="font-semibold text-zinc-200">{deleteTarget?.name}</span>?
-          Its API key, app assignments, and historical check data will be removed.
+          <span className="font-semibold text-zinc-200">
+            {deleteTarget?.name}
+          </span>
+          ? Its API key, app assignments, and historical check data will be
+          removed.
         </p>
         <DialogFooter>
-          <Button variant="secondary" onClick={() => setDeleteTarget(null)}>Cancel</Button>
-          <Button variant="destructive" onClick={handleDelete} disabled={deleteCollector.isPending}>
-            {deleteCollector.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+          <Button variant="secondary" onClick={() => setDeleteTarget(null)}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={handleDelete}
+            disabled={deleteCollector.isPending}
+          >
+            {deleteCollector.isPending && (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            )}
             Delete
           </Button>
         </DialogFooter>
@@ -793,14 +984,20 @@ function CopyBlock({ content, label }: { content: string; label?: string }) {
   return (
     <div className="relative group">
       {label && <p className="text-xs text-zinc-500 mb-1">{label}</p>}
-      <pre className="rounded-lg bg-zinc-900 border border-zinc-700/50 px-4 py-3 text-xs font-mono text-zinc-300 overflow-x-auto whitespace-pre">{content}</pre>
+      <pre className="rounded-lg bg-zinc-900 border border-zinc-700/50 px-4 py-3 text-xs font-mono text-zinc-300 overflow-x-auto whitespace-pre">
+        {content}
+      </pre>
       <button
         type="button"
         onClick={handleCopy}
         className="absolute top-2 right-2 rounded p-1 text-zinc-500 hover:text-zinc-200 bg-zinc-800/80 hover:bg-zinc-700 transition-colors cursor-pointer opacity-0 group-hover:opacity-100"
         title="Copy"
       >
-        {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+        {copied ? (
+          <Check className="h-3.5 w-3.5 text-emerald-400" />
+        ) : (
+          <Copy className="h-3.5 w-3.5" />
+        )}
       </button>
     </div>
   );
@@ -812,7 +1009,10 @@ function SetupInstructionsDialog({ onClose }: { onClose: () => void }) {
   const [collectorName, setCollectorName] = useState("");
   const [phase, setPhase] = useState<"name" | "guide">("name");
   const [regCode, setRegCode] = useState("");
-  const [ctx, setCtx] = useState<{ collector_api_key: string; central_url: string } | null>(null);
+  const [ctx, setCtx] = useState<{
+    collector_api_key: string;
+    central_url: string;
+  } | null>(null);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
   const [codeCopied, setCodeCopied] = useState(false);
@@ -831,9 +1031,18 @@ function SetupInstructionsDialog({ onClose }: { onClose: () => void }) {
         createToken.mutateAsync({ name: `setup-${name}`, one_time: true }),
         fetchContext(),
       ]);
-      const code = tokenResult.data?.short_code ?? tokenResult.data?.token ?? "";
-      if (!code) { setError("Failed to create registration token."); return; }
-      if (!ctxResult.data) { setError("Failed to fetch setup context. Is MONCTL_COLLECTOR_API_KEY configured on central?"); return; }
+      const code =
+        tokenResult.data?.short_code ?? tokenResult.data?.token ?? "";
+      if (!code) {
+        setError("Failed to create registration token.");
+        return;
+      }
+      if (!ctxResult.data) {
+        setError(
+          "Failed to fetch setup context. Is MONCTL_COLLECTOR_API_KEY configured on central?",
+        );
+        return;
+      }
       setRegCode(code);
       setCtx(ctxResult.data);
       setPhase("guide");
@@ -857,13 +1066,20 @@ function SetupInstructionsDialog({ onClose }: { onClose: () => void }) {
               onKeyDown={(e) => e.key === "Enter" && handleGenerate()}
               autoFocus
             />
-            <p className="text-xs text-zinc-500 mt-1">A unique name for this collector node.</p>
+            <p className="text-xs text-zinc-500 mt-1">
+              A unique name for this collector node.
+            </p>
           </div>
           {error && <p className="text-sm text-red-400">{error}</p>}
         </div>
         <DialogFooter>
-          <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button onClick={handleGenerate} disabled={!collectorName.trim() || generating}>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleGenerate}
+            disabled={!collectorName.trim() || generating}
+          >
             {generating && <Loader2 className="h-4 w-4 animate-spin" />}
             Generate Setup Guide
           </Button>
@@ -1050,73 +1266,123 @@ echo "Done! Approve the collector in MonCTL UI."`;
         {/* Registration code + copy-all */}
         <div className="flex items-center justify-between rounded-lg bg-zinc-800 px-4 py-3">
           <div className="flex items-center gap-3">
-            <span className="text-xs text-zinc-500 uppercase tracking-wider">Registration Code</span>
-            <code className="text-2xl font-mono font-bold text-emerald-400 tracking-[0.3em]">{regCode}</code>
-            <button type="button" onClick={handleCopyCode}
-              className="rounded p-1.5 text-zinc-400 hover:text-zinc-100 transition-colors cursor-pointer" title="Copy code">
-              {codeCopied ? <Check className="h-4 w-4 text-emerald-400" /> : <Copy className="h-4 w-4" />}
+            <span className="text-xs text-zinc-500 uppercase tracking-wider">
+              Registration Code
+            </span>
+            <code className="text-2xl font-mono font-bold text-emerald-400 tracking-[0.3em]">
+              {regCode}
+            </code>
+            <button
+              type="button"
+              onClick={handleCopyCode}
+              className="rounded p-1.5 text-zinc-400 hover:text-zinc-100 transition-colors cursor-pointer"
+              title="Copy code"
+            >
+              {codeCopied ? (
+                <Check className="h-4 w-4 text-emerald-400" />
+              ) : (
+                <Copy className="h-4 w-4" />
+              )}
             </button>
           </div>
-          <button type="button" onClick={handleCopyScript}
+          <button
+            type="button"
+            onClick={handleCopyScript}
             className="flex items-center gap-1.5 rounded-md border border-zinc-600 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer"
-            title="Copy complete setup script">
-            {scriptCopied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <FileDown className="h-3.5 w-3.5" />}
+            title="Copy complete setup script"
+          >
+            {scriptCopied ? (
+              <Check className="h-3.5 w-3.5 text-emerald-400" />
+            ) : (
+              <FileDown className="h-3.5 w-3.5" />
+            )}
             {scriptCopied ? "Copied!" : "Copy Full Script"}
           </button>
         </div>
 
-        <p className="text-xs text-zinc-500">Run all commands as <code className="bg-zinc-800 px-1 py-0.5 rounded">root</code> on a fresh Ubuntu 22.04+ server. Or use "Copy Full Script" for a single script.</p>
+        <p className="text-xs text-zinc-500">
+          Run all commands as{" "}
+          <code className="bg-zinc-800 px-1 py-0.5 rounded">root</code> on a
+          fresh Ubuntu 22.04+ server. Or use "Copy Full Script" for a single
+          script.
+        </p>
 
         {/* Step 1 */}
         <div>
-          <h3 className="text-sm font-medium text-zinc-200 mb-2">Step 1: Create user &amp; install Docker</h3>
+          <h3 className="text-sm font-medium text-zinc-200 mb-2">
+            Step 1: Create user &amp; install Docker
+          </h3>
           <CopyBlock content={step1} />
         </div>
 
         {/* Step 2 */}
         <div>
-          <h3 className="text-sm font-medium text-zinc-200 mb-2">Step 2: Create directories</h3>
+          <h3 className="text-sm font-medium text-zinc-200 mb-2">
+            Step 2: Create directories
+          </h3>
           <CopyBlock content={step2} />
         </div>
 
         {/* Step 3 */}
         <div>
-          <h3 className="text-sm font-medium text-zinc-200 mb-2">Step 3: Write <code className="text-xs bg-zinc-800 px-1 py-0.5 rounded">.env</code></h3>
+          <h3 className="text-sm font-medium text-zinc-200 mb-2">
+            Step 3: Write{" "}
+            <code className="text-xs bg-zinc-800 px-1 py-0.5 rounded">
+              .env
+            </code>
+          </h3>
           <CopyBlock content={step3} />
         </div>
 
         {/* Step 4 */}
         <div>
-          <h3 className="text-sm font-medium text-zinc-200 mb-2">Step 4: Write <code className="text-xs bg-zinc-800 px-1 py-0.5 rounded">docker-compose.yml</code></h3>
+          <h3 className="text-sm font-medium text-zinc-200 mb-2">
+            Step 4: Write{" "}
+            <code className="text-xs bg-zinc-800 px-1 py-0.5 rounded">
+              docker-compose.yml
+            </code>
+          </h3>
           <CopyBlock content={composeYml} />
         </div>
 
         {/* Step 5 */}
         <div>
-          <h3 className="text-sm font-medium text-zinc-200 mb-2">Step 5: Transfer Docker images</h3>
+          <h3 className="text-sm font-medium text-zinc-200 mb-2">
+            Step 5: Transfer Docker images
+          </h3>
           <CopyBlock content={step5} />
           <p className="text-xs text-zinc-500 mt-1.5">
-            Replace <code className="bg-zinc-800 px-1 py-0.5 rounded">&lt;COLLECTOR_IP&gt;</code> with the server's IP address.
+            Replace{" "}
+            <code className="bg-zinc-800 px-1 py-0.5 rounded">
+              &lt;COLLECTOR_IP&gt;
+            </code>{" "}
+            with the server's IP address.
           </p>
         </div>
 
         {/* Step 6 */}
         <div>
-          <h3 className="text-sm font-medium text-zinc-200 mb-2">Step 6: Start services</h3>
+          <h3 className="text-sm font-medium text-zinc-200 mb-2">
+            Step 6: Start services
+          </h3>
           <CopyBlock content={step6} />
         </div>
 
         {/* Step 7 */}
         <div className="rounded-lg bg-amber-500/10 border border-amber-500/20 px-4 py-3">
           <p className="text-sm text-amber-400">
-            <strong>Step 7:</strong> The collector registers automatically using the registration code and appears
-            in the <strong>Pending Approval</strong> list above. Approve it and assign a collector group.
+            <strong>Step 7:</strong> The collector registers automatically using
+            the registration code and appears in the{" "}
+            <strong>Pending Approval</strong> list above. Approve it and assign
+            a collector group.
           </p>
         </div>
       </div>
 
       <DialogFooter>
-        <Button variant="secondary" onClick={onClose}>Done</Button>
+        <Button variant="secondary" onClick={onClose}>
+          Done
+        </Button>
       </DialogFooter>
     </Dialog>
   );
@@ -1137,7 +1403,9 @@ function RegistrationTokensCard() {
   const [addError, setAddError] = useState<string | null>(null);
 
   const [createdToken, setCreatedToken] = useState<string | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<RegistrationToken | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<RegistrationToken | null>(
+    null,
+  );
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -1157,7 +1425,9 @@ function RegistrationTokensCard() {
       setAddClusterId("");
       setAddExpiry("");
     } catch (err) {
-      setAddError(err instanceof Error ? err.message : "Failed to create token");
+      setAddError(
+        err instanceof Error ? err.message : "Failed to create token",
+      );
     }
   }
 
@@ -1166,7 +1436,9 @@ function RegistrationTokensCard() {
     try {
       await deleteToken.mutateAsync(deleteTarget.id);
       setDeleteTarget(null);
-    } catch { /* silent */ }
+    } catch {
+      /* silent */
+    }
   }
 
   return (
@@ -1176,7 +1448,9 @@ function RegistrationTokensCard() {
           <CardTitle className="flex items-center gap-2">
             <KeyRound className="h-4 w-4" />
             Registration Tokens
-            <Badge variant="default" className="ml-auto">{tokens?.length ?? 0}</Badge>
+            <Badge variant="default" className="ml-auto">
+              {tokens?.length ?? 0}
+            </Badge>
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -1204,51 +1478,64 @@ function RegistrationTokensCard() {
               </TableHeader>
               <TableBody>
                 {tokens.map((t) => {
-                  const isExpired = !!(t.expires_at && new Date(t.expires_at) < new Date());
+                  const isExpired = !!(
+                    t.expires_at && new Date(t.expires_at) < new Date()
+                  );
                   return (
-                  <TableRow key={t.id} className={isExpired ? "opacity-60" : ""}>
-                    <TableCell className={`font-medium ${isExpired ? "text-zinc-500 line-through" : "text-zinc-100"}`}>{t.name}</TableCell>
-                    <TableCell>
-                      {t.short_code ? (
-                        <code className={`rounded bg-zinc-800 px-1.5 py-0.5 text-sm font-mono font-bold tracking-wider ${isExpired ? "text-zinc-500 line-through" : "text-emerald-400"}`}>
-                          {t.short_code}
-                        </code>
-                      ) : (
-                        <span className="text-zinc-600 text-xs">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={t.one_time ? "info" : "default"}>
-                        {t.one_time ? "yes" : "no"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      {isExpired ? (
-                        <Badge variant="destructive">expired</Badge>
-                      ) : (
-                        <Badge variant={t.used ? "destructive" : "success"}>
-                          {t.used ? "used" : "available"}
-                        </Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className={`text-sm ${isExpired ? "text-red-400" : "text-zinc-500"}`}>
-                      {t.expires_at ? formatDate(t.expires_at, tz) : "—"}
-                    </TableCell>
-                    <TableCell className="text-zinc-500 text-sm">
-                      {formatDate(t.created_at, tz)}
-                    </TableCell>
-                    {isAdmin && (
-                    <TableCell>
-                      <button
-                        onClick={() => setDeleteTarget(t)}
-                        className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                        title="Revoke"
+                    <TableRow
+                      key={t.id}
+                      className={isExpired ? "opacity-60" : ""}
+                    >
+                      <TableCell
+                        className={`font-medium ${isExpired ? "text-zinc-500 line-through" : "text-zinc-100"}`}
                       >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </TableCell>
-                    )}
-                  </TableRow>
+                        {t.name}
+                      </TableCell>
+                      <TableCell>
+                        {t.short_code ? (
+                          <code
+                            className={`rounded bg-zinc-800 px-1.5 py-0.5 text-sm font-mono font-bold tracking-wider ${isExpired ? "text-zinc-500 line-through" : "text-emerald-400"}`}
+                          >
+                            {t.short_code}
+                          </code>
+                        ) : (
+                          <span className="text-zinc-600 text-xs">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={t.one_time ? "info" : "default"}>
+                          {t.one_time ? "yes" : "no"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {isExpired ? (
+                          <Badge variant="destructive">expired</Badge>
+                        ) : (
+                          <Badge variant={t.used ? "destructive" : "success"}>
+                            {t.used ? "used" : "available"}
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell
+                        className={`text-sm ${isExpired ? "text-red-400" : "text-zinc-500"}`}
+                      >
+                        {t.expires_at ? formatDate(t.expires_at, tz) : "—"}
+                      </TableCell>
+                      <TableCell className="text-zinc-500 text-sm">
+                        {formatDate(t.created_at, tz)}
+                      </TableCell>
+                      {isAdmin && (
+                        <TableCell>
+                          <button
+                            onClick={() => setDeleteTarget(t)}
+                            className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                            title="Revoke"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </TableCell>
+                      )}
+                    </TableRow>
                   );
                 })}
               </TableBody>
@@ -1256,28 +1543,50 @@ function RegistrationTokensCard() {
           )}
 
           {isAdmin && (
-          <div className="mt-4 flex justify-end border-t border-zinc-800 pt-4">
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => { tokenNameField.reset(); setAddOneTime(false); setAddClusterId(""); setAddExpiry(""); setAddError(null); setAddOpen(true); }}
-              className="gap-1.5"
-            >
-              <Plus className="h-4 w-4" />
-              New Token
-            </Button>
-          </div>
+            <div className="mt-4 flex justify-end border-t border-zinc-800 pt-4">
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  tokenNameField.reset();
+                  setAddOneTime(false);
+                  setAddClusterId("");
+                  setAddExpiry("");
+                  setAddError(null);
+                  setAddOpen(true);
+                }}
+                className="gap-1.5"
+              >
+                <Plus className="h-4 w-4" />
+                New Token
+              </Button>
+            </div>
           )}
         </CardContent>
       </Card>
 
       {/* Create Token Dialog */}
-      <Dialog open={addOpen} onClose={() => setAddOpen(false)} title="New Registration Token">
+      <Dialog
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        title="New Registration Token"
+      >
         <form onSubmit={handleCreate} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="rt-name">Name</Label>
-            <Input id="rt-name" placeholder="e.g. prod-eu-token" value={tokenNameField.value} onChange={tokenNameField.onChange} onBlur={tokenNameField.onBlur} autoFocus />
-            {tokenNameField.error && <p className="text-xs text-red-400 mt-0.5">{tokenNameField.error}</p>}
+            <Input
+              id="rt-name"
+              placeholder="e.g. prod-eu-token"
+              value={tokenNameField.value}
+              onChange={tokenNameField.onChange}
+              onBlur={tokenNameField.onBlur}
+              autoFocus
+            />
+            {tokenNameField.error && (
+              <p className="text-xs text-red-400 mt-0.5">
+                {tokenNameField.error}
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <label className="flex items-center gap-2 cursor-pointer">
@@ -1292,15 +1601,29 @@ function RegistrationTokensCard() {
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="rt-expiry">
-              Expiry <span className="font-normal text-zinc-500">(optional)</span>
+              Expiry{" "}
+              <span className="font-normal text-zinc-500">(optional)</span>
             </Label>
-            <Input id="rt-expiry" type="datetime-local" value={addExpiry} onChange={(e) => setAddExpiry(e.target.value)} />
+            <Input
+              id="rt-expiry"
+              type="datetime-local"
+              value={addExpiry}
+              onChange={(e) => setAddExpiry(e.target.value)}
+            />
           </div>
           {addError && <p className="text-sm text-red-400">{addError}</p>}
           <DialogFooter>
-            <Button type="button" variant="secondary" onClick={() => setAddOpen(false)}>Cancel</Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setAddOpen(false)}
+            >
+              Cancel
+            </Button>
             <Button type="submit" disabled={createToken.isPending}>
-              {createToken.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              {createToken.isPending && (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              )}
               Create
             </Button>
           </DialogFooter>
@@ -1309,22 +1632,34 @@ function RegistrationTokensCard() {
 
       {/* Setup Instructions dialog */}
       {createdToken && (
-        <SetupInstructionsDialog
-          onClose={() => setCreatedToken(null)}
-        />
+        <SetupInstructionsDialog onClose={() => setCreatedToken(null)} />
       )}
 
       {/* Delete Token Dialog */}
-      <Dialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)} title="Revoke Token">
+      <Dialog
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title="Revoke Token"
+      >
         <p className="text-sm text-zinc-400">
           Revoke registration token{" "}
-          <span className="font-semibold text-zinc-200">{deleteTarget?.name}</span>?
-          Collectors that already registered will not be affected.
+          <span className="font-semibold text-zinc-200">
+            {deleteTarget?.name}
+          </span>
+          ? Collectors that already registered will not be affected.
         </p>
         <DialogFooter>
-          <Button variant="secondary" onClick={() => setDeleteTarget(null)}>Cancel</Button>
-          <Button variant="destructive" onClick={handleDelete} disabled={deleteToken.isPending}>
-            {deleteToken.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+          <Button variant="secondary" onClick={() => setDeleteTarget(null)}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={handleDelete}
+            disabled={deleteToken.isPending}
+          >
+            {deleteToken.isPending && (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            )}
             Revoke
           </Button>
         </DialogFooter>
@@ -1345,14 +1680,15 @@ export function CollectorsPage() {
         <div>
           <h1 className="text-lg font-semibold text-zinc-100">Collectors</h1>
           <p className="text-sm text-zinc-500">
-            Manage collector groups, registered collectors, and registration tokens.
+            Manage collector groups, registered collectors, and registration
+            tokens.
           </p>
         </div>
         {isAdmin && (
-        <Button onClick={() => setShowSetupGuide(true)} className="gap-1.5">
-          <Plus className="h-4 w-4" />
-          Add Collector
-        </Button>
+          <Button onClick={() => setShowSetupGuide(true)} className="gap-1.5">
+            <Plus className="h-4 w-4" />
+            Add Collector
+          </Button>
         )}
       </div>
       <PendingCollectorsCard />

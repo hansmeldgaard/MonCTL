@@ -5,28 +5,44 @@ import { cn } from "@/lib/utils.ts";
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export type TimeRangePreset =
-  | "15m" | "30m" | "1h" | "4h" | "12h" | "24h" | "7d" | "30d" | "all";
+  | "15m"
+  | "30m"
+  | "1h"
+  | "4h"
+  | "12h"
+  | "24h"
+  | "7d"
+  | "30d"
+  | "all";
 
 export type TimeRangeValue =
   | { type: "preset"; preset: TimeRangePreset }
-  | { type: "relative"; value: number; unit: "minutes" | "hours" | "days" | "weeks" }
+  | {
+      type: "relative";
+      value: number;
+      unit: "minutes" | "hours" | "days" | "weeks";
+    }
   | { type: "absolute"; fromTs: string; toTs: string | null };
 
 export interface TimeRange {
-  fromTs: string | null;   // null = no lower bound
-  toTs: string | null;     // null = now
+  fromTs: string | null; // null = no lower bound
+  toTs: string | null; // null = now
 }
 
-const PRESET_OPTIONS: { preset: TimeRangePreset; label: string; ms: number | null }[] = [
-  { preset: "15m",  label: "Last 15 minutes",  ms: 15 * 60 * 1000 },
-  { preset: "30m",  label: "Last 30 minutes",  ms: 30 * 60 * 1000 },
-  { preset: "1h",   label: "Last 1 hour",       ms: 1 * 60 * 60 * 1000 },
-  { preset: "4h",   label: "Last 4 hours",      ms: 4 * 60 * 60 * 1000 },
-  { preset: "12h",  label: "Last 12 hours",     ms: 12 * 60 * 60 * 1000 },
-  { preset: "24h",  label: "Last 24 hours",     ms: 24 * 60 * 60 * 1000 },
-  { preset: "7d",   label: "Last 7 days",       ms: 7 * 24 * 60 * 60 * 1000 },
-  { preset: "30d",  label: "Last 30 days",      ms: 30 * 24 * 60 * 60 * 1000 },
-  { preset: "all",  label: "All time",          ms: null },
+const PRESET_OPTIONS: {
+  preset: TimeRangePreset;
+  label: string;
+  ms: number | null;
+}[] = [
+  { preset: "15m", label: "Last 15 minutes", ms: 15 * 60 * 1000 },
+  { preset: "30m", label: "Last 30 minutes", ms: 30 * 60 * 1000 },
+  { preset: "1h", label: "Last 1 hour", ms: 1 * 60 * 60 * 1000 },
+  { preset: "4h", label: "Last 4 hours", ms: 4 * 60 * 60 * 1000 },
+  { preset: "12h", label: "Last 12 hours", ms: 12 * 60 * 60 * 1000 },
+  { preset: "24h", label: "Last 24 hours", ms: 24 * 60 * 60 * 1000 },
+  { preset: "7d", label: "Last 7 days", ms: 7 * 24 * 60 * 60 * 1000 },
+  { preset: "30d", label: "Last 30 days", ms: 30 * 24 * 60 * 60 * 1000 },
+  { preset: "all", label: "All time", ms: null },
 ];
 
 const UNIT_LABELS = {
@@ -71,8 +87,12 @@ export function rangeLabel(r: TimeRangeValue, timezone = "UTC"): string {
     return `Last ${r.value} ${UNIT_LABELS[r.unit].toLowerCase()}`;
   }
   // absolute
-  const from = r.fromTs ? new Date(r.fromTs).toLocaleString("en-US", { timeZone: timezone }) : "beginning";
-  const to = r.toTs ? new Date(r.toTs).toLocaleString("en-US", { timeZone: timezone }) : "now";
+  const from = r.fromTs
+    ? new Date(r.fromTs).toLocaleString("en-US", { timeZone: timezone })
+    : "beginning";
+  const to = r.toTs
+    ? new Date(r.toTs).toLocaleString("en-US", { timeZone: timezone })
+    : "now";
   return `${from} → ${to}`;
 }
 
@@ -95,18 +115,27 @@ interface TimeRangePickerProps {
   timezone?: string;
 }
 
-export function TimeRangePicker({ value, onChange, className, timezone = "UTC" }: TimeRangePickerProps) {
+export function TimeRangePicker({
+  value,
+  onChange,
+  className,
+  timezone = "UTC",
+}: TimeRangePickerProps) {
   const [open, setOpen] = useState(false);
-  const [customTab, setCustomTab] = useState<"relative" | "absolute">("relative");
+  const [customTab, setCustomTab] = useState<"relative" | "absolute">(
+    "relative",
+  );
 
   // Relative inputs
   const [relValue, setRelValue] = useState(1);
-  const [relUnit, setRelUnit] = useState<"minutes" | "hours" | "days" | "weeks">("hours");
+  const [relUnit, setRelUnit] = useState<
+    "minutes" | "hours" | "days" | "weeks"
+  >("hours");
 
   // Absolute inputs (defaults to last 1h range)
   const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
   const [absFrom, setAbsFrom] = useState(toDatetimeLocal(oneHourAgo));
-  const [absTo, setAbsTo] = useState("");  // empty = now
+  const [absTo, setAbsTo] = useState(""); // empty = now
 
   const ref = useRef<HTMLDivElement>(null);
 
@@ -155,7 +184,9 @@ export function TimeRangePicker({ value, onChange, className, timezone = "UTC" }
       >
         <Clock className="h-3.5 w-3.5" />
         <span>{label}</span>
-        <ChevronDown className={cn("h-3 w-3 transition-transform", open && "rotate-180")} />
+        <ChevronDown
+          className={cn("h-3 w-3 transition-transform", open && "rotate-180")}
+        />
       </button>
 
       {/* Dropdown panel */}
@@ -209,7 +240,9 @@ export function TimeRangePicker({ value, onChange, className, timezone = "UTC" }
 
               {customTab === "relative" && (
                 <div className="space-y-3">
-                  <p className="text-xs text-zinc-500">Show data from the last:</p>
+                  <p className="text-xs text-zinc-500">
+                    Show data from the last:
+                  </p>
                   <div className="flex items-center gap-2">
                     <input
                       type="number"
@@ -220,11 +253,15 @@ export function TimeRangePicker({ value, onChange, className, timezone = "UTC" }
                     />
                     <select
                       value={relUnit}
-                      onChange={(e) => setRelUnit(e.target.value as typeof relUnit)}
+                      onChange={(e) =>
+                        setRelUnit(e.target.value as typeof relUnit)
+                      }
                       className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-xs text-zinc-100 focus:outline-none focus:ring-2 focus:ring-brand-500/50"
                     >
                       {Object.entries(UNIT_LABELS).map(([val, lbl]) => (
-                        <option key={val} value={val}>{lbl}</option>
+                        <option key={val} value={val}>
+                          {lbl}
+                        </option>
                       ))}
                     </select>
                   </div>

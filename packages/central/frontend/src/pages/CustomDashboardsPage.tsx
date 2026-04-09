@@ -5,7 +5,12 @@ import { usePermissions } from "@/hooks/usePermissions.ts";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from "@/components/ui/table.tsx";
 import {
   useAnalyticsDashboards,
@@ -27,12 +32,15 @@ export function CustomDashboardsPage() {
   const filtered = (dashboards || []).filter(
     (d) =>
       d.name.toLowerCase().includes(search.toLowerCase()) ||
-      d.description.toLowerCase().includes(search.toLowerCase())
+      d.description.toLowerCase().includes(search.toLowerCase()),
   );
 
   async function handleCreate() {
     if (!newName.trim()) return;
-    await createMut.mutateAsync({ name: newName.trim(), description: newDesc.trim() });
+    await createMut.mutateAsync({
+      name: newName.trim(),
+      description: newDesc.trim(),
+    });
     setNewName("");
     setNewDesc("");
     setShowCreate(false);
@@ -51,9 +59,15 @@ export function CustomDashboardsPage() {
   return (
     <div className="p-6 space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold text-zinc-100">Custom Dashboards</h1>
+        <h1 className="text-lg font-semibold text-zinc-100">
+          Custom Dashboards
+        </h1>
         {canCreate("dashboard") && (
-          <Button size="sm" onClick={() => setShowCreate(true)} className="gap-1.5">
+          <Button
+            size="sm"
+            onClick={() => setShowCreate(true)}
+            className="gap-1.5"
+          >
             <Plus className="h-3.5 w-3.5" />
             New Dashboard
           </Button>
@@ -82,10 +96,24 @@ export function CustomDashboardsPage() {
               onKeyDown={(e) => e.key === "Enter" && handleCreate()}
             />
           </div>
-          <Button size="sm" onClick={handleCreate} disabled={createMut.isPending || !newName.trim()}>
-            {createMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Create"}
+          <Button
+            size="sm"
+            onClick={handleCreate}
+            disabled={createMut.isPending || !newName.trim()}
+          >
+            {createMut.isPending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              "Create"
+            )}
           </Button>
-          <Button size="sm" variant="ghost" onClick={() => setShowCreate(false)}>Cancel</Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setShowCreate(false)}
+          >
+            Cancel
+          </Button>
         </div>
       )}
 
@@ -138,9 +166,15 @@ export function CustomDashboardsPage() {
                   <TableCell className="text-zinc-500 text-xs max-w-xs truncate">
                     {d.description || "\u2014"}
                   </TableCell>
-                  <TableCell className="text-xs text-zinc-400">{d.owner_name || "\u2014"}</TableCell>
-                  <TableCell className="text-right text-xs">{d.widget_count}</TableCell>
-                  <TableCell className="text-xs text-zinc-500">{formatDate(d.updated_at)}</TableCell>
+                  <TableCell className="text-xs text-zinc-400">
+                    {d.owner_name || "\u2014"}
+                  </TableCell>
+                  <TableCell className="text-right text-xs">
+                    {d.widget_count}
+                  </TableCell>
+                  <TableCell className="text-xs text-zinc-500">
+                    {formatDate(d.updated_at)}
+                  </TableCell>
                   {canDelete("dashboard") && (
                     <TableCell>
                       <button

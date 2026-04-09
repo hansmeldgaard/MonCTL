@@ -51,18 +51,21 @@ class PeerClient:
 
     async def get_my_jobs(
         self, worker_id: str, loaded_apps: list[tuple[str, str]]
-    ) -> list[dict]:
-        """Poll-worker calls this to get its assigned jobs from the cache-node."""
+    ) -> tuple[list[dict], list[str]]:
+        """Poll-worker calls this to get its assigned jobs from the cache-node.
+
+        Returns (jobs, immediate_job_ids).
+        """
         pb_apps = [pb.AppInfo(app_id=a, version=v) for (a, v) in loaded_apps]
         try:
             resp = await self._stub.GetMyJobs(
                 pb.GetJobsRequest(worker_id=worker_id, loaded_apps=pb_apps),
                 timeout=self._timeout,
             )
-            return [_job_to_dict(j) for j in resp.jobs]
+            return [_job_to_dict(j) for j in resp.jobs], list(resp.immediate_job_ids)
         except grpc.aio.AioRpcError as e:
             logger.warning("get_my_jobs_failed", worker=worker_id, error=str(e))
-            return []
+            return [], []
 
     async def register_worker(self, worker_id: str, loaded_apps: list[tuple[str, str]]) -> bool:
         pb_apps = [pb.AppInfo(app_id=a, version=v) for (a, v) in loaded_apps]

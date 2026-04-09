@@ -17,9 +17,21 @@ const LOGIN_TYPES = [
 const MUTATION_ACTIONS = ["create", "update", "delete"];
 
 const RESOURCE_TYPES = [
-  "device", "app", "assignment", "credential", "user", "role", "tenant",
-  "alert_definition", "automation", "connector", "template", "system_setting",
-  "collector", "pack", "discovery_rule",
+  "device",
+  "app",
+  "assignment",
+  "credential",
+  "user",
+  "role",
+  "tenant",
+  "alert_definition",
+  "automation",
+  "connector",
+  "template",
+  "system_setting",
+  "collector",
+  "pack",
+  "discovery_rule",
 ];
 
 function EventBadge({ type }: { type: string }) {
@@ -31,28 +43,49 @@ function EventBadge({ type }: { type: string }) {
       ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
       : "bg-zinc-500/15 text-zinc-400 border-zinc-500/30";
   return (
-    <span className={cn("inline-flex items-center px-2 py-0.5 rounded border text-xs", color)}>
+    <span
+      className={cn(
+        "inline-flex items-center px-2 py-0.5 rounded border text-xs",
+        color,
+      )}
+    >
       {type}
     </span>
   );
 }
 
 function ActionBadge({ action }: { action: string }) {
-  const color = action === "delete"
-    ? "bg-red-500/15 text-red-400 border-red-500/30"
-    : action === "create"
-      ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
-      : "bg-blue-500/15 text-blue-400 border-blue-500/30";
+  const color =
+    action === "delete"
+      ? "bg-red-500/15 text-red-400 border-red-500/30"
+      : action === "create"
+        ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
+        : "bg-blue-500/15 text-blue-400 border-blue-500/30";
   return (
-    <span className={cn("inline-flex items-center px-2 py-0.5 rounded border text-xs", color)}>
+    <span
+      className={cn(
+        "inline-flex items-center px-2 py-0.5 rounded border text-xs",
+        color,
+      )}
+    >
       {action}
     </span>
   );
 }
 
-function LoginsTable({ rows, timezone }: { rows: AuditLoginEvent[]; timezone: string }) {
+function LoginsTable({
+  rows,
+  timezone,
+}: {
+  rows: AuditLoginEvent[];
+  timezone: string;
+}) {
   if (!rows.length) {
-    return <div className="text-sm text-zinc-500 py-8 text-center">No login events.</div>;
+    return (
+      <div className="text-sm text-zinc-500 py-8 text-center">
+        No login events.
+      </div>
+    );
   }
   return (
     <div className="overflow-x-auto">
@@ -69,15 +102,26 @@ function LoginsTable({ rows, timezone }: { rows: AuditLoginEvent[]; timezone: st
         </thead>
         <tbody>
           {rows.map((r) => (
-            <tr key={r.id} className="border-b border-zinc-900 hover:bg-zinc-900/40">
+            <tr
+              key={r.id}
+              className="border-b border-zinc-900 hover:bg-zinc-900/40"
+            >
               <td className="py-2 px-3 text-zinc-400 font-mono text-xs whitespace-nowrap">
                 {r.timestamp ? formatLogTimestamp(r.timestamp, timezone) : "—"}
               </td>
-              <td className="py-2 px-3"><EventBadge type={r.event_type} /></td>
+              <td className="py-2 px-3">
+                <EventBadge type={r.event_type} />
+              </td>
               <td className="py-2 px-3 text-zinc-200">{r.username || "—"}</td>
-              <td className="py-2 px-3 text-zinc-400 font-mono text-xs">{r.ip_address || "—"}</td>
-              <td className="py-2 px-3 text-zinc-400 text-xs">{r.failure_reason || ""}</td>
-              <td className="py-2 px-3 text-zinc-500 text-xs truncate max-w-xs">{r.user_agent || ""}</td>
+              <td className="py-2 px-3 text-zinc-400 font-mono text-xs">
+                {r.ip_address || "—"}
+              </td>
+              <td className="py-2 px-3 text-zinc-400 text-xs">
+                {r.failure_reason || ""}
+              </td>
+              <td className="py-2 px-3 text-zinc-500 text-xs truncate max-w-xs">
+                {r.user_agent || ""}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -86,16 +130,33 @@ function LoginsTable({ rows, timezone }: { rows: AuditLoginEvent[]; timezone: st
   );
 }
 
-function MutationDetailModal({ row, onClose, timezone }: { row: AuditMutation; onClose: () => void; timezone: string }) {
+function MutationDetailModal({
+  row,
+  onClose,
+  timezone,
+}: {
+  row: AuditMutation;
+  onClose: () => void;
+  timezone: string;
+}) {
   let oldPretty = "";
   let newPretty = "";
-  try { oldPretty = JSON.stringify(JSON.parse(row.old_values || "{}"), null, 2); }
-  catch { oldPretty = row.old_values; }
-  try { newPretty = JSON.stringify(JSON.parse(row.new_values || "{}"), null, 2); }
-  catch { newPretty = row.new_values; }
+  try {
+    oldPretty = JSON.stringify(JSON.parse(row.old_values || "{}"), null, 2);
+  } catch {
+    oldPretty = row.old_values;
+  }
+  try {
+    newPretty = JSON.stringify(JSON.parse(row.new_values || "{}"), null, 2);
+  } catch {
+    newPretty = row.new_values;
+  }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      onClick={onClose}
+    >
       <div
         className="bg-zinc-950 border border-zinc-800 rounded-lg shadow-2xl max-w-5xl w-full max-h-[90vh] overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}
@@ -109,31 +170,46 @@ function MutationDetailModal({ row, onClose, timezone }: { row: AuditMutation; o
               <span className="font-mono text-xs">{row.resource_id}</span>
             </div>
             <div className="text-xs text-zinc-500 mt-1">
-              {formatLogTimestamp(row.timestamp, timezone)} · {row.username || "system"} · {row.ip_address}
+              {formatLogTimestamp(row.timestamp, timezone)} ·{" "}
+              {row.username || "system"} · {row.ip_address}
             </div>
           </div>
-          <button onClick={onClose} className="text-zinc-500 hover:text-zinc-200 px-2">✕</button>
+          <button
+            onClick={onClose}
+            className="text-zinc-500 hover:text-zinc-200 px-2"
+          >
+            ✕
+          </button>
         </div>
 
         <div className="overflow-y-auto p-4 grid grid-cols-2 gap-4">
           <div>
-            <div className="text-xs uppercase tracking-wide text-zinc-500 mb-2">Old values</div>
+            <div className="text-xs uppercase tracking-wide text-zinc-500 mb-2">
+              Old values
+            </div>
             <pre className="bg-zinc-900 border border-zinc-800 rounded p-3 text-xs text-zinc-300 whitespace-pre-wrap break-all">
               {oldPretty}
             </pre>
           </div>
           <div>
-            <div className="text-xs uppercase tracking-wide text-zinc-500 mb-2">New values</div>
+            <div className="text-xs uppercase tracking-wide text-zinc-500 mb-2">
+              New values
+            </div>
             <pre className="bg-zinc-900 border border-zinc-800 rounded p-3 text-xs text-zinc-300 whitespace-pre-wrap break-all">
               {newPretty}
             </pre>
           </div>
           {row.changed_fields.length > 0 && (
             <div className="col-span-2">
-              <div className="text-xs uppercase tracking-wide text-zinc-500 mb-2">Changed fields</div>
+              <div className="text-xs uppercase tracking-wide text-zinc-500 mb-2">
+                Changed fields
+              </div>
               <div className="flex flex-wrap gap-1">
                 {row.changed_fields.map((f) => (
-                  <span key={f} className="inline-flex items-center px-2 py-0.5 rounded bg-zinc-800 text-xs text-zinc-300">
+                  <span
+                    key={f}
+                    className="inline-flex items-center px-2 py-0.5 rounded bg-zinc-800 text-xs text-zinc-300"
+                  >
                     {f}
                   </span>
                 ))}
@@ -141,7 +217,8 @@ function MutationDetailModal({ row, onClose, timezone }: { row: AuditMutation; o
             </div>
           )}
           <div className="col-span-2 text-xs text-zinc-500 font-mono">
-            request_id: {row.request_id} · method: {row.method} · path: {row.path}
+            request_id: {row.request_id} · method: {row.method} · path:{" "}
+            {row.path}
           </div>
         </div>
       </div>
@@ -149,11 +226,21 @@ function MutationDetailModal({ row, onClose, timezone }: { row: AuditMutation; o
   );
 }
 
-function MutationsTable({ rows, timezone }: { rows: AuditMutation[]; timezone: string }) {
+function MutationsTable({
+  rows,
+  timezone,
+}: {
+  rows: AuditMutation[];
+  timezone: string;
+}) {
   const [selected, setSelected] = useState<AuditMutation | null>(null);
 
   if (!rows.length) {
-    return <div className="text-sm text-zinc-500 py-8 text-center">No mutation events.</div>;
+    return (
+      <div className="text-sm text-zinc-500 py-8 text-center">
+        No mutation events.
+      </div>
+    );
   }
 
   return (
@@ -180,14 +267,22 @@ function MutationsTable({ rows, timezone }: { rows: AuditMutation[]; timezone: s
                 <td className="py-2 px-3 text-zinc-400 font-mono text-xs whitespace-nowrap">
                   {formatLogTimestamp(r.timestamp, timezone)}
                 </td>
-                <td className="py-2 px-3"><ActionBadge action={r.action} /></td>
+                <td className="py-2 px-3">
+                  <ActionBadge action={r.action} />
+                </td>
                 <td className="py-2 px-3 text-zinc-200">
                   {r.resource_type}
                   <span className="text-zinc-600 mx-1">/</span>
-                  <span className="font-mono text-xs text-zinc-500">{r.resource_id.slice(0, 8)}</span>
+                  <span className="font-mono text-xs text-zinc-500">
+                    {r.resource_id.slice(0, 8)}
+                  </span>
                 </td>
-                <td className="py-2 px-3 text-zinc-300">{r.username || "system"}</td>
-                <td className="py-2 px-3 text-zinc-400 font-mono text-xs">{r.ip_address || "—"}</td>
+                <td className="py-2 px-3 text-zinc-300">
+                  {r.username || "system"}
+                </td>
+                <td className="py-2 px-3 text-zinc-400 font-mono text-xs">
+                  {r.ip_address || "—"}
+                </td>
                 <td className="py-2 px-3 text-zinc-500 text-xs truncate max-w-xs">
                   {r.changed_fields.slice(0, 5).join(", ")}
                   {r.changed_fields.length > 5 && "…"}
@@ -197,7 +292,13 @@ function MutationsTable({ rows, timezone }: { rows: AuditMutation[]; timezone: s
           </tbody>
         </table>
       </div>
-      {selected && <MutationDetailModal row={selected} onClose={() => setSelected(null)} timezone={timezone} />}
+      {selected && (
+        <MutationDetailModal
+          row={selected}
+          onClose={() => setSelected(null)}
+          timezone={timezone}
+        />
+      )}
     </>
   );
 }
@@ -275,7 +376,11 @@ export function AuditLogPage() {
             className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1.5 text-sm text-zinc-200"
           >
             <option value="">All event types</option>
-            {LOGIN_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+            {LOGIN_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
           </select>
         ) : (
           <>
@@ -285,7 +390,11 @@ export function AuditLogPage() {
               className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1.5 text-sm text-zinc-200"
             >
               <option value="">All resources</option>
-              {RESOURCE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+              {RESOURCE_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
             </select>
             <select
               value={action}
@@ -293,7 +402,11 @@ export function AuditLogPage() {
               className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1.5 text-sm text-zinc-200"
             >
               <option value="">All actions</option>
-              {MUTATION_ACTIONS.map((a) => <option key={a} value={a}>{a}</option>)}
+              {MUTATION_ACTIONS.map((a) => (
+                <option key={a} value={a}>
+                  {a}
+                </option>
+              ))}
             </select>
           </>
         )}
@@ -313,13 +426,17 @@ export function AuditLogPage() {
 
       {/* Content */}
       <div className="bg-zinc-950 border border-zinc-800 rounded-lg">
-        {view === "logins"
-          ? loginsQuery.isLoading
-            ? <div className="p-8 text-center text-zinc-500">Loading…</div>
-            : <LoginsTable rows={loginRows} timezone={timezone} />
-          : mutationsQuery.isLoading
-            ? <div className="p-8 text-center text-zinc-500">Loading…</div>
-            : <MutationsTable rows={mutationRows} timezone={timezone} />}
+        {view === "logins" ? (
+          loginsQuery.isLoading ? (
+            <div className="p-8 text-center text-zinc-500">Loading…</div>
+          ) : (
+            <LoginsTable rows={loginRows} timezone={timezone} />
+          )
+        ) : mutationsQuery.isLoading ? (
+          <div className="p-8 text-center text-zinc-500">Loading…</div>
+        ) : (
+          <MutationsTable rows={mutationRows} timezone={timezone} />
+        )}
       </div>
     </div>
   );

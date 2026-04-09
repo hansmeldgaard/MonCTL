@@ -1,14 +1,12 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { Loader2, Pencil, Plus, Search, Server, Trash2 } from "lucide-react";
 import {
-  Loader2,
-  Pencil,
-  Plus,
-  Search,
-  Server,
-  Trash2,
-} from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
@@ -99,7 +97,11 @@ function DeviceTypesTab() {
     scrollMode,
   });
 
-  const { data: response, isLoading, isFetching } = useDeviceTypes(listState.params);
+  const {
+    data: response,
+    isLoading,
+    isFetching,
+  } = useDeviceTypes(listState.params);
   const rules = response?.data ?? [];
   const meta = response?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
 
@@ -120,10 +122,15 @@ function DeviceTypesTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-zinc-500">
-          Map SNMP sysObjectID patterns to device categories for automatic device classification.
+          Map SNMP sysObjectID patterns to device categories for automatic
+          device classification.
         </p>
         {canCreate("device") && (
-          <Button size="sm" onClick={() => setShowCreate(true)} className="gap-1.5">
+          <Button
+            size="sm"
+            onClick={() => setShowCreate(true)}
+            className="gap-1.5"
+          >
             <Plus className="h-4 w-4" />
             Add Device Type
           </Button>
@@ -141,13 +148,46 @@ function DeviceTypesTab() {
           <Table>
             <TableHeader>
               <TableRow>
-                <FilterableSortHead col="name" label="Name" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.name} onFilterChange={(v) => listState.setFilter("name", v)} />
-                <FilterableSortHead col="sys_object_id_pattern" label="sysObjectID Pattern" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.sys_object_id_pattern} onFilterChange={(v) => listState.setFilter("sys_object_id_pattern", v)} />
+                <FilterableSortHead
+                  col="name"
+                  label="Name"
+                  sortBy={listState.sortBy}
+                  sortDir={listState.sortDir}
+                  onSort={listState.handleSort}
+                  filterValue={listState.filters.name}
+                  onFilterChange={(v) => listState.setFilter("name", v)}
+                />
+                <FilterableSortHead
+                  col="sys_object_id_pattern"
+                  label="sysObjectID Pattern"
+                  sortBy={listState.sortBy}
+                  sortDir={listState.sortDir}
+                  onSort={listState.handleSort}
+                  filterValue={listState.filters.sys_object_id_pattern}
+                  onFilterChange={(v) =>
+                    listState.setFilter("sys_object_id_pattern", v)
+                  }
+                />
                 <TableHead>Category</TableHead>
-                <FilterableSortHead col="vendor" label="Vendor" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterValue={listState.filters.vendor} onFilterChange={(v) => listState.setFilter("vendor", v)} />
+                <FilterableSortHead
+                  col="vendor"
+                  label="Vendor"
+                  sortBy={listState.sortBy}
+                  sortDir={listState.sortDir}
+                  onSort={listState.handleSort}
+                  filterValue={listState.filters.vendor}
+                  onFilterChange={(v) => listState.setFilter("vendor", v)}
+                />
                 <TableHead>Model</TableHead>
                 <TableHead>OS Family</TableHead>
-                <FilterableSortHead col="priority" label="Priority" sortBy={listState.sortBy} sortDir={listState.sortDir} onSort={listState.handleSort} filterable={false} />
+                <FilterableSortHead
+                  col="priority"
+                  label="Priority"
+                  sortBy={listState.sortBy}
+                  sortDir={listState.sortDir}
+                  onSort={listState.handleSort}
+                  filterable={false}
+                />
                 <TableHead className="text-center">Devices</TableHead>
                 <TableHead className="w-20"></TableHead>
               </TableRow>
@@ -155,7 +195,10 @@ function DeviceTypesTab() {
             <TableBody>
               {rules.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center text-zinc-500 py-8">
+                  <TableCell
+                    colSpan={9}
+                    className="text-center text-zinc-500 py-8"
+                  >
                     {listState.hasActiveFilters
                       ? "No device types match your filters"
                       : "No device types defined — add types to enable SNMP device auto-classification"}
@@ -167,14 +210,26 @@ function DeviceTypesTab() {
                     <TableRow
                       key={rule.id}
                       className="cursor-pointer hover:bg-zinc-800/50"
-                      onClick={() => setExpandedRow(expandedRow === rule.id ? null : rule.id)}
+                      onClick={() =>
+                        setExpandedRow(expandedRow === rule.id ? null : rule.id)
+                      }
                     >
                       <TableCell className="font-medium text-zinc-100">
                         <span className="flex items-center gap-1.5">
-                          <ChevronDown className={cn("h-3.5 w-3.5 text-zinc-600 transition-transform", expandedRow === rule.id ? "" : "-rotate-90")} />
+                          <ChevronDown
+                            className={cn(
+                              "h-3.5 w-3.5 text-zinc-600 transition-transform",
+                              expandedRow === rule.id ? "" : "-rotate-90",
+                            )}
+                          />
                           {rule.name}
                           {rule.pack_id && (
-                            <Badge variant="default" className="text-xs text-zinc-500">pack</Badge>
+                            <Badge
+                              variant="default"
+                              className="text-xs text-zinc-500"
+                            >
+                              pack
+                            </Badge>
                           )}
                         </span>
                       </TableCell>
@@ -212,9 +267,14 @@ function DeviceTypesTab() {
                         )}
                       </TableCell>
                       <TableCell>
-                        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                        <div
+                          className="flex items-center gap-1"
+                          onClick={(e) => e.stopPropagation()}
+                        >
                           {rule.pack_id ? (
-                            <span className="text-xs text-zinc-600 italic">pack-managed</span>
+                            <span className="text-xs text-zinc-600 italic">
+                              pack-managed
+                            </span>
                           ) : (
                             <>
                               {canEdit("device") && (
@@ -240,7 +300,10 @@ function DeviceTypesTab() {
                     </TableRow>
                     {expandedRow === rule.id && (
                       <TableRow key={`${rule.id}-templates`}>
-                        <TableCell colSpan={8} className="bg-zinc-900/50 px-6 py-3">
+                        <TableCell
+                          colSpan={8}
+                          className="bg-zinc-900/50 px-6 py-3"
+                        >
                           <DeviceTypeTemplateBindingsPanel
                             deviceTypeId={rule.id}
                             deviceCategoryId={rule.device_category_id}
@@ -267,15 +330,16 @@ function DeviceTypesTab() {
         </CardContent>
       </Card>
 
-      {showCreate && (
-        <RuleFormDialog onClose={() => setShowCreate(false)} />
-      )}
+      {showCreate && <RuleFormDialog onClose={() => setShowCreate(false)} />}
 
       {editTarget && (
         <RuleFormDialog rule={editTarget} onClose={() => setEditTarget(null)} />
       )}
 
-      <DeleteRuleDialog rule={deleteTarget} onClose={() => setDeleteTarget(null)} />
+      <DeleteRuleDialog
+        rule={deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+      />
     </div>
   );
 }
@@ -307,11 +371,17 @@ export function RuleFormDialog({
   const isEdit = !!rule;
 
   const [name, setName] = useState(rule?.name ?? prefill?.name ?? "");
-  const [pattern, setPattern] = useState(rule?.sys_object_id_pattern ?? prefill?.sys_object_id_pattern ?? "");
-  const [deviceCategoryId, setDeviceCategoryId] = useState(rule?.device_category_id ?? "");
+  const [pattern, setPattern] = useState(
+    rule?.sys_object_id_pattern ?? prefill?.sys_object_id_pattern ?? "",
+  );
+  const [deviceCategoryId, setDeviceCategoryId] = useState(
+    rule?.device_category_id ?? "",
+  );
   const [vendor, setVendor] = useState(rule?.vendor ?? prefill?.vendor ?? "");
   const [model, setModel] = useState(rule?.model ?? prefill?.model ?? "");
-  const [osFamily, setOsFamily] = useState(rule?.os_family ?? prefill?.os_family ?? "");
+  const [osFamily, setOsFamily] = useState(
+    rule?.os_family ?? prefill?.os_family ?? "",
+  );
   const [description, setDescription] = useState(rule?.description ?? "");
   const [priority, setPriority] = useState(rule?.priority ?? 0);
   const [error, setError] = useState<string | null>(null);
@@ -325,7 +395,16 @@ export function RuleFormDialog({
       if (isEdit && rule) {
         await updateMut.mutateAsync({
           id: rule.id,
-          data: { name, sys_object_id_pattern: pattern, device_category_id: deviceCategoryId, vendor: vendor || undefined, model: model || undefined, os_family: osFamily || undefined, description: description || undefined, priority },
+          data: {
+            name,
+            sys_object_id_pattern: pattern,
+            device_category_id: deviceCategoryId,
+            vendor: vendor || undefined,
+            model: model || undefined,
+            os_family: osFamily || undefined,
+            description: description || undefined,
+            priority,
+          },
         });
       } else {
         await createMut.mutateAsync({
@@ -342,18 +421,29 @@ export function RuleFormDialog({
       onSuccess?.();
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save device type");
+      setError(
+        err instanceof Error ? err.message : "Failed to save device type",
+      );
     }
   };
 
   const isPending = createMut.isPending || updateMut.isPending;
 
   return (
-    <Dialog open onClose={onClose} title={isEdit ? "Edit Device Type" : "Add Device Type"}>
+    <Dialog
+      open
+      onClose={onClose}
+      title={isEdit ? "Edit Device Type" : "Add Device Type"}
+    >
       <form onSubmit={handleSubmit} className="space-y-4">
         <div className="space-y-1.5">
           <Label>Name</Label>
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Cisco Catalyst 9300" autoFocus />
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. Cisco Catalyst 9300"
+            autoFocus
+          />
         </div>
 
         <div className="space-y-1.5">
@@ -371,10 +461,15 @@ export function RuleFormDialog({
 
         <div className="space-y-1.5">
           <Label>Device Category</Label>
-          <Select value={deviceCategoryId} onChange={(e) => setDeviceCategoryId(e.target.value)}>
+          <Select
+            value={deviceCategoryId}
+            onChange={(e) => setDeviceCategoryId(e.target.value)}
+          >
             <option value="">Select device category</option>
             {(deviceCategories ?? []).map((dc) => (
-              <option key={dc.id} value={dc.id}>{dc.name}</option>
+              <option key={dc.id} value={dc.id}>
+                {dc.name}
+              </option>
             ))}
           </Select>
         </div>
@@ -382,34 +477,61 @@ export function RuleFormDialog({
         <div className="grid grid-cols-3 gap-3">
           <div className="space-y-1.5">
             <Label>Vendor</Label>
-            <Input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="e.g. Cisco" />
+            <Input
+              value={vendor}
+              onChange={(e) => setVendor(e.target.value)}
+              placeholder="e.g. Cisco"
+            />
           </div>
           <div className="space-y-1.5">
             <Label>Model</Label>
-            <Input value={model} onChange={(e) => setModel(e.target.value)} placeholder="e.g. C9300" />
+            <Input
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              placeholder="e.g. C9300"
+            />
           </div>
           <div className="space-y-1.5">
             <Label>OS Family</Label>
-            <Input value={osFamily} onChange={(e) => setOsFamily(e.target.value)} placeholder="e.g. IOS-XE" />
+            <Input
+              value={osFamily}
+              onChange={(e) => setOsFamily(e.target.value)}
+              placeholder="e.g. IOS-XE"
+            />
           </div>
         </div>
 
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">
             <Label>Description</Label>
-            <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional" />
+            <Input
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Optional"
+            />
           </div>
           <div className="space-y-1.5">
             <Label>Priority</Label>
-            <Input type="number" min={0} max={1000} value={priority} onChange={(e) => setPriority(Number(e.target.value))} />
+            <Input
+              type="number"
+              min={0}
+              max={1000}
+              value={priority}
+              onChange={(e) => setPriority(Number(e.target.value))}
+            />
           </div>
         </div>
 
         {error && <p className="text-sm text-red-400">{error}</p>}
 
         <DialogFooter>
-          <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button type="submit" disabled={!name || !pattern || !deviceCategoryId || isPending}>
+          <Button type="button" variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            disabled={!name || !pattern || !deviceCategoryId || isPending}
+          >
             {isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             {isEdit ? "Save" : "Add Device Type"}
           </Button>
@@ -442,21 +564,35 @@ function DeleteRuleDialog({
         Are you sure you want to delete the device type{" "}
         <span className="font-medium text-zinc-200">{rule?.name}</span>
         {rule?.sys_object_id_pattern && (
-          <> (pattern <code className="font-mono text-xs text-zinc-300">{rule.sys_object_id_pattern}</code>)</>
+          <>
+            {" "}
+            (pattern{" "}
+            <code className="font-mono text-xs text-zinc-300">
+              {rule.sys_object_id_pattern}
+            </code>
+            )
+          </>
         )}
         ? Devices already classified by this type will keep their category.
       </p>
       <DialogFooter>
-        <Button variant="secondary" onClick={onClose}>Cancel</Button>
-        <Button variant="destructive" onClick={() => void handleDelete()} disabled={deleteMut.isPending}>
-          {deleteMut.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+        <Button variant="secondary" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button
+          variant="destructive"
+          onClick={() => void handleDelete()}
+          disabled={deleteMut.isPending}
+        >
+          {deleteMut.isPending && (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          )}
           Delete
         </Button>
       </DialogFooter>
     </Dialog>
   );
 }
-
 
 /* ── Template bindings panel (shown inside expanded row) ── */
 
@@ -467,8 +603,10 @@ function DeviceTypeTemplateBindingsPanel({
   deviceTypeId: string;
   deviceCategoryId: string;
 }) {
-  const { data: typeBindingsData, refetch: refetchType } = useDeviceTypeTemplateBindings(deviceTypeId);
-  const { data: catBindingsData } = useCategoryTemplateBindings(deviceCategoryId);
+  const { data: typeBindingsData, refetch: refetchType } =
+    useDeviceTypeTemplateBindings(deviceTypeId);
+  const { data: catBindingsData } =
+    useCategoryTemplateBindings(deviceCategoryId);
   const bindTemplate = useBindDeviceTypeTemplate();
   const unbindTemplate = useUnbindDeviceTypeTemplate();
   const { data: templatesData } = useTemplates({ limit: 200 });
@@ -487,15 +625,26 @@ function DeviceTypeTemplateBindingsPanel({
     const a = typeBindings[idx];
     const b = typeBindings[target];
     await Promise.all([
-      bindTemplate.mutateAsync({ device_type_id: deviceTypeId, template_id: a.template_id, step: b.step }),
-      bindTemplate.mutateAsync({ device_type_id: deviceTypeId, template_id: b.template_id, step: a.step }),
+      bindTemplate.mutateAsync({
+        device_type_id: deviceTypeId,
+        template_id: a.template_id,
+        step: b.step,
+      }),
+      bindTemplate.mutateAsync({
+        device_type_id: deviceTypeId,
+        template_id: b.template_id,
+        step: a.step,
+      }),
     ]);
     refetchType();
   }
 
   async function handleAdd() {
     if (!addTemplateId) return;
-    const nextStep = typeBindings.length > 0 ? Math.max(...typeBindings.map((b) => b.step)) + 1 : 100;
+    const nextStep =
+      typeBindings.length > 0
+        ? Math.max(...typeBindings.map((b) => b.step)) + 1
+        : 100;
     await bindTemplate.mutateAsync({
       device_type_id: deviceTypeId,
       template_id: addTemplateId,
@@ -513,7 +662,9 @@ function DeviceTypeTemplateBindingsPanel({
       </div>
 
       <p className="text-xs text-zinc-500">
-        Device type templates (step 100 → 199) are applied after category templates (step 1 → 99). Same app names at type level override category level.
+        Device type templates (step 100 → 199) are applied after category
+        templates (step 1 → 99). Same app names at type level override category
+        level.
       </p>
 
       {/* Inherited from category */}
@@ -522,10 +673,19 @@ function DeviceTypeTemplateBindingsPanel({
           <p className="text-xs text-zinc-500">Inherited from category</p>
           <div className="space-y-1">
             {catBindings.map((b) => (
-              <div key={b.id} className="flex items-center gap-2 rounded border border-zinc-800/50 bg-zinc-800/20 px-2.5 py-1.5 text-sm">
-                <span className="w-8 text-center text-xs text-zinc-600 tabular-nums font-mono">{b.step}</span>
-                <span className="flex-1 truncate text-zinc-400">{b.template_name}</span>
-                <Badge variant="default" className="text-[10px]">category</Badge>
+              <div
+                key={b.id}
+                className="flex items-center gap-2 rounded border border-zinc-800/50 bg-zinc-800/20 px-2.5 py-1.5 text-sm"
+              >
+                <span className="w-8 text-center text-xs text-zinc-600 tabular-nums font-mono">
+                  {b.step}
+                </span>
+                <span className="flex-1 truncate text-zinc-400">
+                  {b.template_name}
+                </span>
+                <Badge variant="default" className="text-[10px]">
+                  category
+                </Badge>
               </div>
             ))}
           </div>
@@ -538,10 +698,19 @@ function DeviceTypeTemplateBindingsPanel({
           <p className="text-xs text-zinc-500">Device type overrides</p>
         )}
         {typeBindings.map((b, idx) => (
-          <div key={b.id} className="flex items-center gap-2 rounded border border-zinc-800 bg-zinc-800/40 px-2.5 py-1.5 text-sm">
-            <span className="w-8 text-center text-xs text-zinc-500 tabular-nums font-mono">{b.step}</span>
-            <span className="flex-1 truncate text-zinc-200">{b.template_name}</span>
-            <Badge variant="info" className="text-[10px]">type</Badge>
+          <div
+            key={b.id}
+            className="flex items-center gap-2 rounded border border-zinc-800 bg-zinc-800/40 px-2.5 py-1.5 text-sm"
+          >
+            <span className="w-8 text-center text-xs text-zinc-500 tabular-nums font-mono">
+              {b.step}
+            </span>
+            <span className="flex-1 truncate text-zinc-200">
+              {b.template_name}
+            </span>
+            <Badge variant="info" className="text-[10px]">
+              type
+            </Badge>
             <div className="flex items-center gap-0.5">
               <button
                 type="button"
@@ -596,7 +765,11 @@ function DeviceTypeTemplateBindingsPanel({
           disabled={!addTemplateId || bindTemplate.isPending}
           onClick={handleAdd}
         >
-          {bindTemplate.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+          {bindTemplate.isPending ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Plus className="h-3.5 w-3.5" />
+          )}
         </Button>
       </div>
     </div>

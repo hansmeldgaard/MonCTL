@@ -3,10 +3,10 @@ import { cn } from "@/lib/utils.ts";
 export type TimeRange = "1h" | "6h" | "24h" | "7d";
 
 const RANGES: { label: TimeRange; ms: number }[] = [
-  { label: "1h",  ms: 1 * 60 * 60 * 1000 },
-  { label: "6h",  ms: 6 * 60 * 60 * 1000 },
+  { label: "1h", ms: 1 * 60 * 60 * 1000 },
+  { label: "6h", ms: 6 * 60 * 60 * 1000 },
   { label: "24h", ms: 24 * 60 * 60 * 1000 },
-  { label: "7d",  ms: 7 * 24 * 60 * 60 * 1000 },
+  { label: "7d", ms: 7 * 24 * 60 * 60 * 1000 },
 ];
 
 /** Returns the ISO string for now minus the selected range's ms */

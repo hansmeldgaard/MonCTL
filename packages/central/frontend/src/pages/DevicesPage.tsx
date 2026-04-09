@@ -20,7 +20,12 @@ import {
   Trash2,
 } from "lucide-react";
 import { X } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card.tsx";
 import { ClearableInput } from "@/components/ui/clearable-input.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
@@ -34,10 +39,24 @@ import {
 } from "@/components/ui/table.tsx";
 import { Select } from "@/components/ui/select.tsx";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
-import { useDevices, useLatestResults, useBulkDeleteDevices, useBulkPatchDevices, useCollectorGroups, useTenants, useLabelKeys, useLabelValues, useDeviceCategories, useAutoApplyTemplates } from "@/api/hooks.ts";
+import {
+  useDevices,
+  useLatestResults,
+  useBulkDeleteDevices,
+  useBulkPatchDevices,
+  useCollectorGroups,
+  useTenants,
+  useLabelKeys,
+  useLabelValues,
+  useDeviceCategories,
+  useAutoApplyTemplates,
+} from "@/api/hooks.ts";
 import { ListChecks } from "lucide-react";
 import type { DeviceBulkPatchRequest } from "@/types/api.ts";
-import { useTablePreferences, PAGE_SIZE_OPTIONS } from "@/hooks/useTablePreferences.ts";
+import {
+  useTablePreferences,
+  PAGE_SIZE_OPTIONS,
+} from "@/hooks/useTablePreferences.ts";
 import { AddDeviceDialog } from "@/components/AddDeviceDialog.tsx";
 import { BulkImportDevicesDialog } from "@/components/BulkImportDevicesDialog.tsx";
 import { ApplyTemplateDialog } from "@/components/ApplyTemplateDialog.tsx";
@@ -62,14 +81,18 @@ export function DevicesPage() {
   const [filterName, setFilterName] = useState("");
   const [filterAddress, setFilterAddress] = useState("");
   const [filterType, setFilterType] = useState("");
-  const [filterDeviceType, setFilterDeviceType] = useState(searchParams.get("device_type_name") ?? "");
+  const [filterDeviceType, setFilterDeviceType] = useState(
+    searchParams.get("device_type_name") ?? "",
+  );
   const [filterTenant, setFilterTenant] = useState("");
   const [filterGroup, setFilterGroup] = useState("");
   const [filterLabelKey, setFilterLabelKey] = useState("");
   const [filterLabelValue, setFilterLabelValue] = useState("");
   const [labelFilterOpen, setLabelFilterOpen] = useState(false);
   const labelFilterRef = useRef<HTMLDivElement>(null);
-  const [labelPopoverDeviceId, setLabelPopoverDeviceId] = useState<string | null>(null);
+  const [labelPopoverDeviceId, setLabelPopoverDeviceId] = useState<
+    string | null
+  >(null);
   const labelPopoverRef = useRef<HTMLDivElement>(null);
 
   // ── Debounced filter values ─────────────────────────────
@@ -99,7 +122,16 @@ export function DevicesPage() {
       setPage(0);
     }, 300);
     return () => clearTimeout(timer);
-  }, [filterName, filterAddress, filterType, filterDeviceType, filterTenant, filterGroup, filterLabelKey, filterLabelValue]);
+  }, [
+    filterName,
+    filterAddress,
+    filterType,
+    filterDeviceType,
+    filterTenant,
+    filterGroup,
+    filterLabelKey,
+    filterLabelValue,
+  ]);
 
   // ── Compact mode ────────────────────────────────────────
   const [compact, setCompact] = useState(false);
@@ -132,9 +164,14 @@ export function DevicesPage() {
   }, [debouncedFilters, sortBy, sortDir, scrollMode]);
 
   // ── Fetch devices ───────────────────────────────────────
-  const fetchLimit = scrollMode === "infinite" ? pageSize * infinitePages : pageSize;
+  const fetchLimit =
+    scrollMode === "infinite" ? pageSize * infinitePages : pageSize;
   const fetchOffset = scrollMode === "infinite" ? 0 : page * pageSize;
-  const { data: response, isLoading, isFetching } = useDevices({
+  const {
+    data: response,
+    isLoading,
+    isFetching,
+  } = useDevices({
     limit: fetchLimit,
     offset: fetchOffset,
     sort_by: sortBy,
@@ -169,7 +206,9 @@ export function DevicesPage() {
   useEffect(() => {
     if (scrollMode !== "infinite" || !sentinelRef.current) return;
     const observer = new IntersectionObserver(
-      (entries) => { if (entries[0].isIntersecting) loadMore(); },
+      (entries) => {
+        if (entries[0].isIntersecting) loadMore();
+      },
       { root: document.querySelector("main"), threshold: 0.1 },
     );
     observer.observe(sentinelRef.current);
@@ -181,14 +220,19 @@ export function DevicesPage() {
   const { data: labelKeys } = useLabelKeys();
   const { data: collectorGroups } = useCollectorGroups();
   const { data: tenants } = useTenants();
-  const labelColorMap = new Map((labelKeys ?? []).map((lk) => [lk.key, lk.color]));
+  const labelColorMap = new Map(
+    (labelKeys ?? []).map((lk) => [lk.key, lk.color]),
+  );
   const { data: labelValues } = useLabelValues(filterLabelKey || null);
 
   // Close label filter popover on outside click
   useEffect(() => {
     if (!labelFilterOpen) return;
     function handleClick(e: MouseEvent) {
-      if (labelFilterRef.current && !labelFilterRef.current.contains(e.target as Node)) {
+      if (
+        labelFilterRef.current &&
+        !labelFilterRef.current.contains(e.target as Node)
+      ) {
         setLabelFilterOpen(false);
       }
     }
@@ -200,7 +244,10 @@ export function DevicesPage() {
   useEffect(() => {
     if (!labelPopoverDeviceId) return;
     function handleClick(e: MouseEvent) {
-      if (labelPopoverRef.current && !labelPopoverRef.current.contains(e.target as Node)) {
+      if (
+        labelPopoverRef.current &&
+        !labelPopoverRef.current.contains(e.target as Node)
+      ) {
         setLabelPopoverDeviceId(null);
       }
     }
@@ -350,65 +397,76 @@ export function DevicesPage() {
               {selected.size} selected
             </span>
             {canEdit("device") && (
-            <>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => handleBulkPatch({ is_enabled: true })}
-              disabled={bulkPatch.isPending}
-              className="gap-1.5"
-            >
-              <Power className="h-3.5 w-3.5" /> Enable
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => handleBulkPatch({ is_enabled: false })}
-              disabled={bulkPatch.isPending}
-              className="gap-1.5"
-            >
-              <PowerOff className="h-3.5 w-3.5" /> Disable
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => { setSelectedGroupId(""); setShowMoveGroupDialog(true); }}
-              disabled={bulkPatch.isPending}
-              className="gap-1.5"
-            >
-              <FolderInput className="h-3.5 w-3.5" /> Move to Group
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => { setSelectedTenantId(""); setShowMoveTenantDialog(true); }}
-              disabled={bulkPatch.isPending}
-              className="gap-1.5"
-            >
-              <Building2 className="h-3.5 w-3.5" /> Move to Tenant
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={async () => {
-                const ids = Array.from(selected);
-                await autoApplyTemplates.mutateAsync(ids);
-                setSelected(new Set());
-              }}
-              disabled={autoApplyTemplates.isPending}
-              className="gap-1.5"
-            >
-              {autoApplyTemplates.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ListChecks className="h-3.5 w-3.5" />} Auto-Assign
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setApplyTemplateOpen(true)}
-              className="gap-1.5"
-            >
-              <FileText className="h-3.5 w-3.5" /> Apply Template
-            </Button>
-            </>
+              <>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => handleBulkPatch({ is_enabled: true })}
+                  disabled={bulkPatch.isPending}
+                  className="gap-1.5"
+                >
+                  <Power className="h-3.5 w-3.5" /> Enable
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => handleBulkPatch({ is_enabled: false })}
+                  disabled={bulkPatch.isPending}
+                  className="gap-1.5"
+                >
+                  <PowerOff className="h-3.5 w-3.5" /> Disable
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setSelectedGroupId("");
+                    setShowMoveGroupDialog(true);
+                  }}
+                  disabled={bulkPatch.isPending}
+                  className="gap-1.5"
+                >
+                  <FolderInput className="h-3.5 w-3.5" /> Move to Group
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setSelectedTenantId("");
+                    setShowMoveTenantDialog(true);
+                  }}
+                  disabled={bulkPatch.isPending}
+                  className="gap-1.5"
+                >
+                  <Building2 className="h-3.5 w-3.5" /> Move to Tenant
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={async () => {
+                    const ids = Array.from(selected);
+                    await autoApplyTemplates.mutateAsync(ids);
+                    setSelected(new Set());
+                  }}
+                  disabled={autoApplyTemplates.isPending}
+                  className="gap-1.5"
+                >
+                  {autoApplyTemplates.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <ListChecks className="h-3.5 w-3.5" />
+                  )}{" "}
+                  Auto-Assign
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setApplyTemplateOpen(true)}
+                  className="gap-1.5"
+                >
+                  <FileText className="h-3.5 w-3.5" /> Apply Template
+                </Button>
+              </>
             )}
             {canDelete("device") && (
               <Button
@@ -440,14 +498,23 @@ export function DevicesPage() {
 
         {canCreate("device") && (
           <>
-          <Button size="sm" variant="secondary" onClick={() => setImportOpen(true)} className="gap-1.5">
-            <FolderInput className="h-4 w-4" />
-            Import
-          </Button>
-          <Button size="sm" onClick={() => setAddOpen(true)} className="gap-1.5">
-            <Plus className="h-4 w-4" />
-            Add Device
-          </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setImportOpen(true)}
+              className="gap-1.5"
+            >
+              <FolderInput className="h-4 w-4" />
+              Import
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => setAddOpen(true)}
+              className="gap-1.5"
+            >
+              <Plus className="h-4 w-4" />
+              Add Device
+            </Button>
           </>
         )}
       </div>
@@ -609,41 +676,64 @@ export function DevicesPage() {
                           <div className="relative" ref={labelFilterRef}>
                             <button
                               type="button"
-                              onClick={() => setLabelFilterOpen(!labelFilterOpen)}
+                              onClick={() =>
+                                setLabelFilterOpen(!labelFilterOpen)
+                              }
                               className={`inline-flex items-center gap-1 text-xs transition-colors cursor-pointer ${filterLabelKey ? "text-brand-400" : "text-zinc-400 hover:text-zinc-200"}`}
                               title="Filter by label"
                             >
                               <Tag className="h-3 w-3" /> Labels
                               {filterLabelKey && (
-                                <Badge variant="default" className="text-[9px] py-0 px-1">{filterLabelKey}{filterLabelValue ? `=${filterLabelValue}` : ""}</Badge>
+                                <Badge
+                                  variant="default"
+                                  className="text-[9px] py-0 px-1"
+                                >
+                                  {filterLabelKey}
+                                  {filterLabelValue
+                                    ? `=${filterLabelValue}`
+                                    : ""}
+                                </Badge>
                               )}
                             </button>
                             {labelFilterOpen && (
                               <div className="absolute right-0 top-6 z-20 w-52 rounded-md border border-zinc-700 bg-zinc-900 p-2.5 space-y-2 shadow-lg">
                                 <div>
-                                  <label className="text-[10px] text-zinc-500 block mb-0.5">Label Key</label>
+                                  <label className="text-[10px] text-zinc-500 block mb-0.5">
+                                    Label Key
+                                  </label>
                                   <select
                                     value={filterLabelKey}
-                                    onChange={(e) => { setFilterLabelKey(e.target.value); setFilterLabelValue(""); }}
+                                    onChange={(e) => {
+                                      setFilterLabelKey(e.target.value);
+                                      setFilterLabelValue("");
+                                    }}
                                     className="w-full text-xs h-7 bg-zinc-800 border border-zinc-700 rounded px-2 text-zinc-300"
                                   >
                                     <option value="">All</option>
                                     {(labelKeys ?? []).map((lk) => (
-                                      <option key={lk.key} value={lk.key}>{lk.key}</option>
+                                      <option key={lk.key} value={lk.key}>
+                                        {lk.key}
+                                      </option>
                                     ))}
                                   </select>
                                 </div>
                                 {filterLabelKey && (
                                   <div>
-                                    <label className="text-[10px] text-zinc-500 block mb-0.5">Value</label>
+                                    <label className="text-[10px] text-zinc-500 block mb-0.5">
+                                      Value
+                                    </label>
                                     <select
                                       value={filterLabelValue}
-                                      onChange={(e) => setFilterLabelValue(e.target.value)}
+                                      onChange={(e) =>
+                                        setFilterLabelValue(e.target.value)
+                                      }
                                       className="w-full text-xs h-7 bg-zinc-800 border border-zinc-700 rounded px-2 text-zinc-300"
                                     >
                                       <option value="">Any value</option>
                                       {(labelValues ?? []).map((v) => (
-                                        <option key={v} value={v}>{v}</option>
+                                        <option key={v} value={v}>
+                                          {v}
+                                        </option>
                                       ))}
                                     </select>
                                   </div>
@@ -651,7 +741,10 @@ export function DevicesPage() {
                                 {filterLabelKey && (
                                   <button
                                     type="button"
-                                    onClick={() => { setFilterLabelKey(""); setFilterLabelValue(""); }}
+                                    onClick={() => {
+                                      setFilterLabelKey("");
+                                      setFilterLabelValue("");
+                                    }}
                                     className="text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors"
                                   >
                                     Clear label filter
@@ -682,175 +775,233 @@ export function DevicesPage() {
                   <TableBody>
                     {devices.length === 0 && hasActiveFilters ? (
                       <TableRow>
-                        <TableCell colSpan={9} className="text-center py-8 text-zinc-500 text-sm">
+                        <TableCell
+                          colSpan={9}
+                          className="text-center py-8 text-zinc-500 text-sm"
+                        >
                           No devices match your filters
                         </TableCell>
                       </TableRow>
-                    ) : devices.map((device) => {
-                      const isUp = deviceReachability.get(device.id);
-                      const latencyInfo = deviceLatency.get(device.id);
-                      const dc = categoryMap.get(device.device_category);
-                      const labelEntries = Object.entries(device.labels ?? {});
+                    ) : (
+                      devices.map((device) => {
+                        const isUp = deviceReachability.get(device.id);
+                        const latencyInfo = deviceLatency.get(device.id);
+                        const dc = categoryMap.get(device.device_category);
+                        const labelEntries = Object.entries(
+                          device.labels ?? {},
+                        );
 
-                      return (
-                        <TableRow key={device.id} className={!device.is_enabled ? "opacity-50" : undefined}>
-                          {/* Checkbox */}
-                          <TableCell>
-                            <input
-                              type="checkbox"
-                              checked={selected.has(device.id)}
-                              onChange={() => toggleSelect(device.id)}
-                              className="h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-brand-500 focus:ring-brand-500 cursor-pointer"
-                            />
-                          </TableCell>
+                        return (
+                          <TableRow
+                            key={device.id}
+                            className={
+                              !device.is_enabled ? "opacity-50" : undefined
+                            }
+                          >
+                            {/* Checkbox */}
+                            <TableCell>
+                              <input
+                                type="checkbox"
+                                checked={selected.has(device.id)}
+                                onChange={() => toggleSelect(device.id)}
+                                className="h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-brand-500 focus:ring-brand-500 cursor-pointer"
+                              />
+                            </TableCell>
 
-                          {/* Status */}
-                          <TableCell>
-                            <div className="relative group w-fit cursor-default">
-                              {!device.is_enabled ? (
-                                <span className="inline-block h-2.5 w-2.5 rounded-full bg-zinc-600" title="Disabled" />
-                              ) : (
-                              <span
-                                className={`inline-block h-2.5 w-2.5 rounded-full ${
-                                  isUp === true
-                                    ? "bg-emerald-500 animate-pulse-dot"
-                                    : isUp === false
-                                      ? "bg-red-500"
-                                      : "bg-zinc-600"
-                                }`}
-                              />)}
-                              {/* Latency tooltip */}
-                              {latencyInfo && (
-                                <div
-                                  className="absolute left-4 top-1/2 -translate-y-1/2 z-50 hidden
+                            {/* Status */}
+                            <TableCell>
+                              <div className="relative group w-fit cursor-default">
+                                {!device.is_enabled ? (
+                                  <span
+                                    className="inline-block h-2.5 w-2.5 rounded-full bg-zinc-600"
+                                    title="Disabled"
+                                  />
+                                ) : (
+                                  <span
+                                    className={`inline-block h-2.5 w-2.5 rounded-full ${
+                                      isUp === true
+                                        ? "bg-emerald-500 animate-pulse-dot"
+                                        : isUp === false
+                                          ? "bg-red-500"
+                                          : "bg-zinc-600"
+                                    }`}
+                                  />
+                                )}
+                                {/* Latency tooltip */}
+                                {latencyInfo && (
+                                  <div
+                                    className="absolute left-4 top-1/2 -translate-y-1/2 z-50 hidden
                                               group-hover:flex items-center gap-1.5
                                               whitespace-nowrap rounded-md border border-zinc-700
                                               bg-zinc-900 px-2 py-1.5 text-xs shadow-lg
                                               pointer-events-none"
-                                >
-                                  <span className="text-zinc-500">
-                                    {latencyInfo.appName}:
-                                  </span>
-                                  {latencyInfo.latencyMs !== null ? (
-                                    <span className="font-mono text-zinc-200">
-                                      {Math.round(latencyInfo.latencyMs)}ms
+                                  >
+                                    <span className="text-zinc-500">
+                                      {latencyInfo.appName}:
                                     </span>
-                                  ) : (
-                                    <span className="text-red-400">
-                                      {latencyInfo.up ? "N/A" : "unreachable"}
-                                    </span>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          </TableCell>
-
-                          {/* Name */}
-                          <TableCell>
-                            <Link
-                              to={`/devices/${device.id}`}
-                              className="font-medium text-zinc-100 hover:text-brand-400 transition-colors"
-                            >
-                              {device.name}
-                            </Link>
-                          </TableCell>
-
-                          {/* Address */}
-                          <TableCell className="font-mono text-xs text-zinc-400">
-                            {device.address}
-                          </TableCell>
-
-                          {/* Category */}
-                          <TableCell>
-                            <div className="flex items-center gap-1.5">
-                              <DeviceIcon
-                                icon={dc?.icon}
-                                customIconUrl={dc?.has_custom_icon ? categoryIconUrl(dc.id) : null}
-                                className="h-4 w-4 text-zinc-400"
-                              />
-                              <span className="text-sm text-zinc-300">{device.device_category}</span>
-                            </div>
-                          </TableCell>
-
-                          {/* Device Type */}
-                          <TableCell className="text-zinc-400 text-sm">
-                            {device.device_type_name || <span className="text-zinc-600">&mdash;</span>}
-                          </TableCell>
-
-                          {/* Tenant */}
-                          <TableCell className="text-zinc-400 text-sm">
-                            {device.tenant_name ? (
-                              <Badge variant="default">
-                                {device.tenant_name}
-                              </Badge>
-                            ) : (
-                              <span className="text-zinc-600">&mdash;</span>
-                            )}
-                          </TableCell>
-
-                          {/* Collector Group */}
-                          <TableCell>
-                            {device.collector_group_name ? (
-                              <Badge variant="default">
-                                {device.collector_group_name}
-                              </Badge>
-                            ) : (
-                              <span className="text-zinc-600">&mdash;</span>
-                            )}
-                          </TableCell>
-
-                          {/* Labels */}
-                          <TableCell>
-                            {labelEntries.length > 0 ? (
-                              <div className="relative" ref={labelPopoverDeviceId === device.id ? labelPopoverRef : undefined}>
-                                <button
-                                  type="button"
-                                  className="flex items-center gap-1 cursor-pointer hover:opacity-80 transition-opacity"
-                                  onClick={() => setLabelPopoverDeviceId(
-                                    labelPopoverDeviceId === device.id ? null : device.id
-                                  )}
-                                >
-                                  <span
-                                    className="inline-block h-2.5 w-2.5 rounded-full"
-                                    style={{ backgroundColor: labelColorMap.get(labelEntries[0][0]) || "#71717a" }}
-                                  />
-                                  {labelEntries.length > 1 && (
-                                    <span className="text-xs text-zinc-500">+{labelEntries.length - 1}</span>
-                                  )}
-                                </button>
-                                {labelPopoverDeviceId === device.id && (
-                                  <div className="absolute left-0 top-6 z-20 min-w-[180px] rounded-md border border-zinc-700 bg-zinc-900 p-2.5 shadow-lg space-y-1.5">
-                                    {labelEntries.map(([k, v]) => {
-                                      const lColor = labelColorMap.get(k) || "#71717a";
-                                      return (
-                                        <div key={k} className="flex items-center gap-2 text-xs whitespace-nowrap">
-                                          <span className="inline-block h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: lColor }} />
-                                          <span className="text-zinc-400">{k}:</span>
-                                          <span className="text-zinc-200">{v}</span>
-                                        </div>
-                                      );
-                                    })}
+                                    {latencyInfo.latencyMs !== null ? (
+                                      <span className="font-mono text-zinc-200">
+                                        {Math.round(latencyInfo.latencyMs)}ms
+                                      </span>
+                                    ) : (
+                                      <span className="text-red-400">
+                                        {latencyInfo.up ? "N/A" : "unreachable"}
+                                      </span>
+                                    )}
                                   </div>
                                 )}
                               </div>
-                            ) : (
-                              <span className="text-zinc-600">&mdash;</span>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
+                            </TableCell>
 
+                            {/* Name */}
+                            <TableCell>
+                              <Link
+                                to={`/devices/${device.id}`}
+                                className="font-medium text-zinc-100 hover:text-brand-400 transition-colors"
+                              >
+                                {device.name}
+                              </Link>
+                            </TableCell>
+
+                            {/* Address */}
+                            <TableCell className="font-mono text-xs text-zinc-400">
+                              {device.address}
+                            </TableCell>
+
+                            {/* Category */}
+                            <TableCell>
+                              <div className="flex items-center gap-1.5">
+                                <DeviceIcon
+                                  icon={dc?.icon}
+                                  customIconUrl={
+                                    dc?.has_custom_icon
+                                      ? categoryIconUrl(dc.id)
+                                      : null
+                                  }
+                                  className="h-4 w-4 text-zinc-400"
+                                />
+                                <span className="text-sm text-zinc-300">
+                                  {device.device_category}
+                                </span>
+                              </div>
+                            </TableCell>
+
+                            {/* Device Type */}
+                            <TableCell className="text-zinc-400 text-sm">
+                              {device.device_type_name || (
+                                <span className="text-zinc-600">&mdash;</span>
+                              )}
+                            </TableCell>
+
+                            {/* Tenant */}
+                            <TableCell className="text-zinc-400 text-sm">
+                              {device.tenant_name ? (
+                                <Badge variant="default">
+                                  {device.tenant_name}
+                                </Badge>
+                              ) : (
+                                <span className="text-zinc-600">&mdash;</span>
+                              )}
+                            </TableCell>
+
+                            {/* Collector Group */}
+                            <TableCell>
+                              {device.collector_group_name ? (
+                                <Badge variant="default">
+                                  {device.collector_group_name}
+                                </Badge>
+                              ) : (
+                                <span className="text-zinc-600">&mdash;</span>
+                              )}
+                            </TableCell>
+
+                            {/* Labels */}
+                            <TableCell>
+                              {labelEntries.length > 0 ? (
+                                <div
+                                  className="relative"
+                                  ref={
+                                    labelPopoverDeviceId === device.id
+                                      ? labelPopoverRef
+                                      : undefined
+                                  }
+                                >
+                                  <button
+                                    type="button"
+                                    className="flex items-center gap-1 cursor-pointer hover:opacity-80 transition-opacity"
+                                    onClick={() =>
+                                      setLabelPopoverDeviceId(
+                                        labelPopoverDeviceId === device.id
+                                          ? null
+                                          : device.id,
+                                      )
+                                    }
+                                  >
+                                    <span
+                                      className="inline-block h-2.5 w-2.5 rounded-full"
+                                      style={{
+                                        backgroundColor:
+                                          labelColorMap.get(
+                                            labelEntries[0][0],
+                                          ) || "#71717a",
+                                      }}
+                                    />
+                                    {labelEntries.length > 1 && (
+                                      <span className="text-xs text-zinc-500">
+                                        +{labelEntries.length - 1}
+                                      </span>
+                                    )}
+                                  </button>
+                                  {labelPopoverDeviceId === device.id && (
+                                    <div className="absolute left-0 top-6 z-20 min-w-[180px] rounded-md border border-zinc-700 bg-zinc-900 p-2.5 shadow-lg space-y-1.5">
+                                      {labelEntries.map(([k, v]) => {
+                                        const lColor =
+                                          labelColorMap.get(k) || "#71717a";
+                                        return (
+                                          <div
+                                            key={k}
+                                            className="flex items-center gap-2 text-xs whitespace-nowrap"
+                                          >
+                                            <span
+                                              className="inline-block h-2 w-2 rounded-full shrink-0"
+                                              style={{
+                                                backgroundColor: lColor,
+                                              }}
+                                            />
+                                            <span className="text-zinc-400">
+                                              {k}:
+                                            </span>
+                                            <span className="text-zinc-200">
+                                              {v}
+                                            </span>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-zinc-600">&mdash;</span>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })
+                    )}
+                  </TableBody>
                 </Table>
               </div>
 
               {/* Infinite scroll sentinel */}
               {scrollMode === "infinite" && (
                 <div ref={sentinelRef} className="flex justify-center py-4">
-                  {isFetching && <Loader2 className="h-5 w-5 animate-spin text-brand-500" />}
+                  {isFetching && (
+                    <Loader2 className="h-5 w-5 animate-spin text-brand-500" />
+                  )}
                   {!isFetching && hasMoreInfinite && (
-                    <span className="text-xs text-zinc-600">Scroll for more...</span>
+                    <span className="text-xs text-zinc-600">
+                      Scroll for more...
+                    </span>
                   )}
                   {!hasMoreInfinite && devices.length > 0 && (
                     <span className="text-xs text-zinc-600">
@@ -865,7 +1016,14 @@ export function DevicesPage() {
                 <div className="flex items-center gap-2">
                   <Select
                     value={scrollMode}
-                    onChange={(e) => { updatePreferences({ table_scroll_mode: e.target.value as "paginated" | "infinite" }); setPage(0); }}
+                    onChange={(e) => {
+                      updatePreferences({
+                        table_scroll_mode: e.target.value as
+                          | "paginated"
+                          | "infinite",
+                      });
+                      setPage(0);
+                    }}
                     className="w-36 text-xs h-7"
                   >
                     <option value="paginated">Paginated</option>
@@ -873,11 +1031,18 @@ export function DevicesPage() {
                   </Select>
                   <Select
                     value={String(pageSize)}
-                    onChange={(e) => { updatePreferences({ table_page_size: Number(e.target.value) }); setPage(0); }}
+                    onChange={(e) => {
+                      updatePreferences({
+                        table_page_size: Number(e.target.value),
+                      });
+                      setPage(0);
+                    }}
                     className="w-20 text-xs h-7"
                   >
                     {PAGE_SIZE_OPTIONS.map((s) => (
-                      <option key={s} value={String(s)}>{s}</option>
+                      <option key={s} value={String(s)}>
+                        {s}
+                      </option>
                     ))}
                   </Select>
                   <span className="text-xs text-zinc-600">
@@ -885,28 +1050,36 @@ export function DevicesPage() {
                   </span>
                 </div>
                 <span className="text-sm text-zinc-500">
-                  {scrollMode === "infinite"
-                    ? `Showing ${devices.length} of ${total}`
-                    : <>Showing {startItem}&ndash;{endItem} of {total}</>}
+                  {scrollMode === "infinite" ? (
+                    `Showing ${devices.length} of ${total}`
+                  ) : (
+                    <>
+                      Showing {startItem}&ndash;{endItem} of {total}
+                    </>
+                  )}
                 </span>
-                {scrollMode === "paginated" ? <div className="flex items-center gap-2">
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    disabled={!hasPrev}
-                    onClick={() => setPage((p) => p - 1)}
-                  >
-                    <ChevronLeft className="h-4 w-4" /> Previous
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    disabled={!hasNext}
-                    onClick={() => setPage((p) => p + 1)}
-                  >
-                    Next <ChevronRight className="h-4 w-4" />
-                  </Button>
-                </div> : <div />}
+                {scrollMode === "paginated" ? (
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={!hasPrev}
+                      onClick={() => setPage((p) => p - 1)}
+                    >
+                      <ChevronLeft className="h-4 w-4" /> Previous
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={!hasNext}
+                      onClick={() => setPage((p) => p + 1)}
+                    >
+                      Next <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ) : (
+                  <div />
+                )}
               </div>
             </>
           )}
@@ -917,7 +1090,10 @@ export function DevicesPage() {
       <AddDeviceDialog open={addOpen} onClose={() => setAddOpen(false)} />
 
       {/* Bulk Import Dialog */}
-      <BulkImportDevicesDialog open={importOpen} onClose={() => setImportOpen(false)} />
+      <BulkImportDevicesDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+      />
 
       {/* Apply Template Dialog */}
       <ApplyTemplateDialog
@@ -975,11 +1151,16 @@ export function DevicesPage() {
         >
           <option value="">Select group...</option>
           {(collectorGroups ?? []).map((g) => (
-            <option key={g.id} value={g.id}>{g.name}</option>
+            <option key={g.id} value={g.id}>
+              {g.name}
+            </option>
           ))}
         </Select>
         <DialogFooter>
-          <Button variant="secondary" onClick={() => setShowMoveGroupDialog(false)}>
+          <Button
+            variant="secondary"
+            onClick={() => setShowMoveGroupDialog(false)}
+          >
             Cancel
           </Button>
           <Button
@@ -1011,11 +1192,16 @@ export function DevicesPage() {
         >
           <option value="">Select tenant...</option>
           {(tenants ?? []).map((t) => (
-            <option key={t.id} value={t.id}>{t.name}</option>
+            <option key={t.id} value={t.id}>
+              {t.name}
+            </option>
           ))}
         </Select>
         <DialogFooter>
-          <Button variant="secondary" onClick={() => setShowMoveTenantDialog(false)}>
+          <Button
+            variant="secondary"
+            onClick={() => setShowMoveTenantDialog(false)}
+          >
             Cancel
           </Button>
           <Button

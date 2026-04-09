@@ -10,7 +10,14 @@ interface SortableHeadProps {
   className?: string;
 }
 
-export function SortableHead({ col, sortBy, sortDir, onSort, children, className }: SortableHeadProps) {
+export function SortableHead({
+  col,
+  sortBy,
+  sortDir,
+  onSort,
+  children,
+  className,
+}: SortableHeadProps) {
   const active = sortBy === col;
   return (
     <TableHead

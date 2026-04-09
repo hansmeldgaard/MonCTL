@@ -63,9 +63,7 @@ export function lengthRange(
   max: number,
   fieldName = "Value",
 ): ValidationResult {
-  return (
-    minLength(value, min, fieldName) ?? maxLength(value, max, fieldName)
-  );
+  return minLength(value, min, fieldName) ?? maxLength(value, max, fieldName);
 }
 
 export function numberRange(
@@ -208,8 +206,7 @@ export function validatePassword(value: string): ValidationResult {
 export function validateAlertWindow(value: string): ValidationResult {
   const err = required(value, "Window");
   if (err) return err;
-  if (!ALERT_WINDOW_RE.test(value.trim()))
-    return "Must be like 5m, 1h, or 30s";
+  if (!ALERT_WINDOW_RE.test(value.trim())) return "Must be like 5m, 1h, or 30s";
   return null;
 }
 

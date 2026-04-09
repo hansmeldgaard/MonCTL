@@ -1,9 +1,24 @@
 import { useState, useEffect } from "react";
 import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
-import { validateSlug, validateName, validateSemver } from "@/lib/validation.ts";
 import {
-  AppWindow, Binary, ChevronDown, ChevronRight, KeyRound, LayoutTemplate,
-  Loader2, Lock, Monitor, Plug, Search, Tag, Unlock,
+  validateSlug,
+  validateName,
+  validateSemver,
+} from "@/lib/validation.ts";
+import {
+  AppWindow,
+  Binary,
+  ChevronDown,
+  ChevronRight,
+  KeyRound,
+  LayoutTemplate,
+  Loader2,
+  Lock,
+  Monitor,
+  Plug,
+  Search,
+  Tag,
+  Unlock,
 } from "lucide-react";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import { Button } from "@/components/ui/button.tsx";
@@ -17,16 +32,45 @@ interface CreatePackDialogProps {
   onClose: () => void;
 }
 
-const SECTION_CONFIG: { key: string; label: string; icon: React.ReactNode }[] = [
-  { key: "apps", label: "Apps", icon: <AppWindow className="h-4 w-4" /> },
-  { key: "credential_templates", label: "Credential Templates", icon: <KeyRound className="h-4 w-4" /> },
-  { key: "snmp_oids", label: "SNMP OIDs", icon: <Binary className="h-4 w-4" /> },
-  { key: "device_templates", label: "Device Templates", icon: <LayoutTemplate className="h-4 w-4" /> },
-  { key: "device_categories", label: "Device Categories", icon: <Monitor className="h-4 w-4" /> },
-  { key: "label_keys", label: "Label Keys", icon: <Tag className="h-4 w-4" /> },
-  { key: "connectors", label: "Connectors", icon: <Plug className="h-4 w-4" /> },
-  { key: "device_types", label: "Device Types", icon: <Search className="h-4 w-4" /> },
-];
+const SECTION_CONFIG: { key: string; label: string; icon: React.ReactNode }[] =
+  [
+    { key: "apps", label: "Apps", icon: <AppWindow className="h-4 w-4" /> },
+    {
+      key: "credential_templates",
+      label: "Credential Templates",
+      icon: <KeyRound className="h-4 w-4" />,
+    },
+    {
+      key: "snmp_oids",
+      label: "SNMP OIDs",
+      icon: <Binary className="h-4 w-4" />,
+    },
+    {
+      key: "device_templates",
+      label: "Device Templates",
+      icon: <LayoutTemplate className="h-4 w-4" />,
+    },
+    {
+      key: "device_categories",
+      label: "Device Categories",
+      icon: <Monitor className="h-4 w-4" />,
+    },
+    {
+      key: "label_keys",
+      label: "Label Keys",
+      icon: <Tag className="h-4 w-4" />,
+    },
+    {
+      key: "connectors",
+      label: "Connectors",
+      icon: <Plug className="h-4 w-4" />,
+    },
+    {
+      key: "device_types",
+      label: "Device Types",
+      icon: <Search className="h-4 w-4" />,
+    },
+  ];
 
 const EMPTY_SELECTED: Record<string, Set<string>> = {
   apps: new Set(),
@@ -40,7 +84,10 @@ const EMPTY_SELECTED: Record<string, Set<string>> = {
 };
 
 function toSlug(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
 }
 
 export function CreatePackDialog({ open, onClose }: CreatePackDialogProps) {
@@ -56,13 +103,16 @@ export function CreatePackDialog({ open, onClose }: CreatePackDialogProps) {
 
   // Step 2: Entity selection
   const [selected, setSelected] = useState<Record<string, Set<string>>>(() =>
-    Object.fromEntries(Object.entries(EMPTY_SELECTED).map(([k]) => [k, new Set<string>()])),
+    Object.fromEntries(
+      Object.entries(EMPTY_SELECTED).map(([k]) => [k, new Set<string>()]),
+    ),
   );
 
   // Step 3: Submit
   const [error, setError] = useState<string | null>(null);
 
-  const { data: available, isLoading: loadingEntities } = useAvailableEntities(open);
+  const { data: available, isLoading: loadingEntities } =
+    useAvailableEntities(open);
   const createPack = useCreatePack();
 
   // Reset on close
@@ -76,7 +126,9 @@ export function CreatePackDialog({ open, onClose }: CreatePackDialogProps) {
       setAuthor("");
       setAutoSlug(true);
       setSelected(
-        Object.fromEntries(Object.entries(EMPTY_SELECTED).map(([k]) => [k, new Set<string>()])),
+        Object.fromEntries(
+          Object.entries(EMPTY_SELECTED).map(([k]) => [k, new Set<string>()]),
+        ),
       );
       setError(null);
     }
@@ -89,7 +141,9 @@ export function CreatePackDialog({ open, onClose }: CreatePackDialogProps) {
 
   function toggleEntity(section: string, id: string) {
     setSelected((prev) => {
-      const next = new Map(Object.entries(prev).map(([k, v]) => [k, new Set(v)]));
+      const next = new Map(
+        Object.entries(prev).map(([k, v]) => [k, new Set(v)]),
+      );
       const s = next.get(section)!;
       if (s.has(id)) s.delete(id);
       else s.add(id);
@@ -100,7 +154,9 @@ export function CreatePackDialog({ open, onClose }: CreatePackDialogProps) {
   function toggleAll(section: string, checked: boolean) {
     if (!available) return;
     setSelected((prev) => {
-      const next = new Map(Object.entries(prev).map(([k, v]) => [k, new Set(v)]));
+      const next = new Map(
+        Object.entries(prev).map(([k, v]) => [k, new Set(v)]),
+      );
       const s = new Set<string>();
       if (checked) {
         for (const e of available[section] ?? []) s.add(e.id);
@@ -110,17 +166,22 @@ export function CreatePackDialog({ open, onClose }: CreatePackDialogProps) {
     });
   }
 
-  const canProceedStep1 = !validateSlug(packUidField.value) && !validateName(nameField.value) && !validateSemver(versionField.value);
+  const canProceedStep1 =
+    !validateSlug(packUidField.value) &&
+    !validateName(nameField.value) &&
+    !validateSemver(versionField.value);
 
-  const totalSelected = Object.values(selected).reduce((sum, s) => sum + s.size, 0);
+  const totalSelected = Object.values(selected).reduce(
+    (sum, s) => sum + s.size,
+    0,
+  );
 
   function handleNext() {
     if (step === 1) {
       if (!validateAll(nameField, packUidField, versionField)) return;
       setStep(2);
       return;
-    }
-    else if (step === 2) setStep(3);
+    } else if (step === 2) setStep(3);
   }
 
   async function handleCreate() {
@@ -164,12 +225,19 @@ export function CreatePackDialog({ open, onClose }: CreatePackDialogProps) {
             <div
               className={cn(
                 "flex h-7 w-7 items-center justify-center rounded-full text-xs font-medium",
-                step >= num ? "bg-brand-600 text-white" : "bg-zinc-800 text-zinc-500",
+                step >= num
+                  ? "bg-brand-600 text-white"
+                  : "bg-zinc-800 text-zinc-500",
               )}
             >
               {num}
             </div>
-            <span className={cn("text-sm", step >= num ? "text-zinc-200" : "text-zinc-600")}>
+            <span
+              className={cn(
+                "text-sm",
+                step >= num ? "text-zinc-200" : "text-zinc-600",
+              )}
+            >
               {label}
             </span>
             {num < 3 && <div className="h-px w-8 bg-zinc-700" />}
@@ -181,7 +249,9 @@ export function CreatePackDialog({ open, onClose }: CreatePackDialogProps) {
       {step === 1 && (
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-1">Name *</label>
+            <label className="block text-sm font-medium text-zinc-300 mb-1">
+              Name *
+            </label>
             <input
               type="text"
               value={nameField.value}
@@ -190,16 +260,22 @@ export function CreatePackDialog({ open, onClose }: CreatePackDialogProps) {
               placeholder="e.g. SNMP Network Basics"
               className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:border-brand-500 focus:outline-none"
             />
-            {nameField.error && <p className="text-xs text-red-400 mt-0.5">{nameField.error}</p>}
+            {nameField.error && (
+              <p className="text-xs text-red-400 mt-0.5">{nameField.error}</p>
+            )}
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-1">Pack UID *</label>
+            <label className="block text-sm font-medium text-zinc-300 mb-1">
+              Pack UID *
+            </label>
             <div className="flex items-center gap-2">
               <input
                 type="text"
                 value={packUidField.value}
-                onChange={(e) => { if (!autoSlug) packUidField.setValue(e.target.value); }}
+                onChange={(e) => {
+                  if (!autoSlug) packUidField.setValue(e.target.value);
+                }}
                 onBlur={packUidField.onBlur}
                 readOnly={autoSlug}
                 className={cn(
@@ -211,9 +287,15 @@ export function CreatePackDialog({ open, onClose }: CreatePackDialogProps) {
                 type="button"
                 onClick={() => setAutoSlug(!autoSlug)}
                 className="rounded-md p-2 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer"
-                title={autoSlug ? "Unlock to edit manually" : "Lock to auto-generate"}
+                title={
+                  autoSlug ? "Unlock to edit manually" : "Lock to auto-generate"
+                }
               >
-                {autoSlug ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
+                {autoSlug ? (
+                  <Lock className="h-4 w-4" />
+                ) : (
+                  <Unlock className="h-4 w-4" />
+                )}
               </button>
             </div>
             {packUidField.error && (
@@ -222,7 +304,9 @@ export function CreatePackDialog({ open, onClose }: CreatePackDialogProps) {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-1">Version *</label>
+            <label className="block text-sm font-medium text-zinc-300 mb-1">
+              Version *
+            </label>
             <input
               type="text"
               value={versionField.value}
@@ -237,7 +321,9 @@ export function CreatePackDialog({ open, onClose }: CreatePackDialogProps) {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-1">Description</label>
+            <label className="block text-sm font-medium text-zinc-300 mb-1">
+              Description
+            </label>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
@@ -247,7 +333,9 @@ export function CreatePackDialog({ open, onClose }: CreatePackDialogProps) {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-1">Author</label>
+            <label className="block text-sm font-medium text-zinc-300 mb-1">
+              Author
+            </label>
             <input
               type="text"
               value={author}
@@ -287,7 +375,9 @@ export function CreatePackDialog({ open, onClose }: CreatePackDialogProps) {
           <div className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-800/50 p-4">
             <div className="flex items-center justify-between">
               <span className="text-sm text-zinc-400">Pack</span>
-              <span className="text-sm font-medium text-zinc-100">{nameField.value}</span>
+              <span className="text-sm font-medium text-zinc-100">
+                {nameField.value}
+              </span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-sm text-zinc-400">UID</span>
@@ -306,21 +396,32 @@ export function CreatePackDialog({ open, onClose }: CreatePackDialogProps) {
             {description && (
               <div className="flex items-center justify-between">
                 <span className="text-sm text-zinc-400">Description</span>
-                <span className="text-sm text-zinc-300 text-right max-w-xs truncate">{description}</span>
+                <span className="text-sm text-zinc-300 text-right max-w-xs truncate">
+                  {description}
+                </span>
               </div>
             )}
           </div>
 
           <div className="space-y-1">
             <h3 className="text-sm font-medium text-zinc-300 mb-2">Contents</h3>
-            {SECTION_CONFIG.filter(({ key }) => (selected[key]?.size ?? 0) > 0).map(({ key, label, icon }) => (
-              <div key={key} className="flex items-center gap-2 text-sm text-zinc-300">
+            {SECTION_CONFIG.filter(
+              ({ key }) => (selected[key]?.size ?? 0) > 0,
+            ).map(({ key, label, icon }) => (
+              <div
+                key={key}
+                className="flex items-center gap-2 text-sm text-zinc-300"
+              >
                 <span className="text-zinc-500">{icon}</span>
-                <span>{selected[key].size} {label}</span>
+                <span>
+                  {selected[key].size} {label}
+                </span>
               </div>
             ))}
             <div className="mt-2 pt-2 border-t border-zinc-800 text-sm text-zinc-400">
-              Total: <span className="font-medium text-zinc-200">{totalSelected}</span> entities will be tagged with this pack.
+              Total:{" "}
+              <span className="font-medium text-zinc-200">{totalSelected}</span>{" "}
+              entities will be tagged with this pack.
             </div>
           </div>
 
@@ -331,7 +432,10 @@ export function CreatePackDialog({ open, onClose }: CreatePackDialogProps) {
       {/* Footer */}
       <DialogFooter>
         {step > 1 && (
-          <Button variant="secondary" onClick={() => setStep((s) => (s - 1) as 1 | 2 | 3)}>
+          <Button
+            variant="secondary"
+            onClick={() => setStep((s) => (s - 1) as 1 | 2 | 3)}
+          >
             Back
           </Button>
         )}
@@ -339,12 +443,20 @@ export function CreatePackDialog({ open, onClose }: CreatePackDialogProps) {
           Cancel
         </Button>
         {step < 3 ? (
-          <Button onClick={handleNext} disabled={step === 1 ? !canProceedStep1 : false}>
+          <Button
+            onClick={handleNext}
+            disabled={step === 1 ? !canProceedStep1 : false}
+          >
             Next
           </Button>
         ) : (
-          <Button onClick={handleCreate} disabled={createPack.isPending || totalSelected === 0}>
-            {createPack.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+          <Button
+            onClick={handleCreate}
+            disabled={createPack.isPending || totalSelected === 0}
+          >
+            {createPack.isPending && (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            )}
             Create Pack
           </Button>
         )}
@@ -389,7 +501,8 @@ function EntitySection({
     );
   }
 
-  const allSelected = entities.length > 0 && entities.every((e) => selected.has(e.id));
+  const allSelected =
+    entities.length > 0 && entities.every((e) => selected.has(e.id));
 
   return (
     <div className="rounded-md border border-zinc-800">
@@ -435,9 +548,13 @@ function EntitySection({
                 onChange={() => onToggle(entity.id)}
                 className="rounded border-zinc-600 bg-zinc-700 text-brand-600 focus:ring-brand-500 cursor-pointer"
               />
-              <span className="font-medium text-sm text-zinc-200">{entity.name}</span>
+              <span className="font-medium text-sm text-zinc-200">
+                {entity.name}
+              </span>
               {entity.description && (
-                <span className="text-xs text-zinc-500 truncate max-w-xs">{entity.description}</span>
+                <span className="text-xs text-zinc-500 truncate max-w-xs">
+                  {entity.description}
+                </span>
               )}
               {entity.pack_id && (
                 <Badge className="ml-auto bg-amber-600/20 text-amber-400 text-xs shrink-0">

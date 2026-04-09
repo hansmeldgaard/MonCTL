@@ -1,4 +1,10 @@
-import { Loader2, AlertCircle, Pencil, Trash2, GripVertical } from "lucide-react";
+import {
+  Loader2,
+  AlertCircle,
+  Pencil,
+  Trash2,
+  GripVertical,
+} from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { apiPost } from "@/api/client.ts";
 import { QueryResultTable } from "@/components/QueryResultTable.tsx";
@@ -7,7 +13,10 @@ import type { AnalyticsWidgetConfig, QueryResult } from "@/types/api.ts";
 import type { TimeRange } from "@/components/DashboardTimePicker.tsx";
 
 export function toClickHouseDateTime(d: Date): string {
-  return d.toISOString().replace("T", " ").replace(/\.\d+Z$/, "");
+  return d
+    .toISOString()
+    .replace("T", " ")
+    .replace(/\.\d+Z$/, "");
 }
 
 export function resolveTimestamp(input: string): string {
@@ -34,7 +43,10 @@ export function resolveSQL(
   if (variables) {
     for (const [name, value] of Object.entries(variables)) {
       const escaped = value.replace(/'/g, "''");
-      resolved = resolved.replace(new RegExp(`\\{var:${name}\\}`, "g"), `'${escaped}'`);
+      resolved = resolved.replace(
+        new RegExp(`\\{var:${name}\\}`, "g"),
+        `'${escaped}'`,
+      );
     }
   }
   return resolved;
@@ -52,17 +64,29 @@ interface Props {
 }
 
 export function DashboardWidget({
-  id, title, config, timeRange, variables, onVariableChange, onEdit, onDelete,
+  id,
+  title,
+  config,
+  timeRange,
+  variables,
+  onVariableChange,
+  onEdit,
+  onDelete,
 }: Props) {
-  const refetchInterval = config.refresh_seconds && config.refresh_seconds > 0
-    ? config.refresh_seconds * 1000
-    : undefined;
+  const refetchInterval =
+    config.refresh_seconds && config.refresh_seconds > 0
+      ? config.refresh_seconds * 1000
+      : undefined;
 
   const resolvedSQL = resolveSQL(config.sql, timeRange, variables);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["widget-query", id, resolvedSQL],
-    queryFn: () => apiPost<QueryResult>("/analytics/query", { sql: resolvedSQL, limit: 1000 }),
+    queryFn: () =>
+      apiPost<QueryResult>("/analytics/query", {
+        sql: resolvedSQL,
+        limit: 1000,
+      }),
     refetchInterval,
     retry: 1,
   });
@@ -71,7 +95,9 @@ export function DashboardWidget({
 
   function handleRowClick(row: unknown[]) {
     if (!config.publishes || !onVariableChange || !result) return;
-    const colIdx = result.columns.findIndex((c) => c.name === config.publishes!.column);
+    const colIdx = result.columns.findIndex(
+      (c) => c.name === config.publishes!.column,
+    );
     if (colIdx === -1) return;
     const value = row[colIdx];
     if (value != null) {
@@ -84,14 +110,24 @@ export function DashboardWidget({
       {/* Header */}
       <div className="flex items-center gap-1 px-2 py-1.5 border-b border-zinc-800 bg-zinc-900/80 shrink-0">
         <GripVertical className="h-3.5 w-3.5 text-zinc-600 cursor-grab drag-handle" />
-        <span className="text-xs font-medium text-zinc-300 flex-1 truncate">{title}</span>
+        <span className="text-xs font-medium text-zinc-300 flex-1 truncate">
+          {title}
+        </span>
         {onEdit && (
-          <button onClick={onEdit} className="text-zinc-600 hover:text-zinc-300 p-0.5" title="Edit">
+          <button
+            onClick={onEdit}
+            className="text-zinc-600 hover:text-zinc-300 p-0.5"
+            title="Edit"
+          >
             <Pencil className="h-3 w-3" />
           </button>
         )}
         {onDelete && (
-          <button onClick={onDelete} className="text-zinc-600 hover:text-red-400 p-0.5" title="Delete">
+          <button
+            onClick={onDelete}
+            className="text-zinc-600 hover:text-red-400 p-0.5"
+            title="Delete"
+          >
             <Trash2 className="h-3 w-3" />
           </button>
         )}

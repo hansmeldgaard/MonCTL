@@ -9,7 +9,9 @@ export function useTablePreferences() {
 
   return {
     pageSize: user?.table_page_size ?? 50,
-    scrollMode: (user?.table_scroll_mode ?? "paginated") as "paginated" | "infinite",
+    scrollMode: (user?.table_scroll_mode ?? "paginated") as
+      | "paginated"
+      | "infinite",
     updatePreferences: async (prefs: {
       table_page_size?: number;
       table_scroll_mode?: "paginated" | "infinite";

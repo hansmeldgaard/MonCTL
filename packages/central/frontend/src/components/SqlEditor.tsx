@@ -14,7 +14,11 @@ interface SqlEditorProps {
 }
 
 export function SqlEditor({
-  value, onChange, onExecute, schema, height = "200px",
+  value,
+  onChange,
+  onExecute,
+  schema,
+  height = "200px",
 }: SqlEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -55,7 +59,10 @@ export function SqlEditor({
     const view = new EditorView({ state, parent: containerRef.current });
     viewRef.current = view;
 
-    return () => { view.destroy(); viewRef.current = null; };
+    return () => {
+      view.destroy();
+      viewRef.current = null;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [schema, height]);
 
@@ -64,7 +71,9 @@ export function SqlEditor({
     if (!view) return;
     const current = view.state.doc.toString();
     if (current !== value) {
-      view.dispatch({ changes: { from: 0, to: current.length, insert: value } });
+      view.dispatch({
+        changes: { from: 0, to: current.length, insert: value },
+      });
     }
   }, [value]);
 

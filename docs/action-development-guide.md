@@ -24,26 +24,26 @@ The `context` object is available as a global variable in every action script. I
 
 ### Properties
 
-| Property | Type | Description |
-|---|---|---|
-| `context.device_id` | `str` | UUID of the target device. |
-| `context.device_name` | `str` | Device display name. |
-| `context.device_ip` | `str` | Device IP address. |
-| `context.collector_id` | `str` | Collector UUID. Empty string if the action runs on central. |
-| `context.collector_name` | `str` | Collector name. Empty string if the action runs on central. |
-| `context.credential` | `dict` | Decrypted credential dictionary. Keys depend on the credential type (see examples below). |
-| `context.trigger_type` | `str` | One of `"event"`, `"cron"`, or `"manual"`. |
-| `context.event_id` | `str` | ClickHouse event ID. Empty string for cron/manual triggers. |
-| `context.event_severity` | `str` | Event severity (e.g., `"critical"`, `"warning"`). Empty string for cron/manual triggers. |
-| `context.event_message` | `str` | Event message text. Empty string for cron/manual triggers. |
-| `context.shared_data` | `dict` | Data from previous steps, namespaced by step number. |
-| `context.step_number` | `int` | Current step number (1-based). |
-| `context.action_name` | `str` | Name of this action. |
+| Property                 | Type   | Description                                                                               |
+| ------------------------ | ------ | ----------------------------------------------------------------------------------------- |
+| `context.device_id`      | `str`  | UUID of the target device.                                                                |
+| `context.device_name`    | `str`  | Device display name.                                                                      |
+| `context.device_ip`      | `str`  | Device IP address.                                                                        |
+| `context.collector_id`   | `str`  | Collector UUID. Empty string if the action runs on central.                               |
+| `context.collector_name` | `str`  | Collector name. Empty string if the action runs on central.                               |
+| `context.credential`     | `dict` | Decrypted credential dictionary. Keys depend on the credential type (see examples below). |
+| `context.trigger_type`   | `str`  | One of `"event"`, `"cron"`, or `"manual"`.                                                |
+| `context.event_id`       | `str`  | ClickHouse event ID. Empty string for cron/manual triggers.                               |
+| `context.event_severity` | `str`  | Event severity (e.g., `"critical"`, `"warning"`). Empty string for cron/manual triggers.  |
+| `context.event_message`  | `str`  | Event message text. Empty string for cron/manual triggers.                                |
+| `context.shared_data`    | `dict` | Data from previous steps, namespaced by step number.                                      |
+| `context.step_number`    | `int`  | Current step number (1-based).                                                            |
+| `context.action_name`    | `str`  | Name of this action.                                                                      |
 
 ### Methods
 
-| Method | Description |
-|---|---|
+| Method                           | Description                                                                                                                  |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | `context.set_output(key, value)` | Store a key-value pair for subsequent steps. `value` must be JSON-serializable (str, int, float, bool, list, dict, or None). |
 
 ### Credential examples
@@ -51,6 +51,7 @@ The `context` object is available as a global variable in every action script. I
 The shape of `context.credential` depends on the credential type assigned to the action:
 
 **SSH:**
+
 ```python
 {
     "username": "admin",
@@ -60,6 +61,7 @@ The shape of `context.credential` depends on the credential type assigned to the
 ```
 
 **SNMP:**
+
 ```python
 {
     "community": "public",
@@ -68,6 +70,7 @@ The shape of `context.credential` depends on the credential type assigned to the
 ```
 
 **API Token:**
+
 ```python
 {
     "api_key": "tok_abc123...",
@@ -111,11 +114,11 @@ output = step1_data.get("raw_output", "")
 
 ### Exit codes
 
-| Exit code | Meaning |
-|---|---|
-| `0` | Success. The automation continues to the next step. |
-| Non-zero | Failure. The automation chain stops; remaining steps are skipped. |
-| `-1` | Typically indicates the subprocess crashed or was killed by timeout. |
+| Exit code | Meaning                                                              |
+| --------- | -------------------------------------------------------------------- |
+| `0`       | Success. The automation continues to the next step.                  |
+| Non-zero  | Failure. The automation chain stops; remaining steps are skipped.    |
+| `-1`      | Typically indicates the subprocess crashed or was killed by timeout. |
 
 ### Output data
 
@@ -133,12 +136,12 @@ The following libraries are pre-installed in the Docker containers and available
 
 ### Third-party libraries
 
-| Library | Use case | Notes |
-|---|---|---|
-| `paramiko` | SSH connections | Available on both central and collector. |
-| `requests` | HTTP client (synchronous) | Simple API calls, webhooks. |
-| `httpx` | HTTP client (sync and async) | More modern alternative to requests. |
-| `pysnmp` | SNMP operations | **Collector only.** Not available on central nodes. |
+| Library    | Use case                     | Notes                                               |
+| ---------- | ---------------------------- | --------------------------------------------------- |
+| `paramiko` | SSH connections              | Available on both central and collector.            |
+| `requests` | HTTP client (synchronous)    | Simple API calls, webhooks.                         |
+| `httpx`    | HTTP client (sync and async) | More modern alternative to requests.                |
+| `pysnmp`   | SNMP operations              | **Collector only.** Not available on central nodes. |
 
 ### Installing additional packages
 
@@ -353,16 +356,16 @@ context.set_output("webhook_status", resp.status_code)
 
 ## 7. Troubleshooting
 
-| Symptom | Likely cause | Resolution |
-|---|---|---|
-| Action fails with no stdout/stderr | Script crashed before producing output, or timed out. | Check the exit code in Run History. `-1` usually means timeout or subprocess crash. Increase the timeout or add early `print()` statements to trace progress. |
-| `"Action disabled or not found"` | The action was disabled or deleted between automation creation and execution. | Re-enable the action or update the automation to reference an active action. |
-| `"No active collector found"` | The device's collector group has no healthy (online) collectors. | Check the Collectors page for offline collectors. Verify the device is assigned to a valid collector group. |
-| `ImportError` or `ModuleNotFoundError` | The required Python package is not installed in the container. | Install the package via the Python Module Registry (Settings > Python Modules) or add it to the Docker image. |
-| `context.credential` is empty | No credential is assigned to the action, or the credential type does not match. | Verify the action has a credential assigned and that the credential type matches what the script expects (SSH, SNMP, etc.). |
-| `context.shared_data` is empty | This is step 1 (no previous steps), or the previous step did not call `set_output()`. | Verify the previous step calls `context.set_output()` and completed successfully. |
-| Output truncated | stdout or stderr exceeded the 50 KB capture limit. | Reduce logging verbosity. Use `context.set_output()` for large data payloads instead of `print()`. |
-| Timeout on SSH/HTTP calls | The action-level timeout fired while waiting for a network response. | Set explicit, shorter timeouts on individual network calls (e.g., `timeout=10` on `paramiko.connect()`). |
+| Symptom                                | Likely cause                                                                          | Resolution                                                                                                                                                    |
+| -------------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Action fails with no stdout/stderr     | Script crashed before producing output, or timed out.                                 | Check the exit code in Run History. `-1` usually means timeout or subprocess crash. Increase the timeout or add early `print()` statements to trace progress. |
+| `"Action disabled or not found"`       | The action was disabled or deleted between automation creation and execution.         | Re-enable the action or update the automation to reference an active action.                                                                                  |
+| `"No active collector found"`          | The device's collector group has no healthy (online) collectors.                      | Check the Collectors page for offline collectors. Verify the device is assigned to a valid collector group.                                                   |
+| `ImportError` or `ModuleNotFoundError` | The required Python package is not installed in the container.                        | Install the package via the Python Module Registry (Settings > Python Modules) or add it to the Docker image.                                                 |
+| `context.credential` is empty          | No credential is assigned to the action, or the credential type does not match.       | Verify the action has a credential assigned and that the credential type matches what the script expects (SSH, SNMP, etc.).                                   |
+| `context.shared_data` is empty         | This is step 1 (no previous steps), or the previous step did not call `set_output()`. | Verify the previous step calls `context.set_output()` and completed successfully.                                                                             |
+| Output truncated                       | stdout or stderr exceeded the 50 KB capture limit.                                    | Reduce logging verbosity. Use `context.set_output()` for large data payloads instead of `print()`.                                                            |
+| Timeout on SSH/HTTP calls              | The action-level timeout fired while waiting for a network response.                  | Set explicit, shorter timeouts on individual network calls (e.g., `timeout=10` on `paramiko.connect()`).                                                      |
 
 ---
 

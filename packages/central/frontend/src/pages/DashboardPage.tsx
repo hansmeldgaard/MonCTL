@@ -9,7 +9,12 @@ import {
   Monitor,
   XCircle,
 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card.tsx";
 import {
   Table,
   TableBody,
@@ -45,16 +50,18 @@ function StatCard({
   to?: string;
 }) {
   const card = (
-    <Card className={to ? "hover:border-brand-500/50 transition-colors cursor-pointer" : ""}>
+    <Card
+      className={
+        to ? "hover:border-brand-500/50 transition-colors cursor-pointer" : ""
+      }
+    >
       <CardHeader className="flex flex-row items-center justify-between pb-2">
         <CardTitle>{title}</CardTitle>
         <Icon className={`h-4.5 w-4.5 ${iconColor}`} />
       </CardHeader>
       <CardContent>
         <div className="text-2xl font-bold text-zinc-100">{value}</div>
-        {subtitle && (
-          <p className="mt-1 text-xs text-zinc-500">{subtitle}</p>
-        )}
+        {subtitle && <p className="mt-1 text-xs text-zinc-500">{subtitle}</p>}
       </CardContent>
     </Card>
   );
@@ -69,11 +76,7 @@ function StatCard({
 
 function PercentBar({ value }: { value: number }) {
   const color =
-    value > 80
-      ? "bg-red-500"
-      : value > 60
-        ? "bg-amber-500"
-        : "bg-emerald-500";
+    value > 80 ? "bg-red-500" : value > 60 ? "bg-amber-500" : "bg-emerald-500";
 
   return (
     <div className="flex items-center gap-2">
@@ -101,7 +104,8 @@ export function DashboardPage() {
     );
   }
 
-  const { alert_summary, device_health, collector_status, performance_top_n } = data;
+  const { alert_summary, device_health, collector_status, performance_top_n } =
+    data;
 
   return (
     <div className="space-y-6">
@@ -116,7 +120,9 @@ export function DashboardPage() {
               : "No active alerts"
           }
           icon={alert_summary.total_firing > 0 ? Bell : CheckCircle2}
-          iconColor={alert_summary.total_firing > 0 ? "text-amber-400" : "text-zinc-500"}
+          iconColor={
+            alert_summary.total_firing > 0 ? "text-amber-400" : "text-zinc-500"
+          }
           to="/alerts"
         />
         <StatCard
@@ -138,7 +144,9 @@ export function DashboardPage() {
                 : "All healthy"
           }
           icon={device_health.down > 0 ? XCircle : CheckCircle2}
-          iconColor={device_health.down > 0 ? "text-red-400" : "text-emerald-400"}
+          iconColor={
+            device_health.down > 0 ? "text-red-400" : "text-emerald-400"
+          }
           to="/devices"
         />
         <StatCard
@@ -196,7 +204,10 @@ export function DashboardPage() {
                           <span className="text-zinc-500">—</span>
                         )}
                       </TableCell>
-                      <TableCell className="max-w-[120px] truncate text-zinc-500" title={a.entity_key}>
+                      <TableCell
+                        className="max-w-[120px] truncate text-zinc-500"
+                        title={a.entity_key}
+                      >
                         {a.entity_key || "—"}
                       </TableCell>
                       <TableCell className="text-zinc-400">
@@ -258,7 +269,9 @@ export function DashboardPage() {
                           {d.device_name}
                         </Link>
                       </TableCell>
-                      <TableCell className="text-zinc-500">{d.device_address}</TableCell>
+                      <TableCell className="text-zinc-500">
+                        {d.device_address}
+                      </TableCell>
                       <TableCell>
                         <span
                           className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
@@ -272,7 +285,9 @@ export function DashboardPage() {
                       </TableCell>
                       <TableCell className="text-zinc-400">
                         {d.firing_alerts > 0 ? (
-                          <span className="text-red-400">{d.firing_alerts}</span>
+                          <span className="text-red-400">
+                            {d.firing_alerts}
+                          </span>
                         ) : (
                           "0"
                         )}
@@ -433,6 +448,7 @@ function TopNCard({
 function formatDuration(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+  if (seconds < 86400)
+    return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
   return `${Math.floor(seconds / 86400)}d ${Math.floor((seconds % 86400) / 3600)}h`;
 }

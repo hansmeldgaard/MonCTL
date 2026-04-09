@@ -15,19 +15,19 @@ Collectors (worker1-4) → poll jobs from central → execute checks → forward
 
 ## Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| Backend | Python 3.11, FastAPI, SQLAlchemy 2.0 async, Alembic, Pydantic 2 |
-| Frontend | React 19, TypeScript 5.9, Vite 7, Tailwind CSS v4, React Query (TanStack) 5 |
-| Time-series | ClickHouse (ReplicatedMergeTree, replicated cluster) |
-| Relational DB | PostgreSQL 16 (Patroni HA) |
-| Cache | Redis |
-| Proxy | HAProxy (TLS termination, round-robin) + Keepalived (VIP failover) |
-| Collector | Python 3.12, gRPC (peer communication), SQLite (local buffer) |
-| Icons | Lucide React |
-| Charts | Recharts |
-| Analytics | Grafana OSS 11.4 (ClickHouse datasource) |
-| Code editor | CodeMirror 6 (Python syntax) |
+| Layer         | Technology                                                                  |
+| ------------- | --------------------------------------------------------------------------- |
+| Backend       | Python 3.11, FastAPI, SQLAlchemy 2.0 async, Alembic, Pydantic 2             |
+| Frontend      | React 19, TypeScript 5.9, Vite 7, Tailwind CSS v4, React Query (TanStack) 5 |
+| Time-series   | ClickHouse (ReplicatedMergeTree, replicated cluster)                        |
+| Relational DB | PostgreSQL 16 (Patroni HA)                                                  |
+| Cache         | Redis                                                                       |
+| Proxy         | HAProxy (TLS termination, round-robin) + Keepalived (VIP failover)          |
+| Collector     | Python 3.12, gRPC (peer communication), SQLite (local buffer)               |
+| Icons         | Lucide React                                                                |
+| Charts        | Recharts                                                                    |
+| Analytics     | Grafana OSS 11.4 (ClickHouse datasource)                                    |
+| Code editor   | CodeMirror 6 (Python syntax)                                                |
 
 ## Package Structure
 
@@ -70,14 +70,14 @@ The central server provides:
 
 ### ClickHouse Tables
 
-| Table | Purpose |
-|-------|---------|
-| `availability_latency` | Ping/port/HTTP check results |
-| `performance` | Custom metric results (CPU, memory, disk, etc.) |
-| `interface` | Per-interface SNMP data with hourly/daily rollups |
-| `config` | Configuration tracking (change-only writes) |
-| `alert_log` | Alert fire/clear history |
-| `events` | Event lifecycle (active/ack/cleared) |
+| Table                  | Purpose                                           |
+| ---------------------- | ------------------------------------------------- |
+| `availability_latency` | Ping/port/HTTP check results                      |
+| `performance`          | Custom metric results (CPU, memory, disk, etc.)   |
+| `interface`            | Per-interface SNMP data with hourly/daily rollups |
+| `config`               | Configuration tracking (change-only writes)       |
+| `alert_log`            | Alert fire/clear history                          |
+| `events`               | Event lifecycle (active/ack/cleared)              |
 
 Each table has a `*_latest` materialized view (ReplacingMergeTree) for instant latest-per-key lookups.
 
@@ -85,11 +85,11 @@ Each table has a `*_latest` materialized view (ReplacingMergeTree) for instant l
 
 Each collector node runs three services:
 
-| Service | Purpose |
-|---------|---------|
-| `cache-node` | Cluster brain — gossip membership, distributed cache, gRPC peer communication |
-| `poll-worker` | Pulls job assignments, executes checks, manages app virtualenvs |
-| `forwarder` | Batches and ships results to central |
+| Service       | Purpose                                                                       |
+| ------------- | ----------------------------------------------------------------------------- |
+| `cache-node`  | Cluster brain — gossip membership, distributed cache, gRPC peer communication |
+| `poll-worker` | Pulls job assignments, executes checks, manages app virtualenvs               |
+| `forwarder`   | Batches and ships results to central                                          |
 
 ## Deployment
 
@@ -133,23 +133,23 @@ ssh monctl@<worker-ip> 'cd /opt/monctl/collector && docker compose down && docke
 
 Central is configured via environment variables with the `MONCTL_` prefix. Key settings:
 
-| Variable | Description |
-|----------|-------------|
-| `MONCTL_DATABASE_URL` | PostgreSQL connection string |
-| `MONCTL_CLICKHOUSE_HOST` | ClickHouse host |
-| `MONCTL_REDIS_URL` | Redis connection string |
-| `MONCTL_ADMIN_USERNAME` | Initial admin username (default: `admin`) |
-| `MONCTL_ADMIN_PASSWORD` | Initial admin password (set on first boot) |
-| `MONCTL_JWT_SECRET` | JWT signing secret |
+| Variable                 | Description                                |
+| ------------------------ | ------------------------------------------ |
+| `MONCTL_DATABASE_URL`    | PostgreSQL connection string               |
+| `MONCTL_CLICKHOUSE_HOST` | ClickHouse host                            |
+| `MONCTL_REDIS_URL`       | Redis connection string                    |
+| `MONCTL_ADMIN_USERNAME`  | Initial admin username (default: `admin`)  |
+| `MONCTL_ADMIN_PASSWORD`  | Initial admin password (set on first boot) |
+| `MONCTL_JWT_SECRET`      | JWT signing secret                         |
 
 Collectors are configured via `.env` at `/opt/monctl/collector/.env`:
 
-| Variable | Description |
-|----------|-------------|
-| `NODE_ID` | Unique node identifier |
-| `CENTRAL_URL` | Central server URL |
-| `CENTRAL_API_KEY` | API key (set after registration) |
-| `PEERS` | Comma-separated peer addresses for gossip |
+| Variable          | Description                               |
+| ----------------- | ----------------------------------------- |
+| `NODE_ID`         | Unique node identifier                    |
+| `CENTRAL_URL`     | Central server URL                        |
+| `CENTRAL_API_KEY` | API key (set after registration)          |
+| `PEERS`           | Comma-separated peer addresses for gossip |
 
 ## Development
 

@@ -71,6 +71,7 @@ class JobScheduler:
 
         self._task: asyncio.Task | None = None
         self._running = False
+        self._immediate_triggers: set[str] = set()
 
     # ── Lifecycle ────────────────────────────────────────────────────────────
 
@@ -92,6 +93,21 @@ class JobScheduler:
             except asyncio.CancelledError:
                 pass
         logger.info("job_scheduler_stopped")
+
+    async def trigger_immediate(self, job_id: str) -> bool:
+        """Mark a job for immediate execution by the next worker that pulls jobs."""
+        if job_id in self._my_jobs:
+            self._immediate_triggers.add(job_id)
+            logger.info("trigger_immediate_queued", job_id=job_id)
+            return True
+        logger.warning("trigger_immediate_unknown_job", job_id=job_id)
+        return False
+
+    def pop_immediate_triggers(self, job_ids: set[str]) -> list[str]:
+        """Return and clear immediate triggers matching the given worker's job IDs."""
+        matched = self._immediate_triggers & job_ids
+        self._immediate_triggers -= matched
+        return list(matched)
 
     async def force_sync(self) -> None:
         """Force an immediate full sync (called via WS config_reload handler).

@@ -10,7 +10,9 @@ interface Props {
 export function DashboardVariableBar({ variables, values, onClear }: Props) {
   return (
     <div className="flex items-center gap-2 px-4 py-1.5 border-b border-zinc-800 bg-zinc-900/50 overflow-x-auto">
-      <span className="text-[10px] text-zinc-500 uppercase tracking-wide shrink-0">Vars</span>
+      <span className="text-[10px] text-zinc-500 uppercase tracking-wide shrink-0">
+        Vars
+      </span>
       {variables.map((v) => {
         const val = values[v.name];
         const isSet = val && val !== v.default_value;

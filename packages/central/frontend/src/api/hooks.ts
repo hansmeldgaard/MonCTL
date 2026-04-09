@@ -1,5 +1,18 @@
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiDelete, apiGet, apiGetRaw, apiPatch, apiPost, apiPostFormData, apiPut } from "@/api/client.ts";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import {
+  apiDelete,
+  apiGet,
+  apiGetRaw,
+  apiPatch,
+  apiPost,
+  apiPostFormData,
+  apiPut,
+} from "@/api/client.ts";
 import { useAuth } from "@/hooks/useAuth.tsx";
 import type {
   AlertInstance,
@@ -124,23 +137,27 @@ function buildListQs(params: ListParams): string {
 
 // ── Polling intervals ────────────────────────────────────
 
-const POLL_LIST = 30_000;    // 30 seconds for list views
-const POLL_DETAIL = 15_000;  // 15 seconds for detail views
+const POLL_LIST = 30_000; // 30 seconds for list views
+const POLL_DETAIL = 15_000; // 15 seconds for detail views
 
 // ── Devices ──────────────────────────────────────────────
 
 export function useDevices(params: DeviceListParams = {}) {
   const queryString = new URLSearchParams();
   if (params.limit) queryString.set("limit", String(params.limit));
-  if (params.offset !== undefined) queryString.set("offset", String(params.offset));
+  if (params.offset !== undefined)
+    queryString.set("offset", String(params.offset));
   if (params.sort_by) queryString.set("sort_by", params.sort_by);
   if (params.sort_dir) queryString.set("sort_dir", params.sort_dir);
   if (params.name) queryString.set("name", params.name);
   if (params.address) queryString.set("address", params.address);
-  if (params.device_category) queryString.set("device_category", params.device_category);
-  if (params.device_type_name) queryString.set("device_type_name", params.device_type_name);
+  if (params.device_category)
+    queryString.set("device_category", params.device_category);
+  if (params.device_type_name)
+    queryString.set("device_type_name", params.device_type_name);
   if (params.tenant_name) queryString.set("tenant_name", params.tenant_name);
-  if (params.collector_group_name) queryString.set("collector_group_name", params.collector_group_name);
+  if (params.collector_group_name)
+    queryString.set("collector_group_name", params.collector_group_name);
   if (params.label_key) queryString.set("label_key", params.label_key);
   if (params.label_value) queryString.set("label_value", params.label_value);
   if (params.collector_id) queryString.set("collector_id", params.collector_id);
@@ -171,7 +188,9 @@ export function useDeviceConfigData(deviceId: string | undefined) {
   return useQuery({
     queryKey: ["device-config-data", deviceId],
     queryFn: () =>
-      apiGet<Record<string, unknown>[]>(`/results/latest?table=config&device_id=${deviceId}`),
+      apiGet<Record<string, unknown>[]>(
+        `/results/latest?table=config&device_id=${deviceId}`,
+      ),
     select: (res) => res.data,
     enabled: !!deviceId,
     refetchInterval: POLL_DETAIL,
@@ -182,11 +201,20 @@ export function useDeviceConfigTemplates(deviceId: string | undefined) {
   return useQuery({
     queryKey: ["device-config-templates", deviceId],
     queryFn: () =>
-      apiGet<Record<string, {
-        app_name: string;
-        version: string;
-        display_template: { html: string; css: string | null; key_mappings: string[] } | null;
-      }>>(`/apps/config-templates?device_id=${deviceId}`),
+      apiGet<
+        Record<
+          string,
+          {
+            app_name: string;
+            version: string;
+            display_template: {
+              html: string;
+              css: string | null;
+              key_mappings: string[];
+            } | null;
+          }
+        >
+      >(`/apps/config-templates?device_id=${deviceId}`),
     select: (res) => res.data,
     enabled: !!deviceId,
   });
@@ -245,7 +273,8 @@ export function useCollectors(params?: { group_id?: string }) {
 export function useAssignments(params: ListParams = {}) {
   return useQuery({
     queryKey: ["assignments", params],
-    queryFn: () => apiGet<Assignment[]>(`/apps/assignments${buildListQs(params)}`),
+    queryFn: () =>
+      apiGet<Assignment[]>(`/apps/assignments${buildListQs(params)}`),
     placeholderData: keepPreviousData,
     refetchInterval: POLL_LIST,
   });
@@ -285,8 +314,13 @@ export function useCreateCredentialType() {
 export function useUpdateCredentialType() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: { name: string; description?: string } }) =>
-      apiPut<CredentialType>(`/credentials/types/${id}`, data),
+    mutationFn: ({
+      id,
+      data,
+    }: {
+      id: string;
+      data: { name: string; description?: string };
+    }) => apiPut<CredentialType>(`/credentials/types/${id}`, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["credential-types"] });
       qc.invalidateQueries({ queryKey: ["credentials"] });
@@ -318,7 +352,8 @@ export function useActiveAlerts() {
 export function useAlertRules(params: ListParams = {}) {
   return useQuery({
     queryKey: ["alert-definitions", params],
-    queryFn: () => apiGet<AppAlertDefinition[]>(`/alerts/definitions${buildListQs(params)}`),
+    queryFn: () =>
+      apiGet<AppAlertDefinition[]>(`/alerts/definitions${buildListQs(params)}`),
     placeholderData: keepPreviousData,
     refetchInterval: POLL_LIST,
   });
@@ -336,7 +371,10 @@ export function useAlertDefinitions(appId?: string) {
 export function useAlertDefinition(id: string) {
   return useQuery({
     queryKey: ["alert-definition", id],
-    queryFn: () => apiGet<AppAlertDefinition & { instances: AlertInstance[] }>(`/alerts/definitions/${id}`),
+    queryFn: () =>
+      apiGet<AppAlertDefinition & { instances: AlertInstance[] }>(
+        `/alerts/definitions/${id}`,
+      ),
     select: (res) => res.data,
     enabled: !!id,
   });
@@ -410,8 +448,14 @@ export function useResolvedAlertInstances(params?: {
   const qs = search.toString();
   return useQuery({
     queryKey: ["alert-instances-resolved", params ?? {}],
-    queryFn: () => apiGet<AlertInstance[]>(`/alerts/instances/resolved${qs ? `?${qs}` : ""}`),
-    select: (res) => ({ data: res.data, meta: (res as unknown as { meta?: { retention_days: number } }).meta }),
+    queryFn: () =>
+      apiGet<AlertInstance[]>(
+        `/alerts/instances/resolved${qs ? `?${qs}` : ""}`,
+      ),
+    select: (res) => ({
+      data: res.data,
+      meta: (res as unknown as { meta?: { retention_days: number } }).meta,
+    }),
     refetchInterval: POLL_LIST,
   });
 }
@@ -431,7 +475,8 @@ export function useAlertInstances(params?: {
   const qs = search.toString();
   return useQuery({
     queryKey: ["alert-instances", params ?? {}],
-    queryFn: () => apiGet<AlertInstance[]>(`/alerts/instances${qs ? `?${qs}` : ""}`),
+    queryFn: () =>
+      apiGet<AlertInstance[]>(`/alerts/instances${qs ? `?${qs}` : ""}`),
     placeholderData: keepPreviousData,
     refetchInterval: POLL_LIST,
   });
@@ -460,15 +505,21 @@ export function useValidateExpression() {
 // ── Alert Log (ClickHouse fire/clear history) ───────────
 
 export function useAlertLog(params?: {
-  definition_id?: string; entity_key?: string; device_id?: string;
-  action?: string; from?: string; to?: string;
-  limit?: number; offset?: number;
+  definition_id?: string;
+  entity_key?: string;
+  device_id?: string;
+  action?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+  offset?: number;
 }) {
   return useQuery({
     queryKey: ["alert-log", params],
     queryFn: () => {
       const search = new URLSearchParams();
-      if (params?.definition_id) search.set("definition_id", params.definition_id);
+      if (params?.definition_id)
+        search.set("definition_id", params.definition_id);
       if (params?.entity_key) search.set("entity_key", params.entity_key);
       if (params?.device_id) search.set("device_id", params.device_id);
       if (params?.action) search.set("action", params.action);
@@ -512,7 +563,9 @@ export function useDeviceActiveEvents(
     queryFn: () => {
       const qs = buildListQs(params);
       const sep = qs.includes("?") ? "&" : "?";
-      return apiGet<MonitoringEvent[]>(`/events/active${qs}${sep}device_id=${deviceId}`);
+      return apiGet<MonitoringEvent[]>(
+        `/events/active${qs}${sep}device_id=${deviceId}`,
+      );
     },
     placeholderData: keepPreviousData,
     enabled: !!deviceId,
@@ -529,7 +582,9 @@ export function useDeviceClearedEvents(
     queryFn: () => {
       const qs = buildListQs(params);
       const sep = qs.includes("?") ? "&" : "?";
-      return apiGet<MonitoringEvent[]>(`/events/cleared${qs}${sep}device_id=${deviceId}`);
+      return apiGet<MonitoringEvent[]>(
+        `/events/cleared${qs}${sep}device_id=${deviceId}`,
+      );
     },
     placeholderData: keepPreviousData,
     enabled: !!deviceId,
@@ -549,7 +604,8 @@ export function useAlertMetrics(appId: string) {
 export function useDeviceThresholds(deviceId: string) {
   return useQuery({
     queryKey: ["device-thresholds", deviceId],
-    queryFn: () => apiGet<DeviceThresholdRow[]>(`/devices/${deviceId}/thresholds`),
+    queryFn: () =>
+      apiGet<DeviceThresholdRow[]>(`/devices/${deviceId}/thresholds`),
     select: (res) => res.data,
     enabled: !!deviceId,
     refetchInterval: POLL_LIST,
@@ -571,14 +627,19 @@ export function useUpdateThresholdVariable() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({
-      appId, varId, ...data
+      appId,
+      varId,
+      ...data
     }: {
-      appId: string; varId: string;
-      default_value?: number; app_value?: number | null;
-      clear_app_value?: boolean; display_name?: string;
-      description?: string; unit?: string;
-    }) =>
-      apiPut(`/apps/${appId}/thresholds/${varId}`, data),
+      appId: string;
+      varId: string;
+      default_value?: number;
+      app_value?: number | null;
+      clear_app_value?: boolean;
+      display_name?: string;
+      description?: string;
+      unit?: string;
+    }) => apiPut(`/apps/${appId}/thresholds/${varId}`, data),
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ["app-thresholds", vars.appId] });
       qc.invalidateQueries({ queryKey: ["device-thresholds"] });
@@ -589,9 +650,16 @@ export function useUpdateThresholdVariable() {
 export function useCreateThresholdVariable() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ appId, ...data }: {
-      appId: string; name: string; default_value: number;
-      display_name?: string; unit?: string; description?: string
+    mutationFn: ({
+      appId,
+      ...data
+    }: {
+      appId: string;
+      name: string;
+      default_value: number;
+      display_name?: string;
+      unit?: string;
+      description?: string;
     }) => apiPost(`/apps/${appId}/thresholds`, data),
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ["app-thresholds", vars.appId] });
@@ -613,8 +681,12 @@ export function useDeleteThresholdVariable() {
 export function useCreateThresholdOverride() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { variable_id: string; device_id: string; entity_key?: string; value: number }) =>
-      apiPost("/alerts/overrides", data),
+    mutationFn: (data: {
+      variable_id: string;
+      device_id: string;
+      entity_key?: string;
+      value: number;
+    }) => apiPost("/alerts/overrides", data),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["device-thresholds"] });
       await qc.invalidateQueries({ queryKey: ["app-thresholds"] });
@@ -648,7 +720,10 @@ export function useDeleteThresholdOverride() {
 export function usePerformanceSummary(deviceId: string | undefined) {
   return useQuery({
     queryKey: ["performance-summary", deviceId],
-    queryFn: () => apiGet<PerformanceAppSummary[]>(`/results/performance/${deviceId}/summary`),
+    queryFn: () =>
+      apiGet<PerformanceAppSummary[]>(
+        `/results/performance/${deviceId}/summary`,
+      ),
     select: (res) => res.data,
     enabled: !!deviceId,
     refetchInterval: 60_000,
@@ -665,7 +740,16 @@ export function usePerformanceHistory(
   limit = 5000,
 ) {
   return useQuery({
-    queryKey: ["performance-history", deviceId, fromTs, toTs, appId, componentType, components, limit],
+    queryKey: [
+      "performance-history",
+      deviceId,
+      fromTs,
+      toTs,
+      appId,
+      componentType,
+      components,
+      limit,
+    ],
     queryFn: () => {
       const params = new URLSearchParams({ limit: String(limit) });
       if (fromTs) params.set("from_ts", fromTs);
@@ -673,7 +757,9 @@ export function usePerformanceHistory(
       if (appId) params.set("app_id", appId);
       if (componentType) params.set("component_type", componentType);
       if (components?.length) params.set("component", components.join(","));
-      return apiGet<PerformanceRecord[]>(`/results/performance/${deviceId}?${params}`);
+      return apiGet<PerformanceRecord[]>(
+        `/results/performance/${deviceId}?${params}`,
+      );
     },
     select: (res) => res.data,
     enabled: !!deviceId && !!fromTs,
@@ -705,8 +791,12 @@ export function useDeviceCategories() {
 export function useCreateDeviceCategory() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { name: string; description?: string; category?: string; icon?: string }) =>
-      apiPost<DeviceCategory>("/device-categories", data),
+    mutationFn: (data: {
+      name: string;
+      description?: string;
+      category?: string;
+      icon?: string;
+    }) => apiPost<DeviceCategory>("/device-categories", data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["device-categories"] });
     },
@@ -716,8 +806,18 @@ export function useCreateDeviceCategory() {
 export function useUpdateDeviceCategory() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: { name?: string; description?: string; category?: string; icon?: string } }) =>
-      apiPut<DeviceCategory>(`/device-categories/${id}`, data),
+    mutationFn: ({
+      id,
+      data,
+    }: {
+      id: string;
+      data: {
+        name?: string;
+        description?: string;
+        category?: string;
+        icon?: string;
+      };
+    }) => apiPut<DeviceCategory>(`/device-categories/${id}`, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["device-categories"] });
     },
@@ -740,7 +840,10 @@ export function useUploadDeviceCategoryIcon() {
     mutationFn: ({ id, file }: { id: string; file: File }) => {
       const fd = new FormData();
       fd.append("file", file);
-      return apiPostFormData<DeviceCategory>(`/device-categories/${id}/icon`, fd);
+      return apiPostFormData<DeviceCategory>(
+        `/device-categories/${id}/icon`,
+        fd,
+      );
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["device-categories"] });
@@ -760,7 +863,11 @@ export function useDeleteDeviceCategoryIcon() {
 
 export function useDeviceCategoryList(params: ListParams) {
   const qs = buildListQs(params);
-  return useQuery<{ status: string; data: DeviceCategory[]; meta: DeviceCategoryListMeta }>({
+  return useQuery<{
+    status: string;
+    data: DeviceCategory[];
+    meta: DeviceCategoryListMeta;
+  }>({
     queryKey: ["device-categories", "list", params],
     queryFn: () => apiGetRaw(`/device-categories${qs}`),
     placeholderData: keepPreviousData,
@@ -772,7 +879,8 @@ export function useDeviceCategoryCounts(search?: string) {
   const qs = search ? `?search=${encodeURIComponent(search)}` : "";
   return useQuery({
     queryKey: ["device-categories", "categories", search ?? ""],
-    queryFn: () => apiGet<DeviceCategoryCounts>(`/device-categories/categories${qs}`),
+    queryFn: () =>
+      apiGet<DeviceCategoryCounts>(`/device-categories/categories${qs}`),
     select: (res) => res.data,
     refetchInterval: POLL_LIST,
   });
@@ -792,8 +900,7 @@ export function useTenants() {
 export function useCreateTenant() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { name: string }) =>
-      apiPost<Tenant>("/tenants", data),
+    mutationFn: (data: { name: string }) => apiPost<Tenant>("/tenants", data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["tenants"] });
     },
@@ -846,8 +953,13 @@ export function useCreateCollectorGroup() {
 export function useUpdateCollectorGroup() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: { name?: string; description?: string } }) =>
-      apiPut<CollectorGroup>(`/collector-groups/${id}`, data),
+    mutationFn: ({
+      id,
+      data,
+    }: {
+      id: string;
+      data: { name?: string; description?: string };
+    }) => apiPut<CollectorGroup>(`/collector-groups/${id}`, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["collector-groups"] });
     },
@@ -894,8 +1006,13 @@ export function useRejectCollector() {
 export function useUpdateCollector() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: { name?: string; group_id?: string } }) =>
-      apiPut<Collector>(`/collectors/${id}`, data),
+    mutationFn: ({
+      id,
+      data,
+    }: {
+      id: string;
+      data: { name?: string; group_id?: string };
+    }) => apiPut<Collector>(`/collectors/${id}`, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["collectors"] });
     },
@@ -946,7 +1063,7 @@ export function useBulkImportDevices() {
     }) =>
       apiPost<{ created: number; discovery_queued: number; devices: Device[] }>(
         "/devices/bulk-import",
-        data
+        data,
       ),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["devices"] });
@@ -968,7 +1085,9 @@ export function useBulkDeleteDevices() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (deviceIds: string[]) =>
-      apiPost<{ deleted: number }>("/devices/bulk-delete", { device_ids: deviceIds }),
+      apiPost<{ deleted: number }>("/devices/bulk-delete", {
+        device_ids: deviceIds,
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["devices"] });
     },
@@ -979,7 +1098,10 @@ export function useBulkPatchDevices() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: import("@/types/api.ts").DeviceBulkPatchRequest) =>
-      apiPost<import("@/types/api.ts").DeviceBulkPatchResult>("/devices/bulk-patch", body),
+      apiPost<import("@/types/api.ts").DeviceBulkPatchResult>(
+        "/devices/bulk-patch",
+        body,
+      ),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["devices"] });
     },
@@ -1058,7 +1180,9 @@ export function useAvailabilityHistory(
         ...(fromTs ? { from_ts: fromTs } : {}),
         ...(toTs ? { to_ts: toTs } : {}),
       });
-      return apiGet<ResultRecord[]>(`/results/availability/${deviceId}?${params}`);
+      return apiGet<ResultRecord[]>(
+        `/results/availability/${deviceId}?${params}`,
+      );
     },
     select: (res) => res.data,
     enabled: !!deviceId,
@@ -1071,7 +1195,8 @@ export function useAvailabilityHistory(
 export function useInterfaceLatest(deviceId: string | undefined) {
   return useQuery({
     queryKey: ["interface-latest", deviceId],
-    queryFn: () => apiGet<InterfaceRecord[]>(`/results/interfaces/${deviceId}/latest`),
+    queryFn: () =>
+      apiGet<InterfaceRecord[]>(`/results/interfaces/${deviceId}/latest`),
     select: (res) => res.data,
     enabled: !!deviceId,
     refetchInterval: POLL_DETAIL,
@@ -1094,7 +1219,9 @@ export function useInterfaceHistory(
         ...(toTs ? { to_ts: toTs } : {}),
         ...(interfaceId != null ? { interface_id: interfaceId } : {}),
       });
-      return apiGet<InterfaceRecord[]>(`/results/interfaces/${deviceId}?${params}`);
+      return apiGet<InterfaceRecord[]>(
+        `/results/interfaces/${deviceId}?${params}`,
+      );
     },
     select: (res) => res.data,
     enabled: !!deviceId,
@@ -1107,7 +1234,10 @@ export function useInterfaceHistory(
 export function useInterfaceMetadata(deviceId: string | undefined) {
   return useQuery({
     queryKey: ["interface-metadata", deviceId],
-    queryFn: () => apiGet<InterfaceMetadataRecord[]>(`/devices/${deviceId}/interface-metadata`),
+    queryFn: () =>
+      apiGet<InterfaceMetadataRecord[]>(
+        `/devices/${deviceId}/interface-metadata`,
+      ),
     select: (res) => res.data,
     enabled: !!deviceId,
     refetchInterval: POLL_DETAIL,
@@ -1124,8 +1254,13 @@ export function useUpdateInterfaceSettings() {
     }: {
       deviceId: string;
       interfaceId: string;
-      data: { polling_enabled?: boolean; alerting_enabled?: boolean; poll_metrics?: string };
-    }) => apiPatch(`/devices/${deviceId}/interface-metadata/${interfaceId}`, data),
+      data: {
+        polling_enabled?: boolean;
+        alerting_enabled?: boolean;
+        poll_metrics?: string;
+      };
+    }) =>
+      apiPatch(`/devices/${deviceId}/interface-metadata/${interfaceId}`, data),
     onSuccess: (_res, vars) => {
       qc.invalidateQueries({ queryKey: ["interface-metadata", vars.deviceId] });
     },
@@ -1140,7 +1275,12 @@ export function useBulkUpdateInterfaceSettings() {
       data,
     }: {
       deviceId: string;
-      data: { interface_ids: string[]; polling_enabled?: boolean; alerting_enabled?: boolean; poll_metrics?: string };
+      data: {
+        interface_ids: string[];
+        polling_enabled?: boolean;
+        alerting_enabled?: boolean;
+        poll_metrics?: string;
+      };
     }) => apiPatch(`/devices/${deviceId}/interface-metadata`, data),
     onSuccess: (_res, vars) => {
       qc.invalidateQueries({ queryKey: ["interface-metadata", vars.deviceId] });
@@ -1159,12 +1299,33 @@ export function useRefreshInterfaceMetadata() {
   });
 }
 
+export function usePollConfigNow() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      deviceId,
+      assignmentId,
+    }: {
+      deviceId: string;
+      assignmentId: string;
+    }) =>
+      apiPost(`/devices/${deviceId}/poll-now`, { assignment_id: assignmentId }),
+    onSuccess: (_res, { deviceId }) => {
+      setTimeout(() => {
+        qc.invalidateQueries({ queryKey: ["device-config-data", deviceId] });
+        qc.invalidateQueries({ queryKey: ["config-changelog", deviceId] });
+      }, 3000);
+    },
+  });
+}
+
 // ── Interface Rules ──────────────────────────────────────
 
 export function useDeviceInterfaceRules(deviceId: string | undefined) {
   return useQuery({
     queryKey: ["interface-rules", deviceId],
-    queryFn: () => apiGet<InterfaceRule[]>(`/devices/${deviceId}/interface-rules`),
+    queryFn: () =>
+      apiGet<InterfaceRule[]>(`/devices/${deviceId}/interface-rules`),
     select: (res) => res.data,
     enabled: !!deviceId,
   });
@@ -1173,7 +1334,10 @@ export function useDeviceInterfaceRules(deviceId: string | undefined) {
 export function useSetDeviceInterfaceRules() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ deviceId, data }: {
+    mutationFn: ({
+      deviceId,
+      data,
+    }: {
       deviceId: string;
       data: { interface_rules: InterfaceRule[]; apply_now?: boolean };
     }) => apiPut(`/devices/${deviceId}/interface-rules`, data),
@@ -1187,10 +1351,17 @@ export function useSetDeviceInterfaceRules() {
 export function useEvaluateInterfaceRules() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ deviceId, force = false }: {
+    mutationFn: ({
+      deviceId,
+      force = false,
+    }: {
       deviceId: string;
       force?: boolean;
-    }) => apiPost<InterfaceRuleEvaluationSummary>(`/devices/${deviceId}/interface-rules/evaluate`, { force }),
+    }) =>
+      apiPost<InterfaceRuleEvaluationSummary>(
+        `/devices/${deviceId}/interface-rules/evaluate`,
+        { force },
+      ),
     onSuccess: (_res, vars) => {
       qc.invalidateQueries({ queryKey: ["interface-metadata", vars.deviceId] });
     },
@@ -1200,7 +1371,10 @@ export function useEvaluateInterfaceRules() {
 export function usePreviewInterfaceRules(deviceId: string | undefined) {
   return useQuery({
     queryKey: ["interface-rules-preview", deviceId],
-    queryFn: () => apiPost<InterfaceRulePreviewItem[]>(`/devices/${deviceId}/interface-rules/preview`),
+    queryFn: () =>
+      apiPost<InterfaceRulePreviewItem[]>(
+        `/devices/${deviceId}/interface-rules/preview`,
+      ),
     select: (res) => res.data,
     enabled: false, // manual trigger only
   });
@@ -1214,7 +1388,14 @@ export function useMultiInterfaceHistory(
   limit = 2000,
 ) {
   return useQuery({
-    queryKey: ["interface-history-multi", deviceId, fromTs, toTs, interfaceIds, limit],
+    queryKey: [
+      "interface-history-multi",
+      deviceId,
+      fromTs,
+      toTs,
+      interfaceIds,
+      limit,
+    ],
     queryFn: async () => {
       const perIface = Math.max(200, Math.floor(limit / interfaceIds.length));
       const results = await Promise.all(
@@ -1225,8 +1406,10 @@ export function useMultiInterfaceHistory(
             ...(toTs ? { to_ts: toTs } : {}),
             interface_id: ifaceId,
           });
-          return apiGet<InterfaceRecord[]>(`/results/interfaces/${deviceId}?${params}`);
-        })
+          return apiGet<InterfaceRecord[]>(
+            `/results/interfaces/${deviceId}?${params}`,
+          );
+        }),
       );
       return results.map((r) => r.data);
     },
@@ -1251,7 +1434,10 @@ export function useDeviceAssignments(deviceId: string | undefined) {
 export function useUpdateAssignment() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, data }: {
+    mutationFn: ({
+      id,
+      data,
+    }: {
       id: string;
       data: {
         schedule_type?: string;
@@ -1262,7 +1448,14 @@ export function useUpdateAssignment() {
         use_latest?: boolean;
         collector_id?: string | null;
         credential_id?: string | null;
-        connector_bindings?: { alias: string; connector_id: string; connector_version_id: string; credential_id?: string | null; use_latest?: boolean; settings?: Record<string, unknown> }[];
+        connector_bindings?: {
+          alias: string;
+          connector_id: string;
+          connector_version_id: string;
+          credential_id?: string | null;
+          use_latest?: boolean;
+          settings?: Record<string, unknown>;
+        }[];
       };
     }) => apiPut<{ id: string }>(`/apps/assignments/${id}`, data),
     onSuccess: () => {
@@ -1297,7 +1490,9 @@ export function useBulkDeleteAssignments() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (assignmentIds: string[]) =>
-      apiPost<{ deleted: number }>("/apps/assignments/bulk-delete", { assignment_ids: assignmentIds }),
+      apiPost<{ deleted: number }>("/apps/assignments/bulk-delete", {
+        assignment_ids: assignmentIds,
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["assignments"] });
       qc.invalidateQueries({ queryKey: ["device-assignments"] });
@@ -1331,7 +1526,7 @@ export function useCreateAssignment() {
     mutationFn: (data: {
       app_id: string;
       app_version_id: string;
-      collector_id?: string | null;  // null/omitted = group-level routing
+      collector_id?: string | null; // null/omitted = group-level routing
       device_id: string;
       schedule_type: string;
       schedule_value: string;
@@ -1339,7 +1534,14 @@ export function useCreateAssignment() {
       resource_limits?: Record<string, unknown>;
       use_latest?: boolean;
       credential_id?: string | null;
-      connector_bindings?: { alias: string; connector_id: string; connector_version_id?: string | null; credential_id?: string | null; use_latest?: boolean; settings?: Record<string, unknown> }[];
+      connector_bindings?: {
+        alias: string;
+        connector_id: string;
+        connector_version_id?: string | null;
+        credential_id?: string | null;
+        use_latest?: boolean;
+        settings?: Record<string, unknown>;
+      }[];
     }) => apiPost<{ id: string }>("/apps/assignments", data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["device-assignments"] });
@@ -1423,14 +1625,19 @@ export function useUpdateMyTimezone() {
 export function useUpdateMyDefaultPage() {
   return useMutation({
     mutationFn: (default_page: string) =>
-      apiPut<{ default_page: string }>("/users/me/default-page", { default_page }),
+      apiPut<{ default_page: string }>("/users/me/default-page", {
+        default_page,
+      }),
   });
 }
 
 export function useUpdateMyIdleTimeout() {
   return useMutation({
     mutationFn: (data: { idle_timeout_minutes: number | null }) =>
-      apiPut<{ idle_timeout_minutes: number | null }>("/users/me/idle-timeout", data),
+      apiPut<{ idle_timeout_minutes: number | null }>(
+        "/users/me/idle-timeout",
+        data,
+      ),
   });
 }
 
@@ -1459,8 +1666,14 @@ export function useUpdateInterfacePreferences() {
 export function useUpdateTablePreferences() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { table_page_size?: number; table_scroll_mode?: "paginated" | "infinite" }) =>
-      apiPut<{ table_page_size: number; table_scroll_mode: string }>("/users/me/table-preferences", data),
+    mutationFn: (data: {
+      table_page_size?: number;
+      table_scroll_mode?: "paginated" | "infinite";
+    }) =>
+      apiPut<{ table_page_size: number; table_scroll_mode: string }>(
+        "/users/me/table-preferences",
+        data,
+      ),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["users"] });
     },
@@ -1480,7 +1693,8 @@ export function useDeleteUser() {
 export function useUserTenants(userId: string | undefined) {
   return useQuery({
     queryKey: ["user-tenants", userId],
-    queryFn: () => apiGet<{ id: string; name: string }[]>(`/users/${userId}/tenants`),
+    queryFn: () =>
+      apiGet<{ id: string; name: string }[]>(`/users/${userId}/tenants`),
     select: (res) => res.data,
     enabled: !!userId,
   });
@@ -1632,8 +1846,13 @@ export function useCreateSnmpOid() {
 export function useUpdateSnmpOid() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: { name?: string; oid?: string; description?: string } }) =>
-      apiPut<SnmpOid>(`/snmp-oids/${id}`, data),
+    mutationFn: ({
+      id,
+      data,
+    }: {
+      id: string;
+      data: { name?: string; oid?: string; description?: string };
+    }) => apiPut<SnmpOid>(`/snmp-oids/${id}`, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["snmp-oids"] });
     },
@@ -1713,7 +1932,10 @@ export function useDeleteRegistrationToken() {
 export function useCollectorSetupContext() {
   return useQuery({
     queryKey: ["collector-setup-context"],
-    queryFn: () => apiGet<{ collector_api_key: string; central_url: string }>("/collectors/setup-context"),
+    queryFn: () =>
+      apiGet<{ collector_api_key: string; central_url: string }>(
+        "/collectors/setup-context",
+      ),
     select: (res) => res.data,
     enabled: false,
   });
@@ -1748,9 +1970,17 @@ export function useCreateCredentialKey() {
 export function useUpdateCredentialKey() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, data }: {
+    mutationFn: ({
+      id,
+      data,
+    }: {
       id: string;
-      data: { name?: string; description?: string; key_type?: string; enum_values?: string[] };
+      data: {
+        name?: string;
+        description?: string;
+        key_type?: string;
+        enum_values?: string[];
+      };
     }) => apiPut<CredentialKey>(`/credential-keys/${id}`, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["credential-keys"] });
@@ -1789,9 +2019,16 @@ export function useCreateCredential() {
 export function useUpdateCredential() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, data }: {
+    mutationFn: ({
+      id,
+      data,
+    }: {
       id: string;
-      data: { description?: string; credential_type?: string; secret?: Record<string, unknown> };
+      data: {
+        description?: string;
+        credential_type?: string;
+        secret?: Record<string, unknown>;
+      };
     }) => apiPut<Credential>(`/credentials/${id}`, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["credentials"] });
@@ -1823,8 +2060,12 @@ export function useCredentialTemplates() {
 export function useCreateCredentialTemplate() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { name: string; credential_type?: string; description?: string; fields: CredentialTemplateField[] }) =>
-      apiPost<CredentialTemplate>("/credential-templates", data),
+    mutationFn: (data: {
+      name: string;
+      credential_type?: string;
+      description?: string;
+      fields: CredentialTemplateField[];
+    }) => apiPost<CredentialTemplate>("/credential-templates", data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["credential-templates"] });
     },
@@ -1834,8 +2075,18 @@ export function useCreateCredentialTemplate() {
 export function useUpdateCredentialTemplate() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: { name?: string; credential_type?: string; description?: string; fields?: CredentialTemplateField[] } }) =>
-      apiPut<CredentialTemplate>(`/credential-templates/${id}`, data),
+    mutationFn: ({
+      id,
+      data,
+    }: {
+      id: string;
+      data: {
+        name?: string;
+        credential_type?: string;
+        description?: string;
+        fields?: CredentialTemplateField[];
+      };
+    }) => apiPut<CredentialTemplate>(`/credential-templates/${id}`, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["credential-templates"] });
     },
@@ -1873,9 +2124,18 @@ export function useCreateApp() {
 export function useUpdateApp() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, data }: {
+    mutationFn: ({
+      id,
+      data,
+    }: {
       id: string;
-      data: { name?: string; description?: string; app_type?: string; config_schema?: Record<string, unknown>; vendor_oid_prefix?: string | null };
+      data: {
+        name?: string;
+        description?: string;
+        app_type?: string;
+        config_schema?: Record<string, unknown>;
+        vendor_oid_prefix?: string | null;
+      };
     }) => apiPut<AppSummary>(`/apps/${id}`, data),
     onSuccess: (_res, { id }) => {
       qc.invalidateQueries({ queryKey: ["apps"] });
@@ -1899,9 +2159,18 @@ export function useDeleteApp() {
 export function useAddAppConnector() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ appId, data }: {
+    mutationFn: ({
+      appId,
+      data,
+    }: {
       appId: string;
-      data: { alias: string; connector_id: string; use_latest?: boolean; connector_version_id?: string | null; settings?: Record<string, unknown> };
+      data: {
+        alias: string;
+        connector_id: string;
+        use_latest?: boolean;
+        connector_version_id?: string | null;
+        settings?: Record<string, unknown>;
+      };
     }) => apiPost(`/apps/${appId}/connectors`, data),
     onSuccess: (_res, { appId }) => {
       qc.invalidateQueries({ queryKey: ["app-detail", appId] });
@@ -1923,9 +2192,20 @@ export function useDeleteAppConnector() {
 export function useCreateAppVersion() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ appId, data }: {
+    mutationFn: ({
+      appId,
+      data,
+    }: {
       appId: string;
-      data: { version: string; source_code: string; requirements?: string[]; entry_class?: string; display_template?: DisplayTemplate; volatile_keys?: string[]; eligibility_oids?: EligibilityOidCheck[] };
+      data: {
+        version: string;
+        source_code: string;
+        requirements?: string[];
+        entry_class?: string;
+        display_template?: DisplayTemplate;
+        volatile_keys?: string[];
+        eligibility_oids?: EligibilityOidCheck[];
+      };
     }) => apiPost<{ id: string }>(`/apps/${appId}/versions`, data),
     onSuccess: (_res, { appId }) => {
       qc.invalidateQueries({ queryKey: ["app-detail", appId] });
@@ -1938,7 +2218,10 @@ export function useSetLatestVersion() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ appId, versionId }: { appId: string; versionId: string }) =>
-      apiPut<{ id: string }>(`/apps/${appId}/versions/${versionId}/set-latest`, {}),
+      apiPut<{ id: string }>(
+        `/apps/${appId}/versions/${versionId}/set-latest`,
+        {},
+      ),
     onSuccess: (_res, { appId }) => {
       qc.invalidateQueries({ queryKey: ["app-detail", appId] });
     },
@@ -1948,10 +2231,21 @@ export function useSetLatestVersion() {
 export function useUpdateAppVersion() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ appId, versionId, data }: {
+    mutationFn: ({
+      appId,
+      versionId,
+      data,
+    }: {
       appId: string;
       versionId: string;
-      data: { source_code?: string; requirements?: string[]; entry_class?: string; display_template?: DisplayTemplate | null; volatile_keys?: string[]; eligibility_oids?: EligibilityOidCheck[] };
+      data: {
+        source_code?: string;
+        requirements?: string[];
+        entry_class?: string;
+        display_template?: DisplayTemplate | null;
+        volatile_keys?: string[];
+        eligibility_oids?: EligibilityOidCheck[];
+      };
     }) => apiPut<{ id: string }>(`/apps/${appId}/versions/${versionId}`, data),
     onSuccess: (_res, { appId }) => {
       qc.invalidateQueries({ queryKey: ["app-detail", appId] });
@@ -1989,7 +2283,10 @@ export function useCloneAppVersion() {
   });
 }
 
-export function useAppConfigKeys(appId: string | undefined, versionId?: string) {
+export function useAppConfigKeys(
+  appId: string | undefined,
+  versionId?: string,
+) {
   return useQuery({
     queryKey: ["app-config-keys", appId, versionId],
     queryFn: () => {
@@ -2004,8 +2301,17 @@ export function useAppConfigKeys(appId: string | undefined, versionId?: string) 
 export function useStartEligibilityTest() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ appId, mode = "instant" }: { appId: string; mode?: "instant" | "probe" }) =>
-      apiPost<{ run_id: string; total_devices: number; mode: string }>(`/apps/${appId}/test-eligibility`, { mode }),
+    mutationFn: ({
+      appId,
+      mode = "instant",
+    }: {
+      appId: string;
+      mode?: "instant" | "probe";
+    }) =>
+      apiPost<{ run_id: string; total_devices: number; mode: string }>(
+        `/apps/${appId}/test-eligibility`,
+        { mode },
+      ),
     onSuccess: (_d, { appId }) => {
       qc.invalidateQueries({ queryKey: ["eligibility-runs", appId] });
     },
@@ -2015,24 +2321,33 @@ export function useStartEligibilityTest() {
 export function useEligibilityRuns(appId: string | undefined) {
   return useQuery({
     queryKey: ["eligibility-runs", appId],
-    queryFn: () => apiGet<EligibilityRun[]>(`/apps/${appId}/eligibility-runs?limit=20`),
+    queryFn: () =>
+      apiGet<EligibilityRun[]>(`/apps/${appId}/eligibility-runs?limit=20`),
     select: (res) => res,
     enabled: !!appId,
     refetchInterval: 5000,
   });
 }
 
-export function useEligibilityRunDetail(appId: string | undefined, runId: string | undefined, eligibleFilter?: number, page = 1) {
+export function useEligibilityRunDetail(
+  appId: string | undefined,
+  runId: string | undefined,
+  eligibleFilter?: number,
+  page = 1,
+) {
   return useQuery({
     queryKey: ["eligibility-run-detail", appId, runId, eligibleFilter, page],
     queryFn: () => {
       const params = new URLSearchParams();
       params.set("limit", "25");
       params.set("offset", String((page - 1) * 25));
-      if (eligibleFilter !== undefined) params.set("eligible_filter", String(eligibleFilter));
-      return apiGet<{ run: EligibilityRun; devices: EligibilityDeviceResult[]; meta: { total: number; limit: number; offset: number } }>(
-        `/apps/${appId}/eligibility-runs/${runId}?${params}`,
-      );
+      if (eligibleFilter !== undefined)
+        params.set("eligible_filter", String(eligibleFilter));
+      return apiGet<{
+        run: EligibilityRun;
+        devices: EligibilityDeviceResult[];
+        meta: { total: number; limit: number; offset: number };
+      }>(`/apps/${appId}/eligibility-runs/${runId}?${params}`);
     },
     enabled: !!appId && !!runId,
     refetchInterval: 5000,
@@ -2042,7 +2357,15 @@ export function useEligibilityRunDetail(appId: string | undefined, runId: string
 export function useAutoAssignEligible() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ appId, runId, deviceIds }: { appId: string; runId: string; deviceIds?: string[] }) =>
+    mutationFn: ({
+      appId,
+      runId,
+      deviceIds,
+    }: {
+      appId: string;
+      runId: string;
+      deviceIds?: string[];
+    }) =>
       apiPost<{ created: number; skipped: number }>(
         `/apps/${appId}/auto-assign-eligible?run_id=${runId}`,
         deviceIds ? { device_ids: deviceIds } : {},
@@ -2059,7 +2382,8 @@ export function useAutoAssignEligible() {
 export function usePythonModules(params: ListParams = {}) {
   return useQuery({
     queryKey: ["python-modules", params],
-    queryFn: () => apiGet<PythonModuleSummary[]>(`/python-modules${buildListQs(params)}`),
+    queryFn: () =>
+      apiGet<PythonModuleSummary[]>(`/python-modules${buildListQs(params)}`),
     placeholderData: keepPreviousData,
     refetchInterval: POLL_LIST,
   });
@@ -2089,7 +2413,10 @@ export function useUploadWheel() {
     mutationFn: (file: File) => {
       const fd = new FormData();
       fd.append("file", file);
-      return apiPostFormData<WheelUploadResult>("/python-modules/upload-wheel", fd);
+      return apiPostFormData<WheelUploadResult>(
+        "/python-modules/upload-wheel",
+        fd,
+      );
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["python-modules"] });
@@ -2103,7 +2430,10 @@ export function useUploadWheelsBatch() {
     mutationFn: (files: File[]) => {
       const fd = new FormData();
       files.forEach((f) => fd.append("files", f));
-      return apiPostFormData<WheelUploadResult[]>("/python-modules/upload-wheels-batch", fd);
+      return apiPostFormData<WheelUploadResult[]>(
+        "/python-modules/upload-wheels-batch",
+        fd,
+      );
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["python-modules"] });
@@ -2133,7 +2463,11 @@ export function useAutoResolve() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: { module_id?: string; max_depth?: number }) =>
-      apiPost<{ imported: { name: string; version: string; filename: string }[]; failed: { name: string; error: string }[]; still_missing: string[] }>("/python-modules/auto-resolve", data),
+      apiPost<{
+        imported: { name: string; version: string; filename: string }[];
+        failed: { name: string; error: string }[];
+        still_missing: string[];
+      }>("/python-modules/auto-resolve", data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["python-modules"] });
       qc.invalidateQueries({ queryKey: ["python-module"] });
@@ -2145,7 +2479,9 @@ export function useToggleModuleApproval() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, is_approved }: { id: string; is_approved: boolean }) =>
-      apiPut<PythonModuleSummary>(`/python-modules/${id}/approve`, { is_approved }),
+      apiPut<PythonModuleSummary>(`/python-modules/${id}/approve`, {
+        is_approved,
+      }),
     onSuccess: (_res, { id }) => {
       qc.invalidateQueries({ queryKey: ["python-modules"] });
       qc.invalidateQueries({ queryKey: ["python-module", id] });
@@ -2156,8 +2492,19 @@ export function useToggleModuleApproval() {
 export function useToggleModuleVerify() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ moduleId, versionId, is_verified }: { moduleId: string; versionId: string; is_verified: boolean }) =>
-      apiPut<{ id: string }>(`/python-modules/${moduleId}/versions/${versionId}/verify`, { is_verified }),
+    mutationFn: ({
+      moduleId,
+      versionId,
+      is_verified,
+    }: {
+      moduleId: string;
+      versionId: string;
+      is_verified: boolean;
+    }) =>
+      apiPut<{ id: string }>(
+        `/python-modules/${moduleId}/versions/${versionId}/verify`,
+        { is_verified },
+      ),
     onSuccess: (_res, { moduleId }) => {
       qc.invalidateQueries({ queryKey: ["python-modules"] });
       qc.invalidateQueries({ queryKey: ["python-module", moduleId] });
@@ -2178,8 +2525,13 @@ export function useDeletePythonModule() {
 export function useDeleteModuleVersion() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ moduleId, versionId }: { moduleId: string; versionId: string }) =>
-      apiDelete(`/python-modules/${moduleId}/versions/${versionId}`),
+    mutationFn: ({
+      moduleId,
+      versionId,
+    }: {
+      moduleId: string;
+      versionId: string;
+    }) => apiDelete(`/python-modules/${moduleId}/versions/${versionId}`),
     onSuccess: (_res, { moduleId }) => {
       qc.invalidateQueries({ queryKey: ["python-modules"] });
       qc.invalidateQueries({ queryKey: ["python-module", moduleId] });
@@ -2190,7 +2542,10 @@ export function useDeleteModuleVersion() {
 export function useSearchPyPI(query: string) {
   return useQuery({
     queryKey: ["pypi-search", query],
-    queryFn: () => apiGet<PyPISearchResult[]>(`/python-modules/search-pypi?q=${encodeURIComponent(query)}`),
+    queryFn: () =>
+      apiGet<PyPISearchResult[]>(
+        `/python-modules/search-pypi?q=${encodeURIComponent(query)}`,
+      ),
     select: (res) => res.data,
     enabled: query.length >= 2,
   });
@@ -2201,8 +2556,13 @@ export function useSearchPyPI(query: string) {
 export function useUpdateTenantFull() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: { name?: string; metadata?: Record<string, string> } }) =>
-      apiPut<Tenant>(`/tenants/${id}`, data),
+    mutationFn: ({
+      id,
+      data,
+    }: {
+      id: string;
+      data: { name?: string; metadata?: Record<string, string> };
+    }) => apiPut<Tenant>(`/tenants/${id}`, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["tenants"] });
     },
@@ -2233,7 +2593,11 @@ export function useUpdateSystemSettings() {
 export function useTriggerTemplateAutoApplyAll() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => apiPost<{ applied: number; total: number; scope: string }>("/templates/auto-apply-all", {}),
+    mutationFn: () =>
+      apiPost<{ applied: number; total: number; scope: string }>(
+        "/templates/auto-apply-all",
+        {},
+      ),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["system-settings"] });
     },
@@ -2253,8 +2617,12 @@ export function useTlsCertificate() {
 export function useGenerateTlsCert() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { cn?: string; san_ips?: string[]; san_dns?: string[]; validity_days?: number }) =>
-      apiPost<TlsCertificateInfo>("/settings/tls/generate", data),
+    mutationFn: (data: {
+      cn?: string;
+      san_ips?: string[];
+      san_dns?: string[];
+      validity_days?: number;
+    }) => apiPost<TlsCertificateInfo>("/settings/tls/generate", data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["tls-cert"] });
     },
@@ -2275,7 +2643,11 @@ export function useUploadTlsCert() {
 export function useDeployTlsCert() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => apiPost<{ deployed: boolean; written: boolean; message: string }>("/settings/tls/deploy", {}),
+    mutationFn: () =>
+      apiPost<{ deployed: boolean; written: boolean; message: string }>(
+        "/settings/tls/deploy",
+        {},
+      ),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["tls-cert"] });
     },
@@ -2296,8 +2668,11 @@ export function useTemplates(params: ListParams = {}) {
 export function useCreateTemplate() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { name: string; description?: string; config: Record<string, unknown> }) =>
-      apiPost<Template>("/templates", data),
+    mutationFn: (data: {
+      name: string;
+      description?: string;
+      config: Record<string, unknown>;
+    }) => apiPost<Template>("/templates", data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["templates"] });
     },
@@ -2307,8 +2682,17 @@ export function useCreateTemplate() {
 export function useUpdateTemplate() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: { name?: string; description?: string; config?: Record<string, unknown> } }) =>
-      apiPut<Template>(`/templates/${id}`, data),
+    mutationFn: ({
+      id,
+      data,
+    }: {
+      id: string;
+      data: {
+        name?: string;
+        description?: string;
+        config?: Record<string, unknown>;
+      };
+    }) => apiPut<Template>(`/templates/${id}`, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["templates"] });
     },
@@ -2328,8 +2712,16 @@ export function useDeleteTemplate() {
 export function useApplyTemplate() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ templateId, deviceIds }: { templateId: string; deviceIds: string[] }) =>
-      apiPost<{ applied: number }>(`/templates/${templateId}/apply`, { device_ids: deviceIds }),
+    mutationFn: ({
+      templateId,
+      deviceIds,
+    }: {
+      templateId: string;
+      deviceIds: string[];
+    }) =>
+      apiPost<{ applied: number }>(`/templates/${templateId}/apply`, {
+        device_ids: deviceIds,
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["devices"] });
     },
@@ -2341,15 +2733,21 @@ export function useApplyTemplate() {
 export function useCategoryTemplateBindings(categoryId: string | undefined) {
   return useQuery({
     queryKey: ["template-bindings-category", categoryId],
-    queryFn: () => apiGet<TemplateBinding[]>(`/templates/bindings/category/${categoryId}`),
+    queryFn: () =>
+      apiGet<TemplateBinding[]>(`/templates/bindings/category/${categoryId}`),
     enabled: !!categoryId,
   });
 }
 
-export function useDeviceTypeTemplateBindings(deviceTypeId: string | undefined) {
+export function useDeviceTypeTemplateBindings(
+  deviceTypeId: string | undefined,
+) {
   return useQuery({
     queryKey: ["template-bindings-device-type", deviceTypeId],
-    queryFn: () => apiGet<TemplateBinding[]>(`/templates/bindings/device-type/${deviceTypeId}`),
+    queryFn: () =>
+      apiGet<TemplateBinding[]>(
+        `/templates/bindings/device-type/${deviceTypeId}`,
+      ),
     enabled: !!deviceTypeId,
   });
 }
@@ -2357,8 +2755,11 @@ export function useDeviceTypeTemplateBindings(deviceTypeId: string | undefined) 
 export function useBindCategoryTemplate() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { device_category_id: string; template_id: string; step?: number }) =>
-      apiPost<TemplateBinding>("/templates/bindings/category", data),
+    mutationFn: (data: {
+      device_category_id: string;
+      template_id: string;
+      step?: number;
+    }) => apiPost<TemplateBinding>("/templates/bindings/category", data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["template-bindings-category"] });
     },
@@ -2368,7 +2769,8 @@ export function useBindCategoryTemplate() {
 export function useUnbindCategoryTemplate() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (bindingId: string) => apiDelete(`/templates/bindings/category/${bindingId}`),
+    mutationFn: (bindingId: string) =>
+      apiDelete(`/templates/bindings/category/${bindingId}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["template-bindings-category"] });
     },
@@ -2378,8 +2780,11 @@ export function useUnbindCategoryTemplate() {
 export function useBindDeviceTypeTemplate() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { device_type_id: string; template_id: string; step?: number }) =>
-      apiPost<TemplateBinding>("/templates/bindings/device-type", data),
+    mutationFn: (data: {
+      device_type_id: string;
+      template_id: string;
+      step?: number;
+    }) => apiPost<TemplateBinding>("/templates/bindings/device-type", data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["template-bindings-device-type"] });
     },
@@ -2389,7 +2794,8 @@ export function useBindDeviceTypeTemplate() {
 export function useUnbindDeviceTypeTemplate() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (bindingId: string) => apiDelete(`/templates/bindings/device-type/${bindingId}`),
+    mutationFn: (bindingId: string) =>
+      apiDelete(`/templates/bindings/device-type/${bindingId}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["template-bindings-device-type"] });
     },
@@ -2399,7 +2805,9 @@ export function useUnbindDeviceTypeTemplate() {
 export function useResolveTemplates() {
   return useMutation({
     mutationFn: (deviceIds: string[]) =>
-      apiPost<ResolvedTemplateResult[]>("/templates/resolve", { device_ids: deviceIds }),
+      apiPost<ResolvedTemplateResult[]>("/templates/resolve", {
+        device_ids: deviceIds,
+      }),
   });
 }
 
@@ -2407,7 +2815,10 @@ export function useAutoApplyTemplates() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (deviceIds: string[]) =>
-      apiPost<{ applied: number; details: ResolvedTemplateResult[] }>("/templates/auto-apply", { device_ids: deviceIds }),
+      apiPost<{ applied: number; details: ResolvedTemplateResult[] }>(
+        "/templates/auto-apply",
+        { device_ids: deviceIds },
+      ),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["devices"] });
       qc.invalidateQueries({ queryKey: ["assignments"] });
@@ -2458,7 +2869,12 @@ export function useUpdateLabelKey() {
       data,
     }: {
       id: string;
-      data: Partial<{ description: string; color: string; show_description: boolean; predefined_values: string[] }>;
+      data: Partial<{
+        description: string;
+        color: string;
+        show_description: boolean;
+        predefined_values: string[];
+      }>;
     }) => apiPut<LabelKey>(`/label-keys/${id}`, data),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["label-keys"] });
@@ -2492,9 +2908,10 @@ export function useSystemHealth() {
 export function useCollectorErrors(collectorName: string | null, hours = 1) {
   return useQuery({
     queryKey: ["collector-errors", collectorName, hours],
-    queryFn: () => apiGet<import("@/types/api").CollectorErrorAnalytics>(
-      `/system/collector-errors/${encodeURIComponent(collectorName!)}?hours=${hours}`
-    ),
+    queryFn: () =>
+      apiGet<import("@/types/api").CollectorErrorAnalytics>(
+        `/system/collector-errors/${encodeURIComponent(collectorName!)}?hours=${hours}`,
+      ),
     select: (res) => res.data,
     enabled: !!collectorName,
     staleTime: 30_000,
@@ -2515,7 +2932,10 @@ export function usePatroniSwitchover() {
 export function useSystemHealthStatus() {
   return useQuery({
     queryKey: ["system-health-status"],
-    queryFn: () => apiGet<{ overall_status: string; checked_at: string | null }>("/system/health/status"),
+    queryFn: () =>
+      apiGet<{ overall_status: string; checked_at: string | null }>(
+        "/system/health/status",
+      ),
     select: (res) => res.data,
     refetchInterval: 30_000,
     retry: false,
@@ -2538,7 +2958,8 @@ export function useCredentialDetail(id: string | undefined) {
 export function useConnectors(params: ListParams = {}) {
   return useQuery({
     queryKey: ["connectors", params],
-    queryFn: () => apiGet<ConnectorSummary[]>(`/connectors${buildListQs(params)}`),
+    queryFn: () =>
+      apiGet<ConnectorSummary[]>(`/connectors${buildListQs(params)}`),
     placeholderData: keepPreviousData,
     refetchInterval: POLL_LIST,
   });
@@ -2556,8 +2977,11 @@ export function useConnectorDetail(id: string | undefined) {
 export function useCreateConnector() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { name: string; description?: string; connector_type: string }) =>
-      apiPost<ConnectorSummary>("/connectors", data),
+    mutationFn: (data: {
+      name: string;
+      description?: string;
+      connector_type: string;
+    }) => apiPost<ConnectorSummary>("/connectors", data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["connectors"] });
     },
@@ -2567,8 +2991,13 @@ export function useCreateConnector() {
 export function useUpdateConnector() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: { name?: string; description?: string } }) =>
-      apiPut<ConnectorDetail>(`/connectors/${id}`, data),
+    mutationFn: ({
+      id,
+      data,
+    }: {
+      id: string;
+      data: { name?: string; description?: string };
+    }) => apiPut<ConnectorDetail>(`/connectors/${id}`, data),
     onSuccess: (_res, vars) => {
       qc.invalidateQueries({ queryKey: ["connectors"] });
       qc.invalidateQueries({ queryKey: ["connector-detail", vars.id] });
@@ -2589,12 +3018,22 @@ export function useDeleteConnector() {
 export function useCreateConnectorVersion() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ connectorId, data }: {
+    mutationFn: ({
+      connectorId,
+      data,
+    }: {
       connectorId: string;
-      data: { version: string; source_code?: string; requirements?: string[]; entry_class?: string };
+      data: {
+        version: string;
+        source_code?: string;
+        requirements?: string[];
+        entry_class?: string;
+      };
     }) => apiPost(`/connectors/${connectorId}/versions`, data),
     onSuccess: (_res, vars) => {
-      qc.invalidateQueries({ queryKey: ["connector-detail", vars.connectorId] });
+      qc.invalidateQueries({
+        queryKey: ["connector-detail", vars.connectorId],
+      });
     },
   });
 }
@@ -2602,13 +3041,23 @@ export function useCreateConnectorVersion() {
 export function useUpdateConnectorVersion() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ connectorId, versionId, data }: {
+    mutationFn: ({
+      connectorId,
+      versionId,
+      data,
+    }: {
       connectorId: string;
       versionId: string;
-      data: { source_code?: string; requirements?: string[]; entry_class?: string };
+      data: {
+        source_code?: string;
+        requirements?: string[];
+        entry_class?: string;
+      };
     }) => apiPut(`/connectors/${connectorId}/versions/${versionId}`, data),
     onSuccess: (_res, vars) => {
-      qc.invalidateQueries({ queryKey: ["connector-detail", vars.connectorId] });
+      qc.invalidateQueries({
+        queryKey: ["connector-detail", vars.connectorId],
+      });
     },
   });
 }
@@ -2616,10 +3065,17 @@ export function useUpdateConnectorVersion() {
 export function useDeleteConnectorVersion() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ connectorId, versionId }: { connectorId: string; versionId: string }) =>
-      apiDelete(`/connectors/${connectorId}/versions/${versionId}`),
+    mutationFn: ({
+      connectorId,
+      versionId,
+    }: {
+      connectorId: string;
+      versionId: string;
+    }) => apiDelete(`/connectors/${connectorId}/versions/${versionId}`),
     onSuccess: (_res, vars) => {
-      qc.invalidateQueries({ queryKey: ["connector-detail", vars.connectorId] });
+      qc.invalidateQueries({
+        queryKey: ["connector-detail", vars.connectorId],
+      });
     },
   });
 }
@@ -2627,10 +3083,18 @@ export function useDeleteConnectorVersion() {
 export function useSetConnectorLatest() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ connectorId, versionId }: { connectorId: string; versionId: string }) =>
+    mutationFn: ({
+      connectorId,
+      versionId,
+    }: {
+      connectorId: string;
+      versionId: string;
+    }) =>
       apiPut(`/connectors/${connectorId}/versions/${versionId}/set-latest`, {}),
     onSuccess: (_res, vars) => {
-      qc.invalidateQueries({ queryKey: ["connector-detail", vars.connectorId] });
+      qc.invalidateQueries({
+        queryKey: ["connector-detail", vars.connectorId],
+      });
     },
   });
 }
@@ -2638,7 +3102,13 @@ export function useSetConnectorLatest() {
 export function useCloneConnectorVersion() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ connectorId, versionId }: { connectorId: string; versionId: string }) =>
+    mutationFn: ({
+      connectorId,
+      versionId,
+    }: {
+      connectorId: string;
+      versionId: string;
+    }) =>
       apiPost<{
         id: string;
         version: string;
@@ -2658,7 +3128,8 @@ export function useCloneConnectorVersion() {
 export function useActiveEvents(params: ListParams = {}) {
   return useQuery({
     queryKey: ["events-active", params],
-    queryFn: () => apiGet<MonitoringEvent[]>(`/events/active${buildListQs(params)}`),
+    queryFn: () =>
+      apiGet<MonitoringEvent[]>(`/events/active${buildListQs(params)}`),
     placeholderData: keepPreviousData,
     refetchInterval: POLL_LIST,
   });
@@ -2667,7 +3138,8 @@ export function useActiveEvents(params: ListParams = {}) {
 export function useClearedEvents(params: ListParams = {}) {
   return useQuery({
     queryKey: ["events-cleared", params],
-    queryFn: () => apiGet<MonitoringEvent[]>(`/events/cleared${buildListQs(params)}`),
+    queryFn: () =>
+      apiGet<MonitoringEvent[]>(`/events/cleared${buildListQs(params)}`),
     placeholderData: keepPreviousData,
     refetchInterval: POLL_LIST,
   });
@@ -2703,7 +3175,12 @@ export function useEventPolicies(params: ListParams = {}) {
   const qs = buildListQs(params);
   return useQuery({
     queryKey: ["event-policies", params],
-    queryFn: () => apiGetRaw<{ status: string; data: EventPolicy[]; meta: { limit: number; offset: number; count: number; total: number } }>(`/events/policies${qs}`),
+    queryFn: () =>
+      apiGetRaw<{
+        status: string;
+        data: EventPolicy[];
+        meta: { limit: number; offset: number; count: number; total: number };
+      }>(`/events/policies${qs}`),
     placeholderData: keepPreviousData,
     refetchInterval: POLL_LIST,
   });
@@ -2860,7 +3337,8 @@ export function useDockerOverview() {
 export function useDockerHostStats(hostLabel: string) {
   return useQuery({
     queryKey: ["docker-infra", "stats", hostLabel],
-    queryFn: () => apiGet<Record<string, unknown>>(`/docker-infra/hosts/${hostLabel}/stats`),
+    queryFn: () =>
+      apiGet<Record<string, unknown>>(`/docker-infra/hosts/${hostLabel}/stats`),
     refetchInterval: 15_000,
     enabled: !!hostLabel,
   });
@@ -2869,18 +3347,23 @@ export function useDockerHostStats(hostLabel: string) {
 export function useDockerHostSystem(hostLabel: string) {
   return useQuery({
     queryKey: ["docker-infra", "system", hostLabel],
-    queryFn: () => apiGet<DockerSystemInfo>(`/docker-infra/hosts/${hostLabel}/system`),
+    queryFn: () =>
+      apiGet<DockerSystemInfo>(`/docker-infra/hosts/${hostLabel}/system`),
     refetchInterval: 30_000,
     enabled: !!hostLabel,
   });
 }
 
-export function useDockerContainerLogs(hostLabel: string, container: string, tail = 100) {
+export function useDockerContainerLogs(
+  hostLabel: string,
+  container: string,
+  tail = 100,
+) {
   return useQuery({
     queryKey: ["docker-infra", "logs", hostLabel, container, tail],
     queryFn: () =>
       apiGet<DockerContainerLog>(
-        `/docker-infra/hosts/${hostLabel}/logs?container=${encodeURIComponent(container)}&tail=${tail}`
+        `/docker-infra/hosts/${hostLabel}/logs?container=${encodeURIComponent(container)}&tail=${tail}`,
       ),
     refetchInterval: 5_000,
     enabled: !!hostLabel && !!container,
@@ -2892,7 +3375,7 @@ export function useDockerEvents(hostLabel: string, since = 0, limit = 100) {
     queryKey: ["docker-infra", "events", hostLabel, since],
     queryFn: () =>
       apiGet<DockerEventsResponse>(
-        `/docker-infra/hosts/${hostLabel}/events?since=${since}&limit=${limit}`
+        `/docker-infra/hosts/${hostLabel}/events?since=${since}&limit=${limit}`,
       ),
     refetchInterval: 10_000,
     enabled: !!hostLabel,
@@ -2902,7 +3385,8 @@ export function useDockerEvents(hostLabel: string, since = 0, limit = 100) {
 export function useDockerImages(hostLabel: string) {
   return useQuery({
     queryKey: ["docker-infra", "images", hostLabel],
-    queryFn: () => apiGet<DockerImagesResponse>(`/docker-infra/hosts/${hostLabel}/images`),
+    queryFn: () =>
+      apiGet<DockerImagesResponse>(`/docker-infra/hosts/${hostLabel}/images`),
     enabled: !!hostLabel,
   });
 }
@@ -2914,11 +3398,13 @@ export function useConfigChangelog(
   params: {
     app_id?: string;
     config_key?: string;
+    component?: string;
+    value?: string;
     from_ts?: string;
     to_ts?: string;
     limit?: number;
     offset?: number;
-  } = {}
+  } = {},
 ) {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
@@ -2929,9 +3415,10 @@ export function useConfigChangelog(
     queryKey: ["config-changelog", deviceId, params],
     queryFn: () =>
       apiGet<ConfigChangeEntry[]>(
-        `/devices/${deviceId}/config/changelog${q ? `?${q}` : ""}`
+        `/devices/${deviceId}/config/changelog${q ? `?${q}` : ""}`,
       ),
     enabled: !!deviceId,
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -2949,15 +3436,18 @@ export function useConfigDiff(
   deviceId: string,
   configKey: string,
   appId?: string,
-  limit = 20
+  limit = 20,
 ) {
-  const qs = new URLSearchParams({ config_key: configKey, limit: String(limit) });
+  const qs = new URLSearchParams({
+    config_key: configKey,
+    limit: String(limit),
+  });
   if (appId) qs.set("app_id", appId);
   return useQuery({
     queryKey: ["config-diff", deviceId, configKey, appId],
     queryFn: () =>
       apiGet<ConfigChangeEntry[]>(
-        `/devices/${deviceId}/config/diff?${qs.toString()}`
+        `/devices/${deviceId}/config/diff?${qs.toString()}`,
       ),
     enabled: !!deviceId && !!configKey,
   });
@@ -2965,7 +3455,7 @@ export function useConfigDiff(
 
 export function useConfigChangeTimestamps(
   deviceId: string,
-  params: { app_id?: string; from_ts?: string; to_ts?: string } = {}
+  params: { app_id?: string; from_ts?: string; to_ts?: string } = {},
 ) {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
@@ -2976,7 +3466,7 @@ export function useConfigChangeTimestamps(
     queryKey: ["config-change-timestamps", deviceId, params],
     queryFn: () =>
       apiGet<ConfigChangeTimestamp[]>(
-        `/devices/${deviceId}/config/change-timestamps${q ? `?${q}` : ""}`
+        `/devices/${deviceId}/config/change-timestamps${q ? `?${q}` : ""}`,
       ),
     enabled: !!deviceId,
   });
@@ -2986,7 +3476,7 @@ export function useConfigCompare(
   deviceId: string,
   timeA: string | null,
   timeB: string | null,
-  appId?: string
+  appId?: string,
 ) {
   const qs = new URLSearchParams();
   if (timeA) qs.set("time_a", timeA);
@@ -2996,7 +3486,7 @@ export function useConfigCompare(
     queryKey: ["config-compare", deviceId, timeA, timeB, appId],
     queryFn: () =>
       apiGet<ConfigCompareResult>(
-        `/devices/${deviceId}/config/compare?${qs.toString()}`
+        `/devices/${deviceId}/config/compare?${qs.toString()}`,
       ),
     select: (res) => res.data,
     enabled: !!deviceId && !!timeA && !!timeB,
@@ -3028,7 +3518,8 @@ export function useSetRetentionDefault() {
 export function useDeviceRetention(deviceId: string) {
   return useQuery({
     queryKey: ["device-retention", deviceId],
-    queryFn: () => apiGet<DeviceRetentionEntry[]>(`/devices/${deviceId}/retention`),
+    queryFn: () =>
+      apiGet<DeviceRetentionEntry[]>(`/devices/${deviceId}/retention`),
     select: (res) => res.data,
     enabled: !!deviceId,
   });
@@ -3037,8 +3528,14 @@ export function useDeviceRetention(deviceId: string) {
 export function useSetDeviceRetention() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ deviceId, ...data }: {
-      deviceId: string; app_id: string; data_type: string; retention_days: number;
+    mutationFn: ({
+      deviceId,
+      ...data
+    }: {
+      deviceId: string;
+      app_id: string;
+      data_type: string;
+      retention_days: number;
     }) => apiPut(`/devices/${deviceId}/retention`, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["device-retention"] });
@@ -3049,8 +3546,13 @@ export function useSetDeviceRetention() {
 export function useDeleteDeviceRetention() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ deviceId, overrideId }: { deviceId: string; overrideId: string }) =>
-      apiDelete(`/devices/${deviceId}/retention/${overrideId}`),
+    mutationFn: ({
+      deviceId,
+      overrideId,
+    }: {
+      deviceId: string;
+      overrideId: string;
+    }) => apiDelete(`/devices/${deviceId}/retention/${overrideId}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["device-retention"] });
     },
@@ -3072,7 +3574,14 @@ export function useUploadUpgradeBundle() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (file: File) => {
-      return apiPostFormData<UpgradePackageInfo>("/upgrades/upload", (() => { const fd = new FormData(); fd.append("file", file); return fd; })());
+      return apiPostFormData<UpgradePackageInfo>(
+        "/upgrades/upload",
+        (() => {
+          const fd = new FormData();
+          fd.append("file", file);
+          return fd;
+        })(),
+      );
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["upgrade-status"] }),
   });
@@ -3081,7 +3590,8 @@ export function useUploadUpgradeBundle() {
 export function useDeleteUpgradePackage() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (packageId: string) => apiDelete(`/upgrades/packages/${packageId}`),
+    mutationFn: (packageId: string) =>
+      apiDelete(`/upgrades/packages/${packageId}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["upgrade-status"] }),
   });
 }
@@ -3089,8 +3599,11 @@ export function useDeleteUpgradePackage() {
 export function useStartUpgrade() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { upgrade_package_id: string; scope: string; strategy: string }) =>
-      apiPost<UpgradeJob>("/upgrades/execute", data),
+    mutationFn: (data: {
+      upgrade_package_id: string;
+      scope: string;
+      strategy: string;
+    }) => apiPost<UpgradeJob>("/upgrades/execute", data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["upgrade-status"] });
       qc.invalidateQueries({ queryKey: ["upgrade-jobs"] });
@@ -3120,14 +3633,16 @@ export function useUpgradeJob(jobId: string | null) {
 export function useCancelUpgradeJob() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (jobId: string) => apiPost(`/upgrades/jobs/${jobId}/cancel`, {}),
+    mutationFn: (jobId: string) =>
+      apiPost(`/upgrades/jobs/${jobId}/cancel`, {}),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["upgrade-jobs"] }),
   });
 }
 
 export function useCheckOsUpdates() {
   return useMutation({
-    mutationFn: () => apiPost<Record<string, unknown>>("/upgrades/os/check", {}),
+    mutationFn: () =>
+      apiPost<Record<string, unknown>>("/upgrades/os/check", {}),
   });
 }
 
@@ -3164,9 +3679,15 @@ export function useCheckOsUpdatesNew() {
 export function useAptCacheStatus() {
   return useQuery({
     queryKey: ["apt-cache-status"],
-    queryFn: () => apiGet<{ mode: string; nodes: Array<{ hostname: string; healthy: boolean; cache_size_mb?: number }> }>(
-      "/upgrades/apt-cache-status"
-    ),
+    queryFn: () =>
+      apiGet<{
+        mode: string;
+        nodes: Array<{
+          hostname: string;
+          healthy: boolean;
+          cache_size_mb?: number;
+        }>;
+      }>("/upgrades/apt-cache-status"),
     select: (r) => r.data,
     refetchInterval: 30000,
   });
@@ -3213,7 +3734,8 @@ export function useStartOsInstallJob() {
 export function useApproveOsInstallJob() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (jobId: string) => apiPost(`/upgrades/os-install-jobs/${jobId}/approve`, {}),
+    mutationFn: (jobId: string) =>
+      apiPost(`/upgrades/os-install-jobs/${jobId}/approve`, {}),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["os-install-jobs"] }),
   });
 }
@@ -3221,7 +3743,8 @@ export function useApproveOsInstallJob() {
 export function useCancelOsInstallJob() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (jobId: string) => apiPost(`/upgrades/os-install-jobs/${jobId}/cancel`, {}),
+    mutationFn: (jobId: string) =>
+      apiPost(`/upgrades/os-install-jobs/${jobId}/cancel`, {}),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["os-install-jobs"] }),
   });
 }
@@ -3229,7 +3752,8 @@ export function useCancelOsInstallJob() {
 export function useDeleteOsInstallJob() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (jobId: string) => apiDelete(`/upgrades/os-install-jobs/${jobId}`),
+    mutationFn: (jobId: string) =>
+      apiDelete(`/upgrades/os-install-jobs/${jobId}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["os-install-jobs"] }),
   });
 }
@@ -3237,7 +3761,8 @@ export function useDeleteOsInstallJob() {
 export function usePackageInventory() {
   return useQuery({
     queryKey: ["package-inventory"],
-    queryFn: () => apiGet<PackageInventoryItem[]>("/upgrades/package-inventory"),
+    queryFn: () =>
+      apiGet<PackageInventoryItem[]>("/upgrades/package-inventory"),
     select: (res) => ({
       packages: res.data,
       completedCount: (res as any).meta?.completed_count ?? 0,
@@ -3292,7 +3817,12 @@ export function useDeviceTypes(params: ListParams = {}) {
   const qs = buildListQs(params);
   return useQuery({
     queryKey: ["device-types", params],
-    queryFn: () => apiGetRaw<{ status: string; data: DeviceType[]; meta: { limit: number; offset: number; count: number; total: number } }>(`/device-types${qs}`),
+    queryFn: () =>
+      apiGetRaw<{
+        status: string;
+        data: DeviceType[];
+        meta: { limit: number; offset: number; count: number; total: number };
+      }>(`/device-types${qs}`),
     placeholderData: keepPreviousData,
     refetchInterval: POLL_LIST,
   });
@@ -3341,8 +3871,7 @@ export function useDeleteDeviceType() {
 export function useDiscoverDevice() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (deviceId: string) =>
-      apiPost(`/devices/${deviceId}/discover`),
+    mutationFn: (deviceId: string) => apiPost(`/devices/${deviceId}/discover`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["devices"] });
       qc.invalidateQueries({ queryKey: ["device"] });
@@ -3416,7 +3945,8 @@ export function useLogsTail(params: LogQueryParams, enabled = false) {
 export function useCollectorWsStatus(collectorId: string) {
   return useQuery({
     queryKey: ["collector-ws-status", collectorId],
-    queryFn: () => apiGet<CollectorWsStatus>(`/collectors/${collectorId}/ws-status`),
+    queryFn: () =>
+      apiGet<CollectorWsStatus>(`/collectors/${collectorId}/ws-status`),
     refetchInterval: 15_000,
     enabled: !!collectorId,
   });
@@ -3426,7 +3956,9 @@ export function useWsConnections() {
   return useQuery({
     queryKey: ["ws-connections"],
     queryFn: () =>
-      apiGet<{ connections: CollectorWsConnection[] }>("/collectors/ws-connections"),
+      apiGet<{ connections: CollectorWsConnection[] }>(
+        "/collectors/ws-connections",
+      ),
     refetchInterval: 15_000,
   });
 }
@@ -3473,7 +4005,9 @@ export function useCreateAnalyticsDashboard() {
   return useMutation({
     mutationFn: (data: { name: string; description?: string }) =>
       apiPost<{ id: string }>("/analytics/dashboards", data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["analytics-dashboards"] }); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["analytics-dashboards"] });
+    },
   });
 }
 
@@ -3492,8 +4026,15 @@ export function useUpdateAnalyticsDashboard() {
 export function useAppendDashboardWidget() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ dashboardId, ...data }: { dashboardId: string; title: string; config: Record<string, unknown>; layout: Record<string, number> }) =>
-      apiPost(`/analytics/dashboards/${dashboardId}/widgets`, data),
+    mutationFn: ({
+      dashboardId,
+      ...data
+    }: {
+      dashboardId: string;
+      title: string;
+      config: Record<string, unknown>;
+      layout: Record<string, number>;
+    }) => apiPost(`/analytics/dashboards/${dashboardId}/widgets`, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["analytics-dashboards"] });
       qc.invalidateQueries({ queryKey: ["analytics-dashboard"] });
@@ -3505,7 +4046,9 @@ export function useDeleteAnalyticsDashboard() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => apiDelete(`/analytics/dashboards/${id}`),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["analytics-dashboards"] }); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["analytics-dashboards"] });
+    },
   });
 }
 
@@ -3529,7 +4072,10 @@ export function useActions(params?: {
   const qs = query.toString();
   return useQuery({
     queryKey: ["actions", qs],
-    queryFn: () => apiGetRaw<{ data: Action[]; total: number }>(`/automations/actions${qs ? `?${qs}` : ""}`),
+    queryFn: () =>
+      apiGetRaw<{ data: Action[]; total: number }>(
+        `/automations/actions${qs ? `?${qs}` : ""}`,
+      ),
     refetchInterval: POLL_LIST,
   });
 }
@@ -3599,7 +4145,10 @@ export function useAutomations(params?: {
   const qs = query.toString();
   return useQuery({
     queryKey: ["automations", qs],
-    queryFn: () => apiGetRaw<{ data: Automation[]; total: number }>(`/automations/automations${qs ? `?${qs}` : ""}`),
+    queryFn: () =>
+      apiGetRaw<{ data: Automation[]; total: number }>(
+        `/automations/automations${qs ? `?${qs}` : ""}`,
+      ),
     refetchInterval: POLL_LIST,
   });
 }
@@ -3671,7 +4220,10 @@ export function useAutomationRuns(params?: {
   const qs = query.toString();
   return useQuery({
     queryKey: ["automation-runs", qs],
-    queryFn: () => apiGetRaw<{ data: AutomationRun[]; total: number }>(`/automations/runs${qs ? `?${qs}` : ""}`),
+    queryFn: () =>
+      apiGetRaw<{ data: AutomationRun[]; total: number }>(
+        `/automations/runs${qs ? `?${qs}` : ""}`,
+      ),
     refetchInterval: POLL_LIST,
   });
 }
@@ -3706,7 +4258,8 @@ export function useAuditLogins(filters: AuditLoginFilters = {}) {
   const q = qs.toString();
   return useQuery({
     queryKey: ["audit-logins", q],
-    queryFn: () => apiGet<AuditLoginEvent[]>(`/audit/logins${q ? `?${q}` : ""}`),
+    queryFn: () =>
+      apiGet<AuditLoginEvent[]>(`/audit/logins${q ? `?${q}` : ""}`),
     placeholderData: keepPreviousData,
   });
 }
@@ -3732,12 +4285,17 @@ export function useAuditMutations(filters: AuditMutationFilters = {}) {
   const q = qs.toString();
   return useQuery({
     queryKey: ["audit-mutations", q],
-    queryFn: () => apiGet<AuditMutation[]>(`/audit/mutations${q ? `?${q}` : ""}`),
+    queryFn: () =>
+      apiGet<AuditMutation[]>(`/audit/mutations${q ? `?${q}` : ""}`),
     placeholderData: keepPreviousData,
   });
 }
 
-export function useResourceHistory(resourceType: string | undefined, resourceId: string | undefined, limit = 100) {
+export function useResourceHistory(
+  resourceType: string | undefined,
+  resourceId: string | undefined,
+  limit = 100,
+) {
   return useQuery({
     queryKey: ["audit-resource-history", resourceType, resourceId, limit],
     queryFn: () =>

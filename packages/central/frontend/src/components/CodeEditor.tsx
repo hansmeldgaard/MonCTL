@@ -11,7 +11,12 @@ interface CodeEditorProps {
   height?: string;
 }
 
-export function CodeEditor({ value, onChange, readOnly = false, height = "300px" }: CodeEditorProps) {
+export function CodeEditor({
+  value,
+  onChange,
+  readOnly = false,
+  height = "300px",
+}: CodeEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
 

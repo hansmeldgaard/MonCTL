@@ -60,14 +60,24 @@ export function KeyValueEditor({
           placeholder={keyPlaceholder}
           value={newKey}
           onChange={(e) => setNewKey(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleAdd(); } }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              handleAdd();
+            }
+          }}
           className="flex-1 font-mono text-xs"
         />
         <Input
           placeholder={valuePlaceholder}
           value={newValue}
           onChange={(e) => setNewValue(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleAdd(); } }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              handleAdd();
+            }
+          }}
           className="flex-1 font-mono text-xs"
         />
         <Button type="button" size="sm" variant="secondary" onClick={handleAdd}>

@@ -64,6 +64,7 @@ message JobWithProfile {
 
 message GetJobsResponse {
   repeated JobWithProfile jobs = 1;
+  repeated string immediate_job_ids = 2;
 }
 
 message ReportExecutionReq {

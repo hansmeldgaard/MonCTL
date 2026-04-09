@@ -36,7 +36,9 @@ export function SearchableSelect({
   const selectedLabel = options.find((o) => o.value === value)?.label;
 
   const filtered = search
-    ? options.filter((o) => o.label.toLowerCase().includes(search.toLowerCase()))
+    ? options.filter((o) =>
+        o.label.toLowerCase().includes(search.toLowerCase()),
+      )
     : options;
 
   const openDropdown = useCallback(() => {
@@ -63,7 +65,10 @@ export function SearchableSelect({
   useEffect(() => {
     if (!open) return;
     const handle = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node)
+      ) {
         closeDropdown();
       }
     };
@@ -81,7 +86,9 @@ export function SearchableSelect({
   // Scroll highlighted item into view
   useEffect(() => {
     if (!open || !listRef.current) return;
-    const item = listRef.current.children[highlightIndex] as HTMLElement | undefined;
+    const item = listRef.current.children[highlightIndex] as
+      | HTMLElement
+      | undefined;
     item?.scrollIntoView({ block: "nearest" });
   }, [highlightIndex, open]);
 
@@ -120,7 +127,11 @@ export function SearchableSelect({
   };
 
   return (
-    <div ref={containerRef} className={cn("relative", className)} onKeyDown={handleKeyDown}>
+    <div
+      ref={containerRef}
+      className={cn("relative", className)}
+      onKeyDown={handleKeyDown}
+    >
       {/* Trigger button */}
       <button
         type="button"
@@ -136,7 +147,10 @@ export function SearchableSelect({
       >
         <span className="truncate">{selectedLabel || placeholder}</span>
         <ChevronDown
-          className={cn("h-4 w-4 shrink-0 text-zinc-500 transition-transform", open && "rotate-180")}
+          className={cn(
+            "h-4 w-4 shrink-0 text-zinc-500 transition-transform",
+            open && "rotate-180",
+          )}
         />
       </button>
 
@@ -161,7 +175,9 @@ export function SearchableSelect({
           {/* Options list */}
           <div ref={listRef} className="max-h-48 overflow-y-auto px-1 pb-1">
             {filtered.length === 0 ? (
-              <div className="px-2.5 py-2 text-sm text-zinc-500">Ingen resultater</div>
+              <div className="px-2.5 py-2 text-sm text-zinc-500">
+                Ingen resultater
+              </div>
             ) : (
               filtered.map((option, idx) => (
                 <div

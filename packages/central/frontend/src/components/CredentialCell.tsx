@@ -3,7 +3,11 @@ import { Key } from "lucide-react";
 
 interface CredentialCellProps {
   credentialName: string | null;
-  credentialOverrides?: { alias: string; credential_id: string; credential_name: string }[];
+  credentialOverrides?: {
+    alias: string;
+    credential_id: string;
+    credential_name: string;
+  }[];
   deviceDefaultCredentialName: string | null;
 }
 

@@ -34,7 +34,9 @@ export function WheelUploadDialog({ open, onClose }: WheelUploadDialogProps) {
   }
 
   function addFiles(newFiles: FileList | File[]) {
-    const whlFiles = Array.from(newFiles).filter((f) => f.name.endsWith(".whl"));
+    const whlFiles = Array.from(newFiles).filter((f) =>
+      f.name.endsWith(".whl"),
+    );
     if (whlFiles.length === 0) return;
     setFiles((prev) => {
       const existing = new Set(prev.map((f) => f.name));
@@ -73,13 +75,21 @@ export function WheelUploadDialog({ open, onClose }: WheelUploadDialogProps) {
   );
 
   return (
-    <Dialog open={open} onClose={handleClose} title="Upload Wheel Files" size="lg">
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      title="Upload Wheel Files"
+      size="lg"
+    >
       <div className="space-y-4">
         {!results ? (
           <>
             {/* Drop zone */}
             <div
-              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragOver(true);
+              }}
               onDragLeave={() => setDragOver(false)}
               onDrop={handleDrop}
               onClick={() => fileInputRef.current?.click()}
@@ -91,9 +101,12 @@ export function WheelUploadDialog({ open, onClose }: WheelUploadDialogProps) {
             >
               <Upload className="h-8 w-8 text-zinc-500 mb-2" />
               <p className="text-sm text-zinc-400">
-                Drop <code className="text-zinc-300">.whl</code> files here or click to browse
+                Drop <code className="text-zinc-300">.whl</code> files here or
+                click to browse
               </p>
-              <p className="text-xs text-zinc-600 mt-1">Multiple files supported</p>
+              <p className="text-xs text-zinc-600 mt-1">
+                Multiple files supported
+              </p>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -123,7 +136,9 @@ export function WheelUploadDialog({ open, onClose }: WheelUploadDialogProps) {
                         {f.name}
                       </span>
                       <div className="flex items-center gap-2 shrink-0">
-                        <span className="text-xs text-zinc-500">{formatBytes(f.size)}</span>
+                        <span className="text-xs text-zinc-500">
+                          {formatBytes(f.size)}
+                        </span>
                         <button
                           onClick={() => removeFile(f.name)}
                           className="rounded p-0.5 text-zinc-600 hover:text-red-400 transition-colors cursor-pointer"
@@ -140,12 +155,16 @@ export function WheelUploadDialog({ open, onClose }: WheelUploadDialogProps) {
             {error && <p className="text-sm text-red-400">{error}</p>}
 
             <DialogFooter>
-              <Button variant="secondary" onClick={handleClose}>Cancel</Button>
+              <Button variant="secondary" onClick={handleClose}>
+                Cancel
+              </Button>
               <Button
                 onClick={handleUpload}
                 disabled={files.length === 0 || uploadBatch.isPending}
               >
-                {uploadBatch.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+                {uploadBatch.isPending && (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                )}
                 Upload {files.length > 0 ? `(${files.length})` : ""}
               </Button>
             </DialogFooter>
@@ -194,9 +213,13 @@ export function WheelUploadDialog({ open, onClose }: WheelUploadDialogProps) {
                       <div className="flex items-center gap-2">
                         <span className="text-zinc-500">{d.version_spec}</span>
                         {d.registered ? (
-                          <Badge variant="info" className="text-[10px]">Registered</Badge>
+                          <Badge variant="info" className="text-[10px]">
+                            Registered
+                          </Badge>
                         ) : (
-                          <Badge variant="warning" className="text-[10px]">Not in registry</Badge>
+                          <Badge variant="warning" className="text-[10px]">
+                            Not in registry
+                          </Badge>
                         )}
                       </div>
                     </div>
