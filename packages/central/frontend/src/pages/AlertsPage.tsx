@@ -64,17 +64,32 @@ export function AlertsPage() {
   };
 
   // Alert log state
-  const [logPage, setLogPage] = useState(0);
   const [logAction, setLogAction] = useState<string>("");
-  const LOG_PAGE_SIZE = 50;
-  const { data: logResponse, isLoading: logLoading } = useAlertLog({
+  const logListState = useListState({
+    columns: [
+      { key: "occurred_at", label: "Time", filterable: false },
+      { key: "action", label: "Action", filterable: false, sortable: false },
+      { key: "definition_name", label: "Alert" },
+      { key: "device_name", label: "Device" },
+      { key: "entity_key", label: "Entity", sortable: false },
+      { key: "message", label: "Message", sortable: false },
+    ],
+    defaultSortBy: "occurred_at",
+    defaultSortDir: "desc",
+    defaultPageSize: pageSize,
+    scrollMode,
+  });
+  const {
+    data: logResponse,
+    isLoading: logLoading,
+    isFetching: logFetching,
+  } = useAlertLog({
+    ...logListState.params,
     action: logAction || undefined,
-    limit: LOG_PAGE_SIZE,
-    offset: logPage * LOG_PAGE_SIZE,
   });
   const logEntries = logResponse?.data ?? [];
   const logMeta = (logResponse as any)?.meta ?? {
-    limit: LOG_PAGE_SIZE,
+    limit: logListState.pageSize,
     offset: 0,
     count: 0,
     total: 0,
@@ -128,12 +143,12 @@ export function AlertsPage() {
         <AlertLogTab
           entries={logEntries}
           meta={logMeta}
-          page={logPage}
-          onPageChange={setLogPage}
+          listState={logListState}
+          isFetching={logFetching}
           action={logAction}
           onActionChange={(v) => {
             setLogAction(v);
-            setLogPage(0);
+            logListState.setPage(0);
           }}
         />
       ) : (
@@ -230,15 +245,15 @@ function ActiveAlertsTab({ alerts }: { alerts: AlertEntity[] }) {
 function AlertLogTab({
   entries,
   meta,
-  page,
-  onPageChange,
+  listState,
+  isFetching,
   action,
   onActionChange,
 }: {
   entries: AlertLogEntry[];
   meta: { limit: number; offset: number; count: number; total: number };
-  page: number;
-  onPageChange: (p: number) => void;
+  listState: ReturnType<typeof useListState>;
+  isFetching: boolean;
   action: string;
   onActionChange: (v: string) => void;
 }) {
@@ -265,7 +280,7 @@ function AlertLogTab({
         </CardTitle>
       </CardHeader>
       <CardContent>
-        {entries.length === 0 ? (
+        {entries.length === 0 && !listState.hasActiveFilters ? (
           <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
             <FileText className="mb-2 h-8 w-8 text-zinc-600" />
             <p className="text-sm">No alert log entries</p>
@@ -275,70 +290,134 @@ function AlertLogTab({
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Time</TableHead>
-                  <TableHead>Action</TableHead>
-                  <TableHead>Alert</TableHead>
-                  <TableHead>Device</TableHead>
+                  <FilterableSortHead
+                    col="occurred_at"
+                    label="Time"
+                    sortBy={listState.sortBy}
+                    sortDir={listState.sortDir}
+                    onSort={listState.handleSort}
+                    filterable={false}
+                  />
+                  <TableHead className="w-16">Action</TableHead>
+                  <FilterableSortHead
+                    col="definition_name"
+                    label="Alert"
+                    sortBy={listState.sortBy}
+                    sortDir={listState.sortDir}
+                    onSort={listState.handleSort}
+                    filterValue={listState.filters.definition_name}
+                    onFilterChange={(v) =>
+                      listState.setFilter("definition_name", v)
+                    }
+                  />
+                  <FilterableSortHead
+                    col="device_name"
+                    label="Device"
+                    sortBy={listState.sortBy}
+                    sortDir={listState.sortDir}
+                    onSort={listState.handleSort}
+                    filterValue={listState.filters.device_name}
+                    onFilterChange={(v) =>
+                      listState.setFilter("device_name", v)
+                    }
+                  />
                   <TableHead>Entity</TableHead>
-                  <TableHead>Value</TableHead>
-                  <TableHead>Fire Count</TableHead>
-                  <TableHead>Message</TableHead>
+                  <TableHead className="w-24">Value</TableHead>
+                  <TableHead className="w-20">Fires</TableHead>
+                  <FilterableSortHead
+                    col="message"
+                    label="Message"
+                    sortBy={listState.sortBy}
+                    sortDir={listState.sortDir}
+                    onSort={listState.handleSort}
+                    filterValue={listState.filters.message}
+                    onFilterChange={(v) => listState.setFilter("message", v)}
+                    sortable={false}
+                  />
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {entries.map((entry, i) => {
-                  const labels =
-                    typeof entry.entity_labels === "string"
-                      ? JSON.parse(entry.entity_labels)
-                      : entry.entity_labels || {};
-                  return (
-                    <TableRow key={`${entry.id ?? i}`}>
-                      <TableCell className="text-zinc-500 text-xs whitespace-nowrap">
-                        {formatDate(entry.occurred_at, tz)}
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={
-                            entry.action === "fire" ? "destructive" : "success"
-                          }
+                {entries.length === 0 ? (
+                  <TableRow>
+                    <TableCell
+                      colSpan={8}
+                      className="text-center text-sm text-zinc-500 py-8"
+                    >
+                      No matches for current filters
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  entries.map((entry, i) => {
+                    const labels =
+                      typeof entry.entity_labels === "string"
+                        ? JSON.parse(entry.entity_labels)
+                        : entry.entity_labels || {};
+                    return (
+                      <TableRow
+                        key={`${entry.id ?? i}`}
+                        className={
+                          entry.action === "fire"
+                            ? "bg-red-500/5"
+                            : "bg-green-500/5"
+                        }
+                      >
+                        <TableCell className="text-zinc-500 text-xs whitespace-nowrap">
+                          {formatDate(entry.occurred_at, tz)}
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant={
+                              entry.action === "fire"
+                                ? "destructive"
+                                : "success"
+                            }
+                          >
+                            {entry.action}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="font-medium text-zinc-100">
+                          {entry.definition_name}
+                        </TableCell>
+                        <TableCell className="text-zinc-300">
+                          {entry.device_name}
+                        </TableCell>
+                        <TableCell className="text-zinc-400 text-xs font-mono">
+                          {labels.if_name ||
+                            labels.component ||
+                            entry.entity_key ||
+                            "—"}
+                        </TableCell>
+                        <TableCell className="text-zinc-300">
+                          {entry.action === "fire" &&
+                          entry.current_value != null
+                            ? Number(entry.current_value).toFixed(1)
+                            : "—"}
+                        </TableCell>
+                        <TableCell className="text-zinc-400">
+                          {entry.fire_count}
+                        </TableCell>
+                        <TableCell
+                          className="text-zinc-400 text-xs max-w-xs truncate"
+                          title={entry.message}
                         >
-                          {entry.action}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="font-medium text-zinc-100">
-                        {entry.definition_name}
-                      </TableCell>
-                      <TableCell className="text-zinc-300">
-                        {entry.device_name}
-                      </TableCell>
-                      <TableCell className="text-zinc-400 text-xs font-mono">
-                        {labels.if_name ||
-                          labels.component ||
-                          entry.entity_key ||
-                          "—"}
-                      </TableCell>
-                      <TableCell className="text-zinc-300">
-                        {entry.action === "fire" && entry.current_value != null
-                          ? Number(entry.current_value).toFixed(1)
-                          : "—"}
-                      </TableCell>
-                      <TableCell className="text-zinc-400">
-                        {entry.fire_count}
-                      </TableCell>
-                      <TableCell className="text-zinc-400 text-xs max-w-xs truncate">
-                        {entry.message}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
+                          {entry.message}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
+                )}
               </TableBody>
             </Table>
             <PaginationBar
-              page={page}
-              pageSize={meta.limit}
+              page={listState.page}
+              pageSize={listState.pageSize}
               total={meta.total}
               count={meta.count}
-              onPageChange={onPageChange}
+              onPageChange={listState.setPage}
+              scrollMode={listState.scrollMode}
+              sentinelRef={listState.sentinelRef}
+              isFetching={isFetching}
+              onLoadMore={listState.loadMore}
             />
           </>
         )}
