@@ -210,6 +210,13 @@ class OsUpdateAgent:
         installed = result.get("installed", [])
         skipped = result.get("skipped", [])
         failed = result.get("failed", [])
+        warnings = result.get("warnings") or []
+        # Append postinst warnings detected by the sidecar (e.g. apparmor
+        # reload failures, DBus errors) so they reach central's job log.
+        if warnings:
+            output += "\n[postinst warnings]"
+            for w in warnings:
+                output += f"\n  {w}"
         if not result.get("success", False):
             # Treat partial success or "already newest" as OK
             if installed or skipped or "is already the newest version" in output:

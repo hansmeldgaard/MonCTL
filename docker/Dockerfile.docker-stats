@@ -1,8 +1,12 @@
 FROM python:3.12-alpine
 
-RUN pip install --no-cache-dir docker==7.1.*
+# util-linux provides the full nsenter binary (busybox's version is minimal).
+# nsenter is required to run apt/dpkg in the host's namespaces from the
+# /os/* endpoints — see docker-stats-server.py::_host_exec.
+RUN apk add --no-cache util-linux \
+    && pip install --no-cache-dir docker==7.1.*
 
-COPY docker-stats-server.py /app/server.py
+COPY docker/docker-stats-server.py /app/server.py
 
 EXPOSE 9100
 

@@ -356,6 +356,7 @@ async def _run_steps(db: AsyncSession, job: OsInstallJob) -> None:
                 failed_pkgs = result.get("failed", [])
                 installed_pkgs = result.get("installed", [])
                 skipped_pkgs = result.get("skipped", [])
+                warnings = result.get("warnings") or []
                 if not result.get("success", False) and not installed_pkgs and not skipped_pkgs:
                     raise RuntimeError(
                         f"Install failed (rc={result.get('returncode')}): "
@@ -363,6 +364,27 @@ async def _run_steps(db: AsyncSession, job: OsInstallJob) -> None:
                     )
                 if failed_pkgs:
                     step.output_log += f"\nWarning: {len(failed_pkgs)} package(s) failed: {', '.join(failed_pkgs)}"
+                # Surface postinst warnings detected by the sidecar
+                # (apparmor reload failures, DBus errors, initramfs hook
+                # errors that apt swallowed with exit 0, etc.)
+                if warnings:
+                    step.output_log += "\n[postinst warnings]"
+                    for w in warnings:
+                        step.output_log += f"\n  {w}"
+                # Check if the install produced a reboot-required flag
+                # (kernel, libc, firmware etc.). Non-fatal — just annotate.
+                try:
+                    reboot_info = await check_reboot_required(step.node_ip)
+                    if reboot_info.get("reboot_required"):
+                        rb_pkgs = reboot_info.get("packages") or []
+                        tag = ", ".join(rb_pkgs) if rb_pkgs else "unspecified"
+                        step.output_log += f"\n[reboot-required] {tag}"
+                except Exception as exc:
+                    logger.warning(
+                        "reboot_required_check_failed",
+                        node=step.node_hostname,
+                        error=str(exc),
+                    )
                 for pkg in job.package_names:
                     await db.execute(
                         sql_update(OsAvailableUpdate)
