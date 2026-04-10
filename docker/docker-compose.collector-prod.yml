@@ -45,6 +45,7 @@ services:
     image: monctl-collector:latest
     command: monctl-poll-worker
     container_name: poll-worker-1
+    mem_limit: 1g
     environment:
       MONCTL_CACHE_NODE: cache-node:50051
       MONCTL_WORKER_ID: ${NODE_ID:-node}-worker-1
@@ -54,6 +55,10 @@ services:
       MONCTL_APPS_DIR: /data/apps
       MONCTL_VENVS_DIR: /data/venvs
       MONCTL_DB_PATH: /data/worker.db
+      # Cap glibc malloc arenas + use plain malloc so malloc_trim() can release
+      # memory back to the OS after each poll. See engine.py:390-392.
+      MALLOC_ARENA_MAX: "2"
+      PYTHONMALLOC: malloc
     volumes:
       - app_data:/data
     depends_on:

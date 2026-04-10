@@ -191,17 +191,33 @@ class PollEngine:
             job_pairs.append((job_def, profile))
 
         # Rebuild heap (keeping in-progress jobs)
-        existing_deadlines: dict[str, float] = {
-            sj.job_id: sj.next_deadline for sj in self._heap
+        # Track previous (deadline, interval) so we can detect interval changes
+        # and reset the deadline — otherwise shortening an interval wouldn't take
+        # effect until the stale (longer) deadline fires.
+        existing: dict[str, tuple[float, int]] = {
+            sj.job_id: (sj.next_deadline, sj.job.interval) for sj in self._heap
         }
         self._heap.clear()
 
+        now = time.time()
         for job_def, profile in job_pairs:
-            # Keep existing deadline if job is already scheduled
-            deadline = existing_deadlines.get(
-                job_def.job_id,
-                time.time() + (hash(job_def.job_id) % max(1, job_def.interval)),
-            )
+            prev = existing.get(job_def.job_id)
+            if prev is None:
+                # Brand-new job — jittered first deadline
+                deadline = now + (hash(job_def.job_id) % max(1, job_def.interval))
+            elif prev[1] != job_def.interval:
+                # Interval changed — re-jitter on the new cadence so the change
+                # takes effect immediately instead of waiting out the old deadline.
+                deadline = now + (hash(job_def.job_id) % max(1, job_def.interval))
+                logger.info(
+                    "job_interval_changed",
+                    job_id=job_def.job_id,
+                    old_interval=prev[1],
+                    new_interval=job_def.interval,
+                )
+            else:
+                # Unchanged — keep existing deadline
+                deadline = prev[0]
             heapq.heappush(
                 self._heap,
                 ScheduledJob(
