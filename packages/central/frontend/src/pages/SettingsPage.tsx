@@ -1549,6 +1549,7 @@ function NetworkTab() {
 }
 
 function TlsTab() {
+  const tz = useTimezone();
   const { data: cert, isLoading } = useTlsCertificate();
   const generateCert = useGenerateTlsCert();
   const uploadCert = useUploadTlsCert();
@@ -1656,7 +1657,12 @@ function TlsTab() {
                 <span className="text-sm text-zinc-400">Valid From</span>
                 <span className="text-sm text-zinc-300">
                   {cert.valid_from
-                    ? new Date(cert.valid_from).toLocaleDateString()
+                    ? new Date(cert.valid_from).toLocaleDateString("en-US", {
+                        year: "numeric",
+                        month: "short",
+                        day: "numeric",
+                        timeZone: tz,
+                      })
                     : "\u2014"}
                 </span>
               </div>
@@ -1664,7 +1670,12 @@ function TlsTab() {
                 <span className="text-sm text-zinc-400">Valid To</span>
                 <span className="text-sm text-zinc-300">
                   {cert.valid_to
-                    ? new Date(cert.valid_to).toLocaleDateString()
+                    ? new Date(cert.valid_to).toLocaleDateString("en-US", {
+                        year: "numeric",
+                        month: "short",
+                        day: "numeric",
+                        timeZone: tz,
+                      })
                     : "\u2014"}
                 </span>
               </div>

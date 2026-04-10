@@ -66,7 +66,9 @@ import {
   useLabelValues,
 } from "@/api/hooks.ts";
 import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
+import { useTimezone } from "@/hooks/useTimezone.ts";
 import { usePermissions } from "@/hooks/usePermissions.ts";
+import { formatDate } from "@/lib/utils.ts";
 import type {
   Action,
   Automation,
@@ -1750,6 +1752,7 @@ function RunDetailDialog({
 }) {
   const { data: run, isLoading } = useAutomationRun(runId);
   const [expandedStep, setExpandedStep] = useState<number | null>(null);
+  const tz = useTimezone();
 
   return (
     <Dialog open onClose={onClose} title="Run Details" size="lg">
@@ -1779,8 +1782,7 @@ function RunDetailDialog({
               Steps: {run.completed_steps}/{run.total_steps}
             </span>
             <span>
-              Started:{" "}
-              {run.started_at ? new Date(run.started_at).toLocaleString() : "-"}
+              Started: {run.started_at ? formatDate(run.started_at, tz) : "-"}
             </span>
           </div>
 

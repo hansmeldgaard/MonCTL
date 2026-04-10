@@ -1,6 +1,8 @@
 import { useState, useCallback, useMemo, Fragment } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
+import { useTimezone } from "@/hooks/useTimezone.ts";
+import { formatDate } from "@/lib/utils.ts";
 import {
   validateName,
   validateSemver,
@@ -1498,6 +1500,7 @@ function EligibilityTab({
   const runs = runsQuery.data?.data ?? [];
   const detail = detailQuery.data?.data;
   const hasRunning = runs.some((r) => r.status === "running");
+  const tz = useTimezone();
 
   // Bulk selection state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -1677,9 +1680,7 @@ function EligibilityTab({
                       )}
                     </TableCell>
                     <TableCell className="py-1.5 text-xs text-zinc-400">
-                      {run.started_at
-                        ? new Date(run.started_at).toLocaleString()
-                        : "—"}
+                      {run.started_at ? formatDate(run.started_at, tz) : "—"}
                     </TableCell>
                     <TableCell className="py-1.5">{statusBadge(run)}</TableCell>
                     <TableCell className="py-1.5 text-xs font-mono text-emerald-400">
