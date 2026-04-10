@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -815,23 +815,53 @@ async def device_performance(
 # ---------------------------------------------------------------------------
 
 async def _auto_select_avail_tier(
-    from_ts_str: str | None, db: AsyncSession, device_id: str | None = None,
+    from_ts_str: str | None,
+    to_ts_str: str | None,
+    db: AsyncSession,
+    device_id: str | None = None,
 ) -> str:
-    """Auto-select availability data tier based on age of query.
+    """Auto-select availability data tier based on the current visible SPAN.
 
-    Display thresholds (independent of retention settings):
-      <= 2 days  → raw   (high-resolution, ~2880 pts max)
-      <= 90 days → hourly (~2160 pts max)
-      > 90 days  → daily
+    Raw is preferred whenever the visible window is narrow enough to render
+    without choking the chart AND the window's start is still within raw
+    retention. Keying off span (to_ts - from_ts) rather than from_ts age is
+    what makes drag-to-zoom inside a wider view correctly refetch raw data
+    instead of staying on hourly rollups.
+
+    Thresholds:
+      span ≤ 2 days AND from_ts within raw retention → raw
+      span ≤ 90 days                                 → hourly
+      otherwise                                      → daily
     """
     if not from_ts_str:
         return "raw"
-    from_dt = datetime.fromisoformat(from_ts_str.replace("Z", "+00:00"))
-    age = datetime.now(tz=from_dt.tzinfo or None) - from_dt
+    from monctl_central.storage.models import SystemSetting
 
-    if age.days <= 2:
+    from_dt = datetime.fromisoformat(from_ts_str.replace("Z", "+00:00"))
+    tz = from_dt.tzinfo
+    now = datetime.now(tz=tz)
+    to_dt = (
+        datetime.fromisoformat(to_ts_str.replace("Z", "+00:00"))
+        if to_ts_str
+        else now
+    )
+    span = to_dt - from_dt
+    from_age = now - from_dt
+
+    raw_retention_days = 30
+    try:
+        setting = await db.get(SystemSetting, "avail_raw_retention_days")
+        if setting:
+            raw_retention_days = int(setting.value)
+    except Exception:
+        pass
+
+    # Safety buffer so we do not race the TTL boundary
+    raw_window = timedelta(days=max(raw_retention_days - 1, 1))
+
+    if span <= timedelta(days=2) and from_age <= raw_window:
         return "raw"
-    elif age.days <= 90:
+    if span <= timedelta(days=90):
         return "hourly"
     return "daily"
 
@@ -856,7 +886,7 @@ async def device_availability(
     if tier and tier in _AVAIL_TIER_TABLE:
         selected_tier = tier
     else:
-        selected_tier = await _auto_select_avail_tier(from_ts, db, device_id=device_id)
+        selected_tier = await _auto_select_avail_tier(from_ts, to_ts, db, device_id=device_id)
 
     ch = get_clickhouse()
     table = _AVAIL_TIER_TABLE[selected_tier]
