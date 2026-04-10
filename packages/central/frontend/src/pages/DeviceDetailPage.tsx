@@ -5936,6 +5936,7 @@ function DeviceActiveAlerts({ deviceId }: { deviceId: string }) {
     isFetching,
   } = useAlertInstances({
     device_id: deviceId,
+    state: "firing",
     ...listState.params,
   });
   const instances = (response as any)?.data ?? response ?? [];
@@ -5959,11 +5960,11 @@ function DeviceActiveAlerts({ deviceId }: { deviceId: string }) {
       <Card>
         <CardContent className="py-12">
           <div className="flex flex-col items-center justify-center text-zinc-500">
-            <Bell className="h-10 w-10 mb-3 text-zinc-600" />
-            <p className="text-sm">No alert definitions for this device</p>
+            <Bell className="h-10 w-10 mb-3 text-emerald-500/50" />
+            <p className="text-sm">No active alerts — all clear</p>
             <p className="text-xs text-zinc-600 mt-1">
-              Alert definitions are created on apps and automatically applied
-              when assigned
+              Switch to History to see past firings, or Thresholds to inspect
+              alert definitions for this device
             </p>
           </div>
         </CardContent>
@@ -5971,21 +5972,16 @@ function DeviceActiveAlerts({ deviceId }: { deviceId: string }) {
     );
   }
 
-  const firing = instances.filter((i: any) => i.state === "firing");
-
   return (
     <Card>
       <CardHeader>
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-2">
             <Bell className="h-4 w-4" /> Active Alerts
-            {firing.length > 0 && (
-              <Badge variant="destructive" className="ml-1.5 text-xs">
-                {firing.length} firing
-              </Badge>
-            )}
+            <Badge variant="destructive" className="ml-1.5 text-xs">
+              {meta.total} firing
+            </Badge>
           </CardTitle>
-          <span className="text-xs text-zinc-500">{meta.total} total</span>
         </div>
       </CardHeader>
       <CardContent>

@@ -2,16 +2,16 @@
   "monctl_pack": "1.0",
   "pack_uid": "basic-checks",
   "name": "Basic Checks (Ping, Port, HTTP)",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Fundamental reachability checks: ICMP ping, TCP port, and HTTP/HTTPS endpoint monitoring.",
   "author": "MonCTL",
-  "changelog": "v1.0.0 - Initial pack release with error_category support",
+  "changelog": "v1.1.0 - Ship canonical alert_definitions + event_policies for ping/port/http",
   "exported_at": null,
   "contents": {
     "apps": [
       {
         "name": "ping_check",
-        "description": "ICMP ping check — measures reachability and round-trip time via system ping command.",
+        "description": "ICMP ping check \u2014 measures reachability and round-trip time via system ping command.",
         "app_type": "script",
         "target_table": "availability_latency",
         "config_schema": {
@@ -34,16 +34,88 @@
         "versions": [
           {
             "version": "2.1.0",
-            "source_code": "\"\"\"ICMP ping check — measures reachability and round-trip time.\"\"\"\nimport asyncio\nimport time\nfrom monctl_collector.polling.base import BasePoller\nfrom monctl_collector.jobs.models import PollContext, PollResult\n\n\nclass Poller(BasePoller):\n    async def poll(self, context: PollContext) -> PollResult:\n        host = context.device_host or context.parameters.get(\"host\", \"\")\n        count = context.parameters.get(\"count\", 3)\n        timeout = context.parameters.get(\"timeout\", 5)\n        start = time.time()\n\n        try:\n            proc = await asyncio.create_subprocess_exec(\n                \"ping\", \"-c\", str(count), \"-W\", str(timeout), host,\n                stdout=asyncio.subprocess.PIPE,\n                stderr=asyncio.subprocess.PIPE,\n            )\n            stdout, stderr = await asyncio.wait_for(\n                proc.communicate(), timeout=timeout * count + 5\n            )\n            output = stdout.decode()\n            execution_ms = int((time.time() - start) * 1000)\n\n            if proc.returncode == 0:\n                rtt = self._parse_rtt(output)\n                loss = self._parse_loss(output)\n                return PollResult(\n                    job_id=context.job.job_id,\n                    device_id=context.job.device_id,\n                    collector_node=context.node_id,\n                    timestamp=time.time(),\n                    metrics=[\n                        {\"name\": \"rtt_ms\", \"value\": rtt},\n                        {\"name\": \"packet_loss_pct\", \"value\": loss},\n                    ],\n                    config_data=None,\n                    status=\"ok\" if loss < 100 else \"critical\",\n                    reachable=True,\n                    error_message=None,\n                    execution_time_ms=execution_ms,\n                    rtt_ms=rtt,\n                )\n            else:\n                detail = stderr.decode().strip() or \"no response\"\n                return PollResult(\n                    job_id=context.job.job_id,\n                    device_id=context.job.device_id,\n                    collector_node=context.node_id,\n                    timestamp=time.time(),\n                    metrics=[{\"name\": \"packet_loss_pct\", \"value\": 100.0}],\n                    config_data=None,\n                    status=\"critical\",\n                    reachable=False,\n                    error_message=f\"Ping failed: {detail}\",\n                    execution_time_ms=execution_ms,\n                    error_category=\"device\",\n                )\n        except asyncio.TimeoutError:\n            execution_ms = int((time.time() - start) * 1000)\n            return PollResult(\n                job_id=context.job.job_id,\n                device_id=context.job.device_id,\n                collector_node=context.node_id,\n                timestamp=time.time(),\n                metrics=[],\n                config_data=None,\n                status=\"critical\",\n                reachable=False,\n                error_message=f\"Ping timed out after {timeout * count}s\",\n                execution_time_ms=execution_ms,\n                error_category=\"device\",\n            )\n\n    def _parse_rtt(self, output: str) -> float:\n        for line in output.splitlines():\n            if \"avg\" in line and \"/\" in line:\n                parts = line.split(\"=\")\n                if len(parts) >= 2:\n                    vals = parts[-1].strip().split(\"/\")\n                    if len(vals) >= 2:\n                        try:\n                            return float(vals[1])\n                        except ValueError:\n                            pass\n        return 0.0\n\n    def _parse_loss(self, output: str) -> float:\n        for line in output.splitlines():\n            if \"packet loss\" in line or \"loss\" in line:\n                for part in line.split(\",\"):\n                    part = part.strip()\n                    if \"%\" in part:\n                        try:\n                            return float(part.split(\"%\")[0].strip().split()[-1])\n                        except (ValueError, IndexError):\n                            pass\n        return 0.0\n",
+            "source_code": "\"\"\"ICMP ping check \u2014 measures reachability and round-trip time.\"\"\"\nimport asyncio\nimport time\nfrom monctl_collector.polling.base import BasePoller\nfrom monctl_collector.jobs.models import PollContext, PollResult\n\n\nclass Poller(BasePoller):\n    async def poll(self, context: PollContext) -> PollResult:\n        host = context.device_host or context.parameters.get(\"host\", \"\")\n        count = context.parameters.get(\"count\", 3)\n        timeout = context.parameters.get(\"timeout\", 5)\n        start = time.time()\n\n        try:\n            proc = await asyncio.create_subprocess_exec(\n                \"ping\", \"-c\", str(count), \"-W\", str(timeout), host,\n                stdout=asyncio.subprocess.PIPE,\n                stderr=asyncio.subprocess.PIPE,\n            )\n            stdout, stderr = await asyncio.wait_for(\n                proc.communicate(), timeout=timeout * count + 5\n            )\n            output = stdout.decode()\n            execution_ms = int((time.time() - start) * 1000)\n\n            if proc.returncode == 0:\n                rtt = self._parse_rtt(output)\n                loss = self._parse_loss(output)\n                return PollResult(\n                    job_id=context.job.job_id,\n                    device_id=context.job.device_id,\n                    collector_node=context.node_id,\n                    timestamp=time.time(),\n                    metrics=[\n                        {\"name\": \"rtt_ms\", \"value\": rtt},\n                        {\"name\": \"packet_loss_pct\", \"value\": loss},\n                    ],\n                    config_data=None,\n                    status=\"ok\" if loss < 100 else \"critical\",\n                    reachable=True,\n                    error_message=None,\n                    execution_time_ms=execution_ms,\n                    rtt_ms=rtt,\n                )\n            else:\n                detail = stderr.decode().strip() or \"no response\"\n                return PollResult(\n                    job_id=context.job.job_id,\n                    device_id=context.job.device_id,\n                    collector_node=context.node_id,\n                    timestamp=time.time(),\n                    metrics=[{\"name\": \"packet_loss_pct\", \"value\": 100.0}],\n                    config_data=None,\n                    status=\"critical\",\n                    reachable=False,\n                    error_message=f\"Ping failed: {detail}\",\n                    execution_time_ms=execution_ms,\n                    error_category=\"device\",\n                )\n        except asyncio.TimeoutError:\n            execution_ms = int((time.time() - start) * 1000)\n            return PollResult(\n                job_id=context.job.job_id,\n                device_id=context.job.device_id,\n                collector_node=context.node_id,\n                timestamp=time.time(),\n                metrics=[],\n                config_data=None,\n                status=\"critical\",\n                reachable=False,\n                error_message=f\"Ping timed out after {timeout * count}s\",\n                execution_time_ms=execution_ms,\n                error_category=\"device\",\n            )\n\n    def _parse_rtt(self, output: str) -> float:\n        for line in output.splitlines():\n            if \"avg\" in line and \"/\" in line:\n                parts = line.split(\"=\")\n                if len(parts) >= 2:\n                    vals = parts[-1].strip().split(\"/\")\n                    if len(vals) >= 2:\n                        try:\n                            return float(vals[1])\n                        except ValueError:\n                            pass\n        return 0.0\n\n    def _parse_loss(self, output: str) -> float:\n        for line in output.splitlines():\n            if \"packet loss\" in line or \"loss\" in line:\n                for part in line.split(\",\"):\n                    part = part.strip()\n                    if \"%\" in part:\n                        try:\n                            return float(part.split(\"%\")[0].strip().split()[-1])\n                        except (ValueError, IndexError):\n                            pass\n        return 0.0\n",
             "requirements": [],
             "entry_class": "Poller",
             "is_latest": true
+          }
+        ],
+        "threshold_variables": [
+          {
+            "name": "rtt_ms_warn",
+            "display_name": "RTT Warning Threshold",
+            "default_value": 50.0,
+            "unit": "ms",
+            "description": "Average RTT (ms) above which Ping - High RTT Warning fires"
+          },
+          {
+            "name": "rtt_ms_crit",
+            "display_name": "RTT Critical Threshold",
+            "default_value": 200.0,
+            "unit": "ms",
+            "description": "Average RTT (ms) above which Ping - High RTT Critical fires"
+          },
+          {
+            "name": "loss_pct_warn",
+            "display_name": "Packet Loss Warning %",
+            "default_value": 25.0,
+            "unit": "percent",
+            "description": "Packet loss % above which Ping - Packet Loss Warning fires"
+          },
+          {
+            "name": "loss_pct_crit",
+            "display_name": "Packet Loss Critical %",
+            "default_value": 50.0,
+            "unit": "percent",
+            "description": "Packet loss % above which Ping - Packet Loss Critical fires"
+          }
+        ],
+        "alert_definitions": [
+          {
+            "name": "Ping - Device Unreachable",
+            "description": "Device did not respond to any ICMP echo during the window",
+            "expression": "last(reachable) == 0",
+            "window": "5m",
+            "enabled": true,
+            "message_template": "Device {device_name} is unreachable via ICMP"
+          },
+          {
+            "name": "Ping - High RTT Warning",
+            "description": "Average ping RTT is elevated (between warn and crit thresholds)",
+            "expression": "avg(rtt_ms) > rtt_ms_warn AND avg(rtt_ms) < rtt_ms_crit",
+            "window": "5m",
+            "enabled": true,
+            "message_template": "High ping latency to {device_name}: {value}ms (> {rtt_ms_warn}ms)"
+          },
+          {
+            "name": "Ping - High RTT Critical",
+            "description": "Average ping RTT exceeds the critical threshold",
+            "expression": "avg(rtt_ms) > rtt_ms_crit",
+            "window": "5m",
+            "enabled": true,
+            "message_template": "Critical ping latency to {device_name}: {value}ms (> {rtt_ms_crit}ms)"
+          },
+          {
+            "name": "Ping - Packet Loss Warning",
+            "description": "Partial packet loss over the window (between warn and crit)",
+            "expression": "(1 - avg(reachable)) * 100 > loss_pct_warn AND (1 - avg(reachable)) * 100 < loss_pct_crit",
+            "window": "5m",
+            "enabled": true,
+            "message_template": "Packet loss to {device_name}: {value}%"
+          },
+          {
+            "name": "Ping - Packet Loss Critical",
+            "description": "High packet loss over the window (>= crit)",
+            "expression": "(1 - avg(reachable)) * 100 > loss_pct_crit",
+            "window": "5m",
+            "enabled": true,
+            "message_template": "Critical packet loss to {device_name}: {value}%"
           }
         ]
       },
       {
         "name": "port_check",
-        "description": "TCP port check — measures whether a TCP port is open and connect time.",
+        "description": "TCP port check \u2014 measures whether a TCP port is open and connect time.",
         "app_type": "script",
         "target_table": "availability_latency",
         "config_schema": {
@@ -66,16 +138,34 @@
         "versions": [
           {
             "version": "1.1.0",
-            "source_code": "\"\"\"TCP port check — measures reachability and connect time.\"\"\"\nimport asyncio\nimport time\nfrom monctl_collector.polling.base import BasePoller\nfrom monctl_collector.jobs.models import PollContext, PollResult\n\n\nclass Poller(BasePoller):\n    async def poll(self, context: PollContext) -> PollResult:\n        host = context.device_host or context.parameters.get(\"host\", \"\")\n        port = int(context.parameters.get(\"port\", 80))\n        timeout = float(context.parameters.get(\"timeout\", 5))\n        start = time.time()\n\n        try:\n            _, writer = await asyncio.wait_for(\n                asyncio.open_connection(host, port),\n                timeout=timeout,\n            )\n            rtt_ms = (time.time() - start) * 1000\n            writer.close()\n            await writer.wait_closed()\n\n            return PollResult(\n                job_id=context.job.job_id,\n                device_id=context.job.device_id,\n                collector_node=context.node_id,\n                timestamp=time.time(),\n                metrics=[\n                    {\"name\": \"port_rtt_ms\", \"value\": rtt_ms},\n                    {\"name\": \"port_reachable\", \"value\": 1.0},\n                ],\n                config_data=None,\n                status=\"ok\",\n                reachable=True,\n                error_message=None,\n                execution_time_ms=int(rtt_ms),\n                rtt_ms=rtt_ms,\n            )\n        except asyncio.TimeoutError:\n            execution_ms = int((time.time() - start) * 1000)\n            return PollResult(\n                job_id=context.job.job_id,\n                device_id=context.job.device_id,\n                collector_node=context.node_id,\n                timestamp=time.time(),\n                metrics=[{\"name\": \"port_reachable\", \"value\": 0.0}],\n                config_data=None,\n                status=\"critical\",\n                reachable=False,\n                error_message=f\"Port {port} timed out: \",\n                execution_time_ms=execution_ms,\n                error_category=\"device\",\n            )\n        except OSError as exc:\n            execution_ms = int((time.time() - start) * 1000)\n            return PollResult(\n                job_id=context.job.job_id,\n                device_id=context.job.device_id,\n                collector_node=context.node_id,\n                timestamp=time.time(),\n                metrics=[{\"name\": \"port_reachable\", \"value\": 0.0}],\n                config_data=None,\n                status=\"critical\",\n                reachable=False,\n                error_message=f\"Port {port} refused/unreachable: {exc}\",\n                execution_time_ms=execution_ms,\n                error_category=\"device\",\n            )\n",
+            "source_code": "\"\"\"TCP port check \u2014 measures reachability and connect time.\"\"\"\nimport asyncio\nimport time\nfrom monctl_collector.polling.base import BasePoller\nfrom monctl_collector.jobs.models import PollContext, PollResult\n\n\nclass Poller(BasePoller):\n    async def poll(self, context: PollContext) -> PollResult:\n        host = context.device_host or context.parameters.get(\"host\", \"\")\n        port = int(context.parameters.get(\"port\", 80))\n        timeout = float(context.parameters.get(\"timeout\", 5))\n        start = time.time()\n\n        try:\n            _, writer = await asyncio.wait_for(\n                asyncio.open_connection(host, port),\n                timeout=timeout,\n            )\n            rtt_ms = (time.time() - start) * 1000\n            writer.close()\n            await writer.wait_closed()\n\n            return PollResult(\n                job_id=context.job.job_id,\n                device_id=context.job.device_id,\n                collector_node=context.node_id,\n                timestamp=time.time(),\n                metrics=[\n                    {\"name\": \"port_rtt_ms\", \"value\": rtt_ms},\n                    {\"name\": \"port_reachable\", \"value\": 1.0},\n                ],\n                config_data=None,\n                status=\"ok\",\n                reachable=True,\n                error_message=None,\n                execution_time_ms=int(rtt_ms),\n                rtt_ms=rtt_ms,\n            )\n        except asyncio.TimeoutError:\n            execution_ms = int((time.time() - start) * 1000)\n            return PollResult(\n                job_id=context.job.job_id,\n                device_id=context.job.device_id,\n                collector_node=context.node_id,\n                timestamp=time.time(),\n                metrics=[{\"name\": \"port_reachable\", \"value\": 0.0}],\n                config_data=None,\n                status=\"critical\",\n                reachable=False,\n                error_message=f\"Port {port} timed out: \",\n                execution_time_ms=execution_ms,\n                error_category=\"device\",\n            )\n        except OSError as exc:\n            execution_ms = int((time.time() - start) * 1000)\n            return PollResult(\n                job_id=context.job.job_id,\n                device_id=context.job.device_id,\n                collector_node=context.node_id,\n                timestamp=time.time(),\n                metrics=[{\"name\": \"port_reachable\", \"value\": 0.0}],\n                config_data=None,\n                status=\"critical\",\n                reachable=False,\n                error_message=f\"Port {port} refused/unreachable: {exc}\",\n                execution_time_ms=execution_ms,\n                error_category=\"device\",\n            )\n",
             "requirements": [],
             "entry_class": "Poller",
             "is_latest": true
+          }
+        ],
+        "alert_definitions": [
+          {
+            "name": "Port - Unreachable",
+            "description": "Configured TCP port is not accepting connections",
+            "expression": "last(reachable) == 0",
+            "window": "5m",
+            "enabled": true,
+            "message_template": "TCP port unreachable on {device_name}"
+          },
+          {
+            "name": "Port - Slow Connect",
+            "description": "TCP connect time is high",
+            "expression": "avg(rtt_ms) > 1000",
+            "window": "5m",
+            "enabled": true,
+            "message_template": "Slow TCP connect to {device_name}: {value}ms"
           }
         ]
       },
       {
         "name": "http_check",
-        "description": "HTTP/HTTPS endpoint check — measures reachability, response time, and status code.",
+        "description": "HTTP/HTTPS endpoint check \u2014 measures reachability, response time, and status code.",
         "app_type": "script",
         "target_table": "availability_latency",
         "config_schema": {
@@ -109,12 +199,124 @@
         "versions": [
           {
             "version": "1.0.0",
-            "source_code": "\"\"\"HTTP/HTTPS check — measures reachability and response time.\"\"\"\nimport asyncio\nimport time\nimport ssl\nfrom monctl_collector.polling.base import BasePoller\nfrom monctl_collector.jobs.models import PollContext, PollResult\n\ntry:\n    import aiohttp\n    _HAS_AIOHTTP = True\nexcept ImportError:\n    _HAS_AIOHTTP = False\n\n\nclass Poller(BasePoller):\n    async def poll(self, context: PollContext) -> PollResult:\n        url = context.parameters.get(\"url\") or context.device_host or \"\"\n        if not url:\n            return PollResult(\n                job_id=context.job.job_id,\n                device_id=context.job.device_id,\n                collector_node=context.node_id,\n                timestamp=time.time(),\n                metrics=[], config_data=None,\n                status=\"error\", reachable=False,\n                error_message=\"No URL or host configured\",\n                execution_time_ms=0,\n                error_category=\"config\",\n            )\n        if not url.startswith((\"http://\", \"https://\")):\n            url = \"http://\" + url\n\n        timeout = int(context.parameters.get(\"timeout\", 10))\n        expected = context.parameters.get(\"expected_status\", [200, 201, 204, 301, 302])\n        verify_ssl = bool(context.parameters.get(\"verify_ssl\", True))\n        start = time.time()\n\n        try:\n            if _HAS_AIOHTTP:\n                ssl_ctx = None if verify_ssl else ssl.create_default_context()\n                if not verify_ssl:\n                    ssl_ctx.check_hostname = False\n                    ssl_ctx.verify_mode = ssl.CERT_NONE\n                async with aiohttp.ClientSession() as session:\n                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=timeout), ssl=ssl_ctx) as resp:\n                        status_code = resp.status\n                        elapsed_ms = (time.time() - start) * 1000\n            else:\n                import urllib.request, urllib.error\n                ssl_ctx = ssl.create_default_context() if verify_ssl else ssl._create_unverified_context()\n                req = urllib.request.Request(url, method=\"GET\", headers={\"User-Agent\": \"monctl-http-check/2.0\"})\n                opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ssl_ctx))\n                loop = asyncio.get_event_loop()\n                resp = await asyncio.wait_for(\n                    loop.run_in_executor(None, lambda: opener.open(req, timeout=timeout)),\n                    timeout=timeout + 2,\n                )\n                status_code = resp.status\n                elapsed_ms = (time.time() - start) * 1000\n                resp.close()\n\n            reachable = status_code in expected\n            return PollResult(\n                job_id=context.job.job_id,\n                device_id=context.job.device_id,\n                collector_node=context.node_id,\n                timestamp=time.time(),\n                metrics=[\n                    {\"name\": \"http_reachable\", \"value\": 1.0 if reachable else 0.0},\n                    {\"name\": \"http_response_time_ms\", \"value\": elapsed_ms, \"unit\": \"ms\"},\n                    {\"name\": \"http_status_code\", \"value\": float(status_code)},\n                ],\n                config_data=None,\n                status=\"ok\" if reachable else \"critical\",\n                reachable=reachable,\n                error_message=None if reachable else f\"HTTP {status_code} (expected {expected})\",\n                execution_time_ms=int(elapsed_ms),\n                rtt_ms=elapsed_ms,\n                error_category=\"\" if reachable else \"device\",\n            )\n        except asyncio.TimeoutError:\n            elapsed_ms = (time.time() - start) * 1000\n            return PollResult(\n                job_id=context.job.job_id,\n                device_id=context.job.device_id,\n                collector_node=context.node_id,\n                timestamp=time.time(),\n                metrics=[{\"name\": \"http_reachable\", \"value\": 0.0}],\n                config_data=None,\n                status=\"critical\", reachable=False,\n                error_message=f\"HTTP timed out after {timeout}s\",\n                execution_time_ms=int(elapsed_ms),\n                error_category=\"device\",\n            )\n        except Exception as exc:\n            elapsed_ms = (time.time() - start) * 1000\n            return PollResult(\n                job_id=context.job.job_id,\n                device_id=context.job.device_id,\n                collector_node=context.node_id,\n                timestamp=time.time(),\n                metrics=[{\"name\": \"http_reachable\", \"value\": 0.0}],\n                config_data=None,\n                status=\"critical\", reachable=False,\n                error_message=f\"HTTP error: {type(exc).__name__}: {exc}\",\n                execution_time_ms=int(elapsed_ms),\n                error_category=\"device\",\n            )\n",
+            "source_code": "\"\"\"HTTP/HTTPS check \u2014 measures reachability and response time.\"\"\"\nimport asyncio\nimport time\nimport ssl\nfrom monctl_collector.polling.base import BasePoller\nfrom monctl_collector.jobs.models import PollContext, PollResult\n\ntry:\n    import aiohttp\n    _HAS_AIOHTTP = True\nexcept ImportError:\n    _HAS_AIOHTTP = False\n\n\nclass Poller(BasePoller):\n    async def poll(self, context: PollContext) -> PollResult:\n        url = context.parameters.get(\"url\") or context.device_host or \"\"\n        if not url:\n            return PollResult(\n                job_id=context.job.job_id,\n                device_id=context.job.device_id,\n                collector_node=context.node_id,\n                timestamp=time.time(),\n                metrics=[], config_data=None,\n                status=\"error\", reachable=False,\n                error_message=\"No URL or host configured\",\n                execution_time_ms=0,\n                error_category=\"config\",\n            )\n        if not url.startswith((\"http://\", \"https://\")):\n            url = \"http://\" + url\n\n        timeout = int(context.parameters.get(\"timeout\", 10))\n        expected = context.parameters.get(\"expected_status\", [200, 201, 204, 301, 302])\n        verify_ssl = bool(context.parameters.get(\"verify_ssl\", True))\n        start = time.time()\n\n        try:\n            if _HAS_AIOHTTP:\n                ssl_ctx = None if verify_ssl else ssl.create_default_context()\n                if not verify_ssl:\n                    ssl_ctx.check_hostname = False\n                    ssl_ctx.verify_mode = ssl.CERT_NONE\n                async with aiohttp.ClientSession() as session:\n                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=timeout), ssl=ssl_ctx) as resp:\n                        status_code = resp.status\n                        elapsed_ms = (time.time() - start) * 1000\n            else:\n                import urllib.request, urllib.error\n                ssl_ctx = ssl.create_default_context() if verify_ssl else ssl._create_unverified_context()\n                req = urllib.request.Request(url, method=\"GET\", headers={\"User-Agent\": \"monctl-http-check/2.0\"})\n                opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ssl_ctx))\n                loop = asyncio.get_event_loop()\n                resp = await asyncio.wait_for(\n                    loop.run_in_executor(None, lambda: opener.open(req, timeout=timeout)),\n                    timeout=timeout + 2,\n                )\n                status_code = resp.status\n                elapsed_ms = (time.time() - start) * 1000\n                resp.close()\n\n            reachable = status_code in expected\n            return PollResult(\n                job_id=context.job.job_id,\n                device_id=context.job.device_id,\n                collector_node=context.node_id,\n                timestamp=time.time(),\n                metrics=[\n                    {\"name\": \"http_reachable\", \"value\": 1.0 if reachable else 0.0},\n                    {\"name\": \"http_response_time_ms\", \"value\": elapsed_ms, \"unit\": \"ms\"},\n                    {\"name\": \"http_status_code\", \"value\": float(status_code)},\n                ],\n                config_data=None,\n                status=\"ok\" if reachable else \"critical\",\n                reachable=reachable,\n                error_message=None if reachable else f\"HTTP {status_code} (expected {expected})\",\n                execution_time_ms=int(elapsed_ms),\n                rtt_ms=elapsed_ms,\n                error_category=\"\" if reachable else \"device\",\n            )\n        except asyncio.TimeoutError:\n            elapsed_ms = (time.time() - start) * 1000\n            return PollResult(\n                job_id=context.job.job_id,\n                device_id=context.job.device_id,\n                collector_node=context.node_id,\n                timestamp=time.time(),\n                metrics=[{\"name\": \"http_reachable\", \"value\": 0.0}],\n                config_data=None,\n                status=\"critical\", reachable=False,\n                error_message=f\"HTTP timed out after {timeout}s\",\n                execution_time_ms=int(elapsed_ms),\n                error_category=\"device\",\n            )\n        except Exception as exc:\n            elapsed_ms = (time.time() - start) * 1000\n            return PollResult(\n                job_id=context.job.job_id,\n                device_id=context.job.device_id,\n                collector_node=context.node_id,\n                timestamp=time.time(),\n                metrics=[{\"name\": \"http_reachable\", \"value\": 0.0}],\n                config_data=None,\n                status=\"critical\", reachable=False,\n                error_message=f\"HTTP error: {type(exc).__name__}: {exc}\",\n                execution_time_ms=int(elapsed_ms),\n                error_category=\"device\",\n            )\n",
             "requirements": [],
             "entry_class": "Poller",
             "is_latest": true
           }
+        ],
+        "alert_definitions": [
+          {
+            "name": "HTTP - Unreachable",
+            "description": "HTTP endpoint returned an unexpected status or was unreachable",
+            "expression": "last(reachable) == 0",
+            "window": "5m",
+            "enabled": true,
+            "message_template": "HTTP endpoint unhealthy on {device_name}"
+          },
+          {
+            "name": "HTTP - Slow Response",
+            "description": "HTTP response time exceeds 2s on average",
+            "expression": "avg(rtt_ms) > 2000",
+            "window": "5m",
+            "enabled": true,
+            "message_template": "Slow HTTP response from {device_name}: {value}ms"
+          }
         ]
+      }
+    ],
+    "event_policies": [
+      {
+        "name": "Ping Unreachable - Promote to Event",
+        "description": "Promote a device-unreachable alert to an Event after 2 consecutive fires",
+        "app_name": "ping_check",
+        "alert_name": "Ping - Device Unreachable",
+        "mode": "consecutive",
+        "fire_count_threshold": 2,
+        "event_severity": "critical",
+        "auto_clear_on_resolve": true,
+        "enabled": true
+      },
+      {
+        "name": "Ping High RTT Critical - Promote to Event",
+        "description": "Promote a critical-RTT alert after 3 fires in the rolling window",
+        "app_name": "ping_check",
+        "alert_name": "Ping - High RTT Critical",
+        "mode": "cumulative",
+        "fire_count_threshold": 3,
+        "window_size": 5,
+        "event_severity": "critical",
+        "auto_clear_on_resolve": true,
+        "enabled": true
+      },
+      {
+        "name": "Ping High RTT Warning - Promote to Event",
+        "description": "Promote a warning-RTT alert after 3 fires in the rolling window",
+        "app_name": "ping_check",
+        "alert_name": "Ping - High RTT Warning",
+        "mode": "cumulative",
+        "fire_count_threshold": 3,
+        "window_size": 5,
+        "event_severity": "warning",
+        "auto_clear_on_resolve": true,
+        "enabled": true
+      },
+      {
+        "name": "Ping Packet Loss Critical - Promote to Event",
+        "description": "Promote a critical packet-loss alert after 2 consecutive fires",
+        "app_name": "ping_check",
+        "alert_name": "Ping - Packet Loss Critical",
+        "mode": "consecutive",
+        "fire_count_threshold": 2,
+        "event_severity": "critical",
+        "auto_clear_on_resolve": true,
+        "enabled": true
+      },
+      {
+        "name": "Ping Packet Loss Warning - Promote to Event",
+        "description": "Promote a warning packet-loss alert after 3 fires in the rolling window",
+        "app_name": "ping_check",
+        "alert_name": "Ping - Packet Loss Warning",
+        "mode": "cumulative",
+        "fire_count_threshold": 3,
+        "window_size": 5,
+        "event_severity": "warning",
+        "auto_clear_on_resolve": true,
+        "enabled": true
+      },
+      {
+        "name": "Port Unreachable - Promote to Event",
+        "description": "Promote a port-unreachable alert after 2 consecutive fires",
+        "app_name": "port_check",
+        "alert_name": "Port - Unreachable",
+        "mode": "consecutive",
+        "fire_count_threshold": 2,
+        "event_severity": "critical",
+        "auto_clear_on_resolve": true,
+        "enabled": true
+      },
+      {
+        "name": "HTTP Unreachable - Promote to Event",
+        "description": "Promote an HTTP-unreachable alert after 2 consecutive fires",
+        "app_name": "http_check",
+        "alert_name": "HTTP - Unreachable",
+        "mode": "consecutive",
+        "fire_count_threshold": 2,
+        "event_severity": "critical",
+        "auto_clear_on_resolve": true,
+        "enabled": true
+      },
+      {
+        "name": "HTTP Slow Response - Promote to Event",
+        "description": "Promote HTTP slow-response after 3 fires in the rolling window",
+        "app_name": "http_check",
+        "alert_name": "HTTP - Slow Response",
+        "mode": "cumulative",
+        "fire_count_threshold": 3,
+        "window_size": 5,
+        "event_severity": "warning",
+        "auto_clear_on_resolve": true,
+        "enabled": true
       }
     ]
   }
