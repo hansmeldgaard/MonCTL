@@ -255,8 +255,8 @@ class CreateEventPolicyRequest(BaseModel):
     @field_validator("mode")
     @classmethod
     def check_mode(cls, v: str) -> str:
-        if v not in {"consecutive", "sliding_window"}:
-            raise ValueError("mode must be 'consecutive' or 'sliding_window'")
+        if v not in {"consecutive", "cumulative"}:
+            raise ValueError("mode must be 'consecutive' or 'cumulative'")
         return v
 
 
@@ -281,8 +281,8 @@ class UpdateEventPolicyRequest(BaseModel):
     @field_validator("mode")
     @classmethod
     def check_mode(cls, v: str | None) -> str | None:
-        if v is not None and v not in {"consecutive", "sliding_window"}:
-            raise ValueError("mode must be 'consecutive' or 'sliding_window'")
+        if v is not None and v not in {"consecutive", "cumulative"}:
+            raise ValueError("mode must be 'consecutive' or 'cumulative'")
         return v
 
 
@@ -412,6 +412,7 @@ async def update_event_policy(
         policy.enabled = req.enabled
 
     policy.updated_at = utc_now()
+    await db.flush()
     await db.refresh(policy, ["definition"])
     return {"status": "success", "data": _fmt_policy(policy)}
 

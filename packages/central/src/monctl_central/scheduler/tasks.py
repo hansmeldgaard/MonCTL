@@ -78,6 +78,9 @@ class SchedulerRunner:
                 # Alert instance sync every 5 min (every 10th cycle)
                 if cycle % 10 == 0:
                     await self._sync_alert_instances()
+                # Orphaned active_events cleanup every 5 min (offset from sync)
+                if cycle % 10 == 1:
+                    await self._cleanup_orphan_active_events()
                 # App cache TTL cleanup every 5 min (every 10th cycle, offset)
                 if cycle % 10 == 2:
                     await self._cleanup_app_cache()
@@ -474,6 +477,64 @@ class SchedulerRunner:
                     logger.info("alert_instance_sync created=%d", created)
         except Exception:
             logger.exception("alert_instance_sync_error")
+
+    async def _cleanup_orphan_active_events(self) -> None:
+        """Drop active_events whose underlying assignment no longer exists.
+
+        The event engine keys its tracker on `{assignment_id}|{entity_key}`.
+        When an assignment is deleted the tracker row is orphaned and the CH
+        row it points to stays state=active forever. This task resolves them:
+        clears the CH row (if any) and deletes the tracker row.
+        """
+        if self._ch is None:
+            return
+        try:
+            from sqlalchemy import text
+
+            async with self._session_factory() as session:
+                # Rows whose entity_key prefix (before '|') is not a valid
+                # app_assignments.id. Cast via text() to avoid pulling the
+                # whole table into Python.
+                result = await session.execute(
+                    text("""
+                        SELECT ae.id, ae.clickhouse_event_id
+                        FROM active_events ae
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM app_assignments aa
+                            WHERE aa.id::text = split_part(ae.entity_key, '|', 1)
+                        )
+                    """)
+                )
+                orphans = result.all()
+                if not orphans:
+                    return
+
+                orphan_ids = [row[0] for row in orphans]
+                ch_ids = [row[1] for row in orphans if row[1]]
+
+                # Delete tracker rows
+                await session.execute(
+                    text("DELETE FROM active_events WHERE id = ANY(:ids)"),
+                    {"ids": orphan_ids},
+                )
+                await session.commit()
+
+                # Flip the CH rows these pointed at to cleared
+                if ch_ids:
+                    try:
+                        await asyncio.to_thread(
+                            self._ch.update_event_state,
+                            ch_ids, "cleared", "orphan_cleanup",
+                        )
+                    except Exception:
+                        logger.exception("orphan_ch_clear_error")
+
+                logger.info(
+                    "active_events_orphan_cleanup removed=%d ch_cleared=%d",
+                    len(orphan_ids), len(ch_ids),
+                )
+        except Exception:
+            logger.exception("orphan_cleanup_error")
 
     async def _evaluate_alerts(self) -> None:
         """Run alert engine evaluation if ClickHouse is available."""

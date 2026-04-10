@@ -46,11 +46,13 @@ class EventEngine:
             ).scalars().all()
 
             events_to_insert: list[dict] = []
+            event_ids_to_clear: list[str] = []
 
             for policy in policies:
                 try:
-                    new_events = await self._evaluate_policy(session, policy)
+                    new_events, cleared_ids = await self._evaluate_policy(session, policy)
                     events_to_insert.extend(new_events)
+                    event_ids_to_clear.extend(cleared_ids)
                 except Exception:
                     logger.exception(
                         "event_policy_error policy_id=%s name=%s",
@@ -66,6 +68,16 @@ class EventEngine:
                 except Exception:
                     logger.exception("events_insert_error")
 
+            if event_ids_to_clear:
+                try:
+                    await asyncio.to_thread(
+                        self._ch.update_event_state,
+                        event_ids_to_clear, "cleared", "auto_clear",
+                    )
+                    logger.info("events_auto_cleared count=%d", len(event_ids_to_clear))
+                except Exception:
+                    logger.exception("events_auto_clear_error")
+
             # Notify automation engine of new events
             if events_to_insert:
                 try:
@@ -77,10 +89,16 @@ class EventEngine:
 
     async def _evaluate_policy(
         self, session: AsyncSession, policy: EventPolicy
-    ) -> list[dict]:
+    ) -> tuple[list[dict], list[str]]:
+        """Evaluate a policy.
+
+        Returns (events_to_insert, event_ids_to_clear):
+          - events_to_insert: new active events to batch-insert into CH
+          - event_ids_to_clear: ClickHouse event ids to UPDATE state=cleared
+        """
         defn = policy.definition
         if not defn or not defn.enabled:
-            return []
+            return [], []
 
         entities = (
             await session.execute(
@@ -101,6 +119,7 @@ class EventEngine:
 
         now = datetime.now(timezone.utc)
         new_events: list[dict] = []
+        cleared_ids: list[str] = []
 
         for inst in entities:
             entity_key = f"{inst.assignment_id}|{inst.entity_key}"
@@ -108,13 +127,16 @@ class EventEngine:
 
             if inst.state == "firing" and not has_active:
                 if self._check_criteria(policy, inst):
-                    event_row = self._build_event(policy, defn, inst, now)
+                    # Generate the event id up-front so we can store the SAME
+                    # uuid in both the CH row (for future UPDATE by id) and
+                    # the active_events tracker.
+                    event_id = str(uuid.uuid4())
+                    event_row = self._build_event(policy, defn, inst, now, event_id)
                     new_events.append(event_row)
-                    # Track in active_events table
                     ae = ActiveEvent(
                         policy_id=policy.id,
                         entity_key=entity_key,
-                        clickhouse_event_id=str(uuid.uuid4()),
+                        clickhouse_event_id=event_id,
                     )
                     session.add(ae)
                     logger.info(
@@ -123,12 +145,16 @@ class EventEngine:
                     )
 
             elif inst.state == "resolved" and has_active:
-                if policy.auto_clear_on_resolve:
-                    resolve_event = self._build_resolve_event(policy, defn, inst, now)
-                    new_events.append(resolve_event)
-                await session.delete(active_by_key[entity_key])
+                ae = active_by_key[entity_key]
+                if policy.auto_clear_on_resolve and ae.clickhouse_event_id:
+                    # Flip the ORIGINAL active CH row to cleared. Previously
+                    # we inserted a separate "resolve" event and left the
+                    # original as-is, which is how prod accumulated 70+
+                    # perma-active rows.
+                    cleared_ids.append(ae.clickhouse_event_id)
+                await session.delete(ae)
 
-        return new_events
+        return new_events, cleared_ids
 
     def _check_criteria(self, policy: EventPolicy, inst: AlertEntity) -> bool:
         if policy.mode == "consecutive":
@@ -185,9 +211,11 @@ class EventEngine:
         defn: AlertDefinition,
         inst: AlertEntity,
         now: datetime,
+        event_id: str,
     ) -> dict:
         labels = inst.entity_labels or {}
         return {
+            "id": event_id,
             "event_type": "alert",
             "definition_id": str(defn.id),
             "definition_name": defn.name,
@@ -208,37 +236,6 @@ class EventEngine:
                 "labels": labels,
             }),
             "state": "active",
-            "occurred_at": now,
-            "collector_name": labels.get("collector_name", ""),
-            "device_name": labels.get("device_name", ""),
-            "app_name": labels.get("app_name", defn.name),
-        }
-
-    def _build_resolve_event(
-        self,
-        policy: EventPolicy,
-        defn: AlertDefinition,
-        inst: AlertEntity,
-        now: datetime,
-    ) -> dict:
-        labels = inst.entity_labels or {}
-        device = labels.get("device_name", "unknown")
-        return {
-            "event_type": "alert_resolved",
-            "definition_id": str(defn.id),
-            "definition_name": defn.name,
-            "policy_id": str(policy.id),
-            "policy_name": policy.name,
-            "collector_id": labels.get("collector_id", _ZERO_UUID),
-            "device_id": str(inst.device_id) if inst.device_id else _ZERO_UUID,
-            "app_id": str(defn.app_id),
-            "assignment_id": str(inst.assignment_id),
-            "tenant_id": labels.get("tenant_id", _ZERO_UUID),
-            "source": f"policy:{policy.name.lower().replace(' ', '_')}",
-            "severity": "info",
-            "message": f"Resolved: {defn.name} on {device}",
-            "data": json.dumps({"labels": labels, "auto_cleared": True}),
-            "state": "cleared",
             "occurred_at": now,
             "collector_name": labels.get("collector_name", ""),
             "device_name": labels.get("device_name", ""),
