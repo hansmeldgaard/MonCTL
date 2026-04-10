@@ -44,11 +44,8 @@ docker/redis-data/
 *.db
 *.key
 
-# Playwright browser state (contains session cookies)
-.playwright/auth-state.json
-
-# Playwright screenshots
-.playwright/screenshots/
+# Playwright local dev artifacts (auth state, screenshots, snapshots)
+.playwright/
 
 # Claude Code
 .claude/audit/
