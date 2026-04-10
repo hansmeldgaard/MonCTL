@@ -10,7 +10,7 @@ import {
   Trash2,
   Zap,
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import {
   Card,
   CardContent,
@@ -71,8 +71,12 @@ export function EventsPage() {
   const { pageSize, scrollMode } = useTablePreferences();
   const activeListState = useListState({
     columns: [
+      { key: "severity", label: "Severity" },
       { key: "source", label: "Source" },
+      { key: "policy_name", label: "Policy" },
       { key: "message", label: "Message" },
+      { key: "device_name", label: "Device" },
+      { key: "occurred_at", label: "Occurred", filterable: false },
     ],
     defaultSortBy: "occurred_at",
     defaultSortDir: "desc",
@@ -81,8 +85,12 @@ export function EventsPage() {
   });
   const clearedListState = useListState({
     columns: [
+      { key: "severity", label: "Severity" },
       { key: "source", label: "Source" },
+      { key: "policy_name", label: "Policy" },
       { key: "message", label: "Message" },
+      { key: "device_name", label: "Device" },
+      { key: "occurred_at", label: "Occurred", filterable: false },
     ],
     defaultSortBy: "occurred_at",
     defaultSortDir: "desc",
@@ -303,7 +311,8 @@ function ActiveEventsTab({
                 sortBy={listState.sortBy}
                 sortDir={listState.sortDir}
                 onSort={listState.handleSort}
-                filterable={false}
+                filterValue={listState.filters.severity}
+                onFilterChange={(v) => listState.setFilter("severity", v)}
               />
               <FilterableSortHead
                 col="source"
@@ -314,7 +323,15 @@ function ActiveEventsTab({
                 filterValue={listState.filters.source}
                 onFilterChange={(v) => listState.setFilter("source", v)}
               />
-              <TableHead>Policy</TableHead>
+              <FilterableSortHead
+                col="policy_name"
+                label="Policy"
+                sortBy={listState.sortBy}
+                sortDir={listState.sortDir}
+                onSort={listState.handleSort}
+                filterValue={listState.filters.policy_name}
+                onFilterChange={(v) => listState.setFilter("policy_name", v)}
+              />
               <FilterableSortHead
                 col="message"
                 label="Message"
@@ -324,7 +341,15 @@ function ActiveEventsTab({
                 filterValue={listState.filters.message}
                 onFilterChange={(v) => listState.setFilter("message", v)}
               />
-              <TableHead>Device</TableHead>
+              <FilterableSortHead
+                col="device_name"
+                label="Device"
+                sortBy={listState.sortBy}
+                sortDir={listState.sortDir}
+                onSort={listState.handleSort}
+                filterValue={listState.filters.device_name}
+                onFilterChange={(v) => listState.setFilter("device_name", v)}
+              />
               <FilterableSortHead
                 col="occurred_at"
                 label="Occurred"
@@ -373,7 +398,16 @@ function ActiveEventsTab({
                     {evt.message}
                   </TableCell>
                   <TableCell className="text-zinc-400">
-                    {evt.device_name || "—"}
+                    {evt.device_id ? (
+                      <Link
+                        to={`/devices/${evt.device_id}`}
+                        className="text-brand-400 hover:text-brand-300 hover:underline"
+                      >
+                        {evt.device_name || evt.device_id}
+                      </Link>
+                    ) : (
+                      evt.device_name || "—"
+                    )}
                   </TableCell>
                   <TableCell className="text-zinc-500">
                     {evt.occurred_at ? timeAgo(evt.occurred_at) : "—"}
@@ -430,7 +464,8 @@ function ClearedEventsTab({
                 sortBy={listState.sortBy}
                 sortDir={listState.sortDir}
                 onSort={listState.handleSort}
-                filterable={false}
+                filterValue={listState.filters.severity}
+                onFilterChange={(v) => listState.setFilter("severity", v)}
               />
               <FilterableSortHead
                 col="source"
@@ -442,6 +477,15 @@ function ClearedEventsTab({
                 onFilterChange={(v) => listState.setFilter("source", v)}
               />
               <FilterableSortHead
+                col="policy_name"
+                label="Policy"
+                sortBy={listState.sortBy}
+                sortDir={listState.sortDir}
+                onSort={listState.handleSort}
+                filterValue={listState.filters.policy_name}
+                onFilterChange={(v) => listState.setFilter("policy_name", v)}
+              />
+              <FilterableSortHead
                 col="message"
                 label="Message"
                 sortBy={listState.sortBy}
@@ -450,7 +494,15 @@ function ClearedEventsTab({
                 filterValue={listState.filters.message}
                 onFilterChange={(v) => listState.setFilter("message", v)}
               />
-              <TableHead>Device</TableHead>
+              <FilterableSortHead
+                col="device_name"
+                label="Device"
+                sortBy={listState.sortBy}
+                sortDir={listState.sortDir}
+                onSort={listState.handleSort}
+                filterValue={listState.filters.device_name}
+                onFilterChange={(v) => listState.setFilter("device_name", v)}
+              />
               <FilterableSortHead
                 col="occurred_at"
                 label="Occurred"
@@ -467,7 +519,7 @@ function ClearedEventsTab({
             {events.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={7}
+                  colSpan={8}
                   className="text-center text-zinc-500 py-8"
                 >
                   {listState.hasActiveFilters
@@ -486,11 +538,23 @@ function ClearedEventsTab({
                   <TableCell className="text-zinc-400 text-xs">
                     {evt.source}
                   </TableCell>
+                  <TableCell className="text-zinc-300 text-sm">
+                    {evt.policy_name || evt.definition_name || "—"}
+                  </TableCell>
                   <TableCell className="text-zinc-300 text-sm max-w-sm truncate">
                     {evt.message}
                   </TableCell>
                   <TableCell className="text-zinc-400">
-                    {evt.device_name || "—"}
+                    {evt.device_id ? (
+                      <Link
+                        to={`/devices/${evt.device_id}`}
+                        className="text-brand-400 hover:text-brand-300 hover:underline"
+                      >
+                        {evt.device_name || evt.device_id}
+                      </Link>
+                    ) : (
+                      evt.device_name || "—"
+                    )}
                   </TableCell>
                   <TableCell className="text-zinc-500 text-xs">
                     {evt.occurred_at ? formatDate(evt.occurred_at, tz) : "—"}

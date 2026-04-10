@@ -2103,6 +2103,9 @@ class ClickHouseClient:
         to_ts: datetime | None = None,
         message: str | None = None,
         source: str | None = None,
+        device_name: str | None = None,
+        policy_name: str | None = None,
+        definition_name: str | None = None,
     ) -> tuple[list[str], dict[str, Any]]:
         """Build WHERE clauses and params for event queries."""
         wheres: list[str] = []
@@ -2112,8 +2115,8 @@ class ClickHouseClient:
             wheres.append("state = {state:String}")
             params["state"] = state
         if severity:
-            wheres.append("severity = {severity:String}")
-            params["severity"] = severity
+            wheres.append("severity ILIKE {severity_pat:String}")
+            params["severity_pat"] = f"%{severity}%"
         if device_id:
             wheres.append("device_id = {device_id:UUID}")
             params["device_id"] = device_id
@@ -2132,6 +2135,15 @@ class ClickHouseClient:
         if source:
             wheres.append("source ILIKE {source_pattern:String}")
             params["source_pattern"] = f"%{source}%"
+        if device_name:
+            wheres.append("device_name ILIKE {device_name_pat:String}")
+            params["device_name_pat"] = f"%{device_name}%"
+        if policy_name:
+            wheres.append("policy_name ILIKE {policy_name_pat:String}")
+            params["policy_name_pat"] = f"%{policy_name}%"
+        if definition_name:
+            wheres.append("definition_name ILIKE {definition_name_pat:String}")
+            params["definition_name_pat"] = f"%{definition_name}%"
 
         return wheres, params
 
@@ -2146,12 +2158,17 @@ class ClickHouseClient:
         to_ts: datetime | None = None,
         message: str | None = None,
         source: str | None = None,
+        device_name: str | None = None,
+        policy_name: str | None = None,
+        definition_name: str | None = None,
     ) -> int:
         """Count events matching the given filters."""
         wheres, params = self._build_event_filters(
             state=state, severity=severity, device_id=device_id,
             tenant_id=tenant_id, from_ts=from_ts, to_ts=to_ts,
             message=message, source=source,
+            device_name=device_name, policy_name=policy_name,
+            definition_name=definition_name,
         )
         sql = "SELECT count() FROM events"
         if wheres:
@@ -2174,6 +2191,9 @@ class ClickHouseClient:
         to_ts: datetime | None = None,
         message: str | None = None,
         source: str | None = None,
+        device_name: str | None = None,
+        policy_name: str | None = None,
+        definition_name: str | None = None,
         sort_by: str = "occurred_at",
         sort_dir: str = "desc",
         limit: int = 200,
@@ -2184,13 +2204,18 @@ class ClickHouseClient:
             state=state, severity=severity, device_id=device_id,
             tenant_id=tenant_id, from_ts=from_ts, to_ts=to_ts,
             message=message, source=source,
+            device_name=device_name, policy_name=policy_name,
+            definition_name=definition_name,
         )
 
         sql = "SELECT * FROM events"
         if wheres:
             sql += " WHERE " + " AND ".join(wheres)
 
-        VALID_SORT = {"occurred_at", "severity", "source", "message"}
+        VALID_SORT = {
+            "occurred_at", "severity", "source", "message",
+            "device_name", "policy_name", "definition_name",
+        }
         sort_col = sort_by if sort_by in VALID_SORT else "occurred_at"
         sort_direction = "DESC" if sort_dir == "desc" else "ASC"
         sql += f" ORDER BY {sort_col} {sort_direction}"
@@ -2335,6 +2360,7 @@ class ClickHouseClient:
         device_id: str | None = None,
         action: str | None = None,
         definition_name: str | None = None,
+        device_name: str | None = None,
         message: str | None = None,
         tenant_id: str | None = None,
         from_ts: str | None = None,
@@ -2348,8 +2374,8 @@ class ClickHouseClient:
             wheres.append("definition_id = {definition_id:UUID}")
             params["definition_id"] = definition_id
         if entity_key:
-            wheres.append("entity_key = {entity_key:String}")
-            params["entity_key"] = entity_key
+            wheres.append("entity_key ILIKE {entity_key_pat:String}")
+            params["entity_key_pat"] = f"%{entity_key}%"
         if device_id:
             wheres.append("device_id = {device_id:UUID}")
             params["device_id"] = device_id
@@ -2359,6 +2385,9 @@ class ClickHouseClient:
         if definition_name:
             wheres.append("definition_name ILIKE {definition_name_pat:String}")
             params["definition_name_pat"] = f"%{definition_name}%"
+        if device_name:
+            wheres.append("device_name ILIKE {device_name_pat:String}")
+            params["device_name_pat"] = f"%{device_name}%"
         if message:
             wheres.append("message ILIKE {message_pat:String}")
             params["message_pat"] = f"%{message}%"
@@ -2382,6 +2411,7 @@ class ClickHouseClient:
         device_id: str | None = None,
         action: str | None = None,
         definition_name: str | None = None,
+        device_name: str | None = None,
         message: str | None = None,
         tenant_id: str | None = None,
         from_ts: str | None = None,
@@ -2395,7 +2425,8 @@ class ClickHouseClient:
         wheres, params = self._build_alert_log_filters(
             definition_id=definition_id, entity_key=entity_key,
             device_id=device_id, action=action,
-            definition_name=definition_name, message=message,
+            definition_name=definition_name, device_name=device_name,
+            message=message,
             tenant_id=tenant_id, from_ts=from_ts, to_ts=to_ts,
         )
 
@@ -2403,7 +2434,10 @@ class ClickHouseClient:
         if wheres:
             sql += " WHERE " + " AND ".join(wheres)
 
-        VALID_SORT = {"occurred_at", "severity", "action", "definition_name", "device_name"}
+        VALID_SORT = {
+            "occurred_at", "severity", "action",
+            "definition_name", "device_name", "entity_key", "fire_count",
+        }
         sort_col = sort_by if sort_by in VALID_SORT else "occurred_at"
         sort_direction = "DESC" if sort_dir.upper() == "DESC" else "ASC"
         sql += f" ORDER BY {sort_col} {sort_direction}"
@@ -2428,6 +2462,7 @@ class ClickHouseClient:
         device_id: str | None = None,
         action: str | None = None,
         definition_name: str | None = None,
+        device_name: str | None = None,
         message: str | None = None,
         tenant_id: str | None = None,
         from_ts: str | None = None,
@@ -2437,7 +2472,8 @@ class ClickHouseClient:
         wheres, params = self._build_alert_log_filters(
             definition_id=definition_id, entity_key=entity_key,
             device_id=device_id, action=action,
-            definition_name=definition_name, message=message,
+            definition_name=definition_name, device_name=device_name,
+            message=message,
             tenant_id=tenant_id, from_ts=from_ts, to_ts=to_ts,
         )
         sql = "SELECT count() FROM alert_log"

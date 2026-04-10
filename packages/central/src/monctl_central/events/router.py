@@ -129,6 +129,9 @@ async def list_active_events(
     device_id: str | None = Query(None),
     message: str | None = Query(default=None),
     source: str | None = Query(default=None),
+    device_name: str | None = Query(default=None),
+    policy_name: str | None = Query(default=None),
+    definition_name: str | None = Query(default=None),
     sort_by: str = Query(default="occurred_at"),
     sort_dir: str = Query(default="desc"),
     limit: int = Query(200, le=1000),
@@ -139,10 +142,14 @@ async def list_active_events(
     total = await asyncio.to_thread(
         ch.count_events, state="active", severity=severity,
         device_id=device_id, message=message, source=source,
+        device_name=device_name, policy_name=policy_name,
+        definition_name=definition_name,
     )
     rows = await asyncio.to_thread(
         ch.query_events, state="active", severity=severity,
         device_id=device_id, limit=limit, message=message, source=source,
+        device_name=device_name, policy_name=policy_name,
+        definition_name=definition_name,
         sort_by=sort_by, sort_dir=sort_dir, offset=offset,
     )
     return {
@@ -154,9 +161,13 @@ async def list_active_events(
 
 @router.get("/cleared")
 async def list_cleared_events(
+    severity: str | None = Query(default=None),
     device_id: str | None = Query(default=None),
     message: str | None = Query(default=None),
     source: str | None = Query(default=None),
+    device_name: str | None = Query(default=None),
+    policy_name: str | None = Query(default=None),
+    definition_name: str | None = Query(default=None),
     sort_by: str = Query(default="occurred_at"),
     sort_dir: str = Query(default="desc"),
     limit: int = Query(200, le=1000),
@@ -165,12 +176,16 @@ async def list_cleared_events(
     auth: dict = Depends(require_permission("event", "view")),
 ):
     total = await asyncio.to_thread(
-        ch.count_events, state="cleared", device_id=device_id,
-        message=message, source=source,
+        ch.count_events, state="cleared", severity=severity,
+        device_id=device_id, message=message, source=source,
+        device_name=device_name, policy_name=policy_name,
+        definition_name=definition_name,
     )
     rows = await asyncio.to_thread(
-        ch.query_events, state="cleared", device_id=device_id,
-        limit=limit, message=message, source=source,
+        ch.query_events, state="cleared", severity=severity,
+        device_id=device_id, limit=limit, message=message, source=source,
+        device_name=device_name, policy_name=policy_name,
+        definition_name=definition_name,
         sort_by=sort_by, sort_dir=sort_dir, offset=offset,
     )
     return {
