@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { Bell, FileText, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
 import {
   Card,
@@ -17,7 +18,7 @@ import {
   TableRow,
 } from "@/components/ui/table.tsx";
 import {
-  useActiveAlerts,
+  useAlertInstances,
   useAlertLog,
   useAlertRules,
   useInvertAlertDefinition,
@@ -41,7 +42,36 @@ type Tab = "active" | "log" | "definitions";
 export function AlertsPage() {
   const [tab, setTab] = useState<Tab>("active");
   const { pageSize, scrollMode } = useTablePreferences();
-  const { data: alerts, isLoading: alertsLoading } = useActiveAlerts();
+
+  // Active alerts (global, firing-only)
+  const activeListState = useListState({
+    columns: [
+      { key: "definition_name", label: "Alert" },
+      { key: "app_name", label: "App" },
+      { key: "device_name", label: "Device" },
+      { key: "entity_key", label: "Entity" },
+      { key: "current_value", label: "Value", filterable: false },
+      { key: "fire_count", label: "Fires", filterable: false },
+      { key: "started_firing_at", label: "Since", filterable: false },
+    ],
+    defaultSortBy: "started_firing_at",
+    defaultSortDir: "desc",
+    defaultPageSize: pageSize,
+    scrollMode,
+  });
+  const {
+    data: activeResponse,
+    isLoading: alertsLoading,
+    isFetching: activeFetching,
+  } = useAlertInstances({ state: "firing", ...activeListState.params });
+  const activeAlerts: AlertEntity[] = (activeResponse as any)?.data ?? [];
+  const activeMeta = (activeResponse as any)?.meta ?? {
+    limit: activeListState.pageSize,
+    offset: 0,
+    count: 0,
+    total: 0,
+  };
+
   const defsListState = useListState({
     columns: [
       { key: "name", label: "Name" },
@@ -68,10 +98,10 @@ export function AlertsPage() {
   const logListState = useListState({
     columns: [
       { key: "occurred_at", label: "Time", filterable: false },
-      { key: "action", label: "Action", filterable: false, sortable: false },
       { key: "definition_name", label: "Alert" },
       { key: "device_name", label: "Device" },
-      { key: "entity_key", label: "Entity", sortable: false },
+      { key: "entity_key", label: "Entity" },
+      { key: "fire_count", label: "Fires", filterable: false },
       { key: "message", label: "Message", sortable: false },
     ],
     defaultSortBy: "occurred_at",
@@ -109,9 +139,9 @@ export function AlertsPage() {
         >
           <Bell className="h-3.5 w-3.5" />
           Active Alerts
-          {alerts && alerts.length > 0 && (
+          {activeMeta.total > 0 && (
             <Badge variant="destructive" className="ml-1.5">
-              {alerts.length}
+              {activeMeta.total}
             </Badge>
           )}
         </Button>
@@ -138,7 +168,12 @@ export function AlertsPage() {
           <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
         </div>
       ) : tab === "active" ? (
-        <ActiveAlertsTab alerts={alerts ?? []} />
+        <ActiveAlertsTab
+          alerts={activeAlerts}
+          listState={activeListState}
+          meta={activeMeta}
+          isFetching={activeFetching}
+        />
       ) : tab === "log" ? (
         <AlertLogTab
           entries={logEntries}
@@ -163,79 +198,175 @@ export function AlertsPage() {
   );
 }
 
-function ActiveAlertsTab({ alerts }: { alerts: AlertEntity[] }) {
+function ActiveAlertsTab({
+  alerts,
+  listState,
+  meta,
+  isFetching,
+}: {
+  alerts: AlertEntity[];
+  listState: ReturnType<typeof useListState>;
+  meta: { limit: number; offset: number; count: number; total: number };
+  isFetching: boolean;
+}) {
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Bell className="h-4 w-4" />
-          Active Alerts ({alerts.length})
+          Active Alerts
+          <Badge
+            variant={meta.total > 0 ? "destructive" : "success"}
+            className="ml-1.5 text-xs"
+          >
+            {meta.total} firing
+          </Badge>
         </CardTitle>
       </CardHeader>
       <CardContent>
-        {alerts.length === 0 ? (
+        {alerts.length === 0 && !listState.hasActiveFilters ? (
           <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
             <Bell className="mb-2 h-8 w-8 text-emerald-500/50" />
             <p className="text-sm">No active alerts — all clear</p>
           </div>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>State</TableHead>
-                <TableHead>Alert Name</TableHead>
-                <TableHead>App</TableHead>
-                <TableHead>Device</TableHead>
-                <TableHead>Entity</TableHead>
-                <TableHead>Value</TableHead>
-                <TableHead>Fire Count</TableHead>
-                <TableHead>Firing Since</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {alerts.map((alert) => (
-                <TableRow key={alert.id}>
-                  <TableCell>
-                    <Badge
-                      variant={
-                        alert.state === "firing" ? "destructive" : "success"
-                      }
-                    >
-                      {alert.state === "firing" ? "ACTIVE" : "CLEARED"}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="font-medium text-zinc-100">
-                    {alert.definition_name ?? alert.definition_id}
-                  </TableCell>
-                  <TableCell className="text-zinc-400">
-                    {alert.app_name ?? ""}
-                  </TableCell>
-                  <TableCell className="text-zinc-300">
-                    {alert.device_name ?? ""}
-                  </TableCell>
-                  <TableCell className="text-zinc-400 text-xs font-mono">
-                    {alert.entity_labels?.if_name ||
-                      alert.entity_labels?.component ||
-                      alert.entity_key ||
-                      "—"}
-                  </TableCell>
-                  <TableCell className="text-zinc-300">
-                    {alert.current_value != null
-                      ? Number(alert.current_value).toFixed(1)
-                      : "—"}
-                  </TableCell>
-                  <TableCell className="text-zinc-400">
-                    {alert.fire_count}
-                  </TableCell>
-                  <TableCell className="text-zinc-500">
-                    {alert.started_firing_at
-                      ? timeAgo(alert.started_firing_at)
-                      : "—"}
-                  </TableCell>
+          <>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <FilterableSortHead
+                    col="definition_name"
+                    label="Alert"
+                    sortBy={listState.sortBy}
+                    sortDir={listState.sortDir}
+                    onSort={listState.handleSort}
+                    filterValue={listState.filters.definition_name}
+                    onFilterChange={(v) =>
+                      listState.setFilter("definition_name", v)
+                    }
+                  />
+                  <FilterableSortHead
+                    col="app_name"
+                    label="App"
+                    sortBy={listState.sortBy}
+                    sortDir={listState.sortDir}
+                    onSort={listState.handleSort}
+                    filterValue={listState.filters.app_name}
+                    onFilterChange={(v) => listState.setFilter("app_name", v)}
+                  />
+                  <FilterableSortHead
+                    col="device_name"
+                    label="Device"
+                    sortBy={listState.sortBy}
+                    sortDir={listState.sortDir}
+                    onSort={listState.handleSort}
+                    filterValue={listState.filters.device_name}
+                    onFilterChange={(v) =>
+                      listState.setFilter("device_name", v)
+                    }
+                  />
+                  <FilterableSortHead
+                    col="entity_key"
+                    label="Entity"
+                    sortBy={listState.sortBy}
+                    sortDir={listState.sortDir}
+                    onSort={listState.handleSort}
+                    filterValue={listState.filters.entity_key}
+                    onFilterChange={(v) => listState.setFilter("entity_key", v)}
+                  />
+                  <FilterableSortHead
+                    col="current_value"
+                    label="Value"
+                    sortBy={listState.sortBy}
+                    sortDir={listState.sortDir}
+                    onSort={listState.handleSort}
+                    filterable={false}
+                  />
+                  <FilterableSortHead
+                    col="fire_count"
+                    label="Fires"
+                    sortBy={listState.sortBy}
+                    sortDir={listState.sortDir}
+                    onSort={listState.handleSort}
+                    filterable={false}
+                  />
+                  <FilterableSortHead
+                    col="started_firing_at"
+                    label="Since"
+                    sortBy={listState.sortBy}
+                    sortDir={listState.sortDir}
+                    onSort={listState.handleSort}
+                    filterable={false}
+                  />
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {alerts.length === 0 ? (
+                  <TableRow>
+                    <TableCell
+                      colSpan={7}
+                      className="text-center text-sm text-zinc-500 py-8"
+                    >
+                      No matches for current filters
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  alerts.map((alert) => (
+                    <TableRow key={alert.id} className="bg-red-500/5">
+                      <TableCell className="font-medium text-zinc-100">
+                        {alert.definition_name ?? alert.definition_id}
+                      </TableCell>
+                      <TableCell className="text-zinc-400">
+                        {alert.app_name ?? ""}
+                      </TableCell>
+                      <TableCell className="text-zinc-300">
+                        {alert.device_id ? (
+                          <Link
+                            to={`/devices/${alert.device_id}`}
+                            className="text-brand-400 hover:text-brand-300 hover:underline"
+                          >
+                            {alert.device_name ?? alert.device_id}
+                          </Link>
+                        ) : (
+                          (alert.device_name ?? "—")
+                        )}
+                      </TableCell>
+                      <TableCell className="text-zinc-400 text-xs font-mono">
+                        {alert.entity_labels?.if_name ||
+                          alert.entity_labels?.component ||
+                          alert.entity_key ||
+                          "—"}
+                      </TableCell>
+                      <TableCell className="text-zinc-300">
+                        {alert.current_value != null
+                          ? Number(alert.current_value).toFixed(1)
+                          : "—"}
+                      </TableCell>
+                      <TableCell className="text-zinc-400">
+                        {alert.fire_count}
+                      </TableCell>
+                      <TableCell className="text-zinc-500">
+                        {alert.started_firing_at
+                          ? timeAgo(alert.started_firing_at)
+                          : "—"}
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+            <PaginationBar
+              page={listState.page}
+              pageSize={listState.pageSize}
+              total={meta.total}
+              count={meta.count}
+              onPageChange={listState.setPage}
+              scrollMode={listState.scrollMode}
+              sentinelRef={listState.sentinelRef}
+              isFetching={isFetching}
+              onLoadMore={listState.loadMore}
+            />
+          </>
         )}
       </CardContent>
     </Card>
@@ -321,9 +452,24 @@ function AlertLogTab({
                       listState.setFilter("device_name", v)
                     }
                   />
-                  <TableHead>Entity</TableHead>
+                  <FilterableSortHead
+                    col="entity_key"
+                    label="Entity"
+                    sortBy={listState.sortBy}
+                    sortDir={listState.sortDir}
+                    onSort={listState.handleSort}
+                    filterValue={listState.filters.entity_key}
+                    onFilterChange={(v) => listState.setFilter("entity_key", v)}
+                  />
                   <TableHead className="w-24">Value</TableHead>
-                  <TableHead className="w-20">Fires</TableHead>
+                  <FilterableSortHead
+                    col="fire_count"
+                    label="Fires"
+                    sortBy={listState.sortBy}
+                    sortDir={listState.sortDir}
+                    onSort={listState.handleSort}
+                    filterable={false}
+                  />
                   <FilterableSortHead
                     col="message"
                     label="Message"
@@ -379,7 +525,16 @@ function AlertLogTab({
                           {entry.definition_name}
                         </TableCell>
                         <TableCell className="text-zinc-300">
-                          {entry.device_name}
+                          {entry.device_id ? (
+                            <Link
+                              to={`/devices/${entry.device_id}`}
+                              className="text-brand-400 hover:text-brand-300 hover:underline"
+                            >
+                              {entry.device_name || entry.device_id}
+                            </Link>
+                          ) : (
+                            entry.device_name || "—"
+                          )}
                         </TableCell>
                         <TableCell className="text-zinc-400 text-xs font-mono">
                           {labels.if_name ||

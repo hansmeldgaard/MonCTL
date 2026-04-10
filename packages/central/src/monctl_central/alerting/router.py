@@ -381,15 +381,19 @@ async def list_alert_instances(
     offset: int = Query(default=0, ge=0),
     definition_name: str | None = Query(default=None),
     app_name: str | None = Query(default=None),
+    device_name: str | None = Query(default=None),
     entity_key: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_permission("alert", "view")),
 ):
     """List alert instances with optional filters, sort, and pagination."""
+    from monctl_central.storage.models import Device
+
     stmt = (
         select(AlertEntity)
         .join(AlertDefinition, AlertEntity.definition_id == AlertDefinition.id)
         .join(App, AlertDefinition.app_id == App.id)
+        .outerjoin(Device, AlertEntity.device_id == Device.id)
     )
     if state:
         stmt = stmt.where(AlertEntity.state == state)
@@ -401,6 +405,8 @@ async def list_alert_instances(
         stmt = stmt.where(AlertDefinition.name.ilike(f"%{definition_name}%"))
     if app_name:
         stmt = stmt.where(App.name.ilike(f"%{app_name}%"))
+    if device_name:
+        stmt = stmt.where(Device.name.ilike(f"%{device_name}%"))
     if entity_key:
         stmt = stmt.where(AlertEntity.entity_key.ilike(f"%{entity_key}%"))
 
@@ -413,6 +419,7 @@ async def list_alert_instances(
         "state": AlertEntity.state,
         "definition_name": AlertDefinition.name,
         "app_name": App.name,
+        "device_name": Device.name,
         "entity_key": AlertEntity.entity_key,
         "current_value": AlertEntity.current_value,
         "fire_count": AlertEntity.fire_count,
@@ -659,6 +666,7 @@ async def query_alert_log(
     device_id: str | None = Query(default=None),
     action: str | None = Query(default=None),
     definition_name: str | None = Query(default=None),
+    device_name: str | None = Query(default=None),
     message: str | None = Query(default=None),
     from_ts: str | None = Query(default=None, alias="from"),
     to_ts: str | None = Query(default=None, alias="to"),
@@ -677,6 +685,7 @@ async def query_alert_log(
         device_id=device_id,
         action=action,
         definition_name=definition_name,
+        device_name=device_name,
         message=message,
         tenant_id=tenant_id,
         from_ts=from_ts,
@@ -692,6 +701,7 @@ async def query_alert_log(
         device_id=device_id,
         action=action,
         definition_name=definition_name,
+        device_name=device_name,
         message=message,
         tenant_id=tenant_id,
         from_ts=from_ts,
