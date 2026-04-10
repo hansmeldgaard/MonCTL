@@ -71,6 +71,8 @@ class SchedulerRunner:
                 await self._evaluate_alerts()
                 # Event policy evaluation (runs after alerts)
                 await self._evaluate_event_policies()
+                # Incident engine (phase 1 shadow — runs after event policies)
+                await self._evaluate_incidents()
                 # Cron automation evaluation (runs after events)
                 await self._evaluate_cron_automations()
                 # Rollup + cleanup (checked every cycle, runs based on time)
@@ -81,6 +83,9 @@ class SchedulerRunner:
                 # Orphaned active_events cleanup every 5 min (offset from sync)
                 if cycle % 10 == 1:
                     await self._cleanup_orphan_active_events()
+                # IncidentRule mirror sync every 5 min (offset from other housekeeping)
+                if cycle % 10 == 3:
+                    await self._sync_incident_rules()
                 # App cache TTL cleanup every 5 min (every 10th cycle, offset)
                 if cycle % 10 == 2:
                     await self._cleanup_app_cache()
@@ -576,6 +581,30 @@ class SchedulerRunner:
             await engine.evaluate_all()
         except Exception:
             logger.exception("event_policy_evaluation_error")
+
+    async def _evaluate_incidents(self) -> None:
+        """Phase 1 shadow IncidentEngine — see docs/event-policy-rework.md."""
+        try:
+            from monctl_central.incidents.engine import IncidentEngine
+
+            engine = IncidentEngine(
+                session_factory=self._session_factory,
+                ch_client=self._ch,
+            )
+            await engine.evaluate_all()
+        except Exception:
+            logger.exception("incident_engine_error")
+
+    async def _sync_incident_rules(self) -> None:
+        """Keep IncidentRule mirrors in sync with EventPolicy (phase 1 plumbing)."""
+        try:
+            from monctl_central.incidents.engine import (
+                sync_incident_rules_from_event_policies,
+            )
+
+            await sync_incident_rules_from_event_policies(self._session_factory)
+        except Exception:
+            logger.exception("incident_rules_sync_error")
 
     async def _evaluate_cron_automations(self) -> None:
         """Run cron automation evaluation if ClickHouse is available."""

@@ -90,6 +90,11 @@ class Settings(BaseSettings):
     admin_username: str = "admin"
     admin_password: str = ""  # Set via MONCTL_ADMIN_PASSWORD to seed admin on first boot
 
+    # IncidentEngine (phase 1 of the event policy rework — see
+    # docs/event-policy-rework.md). "off" = no-op, "shadow" = runs alongside
+    # the existing EventEngine and writes to PG incidents table only.
+    incident_engine: str = "shadow"
+
 
 settings = Settings()
 

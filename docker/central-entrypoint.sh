@@ -14,26 +14,6 @@ until pg_isready -h "$DB_HOST" -p "$DB_PORT" -U monctl -q 2>/dev/null; do
   sleep 2
 done
 
-# Create base schema (tables not covered by alembic migrations)
-echo "Ensuring base schema exists..."
-python -c "
-import os, sys
-db_url = os.environ.get('MONCTL_DATABASE_URL', '')
-sync_url = db_url.replace('+asyncpg', '').replace('postgresql+asyncpg', 'postgresql')
-if not sync_url:
-    sync_url = 'postgresql://monctl:monctl@127.0.0.1:5432/monctl'
-
-from sqlalchemy import create_engine
-from monctl_central.storage.models import Base
-engine = create_engine(sync_url)
-try:
-    Base.metadata.create_all(engine, checkfirst=True)
-except Exception as e:
-    print(f'Note: create_all skipped ({e.__class__.__name__}), migrations will handle it.')
-engine.dispose()
-print('Base schema ensured.')
-"
-
 # Advisory lock: only one instance runs migrations at a time
 echo "Running database migrations (with advisory lock)..."
 cd /app/alembic
@@ -50,11 +30,24 @@ conn = psycopg2.connect(sync_url)
 conn.autocommit = True
 cur = conn.cursor()
 
-# Stamp head if alembic_version table doesn't exist yet (fresh DB with create_all)
+# Stamp head if alembic_version table doesn't exist yet (fresh DB).
+# For a fresh DB we also need to create the initial schema — do it here,
+# gated on 'no alembic_version' so existing DBs never run create_all.
+# (create_all on existing DBs would race with migrations that add new
+# tables: create_all pre-creates them from models.py and alembic upgrade
+# then hits DuplicateTableError.)
 cur.execute(\"\"\"SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='alembic_version')\"\"\")
 has_alembic = cur.fetchone()[0]
 if not has_alembic:
-    print('Fresh database — stamping alembic head...')
+    print('Fresh database — creating base schema + stamping alembic head...')
+    from sqlalchemy import create_engine
+    from monctl_central.storage.models import Base
+    engine = create_engine(sync_url)
+    try:
+        Base.metadata.create_all(engine, checkfirst=True)
+    except Exception as e:
+        print(f'Note: create_all skipped ({e.__class__.__name__}), migrations will handle it.')
+    engine.dispose()
     subprocess.run(['alembic', 'stamp', 'head'], check=True)
     print('Stamped.')
     conn.close()
