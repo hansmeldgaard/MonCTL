@@ -1655,10 +1655,17 @@ function ConfigurationTab({ deviceId }: { deviceId: string }) {
     return apps;
   }, [configRows, assignments]);
 
-  // Auto-select first app
+  // Auto-select first app — must match the alphabetical sort used by the
+  // sidebar render below, otherwise the visible "top entry" won't be the
+  // one that gets highlighted (configApps is a Map in ClickHouse insertion
+  // order, which rarely matches display order).
   useEffect(() => {
     if (!selectedConfigApp && configApps.size > 0) {
-      setSelectedConfigApp([...configApps.keys()][0]);
+      const firstByDisplayOrder = [...configApps.entries()].sort(
+        ([, a], [, b]) =>
+          a.appName.toLowerCase().localeCompare(b.appName.toLowerCase()),
+      )[0][0];
+      setSelectedConfigApp(firstByDisplayOrder);
     }
   }, [configApps, selectedConfigApp]);
 
