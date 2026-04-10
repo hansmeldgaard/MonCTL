@@ -150,6 +150,12 @@ deploy_node() {
       ssh "$SSH_USER@$ip" "cd /opt/monctl/docker-stats && docker compose up -d --force-recreate" > /dev/null 2>&1
     fi
   else
+    # Collector: always push the compose file so compose-level changes
+    # (mem_limit, env, volumes…) actually reach the workers. Without this,
+    # `docker compose up -d` just restarts containers using whatever stale
+    # compose the worker had on disk.
+    scp -q docker/docker-compose.collector-prod.yml \
+      "$SSH_USER@$ip:/opt/monctl/collector/docker-compose.yml"
     ssh "$SSH_USER@$ip" "cd /opt/monctl/collector && docker compose up -d" > /dev/null 2>&1
   fi
 
