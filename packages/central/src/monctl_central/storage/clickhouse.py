@@ -509,6 +509,11 @@ SETTINGS index_granularity = 8192
 """
 
 _EVENTS_INSERT_COLUMNS = [
+    # id must be explicit — the event engine stores it in active_events so it
+    # can UPDATE the same row to cleared/acknowledged later. Without this, the
+    # CH row got a fresh generateUUIDv4() default and the id we tracked was
+    # never a real row id.
+    "id",
     "event_type", "definition_id", "definition_name",
     "policy_id", "policy_name",
     "collector_id", "device_id", "app_id", "assignment_id", "tenant_id",
