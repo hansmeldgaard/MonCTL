@@ -2,21 +2,25 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
+from typing import Optional
 
+import sqlalchemy as sa
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional
+from sqlalchemy.orm import selectinload
 
-import sqlalchemy as sa
 from monctl_central.dependencies import apply_tenant_filter, check_tenant_access, get_clickhouse, get_db, require_permission
 from monctl_central.storage.clickhouse import ClickHouseClient
-from sqlalchemy.orm import selectinload
 from monctl_central.storage.models import Credential, CollectorGroup, Device, DeviceType, InterfaceMetadata, LabelKey, Tenant, Collector
 from monctl_common.utils import utc_now
 from monctl_common.validators import validate_address, validate_labels, validate_metadata, validate_uuid
+
+logger = structlog.get_logger()
 
 router = APIRouter()
 
@@ -973,7 +977,7 @@ async def refresh_interface_metadata(
             result = await db.execute(
                 select(Collector.id).where(
                     Collector.group_id == device.collector_group_id,
-                    Collector.status == "APPROVED",
+                    Collector.status == "ACTIVE",
                 )
             )
             for cid in result.scalars().all():
@@ -1010,6 +1014,7 @@ async def poll_device_now(
     from monctl_central.ws.router import manager as ws_manager
     from monctl_central.storage.models import AppAssignment
     ws_notified = 0
+    poll_triggered = 0
     payload = {"assignment_id": body.assignment_id, "device_id": device_id}
 
     # Collect collector IDs to try
@@ -1025,22 +1030,34 @@ async def poll_device_now(
         result = await db.execute(
             select(Collector.id).where(
                 Collector.group_id == device.collector_group_id,
-                Collector.status == "APPROVED",
+                Collector.status == "ACTIVE",
             )
         )
         for cid in result.scalars().all():
             if cid not in collector_ids:
                 collector_ids.append(cid)
 
-    # Try sending to each — skip non-local connections (KeyError)
+    # Send to each collector via broadcast (reaches any central node)
     for cid in collector_ids:
         try:
-            await ws_manager.send_command(cid, "poll_device", payload, timeout=10)
+            resp = await ws_manager.broadcast_command(cid, "poll_device", payload, timeout=10)
             ws_notified += 1
-        except (KeyError, Exception):
-            pass
+            if resp.get("success"):
+                poll_triggered += 1
+            else:
+                logger.warning(
+                    "poll_device_rejected",
+                    collector_id=str(cid),
+                    error=resp.get("error", "unknown"),
+                )
+        except KeyError:
+            pass  # collector not connected on any central node
+        except asyncio.TimeoutError:
+            logger.warning("poll_device_timeout", collector_id=str(cid))
+        except Exception as exc:
+            logger.warning("poll_device_send_failed", collector_id=str(cid), error=str(exc))
 
-    return {"status": "success", "data": {"ws_notified": ws_notified}}
+    return {"status": "success", "data": {"ws_notified": ws_notified, "poll_triggered": poll_triggered}}
 
 
 # ── Interface Rules ─────────────────────────────────────────

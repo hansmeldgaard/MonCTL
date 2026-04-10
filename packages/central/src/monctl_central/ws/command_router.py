@@ -67,7 +67,7 @@ async def send_command(
 
     cid = uuid.UUID(collector_id)
     try:
-        result = await manager.send_command(
+        result = await manager.broadcast_command(
             cid, command_type, request.payload, timeout=request.timeout,
         )
         return {"status": "success", "data": result}

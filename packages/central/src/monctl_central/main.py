@@ -729,9 +729,24 @@ class SshConnector:
     except Exception:
         logger.warning("audit_buffer_start_failed", exc_info=True)
 
+    # ── WebSocket command listener (cross-node broadcast via Redis) ────────
+    ws_cmd_listener_task = None
+    try:
+        from monctl_central.ws.router import manager as ws_manager
+        ws_cmd_listener_task = await ws_manager.start_command_listener()
+    except Exception:
+        logger.warning("ws_cmd_listener_start_failed", exc_info=True)
+
     yield
 
     # Shutdown
+    if ws_cmd_listener_task:
+        ws_cmd_listener_task.cancel()
+        try:
+            await ws_cmd_listener_task
+        except asyncio.CancelledError:
+            pass
+
     if cert_sync_task:
         cert_sync_task.cancel()
         try:
