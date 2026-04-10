@@ -23,6 +23,8 @@ REQUEST_TIMEOUT_SECONDS = 60
 KEEPALIVE_INTERVAL_SECONDS = 30
 _REDIS_WS_PREFIX = "ws:conn:"
 _REDIS_WS_TTL = 60  # seconds — refreshed every keepalive ping
+_REDIS_CMD_CHANNEL = "ws:commands"
+_REDIS_CMD_RESPONSE_PREFIX = "ws:cmd:resp:"
 
 
 class CollectorConnection:
@@ -285,4 +287,113 @@ class ConnectionManager:
             return connections
         # Fallback to local-only if Redis unavailable
         return self.get_local_status()
+
+    # ── Cross-node command broadcast via Redis ───────────────────────────────
+
+    async def broadcast_command(
+        self,
+        collector_id: uuid.UUID,
+        msg_type: str,
+        payload: dict,
+        timeout: float = 10.0,
+    ) -> dict:
+        """Broadcast a command via Redis so any central node can route it.
+
+        1. Publish command to Redis channel
+        2. Wait for response via BLPOP on a per-request key
+        """
+        # Try local first (fast path)
+        conn = self._connections.get(collector_id)
+        if conn:
+            return await conn.send_request(msg_type, payload, timeout=timeout)
+
+        # Broadcast via Redis
+        r = await _get_redis()
+        if r is None:
+            raise KeyError(f"Redis unavailable, collector {collector_id} not connected locally")
+
+        request_id = str(uuid.uuid4())
+        response_key = f"{_REDIS_CMD_RESPONSE_PREFIX}{request_id}"
+
+        cmd = json.dumps({
+            "request_id": request_id,
+            "collector_id": str(collector_id),
+            "msg_type": msg_type,
+            "payload": payload,
+        })
+
+        await r.publish(_REDIS_CMD_CHANNEL, cmd)
+
+        # Wait for response from the node that has the connection
+        result = await r.blpop(response_key, timeout=int(timeout))
+        if result is None:
+            raise asyncio.TimeoutError(
+                f"No central node could route command to collector {collector_id}"
+            )
+
+        _, raw = result
+        return json.loads(raw)
+
+    async def start_command_listener(self) -> asyncio.Task:
+        """Subscribe to Redis command channel and route to local connections.
+
+        Each central node runs this listener. When a command arrives,
+        only the node with the local WebSocket connection handles it.
+        """
+        task = asyncio.create_task(self._command_listener_loop(), name="ws_cmd_listener")
+        logger.info("ws_command_listener_started")
+        return task
+
+    async def _command_listener_loop(self):
+        """Background loop: subscribe to Redis, handle commands for local collectors."""
+        while True:
+            try:
+                r = await _get_redis()
+                if r is None:
+                    await asyncio.sleep(5)
+                    continue
+
+                pubsub = r.pubsub()
+                await pubsub.subscribe(_REDIS_CMD_CHANNEL)
+
+                async for message in pubsub.listen():
+                    if message["type"] != "message":
+                        continue
+                    try:
+                        await self._handle_broadcast_command(json.loads(message["data"]))
+                    except Exception as exc:
+                        logger.warning("ws_broadcast_cmd_error", error=str(exc))
+
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("ws_cmd_listener_error", error=str(exc))
+                await asyncio.sleep(2)
+
+    async def _handle_broadcast_command(self, cmd: dict):
+        """Handle a broadcast command if we have the collector connected locally."""
+        collector_id = uuid.UUID(cmd["collector_id"])
+        conn = self._connections.get(collector_id)
+        if not conn:
+            return  # Not on this node — another node will handle it
+
+        logger.debug("ws_broadcast_handling", collector_id=str(collector_id), request_id=cmd["request_id"])
+
+        request_id = cmd["request_id"]
+        response_key = f"{_REDIS_CMD_RESPONSE_PREFIX}{request_id}"
+
+        try:
+            result = await conn.send_request(
+                cmd["msg_type"], cmd["payload"], timeout=REQUEST_TIMEOUT_SECONDS,
+            )
+            response = result.get("payload", result) if isinstance(result, dict) else result
+        except asyncio.TimeoutError:
+            response = {"success": False, "error": "Collector did not respond in time"}
+        except Exception as exc:
+            response = {"success": False, "error": str(exc)}
+
+        r = await _get_redis()
+        if r:
+            await r.lpush(response_key, json.dumps(response))
+            await r.expire(response_key, 30)  # cleanup after 30s
 

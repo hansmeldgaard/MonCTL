@@ -1502,15 +1502,13 @@ function ConfigurationTab({ deviceId }: { deviceId: string }) {
   const qc = useQueryClient();
 
   // Poll now visual state
-  const [pollStatus, setPollStatus] = useState<"idle" | "polling" | "done">(
-    "idle",
-  );
+  const [pollStatus, setPollStatus] = useState<
+    "idle" | "polling" | "done" | "error"
+  >("idle");
   const [pollRequestedAt, setPollRequestedAt] = useState<number | null>(null);
-  const {
-    data: configRows,
-    isLoading,
-    dataUpdatedAt,
-  } = useDeviceConfigData(deviceId);
+  const [pollError, setPollError] = useState<string | null>(null);
+  const latestExecutedAtBefore = useRef<string | null>(null);
+  const { data: configRows, isLoading } = useDeviceConfigData(deviceId);
 
   // Aggressively refetch while poll is pending
   useEffect(() => {
@@ -1528,14 +1526,22 @@ function ConfigurationTab({ deviceId }: { deviceId: string }) {
     return () => clearInterval(iv);
   }, [pollRequestedAt, deviceId, qc]);
 
-  // Detect when data actually refreshed after poll
+  // Detect when fresh data actually arrives after poll
   useEffect(() => {
-    if (pollRequestedAt && dataUpdatedAt > pollRequestedAt) {
+    if (!pollRequestedAt || !configRows?.length) return;
+    const latestNow = configRows.reduce(
+      (max: string, r: Record<string, unknown>) => {
+        const ea = String(r.executed_at ?? "");
+        return ea > max ? ea : max;
+      },
+      "",
+    );
+    if (latestNow && latestNow !== latestExecutedAtBefore.current) {
       setPollRequestedAt(null);
       setPollStatus("done");
       setTimeout(() => setPollStatus("idle"), 2500);
     }
-  }, [dataUpdatedAt, pollRequestedAt]);
+  }, [configRows, pollRequestedAt]);
 
   // Changelog — server-side filters + sort
   const [changelogPage, setChangelogPage] = useState(0);
@@ -1809,12 +1815,25 @@ function ConfigurationTab({ deviceId }: { deviceId: string }) {
                           if (!selectedAssignment) return null;
                           const isPolling = pollStatus === "polling";
                           const isDone = pollStatus === "done";
+                          const isError = pollStatus === "error";
                           return (
                             <button
                               onClick={() => {
                                 if (isPolling) return;
-                                const now = Date.now();
-                                setPollRequestedAt(now);
+                                setPollError(null);
+                                // Snapshot current latest executed_at before polling
+                                latestExecutedAtBefore.current =
+                                  configRows?.reduce(
+                                    (
+                                      max: string,
+                                      r: Record<string, unknown>,
+                                    ) => {
+                                      const ea = String(r.executed_at ?? "");
+                                      return ea > max ? ea : max;
+                                    },
+                                    "",
+                                  ) ?? null;
+                                setPollRequestedAt(Date.now());
                                 setPollStatus("polling");
                                 pollNow.mutate(
                                   {
@@ -1822,6 +1841,19 @@ function ConfigurationTab({ deviceId }: { deviceId: string }) {
                                     assignmentId: selectedAssignment.id,
                                   },
                                   {
+                                    onSuccess: (res: any) => {
+                                      if (!res?.data?.poll_triggered) {
+                                        setPollStatus("error");
+                                        setPollRequestedAt(null);
+                                        setPollError(
+                                          "No collector could trigger the poll",
+                                        );
+                                        setTimeout(() => {
+                                          setPollStatus("idle");
+                                          setPollError(null);
+                                        }, 4000);
+                                      }
+                                    },
                                     onError: () => {
                                       setPollStatus("idle");
                                       setPollRequestedAt(null);
@@ -1831,21 +1863,29 @@ function ConfigurationTab({ deviceId }: { deviceId: string }) {
                               }}
                               disabled={isPolling}
                               title={
-                                isPolling
-                                  ? "Polling..."
-                                  : isDone
-                                    ? "Done!"
-                                    : "Poll now"
+                                isError
+                                  ? (pollError ?? "Failed")
+                                  : isPolling
+                                    ? "Polling..."
+                                    : isDone
+                                      ? "Done!"
+                                      : "Poll now"
                               }
                               className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded transition-colors disabled:opacity-60 ${
-                                isDone
-                                  ? "text-emerald-400 bg-emerald-900/30"
-                                  : isPolling
-                                    ? "text-brand-400 bg-brand-900/30"
-                                    : "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700/50"
+                                isError
+                                  ? "text-red-400 bg-red-900/30"
+                                  : isDone
+                                    ? "text-emerald-400 bg-emerald-900/30"
+                                    : isPolling
+                                      ? "text-brand-400 bg-brand-900/30"
+                                      : "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700/50"
                               }`}
                             >
-                              {isDone ? (
+                              {isError ? (
+                                <>
+                                  <AlertTriangle className="h-3 w-3" /> Failed
+                                </>
+                              ) : isDone ? (
                                 <>
                                   <Check className="h-3 w-3" /> Done
                                 </>
