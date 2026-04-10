@@ -2,6 +2,8 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Plus, Trash2, LayoutDashboard, Loader2 } from "lucide-react";
 import { usePermissions } from "@/hooks/usePermissions.ts";
+import { useTimezone } from "@/hooks/useTimezone.ts";
+import { formatDate } from "@/lib/utils.ts";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import {
@@ -20,6 +22,7 @@ import {
 
 export function CustomDashboardsPage() {
   const { canCreate, canDelete } = usePermissions();
+  const tz = useTimezone();
   const { data: dashboards, isLoading } = useAnalyticsDashboards();
   const createMut = useCreateAnalyticsDashboard();
   const deleteMut = useDeleteAnalyticsDashboard();
@@ -49,11 +52,6 @@ export function CustomDashboardsPage() {
   function handleDelete(id: string, name: string) {
     if (!confirm(`Delete dashboard "${name}"?`)) return;
     deleteMut.mutate(id);
-  }
-
-  function formatDate(iso: string | null) {
-    if (!iso) return "\u2014";
-    return new Date(iso).toLocaleString();
   }
 
   return (
@@ -173,7 +171,7 @@ export function CustomDashboardsPage() {
                     {d.widget_count}
                   </TableCell>
                   <TableCell className="text-xs text-zinc-500">
-                    {formatDate(d.updated_at)}
+                    {formatDate(d.updated_at, tz)}
                   </TableCell>
                   {canDelete("dashboard") && (
                     <TableCell>
