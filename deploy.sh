@@ -5,6 +5,7 @@ set -euo pipefail
 # Usage:
 #   ./deploy.sh central          # Build + deploy central to all 4 nodes
 #   ./deploy.sh collector        # Build + deploy collector to all 4 workers
+#   ./deploy.sh docker-stats     # Build + deploy docker-stats sidecar to all 8 nodes
 #   ./deploy.sh central --no-build   # Deploy only (skip build, use existing image)
 #   ./deploy.sh central 41 42       # Deploy to specific nodes only (last octet)
 
@@ -26,12 +27,13 @@ central_compose_dir() {
 TARGET="${1:-}"
 shift || true
 
-if [[ -z "$TARGET" || ( "$TARGET" != "central" && "$TARGET" != "collector" ) ]]; then
-  echo "Usage: $0 <central|collector> [--no-build] [node-suffixes...]"
+if [[ -z "$TARGET" || ( "$TARGET" != "central" && "$TARGET" != "collector" && "$TARGET" != "docker-stats" ) ]]; then
+  echo "Usage: $0 <central|collector|docker-stats> [--no-build] [node-suffixes...]"
   echo ""
   echo "Examples:"
   echo "  $0 central              # Build + deploy to all central nodes"
   echo "  $0 collector            # Build + deploy to all worker nodes"
+  echo "  $0 docker-stats         # Build + deploy sidecar to all 8 nodes (4 central + 4 worker)"
   echo "  $0 central --no-build   # Skip build, deploy existing image"
   echo "  $0 central 41 42        # Deploy to central1 + central2 only"
   exit 1
@@ -52,6 +54,11 @@ if [[ "$TARGET" == "central" ]]; then
   IMAGE="monctl-central:latest"
   DOCKERFILE="docker/Dockerfile.central"
   ALL_IPS=("${CENTRAL_IPS[@]}")
+elif [[ "$TARGET" == "docker-stats" ]]; then
+  IMAGE="monctl-docker-stats:latest"
+  DOCKERFILE="docker/Dockerfile.docker-stats"
+  # docker-stats runs on ALL 8 nodes (4 central + 4 worker)
+  ALL_IPS=("${CENTRAL_IPS[@]}" "${WORKER_IPS[@]}")
 else
   IMAGE="monctl-collector:latest"
   DOCKERFILE="docker/Dockerfile.collector-v2"
@@ -121,6 +128,27 @@ deploy_node() {
     local compose_dir
     compose_dir=$(central_compose_dir "$ip")
     ssh "$SSH_USER@$ip" "cd $compose_dir && docker compose up -d central" > /dev/null 2>&1
+  elif [[ "$target" == "docker-stats" ]]; then
+    # docker-stats lives in different compose projects on different node types:
+    #   central1-4: /opt/monctl/docker-stats/ (standalone compose)
+    #   worker1-4:  /opt/monctl/collector/ (inline in collector-prod compose)
+    # We transfer the updated compose file too because this deploy introduces
+    # compose-level changes (pid: host, privileged: true). --force-recreate
+    # makes docker compose actually pick them up.
+    local is_worker=0
+    for w in "${WORKER_IPS[@]}"; do
+      if [[ "$w" == "$ip" ]]; then is_worker=1; break; fi
+    done
+    if [[ "$is_worker" == "1" ]]; then
+      scp -q docker/docker-compose.collector-prod.yml \
+        "$SSH_USER@$ip:/opt/monctl/collector/docker-compose.yml"
+      ssh "$SSH_USER@$ip" "cd /opt/monctl/collector && docker compose up -d --force-recreate docker-stats" > /dev/null 2>&1
+    else
+      ssh "$SSH_USER@$ip" "mkdir -p /opt/monctl/docker-stats"
+      scp -q docker/docker-compose.docker-stats.yml \
+        "$SSH_USER@$ip:/opt/monctl/docker-stats/docker-compose.yml"
+      ssh "$SSH_USER@$ip" "cd /opt/monctl/docker-stats && docker compose up -d --force-recreate" > /dev/null 2>&1
+    fi
   else
     ssh "$SSH_USER@$ip" "cd /opt/monctl/collector && docker compose up -d" > /dev/null 2>&1
   fi

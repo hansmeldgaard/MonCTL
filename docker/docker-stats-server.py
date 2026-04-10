@@ -273,6 +273,80 @@ def _background_collector():
         time.sleep(COLLECT_INTERVAL)
 
 
+# ── Host namespace execution ────────────────────────────────────────────────
+#
+# Running apt/dpkg via `chroot /host_root` only changes the filesystem view —
+# the process still runs in the container's namespaces and with the container's
+# capabilities, so /dev, /proc, /sys, /run, /var/run (tmpfs), DBus and the
+# kernel AppArmor/device-mapper interfaces are all either absent or forbidden.
+# That breaks AppArmor profile reloads, initramfs regeneration, and DBus-based
+# postinst scripts.
+#
+# `nsenter -t 1 -a` enters the host init's namespaces so commands behave as if
+# executed directly on the host. Requires the container to run with
+# `pid: host` + `privileged: true` (see docker-compose.docker-stats.yml and
+# docker-compose.collector-prod.yml).
+
+def _host_exec(
+    script: str,
+    timeout: int = 120,
+    check: bool = False,
+) -> subprocess.CompletedProcess:
+    """Run a shell script in the host's root namespace via nsenter.
+
+    Prefer this over `chroot /host_root` for any operation that touches:
+    runtime state (/run, /var/run), the kernel (AppArmor, device-mapper),
+    DBus, systemd, or triggers initramfs/apparmor reloads.
+    """
+    return subprocess.run(
+        [
+            "nsenter",
+            "--target", "1",
+            "--mount", "--uts", "--ipc", "--net", "--pid",
+            "--",
+            "bash", "-c", script,
+        ],
+        capture_output=True, text=True, timeout=timeout, check=check,
+    )
+
+
+# ── Post-install output scanner ────────────────────────────────────────────
+#
+# apt/dpkg may exit 0 even when postinst scripts or triggers fail (e.g.
+# apparmor_parser errors are logged but don't propagate, initramfs-tools
+# triggers print "Command failed." but still return success at the top level).
+# Scan the output for known failure markers so the upgrade job can surface
+# them to the operator instead of silently reporting success.
+
+POSTINST_FAILURE_MARKERS = (
+    "apparmor_parser: ",  # "Access denied", "Unable to replace", etc.
+    "Error: At least one profile failed to load",
+    "Failed to connect to bus",
+    "/dev/mapper/control: open failed",
+    "Failure to communicate with kernel device-mapper driver",
+    "dpkg: error processing",
+    "Command failed.",
+    "update-initramfs: failed",
+    "GDBus.Error:",
+)
+
+
+def _scan_postinst_failures(output: str) -> list[str]:
+    """Return a deduplicated list of warning lines from an apt/dpkg output."""
+    seen: set[str] = set()
+    warnings: list[str] = []
+    for line in output.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped in seen:
+            continue
+        for marker in POSTINST_FAILURE_MARKERS:
+            if marker in stripped:
+                seen.add(stripped)
+                warnings.append(stripped)
+                break
+    return warnings
+
+
 class StatsHandler(BaseHTTPRequestHandler):
     def _json_response(self, code: int, data):
         try:
@@ -458,10 +532,9 @@ class StatsHandler(BaseHTTPRequestHandler):
                 params = _parse_qs_single(self.path)
                 proxy_url = params.get("proxy_url", "")
                 proxy_env = f"http_proxy={proxy_url} https_proxy={proxy_url} " if proxy_url else ""
-                result = subprocess.run(
-                    ["chroot", "/host_root", "bash", "-c",
-                     f"{proxy_env}apt-get update -qq 2>/dev/null && apt list --upgradable 2>/dev/null"],
-                    capture_output=True, text=True, timeout=120,
+                result = _host_exec(
+                    f"{proxy_env}apt-get update -qq 2>/dev/null && apt list --upgradable 2>/dev/null",
+                    timeout=120,
                 )
                 updates = []
                 for line in result.stdout.strip().splitlines():
@@ -504,23 +577,24 @@ class StatsHandler(BaseHTTPRequestHandler):
             self._json_response(200, {"configured": configured})
 
         elif path == "/os/reboot-required":
-            # /var/run is a tmpfs not visible in /host_root bind mount.
-            # Use chroot to check the actual host filesystem.
+            # /run (and its /var/run symlink) is a tmpfs — NOT visible in the
+            # /host_root bind mount, so chroot /host_root always reports
+            # "not found". Enter the host's mount namespace via nsenter
+            # instead, where /run is the real runtime tmpfs.
             required = False
-            packages = []
+            packages: list[str] = []
             try:
-                result = subprocess.run(
-                    ["chroot", "/host_root", "test", "-f", "/var/run/reboot-required"],
-                    capture_output=True, timeout=5,
+                result = _host_exec(
+                    "if [ -f /run/reboot-required ]; then "
+                    "echo REQUIRED; "
+                    "cat /run/reboot-required.pkgs 2>/dev/null || true; "
+                    "fi",
+                    timeout=5,
                 )
-                required = result.returncode == 0
-                if required:
-                    pkg_result = subprocess.run(
-                        ["chroot", "/host_root", "cat", "/var/run/reboot-required.pkgs"],
-                        capture_output=True, text=True, timeout=5,
-                    )
-                    if pkg_result.returncode == 0:
-                        packages = [l.strip() for l in pkg_result.stdout.splitlines() if l.strip()]
+                lines = [l.strip() for l in result.stdout.splitlines() if l.strip()]
+                if lines and lines[0] == "REQUIRED":
+                    required = True
+                    packages = lines[1:]
             except Exception:
                 pass
             self._json_response(200, {
@@ -530,10 +604,9 @@ class StatsHandler(BaseHTTPRequestHandler):
 
         elif path == "/os/installed":
             try:
-                result = subprocess.run(
-                    ["chroot", "/host_root", "dpkg-query", "-W",
-                     "-f", "${Package}\t${Version}\t${Architecture}\t${Status}\n"],
-                    capture_output=True, text=True, timeout=30,
+                result = _host_exec(
+                    "dpkg-query -W -f '${Package}\t${Version}\t${Architecture}\t${Status}\n'",
+                    timeout=30,
                 )
                 packages = []
                 for line in result.stdout.strip().splitlines():
@@ -604,18 +677,14 @@ rm -rf /opt/monctl/os-packages
 apt-get update 2>&1
 """
             try:
-                result = subprocess.run(
-                    ["chroot", "/host_root", "bash", "-c", script],
-                    capture_output=True, text=True, timeout=120,
-                )
+                result = _host_exec(script, timeout=120)
                 # If apt-get update failed, restore the backup
                 if result.returncode != 0:
-                    subprocess.run(
-                        ["chroot", "/host_root", "bash", "-c",
-                         "if [ -f /etc/apt/sources.list.monctl.bak ]; then "
-                         "cp /etc/apt/sources.list.monctl.bak /etc/apt/sources.list; fi; "
-                         "rm -f /etc/apt/sources.list.d/monctl.list /etc/apt/apt.conf.d/99-monctl"],
-                        capture_output=True, text=True, timeout=10,
+                    _host_exec(
+                        "if [ -f /etc/apt/sources.list.monctl.bak ]; then "
+                        "cp /etc/apt/sources.list.monctl.bak /etc/apt/sources.list; fi; "
+                        "rm -f /etc/apt/sources.list.d/monctl.list /etc/apt/apt.conf.d/99-monctl",
+                        timeout=10,
                     )
                 self._json_response(200, {
                     "output": result.stdout[-2000:],
@@ -640,33 +709,38 @@ apt-get update 2>&1
             # Try all packages at once first (fastest path)
             pkg_str = " ".join(packages)
             try:
-                result = subprocess.run(
-                    ["chroot", "/host_root", "bash", "-c",
-                     f"DEBIAN_FRONTEND=noninteractive apt-get install -y {pkg_str} 2>&1"],
-                    capture_output=True, text=True, timeout=600,
+                result = _host_exec(
+                    f"DEBIAN_FRONTEND=noninteractive apt-get install -y {pkg_str} 2>&1",
+                    timeout=600,
                 )
                 if result.returncode == 0:
+                    # apt may return 0 even when postinst scripts / triggers
+                    # failed — scan stdout for known failure markers so they
+                    # surface as warnings instead of silent success.
+                    warnings = _scan_postinst_failures(result.stdout)
                     self._json_response(200, {
                         "output": result.stdout,
                         "returncode": 0,
                         "success": True,
+                        "warnings": warnings,
                     })
                     return
             except subprocess.TimeoutExpired:
                 pass
 
             # Batch failed — fall back to installing one by one
-            outputs = []
-            installed = []
-            failed = []
-            skipped = []
+            outputs: list[str] = []
+            installed: list[str] = []
+            failed: list[str] = []
+            skipped: list[str] = []
+            all_output_chunks: list[str] = []
             for pkg in packages:
                 try:
-                    r = subprocess.run(
-                        ["chroot", "/host_root", "bash", "-c",
-                         f"DEBIAN_FRONTEND=noninteractive apt-get install -y {pkg} 2>&1"],
-                        capture_output=True, text=True, timeout=300,
+                    r = _host_exec(
+                        f"DEBIAN_FRONTEND=noninteractive apt-get install -y {pkg} 2>&1",
+                        timeout=300,
                     )
+                    all_output_chunks.append(r.stdout)
                     if r.returncode == 0:
                         # Check if it was actually upgraded or already newest
                         if "is already the newest version" in r.stdout:
@@ -691,6 +765,10 @@ apt-get update 2>&1
                 summary += f"Failed: {', '.join(failed)}\n"
             summary += "\n".join(outputs)
 
+            # Scan per-package output for postinst failures (works even when
+            # the individual apt exit code was 0)
+            warnings = _scan_postinst_failures("\n".join(all_output_chunks))
+
             # Consider success if at least some packages were installed
             # and no critical failures (or all failures are just conflicts)
             self._json_response(200, {
@@ -700,15 +778,23 @@ apt-get update 2>&1
                 "installed": installed,
                 "skipped": skipped,
                 "failed": failed,
+                "warnings": warnings,
             })
 
         elif path == "/os/reboot":
             delay = payload.get("delay_seconds", 3)
             delay = max(1, min(int(delay), 60))
             try:
+                # Fire-and-forget via nsenter into host namespaces so
+                # `shutdown` talks to the real systemd on the host.
                 subprocess.Popen(
-                    ["chroot", "/host_root", "bash", "-c",
-                     f"sleep {delay} && shutdown -r now"],
+                    [
+                        "nsenter",
+                        "--target", "1",
+                        "--mount", "--uts", "--ipc", "--net", "--pid",
+                        "--",
+                        "bash", "-c", f"sleep {delay} && shutdown -r now",
+                    ],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 )
                 self._json_response(200, {
