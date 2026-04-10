@@ -56,17 +56,16 @@ function chooseBucketMs(spanMs: number): number {
 
 /**
  * Format a timestamp for the X axis label based on time span.
+ *
+ * The label must be unique per bucket — Recharts treats the categorical X-axis
+ * `dataKey="time"` as a grouping key, so buckets that share a label collapse
+ * into a single point and hover tooltips snap to the coarsest unique category.
+ * Since `chooseBucketMs` never returns a bucket larger than 1 hour, any span
+ * longer than 1 day must include HH:MM to keep hourly buckets distinct.
  */
 function formatAxisLabel(ts: number, spanMs: number, timezone = "UTC"): string {
   const d = new Date(ts);
   const DAY = 86400_000;
-  if (spanMs > 7 * DAY) {
-    return d.toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      timeZone: timezone,
-    });
-  }
   if (spanMs > 1 * DAY) {
     return (
       d.toLocaleDateString("en-US", {
