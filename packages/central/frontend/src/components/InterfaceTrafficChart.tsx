@@ -619,8 +619,11 @@ function StackedInterfaceChart({
                 fontSize: "0.7rem",
               }}
               labelFormatter={(ts) => formatChartDateTime(Number(ts), timezone)}
-              formatter={(value: number | undefined) => [
-                formatTooltipValue(value ?? 0, unit),
+              formatter={(value) => [
+                formatTooltipValue(
+                  typeof value === "number" ? value : Number(value) || 0,
+                  unit,
+                ),
               ]}
               isAnimationActive={false}
             />
@@ -739,8 +742,11 @@ function OverlaidInterfaceChart({
                 fontSize: "0.75rem",
               }}
               labelFormatter={(ts) => formatChartDateTime(Number(ts), timezone)}
-              formatter={(value: number | undefined) => [
-                formatTooltipValue(value ?? 0, unit),
+              formatter={(value) => [
+                formatTooltipValue(
+                  typeof value === "number" ? value : Number(value) || 0,
+                  unit,
+                ),
               ]}
               isAnimationActive={false}
             />
