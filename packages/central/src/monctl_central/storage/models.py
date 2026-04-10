@@ -1025,6 +1025,114 @@ class ActiveEvent(Base):
     policy: Mapped["EventPolicy"] = relationship()
 
 
+class IncidentRule(Base):
+    """Phase 1 of the event policy rework — mirrors EventPolicy today, will
+    grow correlation / ladders / dependencies / scope filters in phase 2+.
+    See docs/event-policy-rework.md.
+    """
+    __tablename__ = "incident_rules"
+    __table_args__ = (
+        UniqueConstraint("source_policy_id", name="uq_incident_rule_source_policy"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    definition_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("alert_definitions.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    mode: Mapped[str] = mapped_column(String(20), nullable=False, server_default="consecutive")
+    fire_count_threshold: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    window_size: Mapped[int] = mapped_column(Integer, nullable=False, server_default="5")
+    severity: Mapped[str] = mapped_column(String(20), nullable=False, server_default="warning")
+    message_template: Mapped[str | None] = mapped_column(Text, nullable=True)
+    auto_clear_on_resolve: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="true"
+    )
+
+    # Phase 2 columns — reserved, unused by the phase-1 engine.
+    scope_filter: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    severity_ladder: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    correlation_group: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    depends_on: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    flap_guard_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    # "mirror" = auto-synced from an EventPolicy; "native" = operator-created (phase 2+)
+    source: Mapped[str] = mapped_column(String(20), nullable=False, server_default="mirror")
+    source_policy_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("event_policies.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+    definition: Mapped["AlertDefinition"] = relationship()
+    source_policy: Mapped["EventPolicy | None"] = relationship()
+
+
+class Incident(Base):
+    """Persistent incident object tracked by the IncidentEngine (phase 1 shadow).
+
+    Lifecycle in phase 1: open → cleared. Phase 2 adds acknowledged, suppressed.
+    """
+    __tablename__ = "incidents"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    rule_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("incident_rules.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    entity_key: Mapped[str] = mapped_column(String(500), nullable=False)
+    assignment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    device_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True, index=True
+    )
+    state: Mapped[str] = mapped_column(String(20), nullable=False, server_default="open")
+    severity: Mapped[str] = mapped_column(String(20), nullable=False, server_default="warning")
+    message: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    labels: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    fire_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    opened_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    last_fired_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    cleared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cleared_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    # Phase 2 columns
+    correlation_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    parent_incident_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("incidents.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    severity_reached_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+    rule: Mapped["IncidentRule"] = relationship()
+
+
 class AssignmentConnectorBinding(Base):
     """Binds a connector (with optional credential) to an app assignment."""
     __tablename__ = "assignment_connector_bindings"
