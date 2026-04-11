@@ -28,6 +28,13 @@ import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { Select } from "@/components/ui/select.tsx";
 import {
+  Tabs,
+  TabsList,
+  TabTrigger,
+  TabsContent,
+} from "@/components/ui/tabs.tsx";
+import { LadderEditor, validateLadder } from "@/components/LadderEditor.tsx";
+import {
   useAlertRules,
   useCreateIncidentRule,
   useDeleteIncidentRule,
@@ -39,7 +46,10 @@ import { useListState } from "@/hooks/useListState.ts";
 import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
 import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
-import type { IncidentRule } from "@/types/api.ts";
+import type {
+  IncidentRule,
+  IncidentRuleSeverityLadderStep,
+} from "@/types/api.ts";
 
 const severityVariant = (severity: string) => {
   switch (severity?.toLowerCase()) {
@@ -368,6 +378,7 @@ function IncidentRuleDialog({
   const createMut = useCreateIncidentRule();
   const updateMut = useUpdateIncidentRule();
 
+  const [activeTab, setActiveTab] = useState<"settings" | "ladder">("settings");
   const [name, setName] = useState(rule?.name ?? "");
   const [description, setDescription] = useState(rule?.description ?? "");
   const [definitionId, setDefinitionId] = useState(rule?.definition_id ?? "");
@@ -384,38 +395,61 @@ function IncidentRuleDialog({
     rule?.auto_clear_on_resolve ?? true,
   );
   const [enabled, setEnabled] = useState(rule?.enabled ?? true);
+  const [ladder, setLadder] = useState<IncidentRuleSeverityLadderStep[] | null>(
+    rule?.severity_ladder ?? null,
+  );
   const [error, setError] = useState<string | null>(null);
 
   const isPending = createMut.isPending || updateMut.isPending;
+  const baseFieldsDisabled = isEdit && isMirror;
+
+  const ladderValidation = validateLadder(ladder);
+  const ladderChanged =
+    JSON.stringify(ladder ?? null) !==
+    JSON.stringify(rule?.severity_ladder ?? null);
+  // On mirror rules, the ladder is the only thing editable from this
+  // dialog today (3b). 3c/3d will add scope/deps/flap the same way.
+  // Save button is only shown when there is actually something to save.
+  const mirrorHasSavableChanges = isMirror && ladderChanged;
 
   const handleSubmit = async () => {
     setError(null);
-    if (!name || !definitionId) return;
+    if (!ladderValidation.ok) {
+      setError(ladderValidation.error);
+      return;
+    }
     try {
       if (isEdit) {
-        // On mirror rules only the phase-2 feature fields are editable —
-        // this dialog's base-fields form is disabled in that case, so we
-        // don't send base fields. Phase 3b/3c/3d will add the feature
-        // field editors on top of this dialog.
         if (isMirror) {
-          // Nothing base-level to update from this 3a dialog on a mirror
-          // rule. Fall through gracefully — phase-2 editors come later.
-          onClose();
-          return;
+          // Mirror rules: only phase-2 feature fields are allowed by the
+          // API. Build a ladder-only PATCH body. (Phase 3c/3d will grow
+          // this to include scope/deps/flap fields.)
+          if (!ladderChanged) {
+            onClose();
+            return;
+          }
+          await updateMut.mutateAsync({
+            id: rule!.id,
+            severity_ladder: ladder,
+          });
+        } else {
+          if (!name || !definitionId) return;
+          await updateMut.mutateAsync({
+            id: rule!.id,
+            name,
+            description: description || null,
+            mode,
+            fire_count_threshold: threshold,
+            window_size: windowSize,
+            severity,
+            message_template: messageTemplate || null,
+            auto_clear_on_resolve: autoClear,
+            enabled,
+            severity_ladder: ladder,
+          });
         }
-        await updateMut.mutateAsync({
-          id: rule!.id,
-          name,
-          description: description || null,
-          mode,
-          fire_count_threshold: threshold,
-          window_size: windowSize,
-          severity,
-          message_template: messageTemplate || null,
-          auto_clear_on_resolve: autoClear,
-          enabled,
-        });
       } else {
+        if (!name || !definitionId) return;
         await createMut.mutateAsync({
           name,
           description: description || null,
@@ -427,6 +461,7 @@ function IncidentRuleDialog({
           message_template: messageTemplate || null,
           auto_clear_on_resolve: autoClear,
           enabled,
+          severity_ladder: ladder,
         });
       }
       onClose();
@@ -437,173 +472,208 @@ function IncidentRuleDialog({
     }
   };
 
-  const baseFieldsDisabled = isEdit && isMirror;
+  const showSaveButton = baseFieldsDisabled ? mirrorHasSavableChanges : true;
+  const saveDisabled = (() => {
+    if (isPending) return true;
+    if (!ladderValidation.ok) return true;
+    if (!baseFieldsDisabled && (!name || !definitionId)) return true;
+    return false;
+  })();
 
   return (
     <Dialog
       open
       onClose={onClose}
+      size="lg"
       title={
         isEdit
           ? `${isMirror ? "View" : "Edit"} Incident Rule — ${rule!.name}`
           : "Create Incident Rule"
       }
     >
-      <div className="space-y-4">
-        {baseFieldsDisabled && (
-          <div className="rounded border border-zinc-800 bg-zinc-900/60 p-3 text-xs text-zinc-400">
-            This is a <strong>mirror rule</strong> auto-synced from the Event
-            Policy <em>{rule!.name}</em>. Base fields are read-only here — edit
-            the Event Policy instead. Phase-2 feature fields (severity ladder,
-            scope filter, dependencies, flap guard) will be editable on this
-            dialog in phase 3b/3c/3d.
-          </div>
-        )}
+      <Tabs
+        value={activeTab}
+        onChange={(v) => setActiveTab(v as "settings" | "ladder")}
+      >
+        <TabsList>
+          <TabTrigger value="settings">Settings</TabTrigger>
+          <TabTrigger value="ladder">
+            Severity Ladder
+            {ladder && ladder.length > 0 && (
+              <span className="ml-1.5 rounded-full bg-brand-500/20 px-1.5 py-0.5 text-[10px] text-brand-300">
+                {ladder.length}
+              </span>
+            )}
+          </TabTrigger>
+        </TabsList>
 
-        <div className="space-y-1.5">
-          <Label>Name</Label>
-          <Input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Core Router Packet Loss"
-            disabled={baseFieldsDisabled}
-          />
-        </div>
+        <TabsContent value="settings">
+          <div className="space-y-4">
+            {baseFieldsDisabled && (
+              <div className="rounded border border-zinc-800 bg-zinc-900/60 p-3 text-xs text-zinc-400">
+                This is a <strong>mirror rule</strong> auto-synced from the
+                Event Policy <em>{rule!.name}</em>. Base fields are read-only
+                here — edit the Event Policy instead. Use the{" "}
+                <strong>Severity Ladder</strong> tab to layer a ladder onto this
+                mirror; scope / dependencies / flap guard editors land in phase
+                3c/3d.
+              </div>
+            )}
 
-        <div className="space-y-1.5">
-          <Label>Description (optional)</Label>
-          <Input
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="What this rule is for"
-            disabled={baseFieldsDisabled}
-          />
-        </div>
-
-        <div className="space-y-1.5">
-          <Label>Alert Definition</Label>
-          <Select
-            value={definitionId}
-            onChange={(e) => setDefinitionId(e.target.value)}
-            disabled={isEdit}
-          >
-            <option value="">Select alert definition</option>
-            {definitions.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.name}
-              </option>
-            ))}
-          </Select>
-          {isEdit && (
-            <p className="text-xs text-zinc-500">
-              Alert definition cannot be changed after creation.
-            </p>
-          )}
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-1.5">
-            <Label>Mode</Label>
-            <Select
-              value={mode}
-              onChange={(e) =>
-                setMode(e.target.value as "consecutive" | "cumulative")
-              }
-              disabled={baseFieldsDisabled}
-            >
-              <option value="consecutive">Consecutive</option>
-              <option value="cumulative">Cumulative</option>
-            </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Severity</Label>
-            <Select
-              value={severity}
-              onChange={(e) => setSeverity(e.target.value)}
-              disabled={baseFieldsDisabled}
-            >
-              <option value="info">Info</option>
-              <option value="warning">Warning</option>
-              <option value="critical">Critical</option>
-              <option value="emergency">Emergency</option>
-            </Select>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-1.5">
-            <Label>Fire Count Threshold</Label>
-            <Input
-              type="number"
-              min={1}
-              value={threshold}
-              onChange={(e) => setThreshold(Number(e.target.value))}
-              disabled={baseFieldsDisabled}
-            />
-          </div>
-          {mode === "cumulative" && (
             <div className="space-y-1.5">
-              <Label>Window Size</Label>
+              <Label>Name</Label>
               <Input
-                type="number"
-                min={1}
-                value={windowSize}
-                onChange={(e) => setWindowSize(Number(e.target.value))}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g. Core Router Packet Loss"
                 disabled={baseFieldsDisabled}
               />
             </div>
-          )}
-        </div>
 
-        <div className="space-y-1.5">
-          <Label>Message Template (optional)</Label>
-          <Input
-            value={messageTemplate}
-            onChange={(e) => setMessageTemplate(e.target.value)}
-            placeholder="{rule_name}: {value} on {device_name} [{fire_count}x]"
-            disabled={baseFieldsDisabled}
-          />
-        </div>
-
-        <div className="flex items-center gap-4">
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={autoClear}
-              onChange={(e) => setAutoClear(e.target.checked)}
-              className="rounded border-zinc-700"
-              disabled={baseFieldsDisabled}
-            />
-            <span className="text-sm text-zinc-300">Auto-clear on resolve</span>
-          </label>
-          {isEdit && !isMirror && (
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={enabled}
-                onChange={(e) => setEnabled(e.target.checked)}
-                className="rounded border-zinc-700"
+            <div className="space-y-1.5">
+              <Label>Description (optional)</Label>
+              <Input
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="What this rule is for"
+                disabled={baseFieldsDisabled}
               />
-              <span className="text-sm text-zinc-300">Enabled</span>
-            </label>
-          )}
-        </div>
+            </div>
 
-        {error && (
-          <div className="rounded border border-red-900 bg-red-950/40 p-2 text-xs text-red-300">
-            {error}
+            <div className="space-y-1.5">
+              <Label>Alert Definition</Label>
+              <Select
+                value={definitionId}
+                onChange={(e) => setDefinitionId(e.target.value)}
+                disabled={isEdit}
+              >
+                <option value="">Select alert definition</option>
+                {definitions.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                  </option>
+                ))}
+              </Select>
+              {isEdit && (
+                <p className="text-xs text-zinc-500">
+                  Alert definition cannot be changed after creation.
+                </p>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label>Mode</Label>
+                <Select
+                  value={mode}
+                  onChange={(e) =>
+                    setMode(e.target.value as "consecutive" | "cumulative")
+                  }
+                  disabled={baseFieldsDisabled}
+                >
+                  <option value="consecutive">Consecutive</option>
+                  <option value="cumulative">Cumulative</option>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Severity</Label>
+                <Select
+                  value={severity}
+                  onChange={(e) => setSeverity(e.target.value)}
+                  disabled={baseFieldsDisabled}
+                >
+                  <option value="info">Info</option>
+                  <option value="warning">Warning</option>
+                  <option value="critical">Critical</option>
+                  <option value="emergency">Emergency</option>
+                </Select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label>Fire Count Threshold</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  value={threshold}
+                  onChange={(e) => setThreshold(Number(e.target.value))}
+                  disabled={baseFieldsDisabled}
+                />
+              </div>
+              {mode === "cumulative" && (
+                <div className="space-y-1.5">
+                  <Label>Window Size</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={windowSize}
+                    onChange={(e) => setWindowSize(Number(e.target.value))}
+                    disabled={baseFieldsDisabled}
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Message Template (optional)</Label>
+              <Input
+                value={messageTemplate}
+                onChange={(e) => setMessageTemplate(e.target.value)}
+                placeholder="{rule_name}: {value} on {device_name} [{fire_count}x]"
+                disabled={baseFieldsDisabled}
+              />
+            </div>
+
+            <div className="flex items-center gap-4">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={autoClear}
+                  onChange={(e) => setAutoClear(e.target.checked)}
+                  className="rounded border-zinc-700"
+                  disabled={baseFieldsDisabled}
+                />
+                <span className="text-sm text-zinc-300">
+                  Auto-clear on resolve
+                </span>
+              </label>
+              {isEdit && !isMirror && (
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={enabled}
+                    onChange={(e) => setEnabled(e.target.checked)}
+                    className="rounded border-zinc-700"
+                  />
+                  <span className="text-sm text-zinc-300">Enabled</span>
+                </label>
+              )}
+            </div>
           </div>
-        )}
-      </div>
+        </TabsContent>
+
+        <TabsContent value="ladder">
+          <LadderEditor
+            value={ladder}
+            onChange={setLadder}
+            baseSeverity={severity}
+          />
+        </TabsContent>
+      </Tabs>
+
+      {error && (
+        <div className="mt-4 rounded border border-red-900 bg-red-950/40 p-2 text-xs text-red-300">
+          {error}
+        </div>
+      )}
+
       <DialogFooter>
         <Button variant="ghost" onClick={onClose}>
-          {baseFieldsDisabled ? "Close" : "Cancel"}
+          {baseFieldsDisabled && !mirrorHasSavableChanges ? "Close" : "Cancel"}
         </Button>
-        {!baseFieldsDisabled && (
-          <Button
-            onClick={() => void handleSubmit()}
-            disabled={!name || !definitionId || isPending}
-          >
+        {showSaveButton && (
+          <Button onClick={() => void handleSubmit()} disabled={saveDisabled}>
             {isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             {isEdit ? "Save" : "Create"}
           </Button>
