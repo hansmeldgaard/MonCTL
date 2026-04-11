@@ -1,14 +1,21 @@
-"""IncidentEngine — phase 1 (shadow mode).
+"""IncidentEngine — phase 1 (shadow mode) + phase 2a (severity ladders).
 
 Runs after the scheduler's AlertEngine + EventEngine each cycle. Reads
 AlertEntities and IncidentRules from PG and upserts rows in the
-incidents table. Does NOT:
+incidents table. Does NOT (yet):
 
 - write ClickHouse events
 - send notifications
 - trigger automations
-- apply correlation groups, severity ladders, dependencies, scope filters,
-  or flap guard windows (columns exist but are reserved for phase 2)
+- apply correlation groups, dependencies, scope filters, or flap guard
+  windows (columns exist but are reserved for later phases)
+
+Phase 2a adds wall-clock severity ladders: an IncidentRule with a
+`severity_ladder` JSONB is promoted over time after opening. The ladder
+runs on wall-clock time after `opened_at` and is independent of
+`mode` — cumulative only controls *when* an incident opens, not how
+its severity evolves afterwards. See docs/event-policy-rework.md
+open question #3.
 
 The feature flag `settings.incident_engine` controls whether
 `evaluate_all()` does any work at all:
@@ -41,6 +48,96 @@ from monctl_central.storage.models import (
 logger = logging.getLogger(__name__)
 
 
+_SEVERITY_PRIORITY = {"info": 0, "warning": 1, "critical": 2, "emergency": 3}
+
+
+def _validate_ladder(raw) -> list[dict] | None:
+    """Validate and normalize a severity_ladder JSONB value.
+
+    Returns the ladder as a list of `{after_seconds, severity}` dicts,
+    or `None` if the ladder is missing, empty, or malformed. Malformed
+    ladders are logged at WARNING so a typo in one rule doesn't silently
+    skip promotion.
+
+    Rules:
+    - Must be a non-empty list of dicts.
+    - Each entry must have `after_seconds` (int >= 0) and `severity`
+      (one of info/warning/critical/emergency — `recovery` is a state,
+      not a ladder level).
+    - First entry must have `after_seconds == 0` (defines base severity).
+    - Entries must be strictly ascending by `after_seconds`.
+    - Severities must be monotonically non-decreasing in priority
+      (info < warning < critical < emergency) — a ladder only escalates.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, list) or not raw:
+        logger.warning("incident_ladder_invalid reason=not_a_list value=%r", raw)
+        return None
+
+    normalized: list[dict] = []
+    last_seconds = -1
+    last_priority = -1
+    for idx, entry in enumerate(raw):
+        if not isinstance(entry, dict):
+            logger.warning("incident_ladder_invalid reason=entry_not_dict idx=%d", idx)
+            return None
+        after = entry.get("after_seconds")
+        sev = entry.get("severity")
+        if not isinstance(after, int) or after < 0:
+            logger.warning(
+                "incident_ladder_invalid reason=bad_after_seconds idx=%d value=%r",
+                idx, after,
+            )
+            return None
+        if sev not in _SEVERITY_PRIORITY:
+            logger.warning(
+                "incident_ladder_invalid reason=bad_severity idx=%d value=%r",
+                idx, sev,
+            )
+            return None
+        if after <= last_seconds:
+            logger.warning(
+                "incident_ladder_invalid reason=not_ascending idx=%d after=%d prev=%d",
+                idx, after, last_seconds,
+            )
+            return None
+        priority = _SEVERITY_PRIORITY[sev]
+        if priority < last_priority:
+            logger.warning(
+                "incident_ladder_invalid reason=severity_decreasing idx=%d sev=%s prev_priority=%d",
+                idx, sev, last_priority,
+            )
+            return None
+        last_seconds = after
+        last_priority = priority
+        normalized.append({"after_seconds": after, "severity": sev})
+
+    if normalized[0]["after_seconds"] != 0:
+        logger.warning(
+            "incident_ladder_invalid reason=first_step_not_zero first=%d",
+            normalized[0]["after_seconds"],
+        )
+        return None
+
+    return normalized
+
+
+def _ladder_severity_at(ladder: list[dict], elapsed_seconds: float) -> str:
+    """Return the ladder step severity for the given elapsed time.
+
+    Assumes ladder is already validated (sorted ascending, first step
+    at 0). Walks from the top down and returns the first step whose
+    `after_seconds` has been reached.
+    """
+    for step in reversed(ladder):
+        if elapsed_seconds >= step["after_seconds"]:
+            return step["severity"]
+    # Unreachable when ladder is validated (first step is 0), but keep a
+    # safe fallback.
+    return ladder[0]["severity"]
+
+
 class IncidentEngine:
     """Phase 1 incident engine — observation only."""
 
@@ -64,13 +161,15 @@ class IncidentEngine:
             opened = 0
             updated = 0
             cleared = 0
+            escalated = 0
 
             for rule in rules:
                 try:
-                    o, u, c = await self._evaluate_rule(session, rule)
+                    o, u, c, e = await self._evaluate_rule(session, rule)
                     opened += o
                     updated += u
                     cleared += c
+                    escalated += e
                 except Exception:
                     logger.exception(
                         "incident_rule_error rule_id=%s name=%s",
@@ -79,19 +178,19 @@ class IncidentEngine:
 
             await session.commit()
 
-            if opened or updated or cleared:
+            if opened or updated or cleared or escalated:
                 logger.info(
-                    "incident_cycle opened=%d updated=%d cleared=%d rules=%d",
-                    opened, updated, cleared, len(rules),
+                    "incident_cycle opened=%d updated=%d cleared=%d escalated=%d rules=%d",
+                    opened, updated, cleared, escalated, len(rules),
                 )
 
     async def _evaluate_rule(
         self, session: AsyncSession, rule: IncidentRule
-    ) -> tuple[int, int, int]:
-        """Evaluate one rule. Returns (opened, updated, cleared) counts."""
+    ) -> tuple[int, int, int, int]:
+        """Evaluate one rule. Returns (opened, updated, cleared, escalated) counts."""
         defn = rule.definition
         if not defn or not defn.enabled:
-            return 0, 0, 0
+            return 0, 0, 0, 0
 
         entities = (
             await session.execute(
@@ -113,8 +212,9 @@ class IncidentEngine:
         ).scalars().all()
         open_by_key = {inc.entity_key: inc for inc in open_incidents}
 
+        ladder = _validate_ladder(rule.severity_ladder)
         now = datetime.now(timezone.utc)
-        opened = updated = cleared = 0
+        opened = updated = cleared = escalated = 0
 
         for inst in entities:
             entity_key = f"{inst.assignment_id}|{inst.entity_key}"
@@ -125,25 +225,29 @@ class IncidentEngine:
                     # Threshold check mirrors the EventEngine's consecutive/cumulative logic.
                     if not self._meets_threshold(rule, inst):
                         continue
+                    # Seed severity from ladder[0] if present, else rule default.
+                    base_severity = ladder[0]["severity"] if ladder else rule.severity
                     new_inc = Incident(
                         rule_id=rule.id,
                         entity_key=entity_key,
                         assignment_id=inst.assignment_id,
                         device_id=inst.device_id,
                         state="open",
-                        severity=rule.severity,
+                        severity=base_severity,
                         message=self._render_message(rule, defn, inst),
                         labels=inst.entity_labels or {},
                         fire_count=1,
                         opened_at=now,
                         last_fired_at=now,
+                        severity_reached_at=now,
                     )
                     session.add(new_inc)
                     opened += 1
                     logger.info(
-                        "incident_opened rule=%s entity=%s device=%s",
+                        "incident_opened rule=%s entity=%s device=%s severity=%s",
                         rule.name, inst.entity_key or "-",
                         (inst.entity_labels or {}).get("device_name", "-"),
+                        base_severity,
                     )
                 else:
                     incident.last_fired_at = now
@@ -153,6 +257,16 @@ class IncidentEngine:
                     if inst.entity_labels:
                         incident.labels = inst.entity_labels
                     updated += 1
+
+                    # Apply severity ladder (wall-clock time since opened_at).
+                    if ladder and self._apply_ladder(incident, ladder, now):
+                        escalated += 1
+                        logger.info(
+                            "incident_escalated rule=%s entity=%s severity=%s elapsed=%ds",
+                            rule.name, inst.entity_key or "-",
+                            incident.severity,
+                            int((now - incident.opened_at).total_seconds()),
+                        )
 
             elif inst.state == "resolved" and incident is not None:
                 if rule.auto_clear_on_resolve:
@@ -165,7 +279,25 @@ class IncidentEngine:
                         rule.name, inst.entity_key or "-",
                     )
 
-        return opened, updated, cleared
+        return opened, updated, cleared, escalated
+
+    @staticmethod
+    def _apply_ladder(incident: Incident, ladder: list[dict], now: datetime) -> bool:
+        """Advance the incident's severity along the ladder if enough wall-clock
+        time has elapsed since `opened_at`. Returns True if severity was
+        promoted. Never demotes — a ladder with non-decreasing priorities
+        (enforced by `_validate_ladder`) guarantees monotonic escalation."""
+        elapsed = (now - incident.opened_at).total_seconds()
+        target = _ladder_severity_at(ladder, elapsed)
+        if target == incident.severity:
+            return False
+        target_priority = _SEVERITY_PRIORITY[target]
+        current_priority = _SEVERITY_PRIORITY.get(incident.severity, -1)
+        if target_priority <= current_priority:
+            return False
+        incident.severity = target
+        incident.severity_reached_at = now
+        return True
 
     @staticmethod
     def _meets_threshold(rule: IncidentRule, inst: AlertEntity) -> bool:

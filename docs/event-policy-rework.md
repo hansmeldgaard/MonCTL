@@ -124,10 +124,44 @@ For each AlertEntity in resolved state:
 
 1. **Who owns incident state — PG or CH?** PG is ACID and suits mutation-heavy per-incident updates; CH is better for historical queries. Current proposal: PG for live incidents (`incidents` table), CH for historical history/audit (`incident_history` append-only). Trade-off is a two-store read for the incidents tab.
 2. **Are correlation keys just string templates, or a DSL?** String templates are enough for the 80% case (`"device:{device_id}"`, `"link:{device_id}:{if_index}"`). A DSL would let users express "same rack" or "same BGP peer group" but needs a schema for entity metadata we don't have today.
-3. **How do severity ladders interact with mode="cumulative"?** Does "5 fires in 10 min" count as one step, or does each fire advance the ladder? Proposal: cumulative only controls when an incident _opens_; the ladder runs on wall-clock time after opening.
+3. **~~How do severity ladders interact with mode="cumulative"?~~** **RESOLVED** (phase 2a): cumulative only controls when an incident _opens_; the ladder runs on wall-clock time after opening. Same behavior for consecutive mode.
 4. **Dependency scope.** Are dependencies defined per rule (rule A depends on rule B) or per entity (incident-A-on-device-X depends on incident-B-on-device-X)? Per-entity is more powerful but needs an entity-equivalence function.
 5. **Flap guard window defaults.** What's a reasonable default? Proposal: 3× the alert definition's evaluation interval, clamped to [30s, 5min].
 6. **Integration with automations.** Today the automation engine fires on new events. With incidents, it should fire on _incident state transitions_ (open, ladder step, clear), not every fire. Does the automation engine need per-transition filters, or do automations get rewritten to subscribe to specific transitions?
+
+## Phase 2a — Severity ladder (shipped)
+
+Wall-clock severity promotion after `opened_at`. Shipped as a minimal,
+shadow-mode addition to `IncidentEngine`:
+
+- New per-rule field: `incident_rules.severity_ladder` (JSONB, nullable, already allocated in phase 1).
+- Format: a list of `{after_seconds: int, severity: str}` objects.
+- Validation (enforced in `incidents/engine.py::_validate_ladder`):
+  - Non-empty list; each entry has integer `after_seconds >= 0` and a severity in `{info, warning, critical, emergency}` (`recovery` is a state, not a ladder step).
+  - First entry must have `after_seconds == 0` (defines the opening severity).
+  - `after_seconds` strictly ascending.
+  - Severities monotonically non-decreasing in priority — a ladder only escalates.
+  - Malformed ladders log at WARNING and the engine falls back to `rule.severity`.
+- Example:
+  ```json
+  [
+    { "after_seconds": 0, "severity": "warning" },
+    { "after_seconds": 900, "severity": "critical" },
+    { "after_seconds": 3600, "severity": "emergency" }
+  ]
+  ```
+- Engine behavior:
+  - On open: `severity = ladder[0].severity` if ladder present, else `rule.severity`. Always sets `severity_reached_at = opened_at`.
+  - On update: walks ladder, finds highest step whose `after_seconds` has been reached, promotes if that step's severity has higher priority than the current. Logs `incident_escalated`.
+  - Never demotes — `_apply_ladder` guards with severity priority.
+- Cumulative interaction (open question #3 resolved): `mode` still gates _opening_ (same `_meets_threshold` logic as phase 1). Once an incident is open, the ladder runs on wall-clock time after `opened_at` regardless of mode.
+- No API/UI surface yet. Ladders are set via SQL for phase 2a shadow verification:
+  ```sql
+  UPDATE incident_rules
+  SET severity_ladder = '[{"after_seconds":0,"severity":"warning"},{"after_seconds":60,"severity":"critical"}]'::jsonb
+  WHERE id = '...';
+  ```
+  Mirror sync (`sync_incident_rules_from_event_policies`) deliberately does not touch `severity_ladder`, `scope_filter`, etc., so ladders set on mirror rules are preserved across syncs.
 
 ## Out of scope (for the rework PR)
 
