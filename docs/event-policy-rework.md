@@ -194,6 +194,28 @@ rules per device subset.
   ```
   Clear with `scope_filter = NULL`. Mirror sync still ignores this field.
 
+## Phase 2e — Flap guard (shipped)
+
+Hold auto-clear for a configurable window so a flapping alert doesn't
+produce a new incident on every resolve/fire cycle. Implemented without
+a new schema column by leaning on `incidents.last_fired_at` which already
+tracks the most recent firing observation.
+
+- Per-rule field: `incident_rules.flap_guard_seconds` (int, nullable, already allocated in phase 1).
+- `NULL` or `0` → legacy immediate-clear behavior (phase 1–2d default).
+- Positive int → on resolve, clear is deferred until `(now - incident.last_fired_at) >= flap_guard_seconds`. Until then the incident stays `state='open'`.
+- Engine logic:
+  - Firing cycles still advance `last_fired_at` normally. If the alert flaps back within the guard window, the same incident keeps riding — no churn in `incidents` rows, no `parent_incident_id` reset, no severity ladder re-entry, no UI noise.
+  - Resolve cycles check the age. If under guard → log `incident_hold rule=X entity=Y age=Ns guard=Ms` and skip. Next cycle re-checks. If over guard → normal clear path runs (`state=cleared`, `cleared_reason='auto'`).
+  - Rule without `auto_clear_on_resolve` bypasses flap guard entirely (engine never clears those anyway).
+- **Why `last_fired_at` is enough** — no `pending_clear_at` column needed. The semantic "how long has this incident been not-firing" is exactly `now - last_fired_at`. A re-fire advances the timestamp, which resets the window. A sustained resolve makes the age grow until the threshold clears it.
+- **Default flap-guard value** (per design-doc question #5): 3× alert definition eval interval, clamped to [30s, 5min]. For this codebase the scheduler eval interval is 30s, so the natural default is **90s**. Enforced only in the UI (phase 3 will pre-fill this value). The engine treats NULL as no guard — operators must opt in explicitly.
+- Set via SQL:
+  ```sql
+  UPDATE incident_rules SET flap_guard_seconds = 90 WHERE id = '...';
+  ```
+  Clear with `flap_guard_seconds = NULL`. Mirror sync ignores this field.
+
 ## Out of scope (for the rework PR)
 
 - Label-based routing to different notification channels — that's a notification-layer concern.
