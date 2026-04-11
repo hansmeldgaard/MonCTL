@@ -452,15 +452,33 @@ class IncidentEngine:
                         )
 
             elif inst.state == "resolved" and incident is not None:
-                if rule.auto_clear_on_resolve:
-                    incident.state = "cleared"
-                    incident.cleared_at = now
-                    incident.cleared_reason = "auto"
-                    cleared += 1
-                    logger.info(
-                        "incident_cleared rule=%s entity=%s reason=auto",
-                        rule.name, inst.entity_key or "-",
-                    )
+                if not rule.auto_clear_on_resolve:
+                    continue
+                # Flap guard: if configured and not yet elapsed since
+                # last_fired_at, hold the clear. `last_fired_at` advances
+                # on every firing cycle, so if the alert flaps back within
+                # the window the same incident keeps riding — no new open,
+                # no new UUID, notifications in phase 3+ fire only on the
+                # eventual real clear. NULL / 0 flap_guard_seconds = legacy
+                # immediate-clear behavior (phase 1-2b default).
+                guard_s = rule.flap_guard_seconds
+                if guard_s is not None and guard_s > 0:
+                    age = (now - incident.last_fired_at).total_seconds()
+                    if age < guard_s:
+                        logger.info(
+                            "incident_hold rule=%s entity=%s age=%ds guard=%ds",
+                            rule.name, inst.entity_key or "-",
+                            int(age), guard_s,
+                        )
+                        continue
+                incident.state = "cleared"
+                incident.cleared_at = now
+                incident.cleared_reason = "auto"
+                cleared += 1
+                logger.info(
+                    "incident_cleared rule=%s entity=%s reason=auto",
+                    rule.name, inst.entity_key or "-",
+                )
 
         return opened, updated, cleared, escalated
 
