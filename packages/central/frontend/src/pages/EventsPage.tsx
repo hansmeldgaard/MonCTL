@@ -1,17 +1,6 @@
 import { useState } from "react";
-import {
-  Check,
-  CheckCheck,
-  Clock,
-  Loader2,
-  Pencil,
-  Play,
-  Plus,
-  Settings2,
-  Trash2,
-  Zap,
-} from "lucide-react";
-import { useNavigate, Link } from "react-router-dom";
+import { Check, CheckCheck, Clock, Loader2, Play, Zap } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
 import {
   Card,
   CardContent,
@@ -21,6 +10,18 @@ import {
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import {
+  useActiveEvents,
+  useAcknowledgeEvents,
+  useClearEvents,
+  useClearedEvents,
+} from "@/api/hooks.ts";
+import { timeAgo, formatDate } from "@/lib/utils.ts";
+import { useTimezone } from "@/hooks/useTimezone.ts";
+import { useListState } from "@/hooks/useListState.ts";
+import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
+import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
+import { PaginationBar } from "@/components/PaginationBar.tsx";
+import {
   Table,
   TableBody,
   TableCell,
@@ -28,31 +29,15 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table.tsx";
-import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
-import { Input } from "@/components/ui/input.tsx";
-import { Label } from "@/components/ui/label.tsx";
-import { Select } from "@/components/ui/select.tsx";
-import {
-  useActiveEvents,
-  useAcknowledgeEvents,
-  useAlertRules,
-  useClearEvents,
-  useClearedEvents,
-  useCreateEventPolicy,
-  useDeleteEventPolicy,
-  useEventPolicies,
-  useUpdateEventPolicy,
-} from "@/api/hooks.ts";
-import { timeAgo, formatDate } from "@/lib/utils.ts";
-import { usePermissions } from "@/hooks/usePermissions.ts";
-import { useTimezone } from "@/hooks/useTimezone.ts";
-import { useListState } from "@/hooks/useListState.ts";
-import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
-import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
-import { PaginationBar } from "@/components/PaginationBar.tsx";
-import type { MonitoringEvent, EventPolicy } from "@/types/api.ts";
+import type { MonitoringEvent } from "@/types/api.ts";
 
-type Tab = "active" | "cleared" | "policies";
+// EventsPage now only serves the historical CH events Active/Cleared
+// read surface. EventPolicy CRUD + the legacy "Policies" tab were
+// retired as part of the event policy rework's phase deprecation —
+// operators manage rules via /incident-rules and observe incident
+// lifecycle via /incidents. See docs/event-policy-rework.md.
+
+type Tab = "active" | "cleared";
 
 const severityVariant = (severity: string) => {
   switch (severity?.toLowerCase()) {
@@ -154,14 +139,6 @@ export function EventsPage() {
           <Clock className="h-3.5 w-3.5" />
           Cleared
         </Button>
-        <Button
-          variant={tab === "policies" ? "secondary" : "ghost"}
-          size="sm"
-          onClick={() => setTab("policies")}
-        >
-          <Settings2 className="h-3.5 w-3.5" />
-          Policies
-        </Button>
       </div>
 
       {isLoading ? (
@@ -175,15 +152,13 @@ export function EventsPage() {
           meta={activeMeta}
           isFetching={activeFetching}
         />
-      ) : tab === "cleared" ? (
+      ) : (
         <ClearedEventsTab
           events={clearedEvents}
           listState={clearedListState}
           meta={clearedMeta}
           isFetching={clearedFetching}
         />
-      ) : (
-        <PoliciesTab />
       )}
     </div>
   );
@@ -588,441 +563,8 @@ function ClearedEventsTab({
   );
 }
 
-function PoliciesTab() {
-  const { canManage } = usePermissions();
-  const [showCreate, setShowCreate] = useState(false);
-  const [editTarget, setEditTarget] = useState<EventPolicy | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<EventPolicy | null>(null);
-  const deleteMut = useDeleteEventPolicy();
-  const { pageSize, scrollMode } = useTablePreferences();
-
-  const listState = useListState({
-    columns: [
-      { key: "name", label: "Name" },
-      { key: "definition_name", label: "Alert Definition" },
-      { key: "event_severity", label: "Severity" },
-    ],
-    defaultSortBy: "name",
-    defaultSortDir: "asc",
-    defaultPageSize: pageSize,
-    scrollMode,
-  });
-
-  const {
-    data: response,
-    isLoading,
-    isFetching,
-  } = useEventPolicies(listState.params);
-  const policies = response?.data ?? [];
-  const meta = response?.meta ?? { limit: 50, offset: 0, count: 0, total: 0 };
-
-  const handleDelete = async () => {
-    if (!deleteTarget) return;
-    await deleteMut.mutateAsync(deleteTarget.id);
-    setDeleteTarget(null);
-  };
-
-  if (isLoading) {
-    return (
-      <div className="flex h-64 items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
-      </div>
-    );
-  }
-
-  return (
-    <>
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="flex items-center gap-2">
-              <Settings2 className="h-4 w-4" />
-              Event Policies ({meta.total})
-            </CardTitle>
-            {canManage("event") && (
-              <Button size="sm" onClick={() => setShowCreate(true)}>
-                <Plus className="h-3.5 w-3.5" />
-                Create Policy
-              </Button>
-            )}
-          </div>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <FilterableSortHead
-                  col="name"
-                  label="Name"
-                  sortBy={listState.sortBy}
-                  sortDir={listState.sortDir}
-                  onSort={listState.handleSort}
-                  filterValue={listState.filters.name}
-                  onFilterChange={(v) => listState.setFilter("name", v)}
-                />
-                <FilterableSortHead
-                  col="definition_name"
-                  label="Alert Definition"
-                  sortBy={listState.sortBy}
-                  sortDir={listState.sortDir}
-                  onSort={listState.handleSort}
-                  filterValue={listState.filters.definition_name}
-                  onFilterChange={(v) =>
-                    listState.setFilter("definition_name", v)
-                  }
-                />
-                <FilterableSortHead
-                  col="mode"
-                  label="Mode"
-                  sortBy={listState.sortBy}
-                  sortDir={listState.sortDir}
-                  onSort={listState.handleSort}
-                  filterable={false}
-                />
-                <TableHead>Threshold</TableHead>
-                <FilterableSortHead
-                  col="event_severity"
-                  label="Severity"
-                  sortBy={listState.sortBy}
-                  sortDir={listState.sortDir}
-                  onSort={listState.handleSort}
-                  filterValue={listState.filters.event_severity}
-                  onFilterChange={(v) =>
-                    listState.setFilter("event_severity", v)
-                  }
-                />
-                <TableHead>Auto-clear</TableHead>
-                <FilterableSortHead
-                  col="enabled"
-                  label="Enabled"
-                  sortBy={listState.sortBy}
-                  sortDir={listState.sortDir}
-                  onSort={listState.handleSort}
-                  filterable={false}
-                />
-                <TableHead className="w-12"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {policies.length === 0 ? (
-                <TableRow>
-                  <TableCell
-                    colSpan={8}
-                    className="text-center text-zinc-500 py-8"
-                  >
-                    {listState.hasActiveFilters
-                      ? "No policies match your filters"
-                      : "No event policies configured — create a policy to promote alerts to events"}
-                  </TableCell>
-                </TableRow>
-              ) : (
-                policies.map((p) => (
-                  <TableRow key={p.id}>
-                    <TableCell className="font-medium text-zinc-100">
-                      {p.name}
-                    </TableCell>
-                    <TableCell className="text-zinc-400">
-                      {p.definition_name || p.definition_id}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="default">{p.mode}</Badge>
-                    </TableCell>
-                    <TableCell className="text-zinc-300">
-                      {p.mode === "consecutive"
-                        ? `${p.fire_count_threshold} consecutive`
-                        : `${p.fire_count_threshold} of ${p.window_size}`}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={severityVariant(p.event_severity)}>
-                        {p.event_severity}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={
-                          p.auto_clear_on_resolve ? "success" : "default"
-                        }
-                      >
-                        {p.auto_clear_on_resolve ? "Yes" : "No"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={p.enabled ? "success" : "default"}>
-                        {p.enabled ? "Enabled" : "Disabled"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      {canManage("event") && (
-                        <div className="flex items-center gap-1">
-                          <button
-                            className="rounded p-1 text-zinc-600 hover:text-brand-400 hover:bg-brand-500/10 transition-colors cursor-pointer"
-                            onClick={() => setEditTarget(p)}
-                            title="Edit"
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                            onClick={() => setDeleteTarget(p)}
-                            title="Delete"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-          <PaginationBar
-            page={listState.page}
-            pageSize={listState.pageSize}
-            total={meta.total}
-            count={meta.count}
-            onPageChange={listState.setPage}
-            scrollMode={listState.scrollMode}
-            sentinelRef={listState.sentinelRef}
-            isFetching={isFetching}
-            onLoadMore={listState.loadMore}
-          />
-        </CardContent>
-      </Card>
-
-      {showCreate && <PolicyDialog onClose={() => setShowCreate(false)} />}
-
-      {editTarget && (
-        <PolicyDialog policy={editTarget} onClose={() => setEditTarget(null)} />
-      )}
-
-      {/* Delete Confirmation */}
-      <Dialog
-        open={!!deleteTarget}
-        onClose={() => setDeleteTarget(null)}
-        title="Delete Event Policy"
-      >
-        <p className="text-sm text-zinc-400">
-          Are you sure you want to delete the policy{" "}
-          <span className="font-medium text-zinc-200">
-            {deleteTarget?.name}
-          </span>
-          ? Active events created by this policy will remain but no new events
-          will be promoted.
-        </p>
-        <DialogFooter>
-          <Button variant="secondary" onClick={() => setDeleteTarget(null)}>
-            Cancel
-          </Button>
-          <Button
-            variant="destructive"
-            onClick={() => void handleDelete()}
-            disabled={deleteMut.isPending}
-          >
-            {deleteMut.isPending && (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            )}
-            Delete
-          </Button>
-        </DialogFooter>
-      </Dialog>
-    </>
-  );
-}
-
-function PolicyDialog({
-  onClose,
-  policy,
-}: {
-  onClose: () => void;
-  policy?: EventPolicy;
-}) {
-  const isEdit = !!policy;
-  const { data: definitionsResp } = useAlertRules();
-  const definitions = definitionsResp?.data ?? [];
-  const createMut = useCreateEventPolicy();
-  const updateMut = useUpdateEventPolicy();
-
-  const [name, setName] = useState(policy?.name ?? "");
-  const [definitionId, setDefinitionId] = useState(policy?.definition_id ?? "");
-  const [mode, setMode] = useState<"consecutive" | "cumulative">(
-    policy?.mode ?? "consecutive",
-  );
-  const [threshold, setThreshold] = useState(policy?.fire_count_threshold ?? 3);
-  const [windowSize, setWindowSize] = useState(policy?.window_size ?? 5);
-  const [severity, setSeverity] = useState(policy?.event_severity ?? "warning");
-  const [messageTemplate, setMessageTemplate] = useState(
-    policy?.message_template ?? "",
-  );
-  const [autoClear, setAutoClear] = useState(
-    policy?.auto_clear_on_resolve ?? true,
-  );
-  const [enabled, setEnabled] = useState(policy?.enabled ?? true);
-
-  const isPending = createMut.isPending || updateMut.isPending;
-
-  const handleSubmit = async () => {
-    if (!name || !definitionId) return;
-    if (isEdit) {
-      // definition_id is fixed for the life of a policy
-      await updateMut.mutateAsync({
-        id: policy!.id,
-        name,
-        mode,
-        fire_count_threshold: threshold,
-        window_size: windowSize,
-        event_severity: severity,
-        message_template: messageTemplate || undefined,
-        auto_clear_on_resolve: autoClear,
-        enabled,
-      });
-    } else {
-      await createMut.mutateAsync({
-        name,
-        definition_id: definitionId,
-        mode,
-        fire_count_threshold: threshold,
-        window_size: windowSize,
-        event_severity: severity,
-        message_template: messageTemplate || undefined,
-        auto_clear_on_resolve: autoClear,
-      });
-    }
-    onClose();
-  };
-
-  return (
-    <Dialog
-      open
-      onClose={onClose}
-      title={
-        isEdit ? `Edit Event Policy — ${policy!.name}` : "Create Event Policy"
-      }
-    >
-      <div className="space-y-4">
-        <div className="space-y-1.5">
-          <Label>Name</Label>
-          <Input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Interface Util Sustained"
-          />
-        </div>
-
-        <div className="space-y-1.5">
-          <Label>Alert Definition</Label>
-          <Select
-            value={definitionId}
-            onChange={(e) => setDefinitionId(e.target.value)}
-            disabled={isEdit}
-          >
-            <option value="">Select alert definition</option>
-            {(definitions ?? []).map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.name}
-              </option>
-            ))}
-          </Select>
-          {isEdit && (
-            <p className="text-xs text-zinc-500">
-              Alert definition cannot be changed after creation.
-            </p>
-          )}
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-1.5">
-            <Label>Mode</Label>
-            <Select
-              value={mode}
-              onChange={(e) =>
-                setMode(e.target.value as "consecutive" | "cumulative")
-              }
-            >
-              <option value="consecutive">Consecutive</option>
-              <option value="cumulative">Cumulative</option>
-            </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Severity</Label>
-            <Select
-              value={severity}
-              onChange={(e) => setSeverity(e.target.value)}
-            >
-              <option value="info">Info</option>
-              <option value="warning">Warning</option>
-              <option value="critical">Critical</option>
-            </Select>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-1.5">
-            <Label>Fire Count Threshold</Label>
-            <Input
-              type="number"
-              min={1}
-              value={threshold}
-              onChange={(e) => setThreshold(Number(e.target.value))}
-            />
-          </div>
-          {mode === "cumulative" && (
-            <div className="space-y-1.5">
-              <Label>Window Size</Label>
-              <Input
-                type="number"
-                min={1}
-                value={windowSize}
-                onChange={(e) => setWindowSize(Number(e.target.value))}
-              />
-            </div>
-          )}
-        </div>
-
-        <div className="space-y-1.5">
-          <Label>Message Template (optional)</Label>
-          <Input
-            value={messageTemplate}
-            onChange={(e) => setMessageTemplate(e.target.value)}
-            placeholder="{rule_name}: {value} on {device_name} [{fire_count}x]"
-          />
-        </div>
-
-        <div className="flex items-center gap-4">
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={autoClear}
-              onChange={(e) => setAutoClear(e.target.checked)}
-              className="rounded border-zinc-700"
-            />
-            <span className="text-sm text-zinc-300">Auto-clear on resolve</span>
-          </label>
-          {isEdit && (
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={enabled}
-                onChange={(e) => setEnabled(e.target.checked)}
-                className="rounded border-zinc-700"
-              />
-              <span className="text-sm text-zinc-300">Enabled</span>
-            </label>
-          )}
-        </div>
-      </div>
-      <DialogFooter>
-        <Button variant="ghost" onClick={onClose}>
-          Cancel
-        </Button>
-        <Button
-          onClick={() => void handleSubmit()}
-          disabled={!name || !definitionId || isPending}
-        >
-          {isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-          {isEdit ? "Save" : "Create"}
-        </Button>
-      </DialogFooter>
-    </Dialog>
-  );
-}
+// `PoliciesTab` and `PolicyDialog` were removed in the event policy
+// rework's phase deprecation (see docs/event-policy-rework.md). Rule
+// configuration lives at /incident-rules now. The Active and Cleared
+// event tabs above still query the append-only CH events table for
+// historical observation.

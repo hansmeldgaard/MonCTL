@@ -727,22 +727,9 @@ export interface MonitoringEvent {
   app_name: string;
 }
 
-export interface EventPolicy {
-  id: string;
-  name: string;
-  description: string | null;
-  definition_id: string;
-  definition_name: string;
-  mode: "consecutive" | "cumulative";
-  fire_count_threshold: number;
-  window_size: number;
-  event_severity: string;
-  message_template: string | null;
-  auto_clear_on_resolve: boolean;
-  enabled: boolean;
-  created_at: string;
-  updated_at: string;
-}
+// EventPolicy was retired in the event policy rework's phase
+// deprecation. Rule configuration now lives on `IncidentRule` below.
+// Historical events are still queryable via the MonitoringEvent type.
 
 // ── IncidentRule (phase 3 native editor) ──────────────────────
 //

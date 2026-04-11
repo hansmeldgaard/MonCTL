@@ -1,23 +1,21 @@
-"""Events and event policies — query, acknowledge, clear, policy CRUD."""
+"""Legacy CH events query / acknowledge / clear endpoints.
+
+After phase deprecation (see docs/event-policy-rework.md) the
+EventPolicy CRUD endpoints and EventEngine are gone. This router
+keeps the read/acknowledge/clear surface so the Events UI can still
+query the append-only CH events table for historical observation.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import json
-import uuid
 
-import sqlalchemy as sa
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field, field_validator
-from monctl_common.validators import validate_uuid
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, Field
 
-from monctl_central.dependencies import get_clickhouse, get_db, require_permission
+from monctl_central.dependencies import get_clickhouse, require_permission
 from monctl_central.storage.clickhouse import ClickHouseClient
-from monctl_central.storage.models import AlertDefinition, EventPolicy
-from monctl_common.utils import utc_now
 
 router = APIRouter()
 
@@ -65,28 +63,6 @@ def _fmt_event(e: dict) -> dict:
         "collector_name": e.get("collector_name", ""),
         "device_name": e.get("device_name", ""),
         "app_name": e.get("app_name", ""),
-    }
-
-
-def _fmt_policy(p: EventPolicy) -> dict:
-    defn_name = ""
-    if p.definition:
-        defn_name = p.definition.name
-    return {
-        "id": str(p.id),
-        "name": p.name,
-        "description": p.description,
-        "definition_id": str(p.definition_id),
-        "definition_name": defn_name,
-        "mode": p.mode,
-        "fire_count_threshold": p.fire_count_threshold,
-        "window_size": p.window_size,
-        "event_severity": p.event_severity,
-        "message_template": p.message_template,
-        "auto_clear_on_resolve": p.auto_clear_on_resolve,
-        "enabled": p.enabled,
-        "created_at": p.created_at.isoformat() if p.created_at else None,
-        "updated_at": p.updated_at.isoformat() if p.updated_at else None,
     }
 
 
@@ -224,206 +200,6 @@ async def clear_events(
     return {"status": "success", "data": {"cleared": len(req.event_ids)}}
 
 
-# ── Event Policies CRUD ──────────────────────────────────
-
-
-class CreateEventPolicyRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=255)
-    description: str | None = Field(default=None, max_length=2000)
-    definition_id: str
-    mode: str = Field(default="consecutive")
-    fire_count_threshold: int = Field(default=1, ge=1)
-    window_size: int = Field(default=5, ge=1)
-    event_severity: str = Field(default="warning", max_length=20)
-    message_template: str | None = Field(default=None, max_length=2000)
-    auto_clear_on_resolve: bool = True
-    enabled: bool = True
-
-    @field_validator("definition_id")
-    @classmethod
-    def check_definition_id(cls, v: str) -> str:
-        validate_uuid(v, "definition_id")
-        return v
-
-    @field_validator("event_severity")
-    @classmethod
-    def check_severity(cls, v: str) -> str:
-        if v not in {"info", "warning", "critical", "emergency", "recovery"}:
-            raise ValueError("event_severity must be one of: info, warning, critical, emergency, recovery")
-        return v
-
-    @field_validator("mode")
-    @classmethod
-    def check_mode(cls, v: str) -> str:
-        if v not in {"consecutive", "cumulative"}:
-            raise ValueError("mode must be 'consecutive' or 'cumulative'")
-        return v
-
-
-class UpdateEventPolicyRequest(BaseModel):
-    name: str | None = Field(default=None, min_length=1, max_length=255)
-    description: str | None = Field(default=None, max_length=2000)
-    mode: str | None = None
-    fire_count_threshold: int | None = None
-    window_size: int | None = None
-    event_severity: str | None = Field(default=None, max_length=20)
-    message_template: str | None = Field(default=None, max_length=2000)
-    auto_clear_on_resolve: bool | None = None
-    enabled: bool | None = None
-
-    @field_validator("event_severity")
-    @classmethod
-    def check_severity(cls, v: str | None) -> str | None:
-        if v is not None and v not in {"info", "warning", "critical", "emergency", "recovery"}:
-            raise ValueError("event_severity must be one of: info, warning, critical, emergency, recovery")
-        return v
-
-    @field_validator("mode")
-    @classmethod
-    def check_mode(cls, v: str | None) -> str | None:
-        if v is not None and v not in {"consecutive", "cumulative"}:
-            raise ValueError("mode must be 'consecutive' or 'cumulative'")
-        return v
-
-
-@router.get("/policies")
-async def list_event_policies(
-    name: str | None = Query(default=None, description="Filter by name (ilike)"),
-    definition_name: str | None = Query(default=None, description="Filter by alert definition name (ilike)"),
-    event_severity: str | None = Query(default=None, description="Filter by severity"),
-    enabled: str | None = Query(default=None, description="Filter by enabled (true/false)"),
-    search: str | None = Query(default=None, description="Search name or definition name"),
-    sort_by: str = Query(default="name", description="Sort field"),
-    sort_dir: str = Query(default="asc", description="Sort direction"),
-    limit: int = Query(default=50, le=500),
-    offset: int = Query(default=0, ge=0),
-    db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_permission("event", "view")),
-):
-    stmt = select(EventPolicy).options(selectinload(EventPolicy.definition))
-
-    if name:
-        stmt = stmt.where(EventPolicy.name.ilike(f"%{name}%"))
-    if definition_name:
-        stmt = stmt.join(AlertDefinition, EventPolicy.definition_id == AlertDefinition.id)
-        stmt = stmt.where(AlertDefinition.name.ilike(f"%{definition_name}%"))
-    if event_severity:
-        stmt = stmt.where(EventPolicy.event_severity == event_severity)
-    if enabled is not None and enabled != "":
-        stmt = stmt.where(EventPolicy.enabled == (enabled.lower() == "true"))
-    if search:
-        stmt = stmt.outerjoin(AlertDefinition, EventPolicy.definition_id == AlertDefinition.id)
-        stmt = stmt.where(
-            sa.or_(
-                EventPolicy.name.ilike(f"%{search}%"),
-                AlertDefinition.name.ilike(f"%{search}%"),
-            )
-        )
-
-    # Count
-    count_stmt = select(sa.func.count()).select_from(stmt.subquery())
-    total = (await db.execute(count_stmt)).scalar() or 0
-
-    # Sorting
-    sort_column = {
-        "name": EventPolicy.name,
-        "event_severity": EventPolicy.event_severity,
-        "mode": EventPolicy.mode,
-        "enabled": EventPolicy.enabled,
-        "created_at": EventPolicy.created_at,
-    }.get(sort_by, EventPolicy.name)
-
-    if sort_dir == "desc":
-        stmt = stmt.order_by(sa.desc(sort_column))
-    else:
-        stmt = stmt.order_by(sa.asc(sort_column))
-
-    stmt = stmt.offset(offset).limit(limit)
-    rows = (await db.execute(stmt)).scalars().unique().all()
-    return {
-        "status": "success",
-        "data": [_fmt_policy(p) for p in rows],
-        "meta": {"limit": limit, "offset": offset, "count": len(rows), "total": total},
-    }
-
-
-@router.post("/policies", status_code=status.HTTP_201_CREATED)
-async def create_event_policy(
-    req: CreateEventPolicyRequest,
-    db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_permission("event", "manage")),
-):
-    defn = await db.get(AlertDefinition, uuid.UUID(req.definition_id))
-    if not defn:
-        raise HTTPException(status_code=404, detail="Alert definition not found")
-
-    if req.mode not in ("consecutive", "cumulative"):
-        raise HTTPException(status_code=400, detail="Mode must be 'consecutive' or 'cumulative'")
-
-    policy = EventPolicy(
-        name=req.name,
-        description=req.description,
-        definition_id=uuid.UUID(req.definition_id),
-        mode=req.mode,
-        fire_count_threshold=req.fire_count_threshold,
-        window_size=req.window_size,
-        event_severity=req.event_severity,
-        message_template=req.message_template,
-        auto_clear_on_resolve=req.auto_clear_on_resolve,
-        enabled=req.enabled,
-    )
-    db.add(policy)
-    await db.flush()
-    # Reload with relationship
-    await db.refresh(policy, ["definition"])
-    return {"status": "success", "data": _fmt_policy(policy)}
-
-
-@router.put("/policies/{policy_id}")
-async def update_event_policy(
-    policy_id: str,
-    req: UpdateEventPolicyRequest,
-    db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_permission("event", "manage")),
-):
-    policy = await db.get(EventPolicy, uuid.UUID(policy_id))
-    if not policy:
-        raise HTTPException(status_code=404, detail="Not found")
-
-    if req.name is not None:
-        policy.name = req.name
-    if req.description is not None:
-        policy.description = req.description
-    if req.mode is not None:
-        if req.mode not in ("consecutive", "cumulative"):
-            raise HTTPException(status_code=400, detail="Mode must be 'consecutive' or 'cumulative'")
-        policy.mode = req.mode
-    if req.fire_count_threshold is not None:
-        policy.fire_count_threshold = req.fire_count_threshold
-    if req.window_size is not None:
-        policy.window_size = req.window_size
-    if req.event_severity is not None:
-        policy.event_severity = req.event_severity
-    if req.message_template is not None:
-        policy.message_template = req.message_template
-    if req.auto_clear_on_resolve is not None:
-        policy.auto_clear_on_resolve = req.auto_clear_on_resolve
-    if req.enabled is not None:
-        policy.enabled = req.enabled
-
-    policy.updated_at = utc_now()
-    await db.flush()
-    await db.refresh(policy, ["definition"])
-    return {"status": "success", "data": _fmt_policy(policy)}
-
-
-@router.delete("/policies/{policy_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_event_policy(
-    policy_id: str,
-    db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_permission("event", "manage")),
-):
-    policy = await db.get(EventPolicy, uuid.UUID(policy_id))
-    if not policy:
-        raise HTTPException(status_code=404, detail="Not found")
-    await db.delete(policy)
+# EventPolicy CRUD was removed in the phase deprecation of the event
+# policy rework. Rule configuration lives at /v1/incident-rules now.
+# See docs/event-policy-rework.md.

@@ -1,20 +1,18 @@
-"""IncidentRule CRUD — phase 3a of the event policy rework.
+"""IncidentRule CRUD at `/v1/incident-rules`.
 
-Exposes `/v1/incident-rules` for operators to configure native rules.
+After phase deprecation of the event policy rework, every rule is
+native (operator-managed). The legacy `source='mirror'` concept —
+auto-synced from `EventPolicy` via a now-retired scheduler task — has
+been flipped to `source='native'` in alembic revision zq7r8s9t0u1v;
+the `source_policy_id` FK and the mirror-sync job are gone.
 
-Mirror rules (auto-synced from `EventPolicy` via `sync_incident_rules_from_event_policies`)
-have `source='mirror'` and are deliberately restricted:
-- Cannot be created via POST (use the EventPolicy API instead).
-- Cannot be deleted via DELETE (delete the source EventPolicy, sync will disable the mirror).
-- On PATCH, only the phase-2 feature fields (`severity_ladder`, `scope_filter`,
-  `depends_on`, `flap_guard_seconds`) are editable. Name/description/mode/threshold/etc.
-  are governed by the source EventPolicy and overwriting them would be fought back
-  by the next mirror sync.
+New rules default to `source='native'`. Any pre-existing row with
+`source='mirror'` (theoretical — the migration flipped them all) is
+treated as fully editable just like native rules.
 
-Native rules (`source='native'`) have full CRUD.
-
-JSONB validation is delegated to the engine's validator helpers so the API
-and engine enforce identical semantics — one place to maintain error messages.
+JSONB validation is delegated to the engine's validator helpers so the
+API and engine enforce identical semantics — one place to maintain
+error messages.
 """
 
 from __future__ import annotations
@@ -43,18 +41,6 @@ router = APIRouter()
 
 _VALID_SEVERITIES = {"info", "warning", "critical", "emergency"}
 _VALID_MODES = {"consecutive", "cumulative"}
-_MIRROR_LOCKED_FIELDS = {
-    "name",
-    "description",
-    "definition_id",
-    "mode",
-    "fire_count_threshold",
-    "window_size",
-    "severity",
-    "message_template",
-    "auto_clear_on_resolve",
-    "enabled",
-}
 
 
 # ── Formatter ────────────────────────────────────────────────
@@ -81,7 +67,6 @@ def _fmt_rule(r: IncidentRule) -> dict:
         "flap_guard_seconds": r.flap_guard_seconds,
         "enabled": r.enabled,
         "source": r.source,
-        "source_policy_id": str(r.source_policy_id) if r.source_policy_id else None,
         "created_at": r.created_at.isoformat() if r.created_at else None,
         "updated_at": r.updated_at.isoformat() if r.updated_at else None,
     }
@@ -354,7 +339,6 @@ async def create_incident_rule(
         flap_guard_seconds=req.flap_guard_seconds,
         enabled=req.enabled,
         source="native",
-        source_policy_id=None,
     )
     db.add(rule)
     await db.flush()
@@ -385,25 +369,9 @@ async def update_incident_rule(
         raise HTTPException(status_code=404, detail="Not found")
 
     # Collect fields the caller is trying to change (explicitly set in the
-    # request, not just left at default None).
+    # request, not just left at default None). Every field is editable —
+    # the legacy mirror-rule restriction is gone (see phase deprecation).
     updates = req.model_dump(exclude_unset=True)
-
-    # Mirror rules: only the phase-2 feature fields are editable. The rest
-    # are overwritten by sync_incident_rules_from_event_policies on every
-    # cycle, so accepting them would be misleading.
-    if rule.source == "mirror":
-        locked = _MIRROR_LOCKED_FIELDS & updates.keys()
-        if locked:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Cannot edit fields "
-                    f"{sorted(locked)} on a mirror rule. "
-                    "These are synced from the source EventPolicy — edit that "
-                    "instead. Only severity_ladder, scope_filter, depends_on, "
-                    "and flap_guard_seconds can be set on a mirror rule."
-                ),
-            )
 
     # Validate JSONB shapes before mutating anything.
     if "severity_ladder" in updates:
@@ -436,16 +404,6 @@ async def delete_incident_rule(
     rule = await db.get(IncidentRule, rid)
     if rule is None:
         raise HTTPException(status_code=404, detail="Not found")
-
-    if rule.source == "mirror":
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Cannot delete a mirror rule directly. Delete the source "
-                "EventPolicy instead — the mirror will be disabled on the "
-                "next sync cycle."
-            ),
-        )
 
     await db.delete(rule)
     return None

@@ -71,7 +71,6 @@ import type {
   ConnectorSummary,
   ConnectorDetail,
   MonitoringEvent,
-  EventPolicy,
   Incident,
   IncidentRule,
   Pack,
@@ -3165,64 +3164,12 @@ export function useClearEvents() {
   });
 }
 
-// ── Event Policies ───────────────────────────────────────
+// EventPolicy CRUD hooks were retired in the event policy rework's
+// phase deprecation. Rule configuration lives in `useIncidentRules`
+// below. Historical events are still queryable via `useActiveEvents` /
+// `useClearedEvents` from the CH events table.
 
-export function useEventPolicies(params: ListParams = {}) {
-  const qs = buildListQs(params);
-  return useQuery({
-    queryKey: ["event-policies", params],
-    queryFn: () =>
-      apiGetRaw<{
-        status: string;
-        data: EventPolicy[];
-        meta: { limit: number; offset: number; count: number; total: number };
-      }>(`/events/policies${qs}`),
-    placeholderData: keepPreviousData,
-    refetchInterval: POLL_LIST,
-  });
-}
-
-export function useCreateEventPolicy() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (data: {
-      name: string;
-      definition_id: string;
-      mode?: string;
-      fire_count_threshold?: number;
-      window_size?: number;
-      event_severity?: string;
-      message_template?: string;
-      auto_clear_on_resolve?: boolean;
-    }) => apiPost("/events/policies", data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["event-policies"] });
-    },
-  });
-}
-
-export function useUpdateEventPolicy() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, ...data }: { id: string } & Record<string, unknown>) =>
-      apiPut(`/events/policies/${id}`, data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["event-policies"] });
-    },
-  });
-}
-
-export function useDeleteEventPolicy() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => apiDelete(`/events/policies/${id}`),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["event-policies"] });
-    },
-  });
-}
-
-// ── Incident Rules (phase 3 native editor) ─────────────────
+// ── Incident Rules ─────────────────────────────────────────
 
 export function useIncidentRules(params: ListParams = {}) {
   const qs = buildListQs(params);

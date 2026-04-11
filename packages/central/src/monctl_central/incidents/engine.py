@@ -41,7 +41,6 @@ from monctl_central.storage.clickhouse import ClickHouseClient
 from monctl_central.storage.models import (
     AlertDefinition,
     AlertEntity,
-    EventPolicy,
     Incident,
     IncidentRule,
 )
@@ -668,100 +667,9 @@ class IncidentEngine:
         return f"{defn.name}{val_str} on {device} {entity} [{inst.fire_count}x]".strip()
 
 
-async def sync_incident_rules_from_event_policies(session_factory) -> tuple[int, int, int]:
-    """Upsert a mirror IncidentRule for every EventPolicy.
-
-    - Adds new rules for policies that don't have a mirror yet.
-    - Updates mutable fields (name, thresholds, severity, enabled, ...) on
-      existing mirrors.
-    - Disables mirrors whose source EventPolicy has been deleted (source_policy_id
-      is set to NULL by the FK ON DELETE SET NULL and this task marks them
-      `enabled = False` so the engine skips them).
-
-    Returns (added, updated, disabled).
-    """
-    added = updated = disabled = 0
-    async with session_factory() as session:
-        policies = (await session.execute(select(EventPolicy))).scalars().all()
-        mirrors = (
-            await session.execute(
-                select(IncidentRule).where(IncidentRule.source == "mirror")
-            )
-        ).scalars().all()
-        mirror_by_policy_id = {
-            m.source_policy_id: m for m in mirrors if m.source_policy_id is not None
-        }
-        orphan_mirrors = [m for m in mirrors if m.source_policy_id is None]
-
-        for policy in policies:
-            mirror = mirror_by_policy_id.get(policy.id)
-            if mirror is None:
-                session.add(
-                    IncidentRule(
-                        name=policy.name,
-                        description=policy.description,
-                        definition_id=policy.definition_id,
-                        mode=policy.mode,
-                        fire_count_threshold=policy.fire_count_threshold,
-                        window_size=policy.window_size,
-                        severity=policy.event_severity,
-                        message_template=policy.message_template,
-                        auto_clear_on_resolve=policy.auto_clear_on_resolve,
-                        enabled=policy.enabled,
-                        source="mirror",
-                        source_policy_id=policy.id,
-                    )
-                )
-                added += 1
-                continue
-
-            dirty = False
-            if mirror.name != policy.name:
-                mirror.name = policy.name
-                dirty = True
-            if mirror.description != policy.description:
-                mirror.description = policy.description
-                dirty = True
-            if mirror.definition_id != policy.definition_id:
-                mirror.definition_id = policy.definition_id
-                dirty = True
-            if mirror.mode != policy.mode:
-                mirror.mode = policy.mode
-                dirty = True
-            if mirror.fire_count_threshold != policy.fire_count_threshold:
-                mirror.fire_count_threshold = policy.fire_count_threshold
-                dirty = True
-            if mirror.window_size != policy.window_size:
-                mirror.window_size = policy.window_size
-                dirty = True
-            if mirror.severity != policy.event_severity:
-                mirror.severity = policy.event_severity
-                dirty = True
-            if mirror.message_template != policy.message_template:
-                mirror.message_template = policy.message_template
-                dirty = True
-            if mirror.auto_clear_on_resolve != policy.auto_clear_on_resolve:
-                mirror.auto_clear_on_resolve = policy.auto_clear_on_resolve
-                dirty = True
-            if mirror.enabled != policy.enabled:
-                mirror.enabled = policy.enabled
-                dirty = True
-            if dirty:
-                mirror.updated_at = datetime.now(timezone.utc)
-                updated += 1
-
-        # Orphan mirrors — policy was deleted, FK cleared source_policy_id.
-        for orphan in orphan_mirrors:
-            if orphan.enabled:
-                orphan.enabled = False
-                orphan.updated_at = datetime.now(timezone.utc)
-                disabled += 1
-
-        await session.commit()
-
-    if added or updated or disabled:
-        logger.info(
-            "incident_rules_synced added=%d updated=%d disabled=%d",
-            added, updated, disabled,
-        )
-    return added, updated, disabled
+# `sync_incident_rules_from_event_policies` was retired in alembic
+# revision zq7r8s9t0u1v as part of the phase deprecation of the event
+# policy rework. Pre-existing mirror rows were flipped in place to
+# `source='native'` and the `source_policy_id` FK was dropped. No
+# replacement — operators now manage incident rules directly via the
+# `/v1/incident-rules` API (see docs/event-policy-rework.md).

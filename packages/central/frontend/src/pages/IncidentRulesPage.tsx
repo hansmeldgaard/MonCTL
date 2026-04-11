@@ -144,10 +144,9 @@ export function IncidentRulesPage() {
             )}
           </div>
           <p className="text-xs text-zinc-500 mt-1">
-            Native rules configured here plus mirror rules auto-synced from
-            Event Policies. Mirror rules only expose phase-2 feature fields
-            (ladder, scope, deps, flap guard) — edit the source EventPolicy for
-            base fields.
+            Incident rules drive the IncidentEngine. Configure a rule's severity
+            ladder, scope filter, dependencies, and flap guard here; the engine
+            applies them on the next 30s cycle.
           </p>
         </CardHeader>
         <CardContent>
