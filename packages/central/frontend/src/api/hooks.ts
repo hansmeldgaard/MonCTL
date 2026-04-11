@@ -72,6 +72,7 @@ import type {
   ConnectorDetail,
   MonitoringEvent,
   EventPolicy,
+  IncidentRule,
   Pack,
   PackDetail,
   PackImportPreview,
@@ -3216,6 +3217,67 @@ export function useDeleteEventPolicy() {
     mutationFn: (id: string) => apiDelete(`/events/policies/${id}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["event-policies"] });
+    },
+  });
+}
+
+// ── Incident Rules (phase 3 native editor) ─────────────────
+
+export function useIncidentRules(params: ListParams = {}) {
+  const qs = buildListQs(params);
+  return useQuery({
+    queryKey: ["incident-rules", params],
+    queryFn: () =>
+      apiGetRaw<{
+        status: string;
+        data: IncidentRule[];
+        meta: { limit: number; offset: number; count: number; total: number };
+      }>(`/incident-rules${qs}`),
+    placeholderData: keepPreviousData,
+    refetchInterval: POLL_LIST,
+  });
+}
+
+export function useIncidentRule(id: string | null | undefined) {
+  return useQuery({
+    queryKey: ["incident-rule", id],
+    queryFn: () =>
+      apiGetRaw<{ status: string; data: IncidentRule }>(
+        `/incident-rules/${id}`,
+      ),
+    enabled: !!id,
+  });
+}
+
+export function useCreateIncidentRule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: Record<string, unknown>) =>
+      apiPost("/incident-rules", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["incident-rules"] });
+    },
+  });
+}
+
+export function useUpdateIncidentRule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...data }: { id: string } & Record<string, unknown>) =>
+      apiPatch(`/incident-rules/${id}`, data),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: ["incident-rules"] });
+      qc.invalidateQueries({ queryKey: ["incident-rule", variables.id] });
+    },
+  });
+}
+
+export function useDeleteIncidentRule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/incident-rules/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["incident-rules"] });
     },
   });
 }

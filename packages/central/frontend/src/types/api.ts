@@ -744,6 +744,51 @@ export interface EventPolicy {
   updated_at: string;
 }
 
+// ── IncidentRule (phase 3 native editor) ──────────────────────
+//
+// IncidentRule is the v2 replacement for EventPolicy. Phase 3a exposes
+// basic CRUD; phases 3b/3c/3d layer visual editors for the phase-2
+// feature fields (severity_ladder, scope_filter, depends_on).
+//
+// source="mirror" rules are auto-synced from an EventPolicy and have
+// locked base fields — only the phase-2 feature fields can be edited
+// via the incident-rules API. source="native" rules are fully editable.
+
+export interface IncidentRuleSeverityLadderStep {
+  after_seconds: number;
+  severity: "info" | "warning" | "critical" | "emergency";
+}
+
+export type IncidentRuleScopeFilter = Record<string, string>;
+
+export interface IncidentRuleDependsOn {
+  rule_ids: string[];
+  match_on: string[];
+}
+
+export interface IncidentRule {
+  id: string;
+  name: string;
+  description: string | null;
+  definition_id: string;
+  definition_name: string | null;
+  mode: "consecutive" | "cumulative";
+  fire_count_threshold: number;
+  window_size: number;
+  severity: string;
+  message_template: string | null;
+  auto_clear_on_resolve: boolean;
+  severity_ladder: IncidentRuleSeverityLadderStep[] | null;
+  scope_filter: IncidentRuleScopeFilter | null;
+  depends_on: IncidentRuleDependsOn | null;
+  flap_guard_seconds: number | null;
+  enabled: boolean;
+  source: "mirror" | "native";
+  source_policy_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 // Legacy aliases for backward compat with DashboardPage
 export type ActiveAlert = AlertEntity;
 export type AlertRule = AlertDefinition;
