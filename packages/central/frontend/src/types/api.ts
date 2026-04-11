@@ -2013,12 +2013,10 @@ export interface Automation {
   id: string;
   name: string;
   description: string | null;
-  trigger_type: "event" | "cron" | "incident";
-  event_severity_filter: string | null;
-  event_policy_ids: string[] | null;
-  event_label_filter: Record<string, string> | null;
-  // Phase cut-over step 1 — trigger_type="incident" uses these in
-  // place of event_policy_ids/event_severity_filter.
+  // Cut-over step 2 retired the legacy "event" trigger type. All
+  // pre-existing event-typed records were bulk-migrated to "incident"
+  // in alembic revision zp6q7r8s9t0u.
+  trigger_type: "cron" | "incident";
   incident_rule_ids: string[] | null;
   incident_state_trigger: "opened" | "escalated" | "cleared" | "any" | null;
   cron_expression: string | null;

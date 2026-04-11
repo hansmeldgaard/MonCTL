@@ -54,13 +54,10 @@ class StepInput(BaseModel):
 class CreateAutomationRequest(BaseModel):
     name: str = Field(..., max_length=200)
     description: str | None = None
+    # Only `incident` and `cron` are supported after cut-over step 2
+    # (see docs/event-policy-rework.md). Legacy `event` records were
+    # bulk-migrated in alembic revision zp6q7r8s9t0u.
     trigger_type: str
-    event_severity_filter: str | None = None
-    event_policy_ids: list[str] | None = None
-    event_label_filter: dict | None = None
-    # Phase cut-over step 1 — see docs/event-policy-rework.md.
-    # trigger_type="incident" uses these two fields in place of the
-    # event-specific ones above. Both sets coexist during the cut-over.
     incident_rule_ids: list[str] | None = None
     incident_state_trigger: str | None = None
     cron_expression: str | None = None
@@ -76,9 +73,6 @@ class CreateAutomationRequest(BaseModel):
 class UpdateAutomationRequest(BaseModel):
     name: str | None = Field(default=None, max_length=200)
     description: str | None = None
-    event_severity_filter: str | None = None
-    event_policy_ids: list[str] | None = None
-    event_label_filter: dict | None = None
     incident_rule_ids: list[str] | None = None
     incident_state_trigger: str | None = None
     cron_expression: str | None = None
@@ -119,9 +113,6 @@ def _fmt_automation(a: Automation) -> dict:
         "name": a.name,
         "description": a.description,
         "trigger_type": a.trigger_type,
-        "event_severity_filter": a.event_severity_filter,
-        "event_policy_ids": a.event_policy_ids,
-        "event_label_filter": a.event_label_filter,
         "incident_rule_ids": a.incident_rule_ids,
         "incident_state_trigger": a.incident_state_trigger,
         "cron_expression": a.cron_expression,
@@ -350,9 +341,14 @@ async def create_automation(
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_permission("automation", "create")),
 ):
-    if request.trigger_type not in ("event", "cron", "incident"):
+    if request.trigger_type not in ("cron", "incident"):
         raise HTTPException(
-            400, detail="trigger_type must be 'event', 'cron', or 'incident'"
+            400,
+            detail=(
+                "trigger_type must be 'cron' or 'incident'. The legacy "
+                "'event' trigger was retired in cut-over step 2 — use "
+                "'incident' with incident_rule_ids / incident_state_trigger."
+            ),
         )
 
     if request.trigger_type == "cron":
@@ -390,9 +386,6 @@ async def create_automation(
         name=request.name,
         description=request.description,
         trigger_type=request.trigger_type,
-        event_severity_filter=request.event_severity_filter,
-        event_policy_ids=request.event_policy_ids,
-        event_label_filter=request.event_label_filter,
         incident_rule_ids=request.incident_rule_ids,
         incident_state_trigger=request.incident_state_trigger,
         cron_expression=request.cron_expression,
@@ -452,12 +445,6 @@ async def update_automation(
         automation.name = request.name
     if request.description is not None:
         automation.description = request.description
-    if request.event_severity_filter is not None:
-        automation.event_severity_filter = request.event_severity_filter
-    if request.event_policy_ids is not None:
-        automation.event_policy_ids = request.event_policy_ids
-    if request.event_label_filter is not None:
-        automation.event_label_filter = request.event_label_filter
     if request.incident_rule_ids is not None:
         automation.incident_rule_ids = request.incident_rule_ids
     if request.incident_state_trigger is not None:
