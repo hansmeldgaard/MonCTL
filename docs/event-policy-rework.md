@@ -123,11 +123,12 @@ For each AlertEntity in resolved state:
 ## Open questions
 
 1. **Who owns incident state — PG or CH?** PG is ACID and suits mutation-heavy per-incident updates; CH is better for historical queries. Current proposal: PG for live incidents (`incidents` table), CH for historical history/audit (`incident_history` append-only). Trade-off is a two-store read for the incidents tab.
-2. **Are correlation keys just string templates, or a DSL?** String templates are enough for the 80% case (`"device:{device_id}"`, `"link:{device_id}:{if_index}"`). A DSL would let users express "same rack" or "same BGP peer group" but needs a schema for entity metadata we don't have today.
+2. **~~Are correlation keys just string templates, or a DSL?~~** **RESOLVED**: ship string templates when the correlation phase starts. Revisit DSL only if real operators hit the ceiling. No blocker today.
 3. **~~How do severity ladders interact with mode="cumulative"?~~** **RESOLVED** (phase 2a): cumulative only controls when an incident _opens_; the ladder runs on wall-clock time after opening. Same behavior for consecutive mode.
-4. **Dependency scope.** Are dependencies defined per rule (rule A depends on rule B) or per entity (incident-A-on-device-X depends on incident-B-on-device-X)? Per-entity is more powerful but needs an entity-equivalence function.
-5. **Flap guard window defaults.** What's a reasonable default? Proposal: 3× the alert definition's evaluation interval, clamped to [30s, 5min].
-6. **Integration with automations.** Today the automation engine fires on new events. With incidents, it should fire on _incident state transitions_ (open, ladder step, clear), not every fire. Does the automation engine need per-transition filters, or do automations get rewritten to subscribe to specific transitions?
+4. **~~Dependency scope.~~** **RESOLVED**: per-rule `depends_on` list + optional `match_on: [label_key, …]` list. Dependency fires only when the parent incident matches the child incident on every label key in `match_on`. Covers "interface-down suppressed under device-down for same device" via `match_on: ["device_id"]` without inventing an entity-equivalence graph. Implementation deferred to the dependency phase.
+5. **~~Flap guard window defaults.~~** **RESOLVED**: 3× the alert definition's evaluation interval, clamped to [30s, 5min]. Implementation deferred to the suppression phase.
+6. **~~Integration with automations.~~** **RESOLVED**: rewrite `AutomationEngine.on_new_events` into `on_incident_transition(incident, old_state, new_state)` with transition types `opened` / `escalated` / `cleared`. Ship as a two-step migration: add the new hook alongside the old one, migrate UI + automation records gradually, then remove the old hook. Avoids a big-bang switchover.
+7. **~~Native rule-editor UI — when?~~** **RESOLVED**: build now, as a dedicated phase (phase 3) once engine features stabilize. Gets its own planning doc. Between now and then, rules can only be configured via SQL on mirror rules — that's fine for staff-operated shadow verification.
 
 ## Phase 2a — Severity ladder (shipped)
 
@@ -162,6 +163,36 @@ shadow-mode addition to `IncidentEngine`:
   WHERE id = '...';
   ```
   Mirror sync (`sync_incident_rules_from_event_policies`) deliberately does not touch `severity_ladder`, `scope_filter`, etc., so ladders set on mirror rules are preserved across syncs.
+
+## Phase 2b — Scope filters (shipped)
+
+Label-based entity filtering on an `IncidentRule`. Restricts which
+`AlertEntity` rows a rule evaluates against without requiring duplicate
+rules per device subset.
+
+- Per-rule field: `incident_rules.scope_filter` (JSONB, nullable, already allocated in phase 1).
+- Format: a flat `{label_key: required_value}` dict. **All keys AND-match** against the entity's `entity_labels` JSONB.
+- Validation (enforced in `incidents/engine.py::_validate_scope_filter`):
+  - Must be a dict of string → string. Non-string keys or values → log WARNING, treat as no filter.
+  - `None` or empty dict → no filter (current behavior).
+  - An empty-string value is a wildcard: the key must exist on the entity, but the value is unconstrained.
+  - No regex, IN lists, or negation in this phase — intentionally minimal. Can grow later if real operator demand surfaces.
+- Example:
+  ```json
+  { "env": "prod", "role": "core_switch" }
+  ```
+- Engine behavior:
+  - Scope is loaded once per rule in `_evaluate_rule`.
+  - Each `AlertEntity` goes through `_entity_in_scope()` before anything else — out-of-scope entities are skipped entirely (no threshold check, no incident open/update).
+  - **Mid-flight scope narrowing**: if an operator narrows `scope_filter` so a currently-open incident's entity no longer matches, the engine clears the incident with `cleared_reason = "out_of_scope"`. Distinguishable from natural auto-clears (`"auto"`) for UI and audit queries.
+  - No reopen logic: clearing a scope filter doesn't resurrect out-of-scope incidents. If the alert is still firing, the rule opens a fresh incident on the next cycle.
+- No API/UI surface yet. Set via SQL:
+  ```sql
+  UPDATE incident_rules
+  SET scope_filter = '{"device_name": "lab-switch-01"}'::jsonb
+  WHERE id = '...';
+  ```
+  Clear with `scope_filter = NULL`. Mirror sync still ignores this field.
 
 ## Out of scope (for the rework PR)
 

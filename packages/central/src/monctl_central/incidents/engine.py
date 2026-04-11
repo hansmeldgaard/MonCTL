@@ -138,6 +138,49 @@ def _ladder_severity_at(ladder: list[dict], elapsed_seconds: float) -> str:
     return ladder[0]["severity"]
 
 
+def _validate_scope_filter(raw) -> dict[str, str] | None:
+    """Validate and normalize a scope_filter JSONB value.
+
+    Returns a flat `{label_key: required_value}` dict, or `None` when
+    the filter is missing, empty, or malformed. Malformed filters are
+    logged at WARNING so a typo in one rule doesn't silently disable
+    scope restriction.
+
+    Format:
+    - Flat dict of string → string.
+    - All keys AND-match against `AlertEntity.entity_labels`.
+    - Empty-string value = wildcard ("key must exist", any value).
+    - `None` or empty dict → returns `None` (rule has no scope filter).
+
+    Kept intentionally minimal — no regex, IN lists, or negation.
+    Those can be added later if real operator demand surfaces.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        logger.warning("incident_scope_invalid reason=not_a_dict value=%r", raw)
+        return None
+    if not raw:
+        return None
+
+    normalized: dict[str, str] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str):
+            logger.warning(
+                "incident_scope_invalid reason=key_not_string key=%r", key
+            )
+            return None
+        if not isinstance(value, str):
+            logger.warning(
+                "incident_scope_invalid reason=value_not_string key=%s value=%r",
+                key, value,
+            )
+            return None
+        normalized[key] = value
+
+    return normalized
+
+
 class IncidentEngine:
     """Phase 1 incident engine — observation only."""
 
@@ -213,12 +256,29 @@ class IncidentEngine:
         open_by_key = {inc.entity_key: inc for inc in open_incidents}
 
         ladder = _validate_ladder(rule.severity_ladder)
+        scope = _validate_scope_filter(rule.scope_filter)
         now = datetime.now(timezone.utc)
         opened = updated = cleared = escalated = 0
 
         for inst in entities:
             entity_key = f"{inst.assignment_id}|{inst.entity_key}"
             incident = open_by_key.get(entity_key)
+
+            # Scope filter: entities outside the rule's scope are skipped. If
+            # the filter was narrowed while an incident was already open, the
+            # open incident is cleared with cleared_reason="out_of_scope" so
+            # operators can distinguish it from natural auto-clears.
+            if scope and not self._entity_in_scope(inst, scope):
+                if incident is not None:
+                    incident.state = "cleared"
+                    incident.cleared_at = now
+                    incident.cleared_reason = "out_of_scope"
+                    cleared += 1
+                    logger.info(
+                        "incident_cleared rule=%s entity=%s reason=out_of_scope",
+                        rule.name, inst.entity_key or "-",
+                    )
+                continue
 
             if inst.state == "firing":
                 if incident is None:
@@ -280,6 +340,26 @@ class IncidentEngine:
                     )
 
         return opened, updated, cleared, escalated
+
+    @staticmethod
+    def _entity_in_scope(inst: AlertEntity, scope: dict[str, str]) -> bool:
+        """Return True if the AlertEntity's labels AND-match the scope filter.
+
+        Missing keys or value mismatches fail the check. An empty string
+        in the scope value acts as a wildcard — the key must exist on the
+        entity, but its value is unconstrained.
+        """
+        labels = inst.entity_labels or {}
+        for key, required in scope.items():
+            actual = labels.get(key)
+            if actual is None:
+                return False
+            if required == "":
+                # Wildcard: key must exist, value doesn't matter.
+                continue
+            if str(actual) != required:
+                return False
+        return True
 
     @staticmethod
     def _apply_ladder(incident: Incident, ladder: list[dict], now: datetime) -> bool:
