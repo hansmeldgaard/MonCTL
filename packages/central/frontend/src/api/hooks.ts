@@ -72,6 +72,7 @@ import type {
   ConnectorDetail,
   MonitoringEvent,
   EventPolicy,
+  Incident,
   IncidentRule,
   Pack,
   PackDetail,
@@ -3279,6 +3280,23 @@ export function useDeleteIncidentRule() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["incident-rules"] });
     },
+  });
+}
+
+// ── Incidents (read-only, phase 3d tree view) ─────────────
+
+export function useIncidents(params: ListParams = {}) {
+  const qs = buildListQs(params);
+  return useQuery({
+    queryKey: ["incidents", params],
+    queryFn: () =>
+      apiGetRaw<{
+        status: string;
+        data: Incident[];
+        meta: { limit: number; offset: number; count: number; total: number };
+      }>(`/incidents${qs}`),
+    placeholderData: keepPreviousData,
+    refetchInterval: POLL_LIST,
   });
 }
 

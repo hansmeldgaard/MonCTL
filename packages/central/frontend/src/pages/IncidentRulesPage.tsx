@@ -36,6 +36,10 @@ import {
 import { LadderEditor, validateLadder } from "@/components/LadderEditor.tsx";
 import { ScopeFilterEditor } from "@/components/ScopeFilterEditor.tsx";
 import {
+  DependencyPicker,
+  validateDependsOn,
+} from "@/components/DependencyPicker.tsx";
+import {
   useAlertRules,
   useCreateIncidentRule,
   useDeleteIncidentRule,
@@ -49,6 +53,7 @@ import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
 import type {
   IncidentRule,
+  IncidentRuleDependsOn,
   IncidentRuleScopeFilter,
   IncidentRuleSeverityLadderStep,
 } from "@/types/api.ts";
@@ -380,9 +385,9 @@ function IncidentRuleDialog({
   const createMut = useCreateIncidentRule();
   const updateMut = useUpdateIncidentRule();
 
-  const [activeTab, setActiveTab] = useState<"settings" | "ladder" | "scope">(
-    "settings",
-  );
+  const [activeTab, setActiveTab] = useState<
+    "settings" | "ladder" | "scope" | "deps"
+  >("settings");
   const [name, setName] = useState(rule?.name ?? "");
   const [description, setDescription] = useState(rule?.description ?? "");
   const [definitionId, setDefinitionId] = useState(rule?.definition_id ?? "");
@@ -407,7 +412,17 @@ function IncidentRuleDialog({
   const [flapGuardSeconds, setFlapGuardSeconds] = useState<number | null>(
     rule?.flap_guard_seconds ?? null,
   );
+  const [dependsOn, setDependsOn] = useState<IncidentRuleDependsOn | null>(
+    rule?.depends_on ?? null,
+  );
   const [error, setError] = useState<string | null>(null);
+
+  // All rules are needed for the dependency picker's parent select —
+  // reuse the same hook the list page does. Fetches at dialog-open time;
+  // relying on React Query's shared cache with the outer list page means
+  // this is effectively free.
+  const { data: allRulesResp } = useIncidentRules({ limit: 500, offset: 0 });
+  const allRules = allRulesResp?.data ?? [];
 
   const isPending = createMut.isPending || updateMut.isPending;
   const baseFieldsDisabled = isEdit && isMirror;
@@ -429,6 +444,7 @@ function IncidentRuleDialog({
   const flapGuardInvalid =
     flapGuardSeconds !== null &&
     (!Number.isInteger(flapGuardSeconds) || flapGuardSeconds < 0);
+  const dependsOnValidation = validateDependsOn(dependsOn);
 
   const ladderChanged =
     JSON.stringify(ladder ?? null) !==
@@ -438,10 +454,13 @@ function IncidentRuleDialog({
     JSON.stringify(rule?.scope_filter ?? null);
   const flapChanged =
     (flapGuardSeconds ?? null) !== (rule?.flap_guard_seconds ?? null);
+  const depsChanged =
+    JSON.stringify(dependsOn ?? null) !==
+    JSON.stringify(rule?.depends_on ?? null);
   // Mirror rules can edit any of the phase-2 fields but no base fields.
   // Save is only shown when at least one phase-2 field has changed.
   const mirrorHasSavableChanges =
-    isMirror && (ladderChanged || scopeChanged || flapChanged);
+    isMirror && (ladderChanged || scopeChanged || flapChanged || depsChanged);
 
   const handleSubmit = async () => {
     setError(null);
@@ -457,12 +476,16 @@ function IncidentRuleDialog({
       setError("Flap guard must be a non-negative integer number of seconds");
       return;
     }
+    if (!dependsOnValidation.ok) {
+      setError(dependsOnValidation.error);
+      return;
+    }
     try {
       if (isEdit) {
         if (isMirror) {
           // Mirror rules: only phase-2 feature fields are allowed by the
           // API. Send a minimal PATCH body containing only what changed.
-          if (!ladderChanged && !scopeChanged && !flapChanged) {
+          if (!ladderChanged && !scopeChanged && !flapChanged && !depsChanged) {
             onClose();
             return;
           }
@@ -470,6 +493,7 @@ function IncidentRuleDialog({
           if (ladderChanged) body.severity_ladder = ladder;
           if (scopeChanged) body.scope_filter = scopeFilter;
           if (flapChanged) body.flap_guard_seconds = flapGuardSeconds;
+          if (depsChanged) body.depends_on = dependsOn;
           await updateMut.mutateAsync(
             body as { id: string } & Record<string, unknown>,
           );
@@ -489,6 +513,7 @@ function IncidentRuleDialog({
             severity_ladder: ladder,
             scope_filter: scopeFilter,
             flap_guard_seconds: flapGuardSeconds,
+            depends_on: dependsOn,
           });
         }
       } else {
@@ -507,6 +532,7 @@ function IncidentRuleDialog({
           severity_ladder: ladder,
           scope_filter: scopeFilter,
           flap_guard_seconds: flapGuardSeconds,
+          depends_on: dependsOn,
         });
       }
       onClose();
@@ -523,6 +549,7 @@ function IncidentRuleDialog({
     if (!ladderValidation.ok) return true;
     if (scopeFilterInvalid) return true;
     if (flapGuardInvalid) return true;
+    if (!dependsOnValidation.ok) return true;
     if (!baseFieldsDisabled && (!name || !definitionId)) return true;
     return false;
   })();
@@ -565,6 +592,14 @@ function IncidentRuleDialog({
               ) : null;
             })()}
           </TabTrigger>
+          <TabTrigger value="deps">
+            Dependencies
+            {dependsOn && dependsOn.rule_ids.length > 0 && (
+              <span className="ml-1.5 rounded-full bg-brand-500/20 px-1.5 py-0.5 text-[10px] text-brand-300">
+                {dependsOn.rule_ids.length}
+              </span>
+            )}
+          </TabTrigger>
         </TabsList>
 
         <TabsContent value="settings">
@@ -576,7 +611,8 @@ function IncidentRuleDialog({
                 here — edit the Event Policy instead. Use the{" "}
                 <strong>Severity Ladder</strong> or{" "}
                 <strong>Scope &amp; Flap Guard</strong> tabs to layer phase-2
-                features onto this mirror. Dependency picker lands in phase 3d.
+                features onto this mirror, or the <strong>Dependencies</strong>{" "}
+                tab to suppress this mirror under a parent rule's incidents.
               </div>
             )}
 
@@ -792,6 +828,15 @@ function IncidentRuleDialog({
               )}
             </div>
           </div>
+        </TabsContent>
+
+        <TabsContent value="deps">
+          <DependencyPicker
+            value={dependsOn}
+            onChange={setDependsOn}
+            availableRules={allRules}
+            currentRuleId={rule?.id}
+          />
         </TabsContent>
       </Tabs>
 
