@@ -2185,6 +2185,37 @@ export function useDeleteAppConnector() {
   });
 }
 
+/**
+ * Assign a concrete Connector to a slot declared by an app's Poller code.
+ *
+ * The slot must already exist (it is auto-created on version upload
+ * from the `required_connectors` class attribute). The chosen
+ * connector's type must match the slot's declared `connector_type`.
+ */
+export function useAssignConnectorToSlot() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      appId,
+      alias,
+      data,
+    }: {
+      appId: string;
+      alias: string;
+      data: {
+        connector_id: string;
+        connector_version_id?: string | null;
+        use_latest?: boolean;
+        settings?: Record<string, unknown>;
+      };
+    }) => apiPut(`/apps/${appId}/connectors/${alias}/assign`, data),
+    onSuccess: (_res, { appId }) => {
+      qc.invalidateQueries({ queryKey: ["app-detail", appId] });
+      qc.invalidateQueries({ queryKey: ["apps"] });
+    },
+  });
+}
+
 export function useCreateAppVersion() {
   const qc = useQueryClient();
   return useMutation({
