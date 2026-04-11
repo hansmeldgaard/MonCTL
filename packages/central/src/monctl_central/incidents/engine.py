@@ -253,11 +253,25 @@ def _validate_depends_on(raw) -> dict | None:
 
 
 class IncidentEngine:
-    """Phase 1 incident engine — observation only."""
+    """Phase 1 incident engine — observation + automation trigger (cut-over step 1).
 
-    def __init__(self, session_factory, ch_client: ClickHouseClient | None = None) -> None:
+    An optional `automation_engine` can be passed in; when set, the
+    engine dispatches `on_incident_transition` calls after each cycle's
+    session.commit() for every opened / escalated / cleared transition
+    observed this cycle. The old `AutomationEngine.on_new_events` hook
+    continues to fire in parallel for `trigger_type='event'` automations
+    during the cut-over period.
+    """
+
+    def __init__(
+        self,
+        session_factory,
+        ch_client: ClickHouseClient | None = None,
+        automation_engine=None,
+    ) -> None:
         self._session_factory = session_factory
         self._ch = ch_client  # unused in phase 1, reserved for phase 2
+        self._automation_engine = automation_engine
 
     async def evaluate_all(self) -> None:
         if settings.incident_engine == "off":
@@ -276,10 +290,11 @@ class IncidentEngine:
             updated = 0
             cleared = 0
             escalated = 0
+            transitions: list[dict] = []
 
             for rule in rules:
                 try:
-                    o, u, c, e = await self._evaluate_rule(session, rule)
+                    o, u, c, e = await self._evaluate_rule(session, rule, transitions)
                     opened += o
                     updated += u
                     cleared += c
@@ -298,10 +313,60 @@ class IncidentEngine:
                     opened, updated, cleared, escalated, len(rules),
                 )
 
+        # Dispatch transitions AFTER the session is closed so the
+        # AutomationEngine sees committed state. Collected during
+        # `_evaluate_rule` as plain dicts (no ORM refs) to avoid
+        # lazy-load surprises across sessions.
+        if transitions and self._automation_engine is not None:
+            for t in transitions:
+                try:
+                    await self._automation_engine.on_incident_transition(
+                        incident_id=t["incident_id"],
+                        rule_id=t["rule_id"],
+                        transition=t["transition"],
+                        device_id=t["device_id"],
+                        severity=t["severity"],
+                        message=t["message"],
+                        labels=t["labels"],
+                    )
+                except Exception:
+                    logger.exception(
+                        "incident_transition_dispatch_error rule_id=%s transition=%s",
+                        t["rule_id"], t["transition"],
+                    )
+
     async def _evaluate_rule(
-        self, session: AsyncSession, rule: IncidentRule
+        self,
+        session: AsyncSession,
+        rule: IncidentRule,
+        transitions: list[dict] | None = None,
     ) -> tuple[int, int, int, int]:
-        """Evaluate one rule. Returns (opened, updated, cleared, escalated) counts."""
+        """Evaluate one rule. Returns (opened, updated, cleared, escalated) counts.
+
+        `transitions` is an optional list that is appended to when an
+        incident enters a new state (`opened` / `escalated` / `cleared`).
+        Each entry is a plain dict the engine passes to
+        `AutomationEngine.on_incident_transition` after commit.
+        """
+        if transitions is None:
+            transitions = []
+
+        def _record(incident: Incident, transition: str) -> None:
+            """Append a transition dict for later dispatch to the AutomationEngine."""
+            labels = incident.labels or {}
+            transitions.append(
+                {
+                    "incident_id": str(incident.id),
+                    "rule_id": str(rule.id),
+                    "transition": transition,
+                    "device_id": (
+                        str(incident.device_id) if incident.device_id else ""
+                    ),
+                    "severity": incident.severity,
+                    "message": incident.message or "",
+                    "labels": dict(labels),
+                }
+            )
         defn = rule.definition
         if not defn or not defn.enabled:
             return 0, 0, 0, 0
@@ -370,6 +435,7 @@ class IncidentEngine:
                     incident.cleared_at = now
                     incident.cleared_reason = "out_of_scope"
                     cleared += 1
+                    _record(incident, "cleared")
                     logger.info(
                         "incident_cleared rule=%s entity=%s reason=out_of_scope",
                         rule.name, inst.entity_key or "-",
@@ -408,6 +474,7 @@ class IncidentEngine:
                     )
                     session.add(new_inc)
                     opened += 1
+                    _record(new_inc, "opened")
                     logger.info(
                         "incident_opened rule=%s entity=%s device=%s severity=%s parent=%s",
                         rule.name, inst.entity_key or "-",
@@ -444,6 +511,7 @@ class IncidentEngine:
                     # Apply severity ladder (wall-clock time since opened_at).
                     if ladder and self._apply_ladder(incident, ladder, now):
                         escalated += 1
+                        _record(incident, "escalated")
                         logger.info(
                             "incident_escalated rule=%s entity=%s severity=%s elapsed=%ds",
                             rule.name, inst.entity_key or "-",
@@ -475,6 +543,7 @@ class IncidentEngine:
                 incident.cleared_at = now
                 incident.cleared_reason = "auto"
                 cleared += 1
+                _record(incident, "cleared")
                 logger.info(
                     "incident_cleared rule=%s entity=%s reason=auto",
                     rule.name, inst.entity_key or "-",

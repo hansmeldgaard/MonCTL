@@ -1620,6 +1620,11 @@ class Automation(Base):
     event_severity_filter: Mapped[str | None] = mapped_column(String(20), nullable=True)
     event_policy_ids: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     event_label_filter: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Phase cut-over step 1: `trigger_type='incident'` fires on IncidentEngine
+    # state transitions (opened / escalated / cleared / any). Both the new
+    # and old hooks coexist; existing event-typed automations are unaffected.
+    incident_rule_ids: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    incident_state_trigger: Mapped[str | None] = mapped_column(String(20), nullable=True)
     cron_expression: Mapped[str | None] = mapped_column(String(100), nullable=True)
     cron_device_label_filter: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     cron_device_ids: Mapped[list | None] = mapped_column(JSONB, nullable=True)
