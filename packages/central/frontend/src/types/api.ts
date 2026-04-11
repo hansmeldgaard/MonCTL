@@ -789,6 +789,32 @@ export interface IncidentRule {
   updated_at: string;
 }
 
+// Live Incident object — the IncidentEngine's primary output. Read-only
+// from the UI side; the engine owns all mutations.
+export interface Incident {
+  id: string;
+  rule_id: string;
+  rule_name: string | null;
+  rule_source: "mirror" | "native" | null;
+  entity_key: string;
+  assignment_id: string;
+  device_id: string | null;
+  state: "open" | "cleared";
+  severity: string;
+  message: string;
+  labels: Record<string, unknown>;
+  fire_count: number;
+  opened_at: string;
+  last_fired_at: string;
+  cleared_at: string | null;
+  cleared_reason: string | null;
+  correlation_key: string | null;
+  parent_incident_id: string | null;
+  severity_reached_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 // Legacy aliases for backward compat with DashboardPage
 export type ActiveAlert = AlertEntity;
 export type AlertRule = AlertDefinition;

@@ -34,6 +34,11 @@ import {
   TabsContent,
 } from "@/components/ui/tabs.tsx";
 import { LadderEditor, validateLadder } from "@/components/LadderEditor.tsx";
+import { ScopeFilterEditor } from "@/components/ScopeFilterEditor.tsx";
+import {
+  DependencyPicker,
+  validateDependsOn,
+} from "@/components/DependencyPicker.tsx";
 import {
   useAlertRules,
   useCreateIncidentRule,
@@ -48,6 +53,8 @@ import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
 import type {
   IncidentRule,
+  IncidentRuleDependsOn,
+  IncidentRuleScopeFilter,
   IncidentRuleSeverityLadderStep,
 } from "@/types/api.ts";
 
@@ -378,7 +385,9 @@ function IncidentRuleDialog({
   const createMut = useCreateIncidentRule();
   const updateMut = useUpdateIncidentRule();
 
-  const [activeTab, setActiveTab] = useState<"settings" | "ladder">("settings");
+  const [activeTab, setActiveTab] = useState<
+    "settings" | "ladder" | "scope" | "deps"
+  >("settings");
   const [name, setName] = useState(rule?.name ?? "");
   const [description, setDescription] = useState(rule?.description ?? "");
   const [definitionId, setDefinitionId] = useState(rule?.definition_id ?? "");
@@ -398,19 +407,60 @@ function IncidentRuleDialog({
   const [ladder, setLadder] = useState<IncidentRuleSeverityLadderStep[] | null>(
     rule?.severity_ladder ?? null,
   );
+  const [scopeFilter, setScopeFilter] =
+    useState<IncidentRuleScopeFilter | null>(rule?.scope_filter ?? null);
+  const [flapGuardSeconds, setFlapGuardSeconds] = useState<number | null>(
+    rule?.flap_guard_seconds ?? null,
+  );
+  const [dependsOn, setDependsOn] = useState<IncidentRuleDependsOn | null>(
+    rule?.depends_on ?? null,
+  );
   const [error, setError] = useState<string | null>(null);
+
+  // All rules are needed for the dependency picker's parent select —
+  // reuse the same hook the list page does. Fetches at dialog-open time;
+  // relying on React Query's shared cache with the outer list page means
+  // this is effectively free.
+  const { data: allRulesResp } = useIncidentRules({ limit: 500, offset: 0 });
+  const allRules = allRulesResp?.data ?? [];
 
   const isPending = createMut.isPending || updateMut.isPending;
   const baseFieldsDisabled = isEdit && isMirror;
 
   const ladderValidation = validateLadder(ladder);
+  // Scope filter validation: keys must be non-empty, no duplicates. The
+  // ScopeFilterEditor collapses duplicates on save but the error surfaces
+  // in the editor itself; save gate uses the normalized dict here.
+  const scopeFilterInvalid = (() => {
+    if (!scopeFilter) return false;
+    // If the dict has any empty key it's invalid — but rowsToDict already
+    // strips empty keys, so this is really a check for "nothing remains"
+    // vs "something remains that shouldn't have been allowed".
+    for (const key of Object.keys(scopeFilter)) {
+      if (!key.trim()) return true;
+    }
+    return false;
+  })();
+  const flapGuardInvalid =
+    flapGuardSeconds !== null &&
+    (!Number.isInteger(flapGuardSeconds) || flapGuardSeconds < 0);
+  const dependsOnValidation = validateDependsOn(dependsOn);
+
   const ladderChanged =
     JSON.stringify(ladder ?? null) !==
     JSON.stringify(rule?.severity_ladder ?? null);
-  // On mirror rules, the ladder is the only thing editable from this
-  // dialog today (3b). 3c/3d will add scope/deps/flap the same way.
-  // Save button is only shown when there is actually something to save.
-  const mirrorHasSavableChanges = isMirror && ladderChanged;
+  const scopeChanged =
+    JSON.stringify(scopeFilter ?? null) !==
+    JSON.stringify(rule?.scope_filter ?? null);
+  const flapChanged =
+    (flapGuardSeconds ?? null) !== (rule?.flap_guard_seconds ?? null);
+  const depsChanged =
+    JSON.stringify(dependsOn ?? null) !==
+    JSON.stringify(rule?.depends_on ?? null);
+  // Mirror rules can edit any of the phase-2 fields but no base fields.
+  // Save is only shown when at least one phase-2 field has changed.
+  const mirrorHasSavableChanges =
+    isMirror && (ladderChanged || scopeChanged || flapChanged || depsChanged);
 
   const handleSubmit = async () => {
     setError(null);
@@ -418,20 +468,35 @@ function IncidentRuleDialog({
       setError(ladderValidation.error);
       return;
     }
+    if (scopeFilterInvalid) {
+      setError("Scope filter has an invalid key");
+      return;
+    }
+    if (flapGuardInvalid) {
+      setError("Flap guard must be a non-negative integer number of seconds");
+      return;
+    }
+    if (!dependsOnValidation.ok) {
+      setError(dependsOnValidation.error);
+      return;
+    }
     try {
       if (isEdit) {
         if (isMirror) {
           // Mirror rules: only phase-2 feature fields are allowed by the
-          // API. Build a ladder-only PATCH body. (Phase 3c/3d will grow
-          // this to include scope/deps/flap fields.)
-          if (!ladderChanged) {
+          // API. Send a minimal PATCH body containing only what changed.
+          if (!ladderChanged && !scopeChanged && !flapChanged && !depsChanged) {
             onClose();
             return;
           }
-          await updateMut.mutateAsync({
-            id: rule!.id,
-            severity_ladder: ladder,
-          });
+          const body: Record<string, unknown> = { id: rule!.id };
+          if (ladderChanged) body.severity_ladder = ladder;
+          if (scopeChanged) body.scope_filter = scopeFilter;
+          if (flapChanged) body.flap_guard_seconds = flapGuardSeconds;
+          if (depsChanged) body.depends_on = dependsOn;
+          await updateMut.mutateAsync(
+            body as { id: string } & Record<string, unknown>,
+          );
         } else {
           if (!name || !definitionId) return;
           await updateMut.mutateAsync({
@@ -446,6 +511,9 @@ function IncidentRuleDialog({
             auto_clear_on_resolve: autoClear,
             enabled,
             severity_ladder: ladder,
+            scope_filter: scopeFilter,
+            flap_guard_seconds: flapGuardSeconds,
+            depends_on: dependsOn,
           });
         }
       } else {
@@ -462,6 +530,9 @@ function IncidentRuleDialog({
           auto_clear_on_resolve: autoClear,
           enabled,
           severity_ladder: ladder,
+          scope_filter: scopeFilter,
+          flap_guard_seconds: flapGuardSeconds,
+          depends_on: dependsOn,
         });
       }
       onClose();
@@ -476,6 +547,9 @@ function IncidentRuleDialog({
   const saveDisabled = (() => {
     if (isPending) return true;
     if (!ladderValidation.ok) return true;
+    if (scopeFilterInvalid) return true;
+    if (flapGuardInvalid) return true;
+    if (!dependsOnValidation.ok) return true;
     if (!baseFieldsDisabled && (!name || !definitionId)) return true;
     return false;
   })();
@@ -493,7 +567,7 @@ function IncidentRuleDialog({
     >
       <Tabs
         value={activeTab}
-        onChange={(v) => setActiveTab(v as "settings" | "ladder")}
+        onChange={(v) => setActiveTab(v as "settings" | "ladder" | "scope")}
       >
         <TabsList>
           <TabTrigger value="settings">Settings</TabTrigger>
@@ -502,6 +576,27 @@ function IncidentRuleDialog({
             {ladder && ladder.length > 0 && (
               <span className="ml-1.5 rounded-full bg-brand-500/20 px-1.5 py-0.5 text-[10px] text-brand-300">
                 {ladder.length}
+              </span>
+            )}
+          </TabTrigger>
+          <TabTrigger value="scope">
+            Scope &amp; Flap Guard
+            {(() => {
+              const n =
+                (scopeFilter && Object.keys(scopeFilter).length > 0 ? 1 : 0) +
+                (flapGuardSeconds != null && flapGuardSeconds > 0 ? 1 : 0);
+              return n > 0 ? (
+                <span className="ml-1.5 rounded-full bg-brand-500/20 px-1.5 py-0.5 text-[10px] text-brand-300">
+                  {n}
+                </span>
+              ) : null;
+            })()}
+          </TabTrigger>
+          <TabTrigger value="deps">
+            Dependencies
+            {dependsOn && dependsOn.rule_ids.length > 0 && (
+              <span className="ml-1.5 rounded-full bg-brand-500/20 px-1.5 py-0.5 text-[10px] text-brand-300">
+                {dependsOn.rule_ids.length}
               </span>
             )}
           </TabTrigger>
@@ -514,9 +609,10 @@ function IncidentRuleDialog({
                 This is a <strong>mirror rule</strong> auto-synced from the
                 Event Policy <em>{rule!.name}</em>. Base fields are read-only
                 here — edit the Event Policy instead. Use the{" "}
-                <strong>Severity Ladder</strong> tab to layer a ladder onto this
-                mirror; scope / dependencies / flap guard editors land in phase
-                3c/3d.
+                <strong>Severity Ladder</strong> or{" "}
+                <strong>Scope &amp; Flap Guard</strong> tabs to layer phase-2
+                features onto this mirror, or the <strong>Dependencies</strong>{" "}
+                tab to suppress this mirror under a parent rule's incidents.
               </div>
             )}
 
@@ -658,6 +754,88 @@ function IncidentRuleDialog({
             value={ladder}
             onChange={setLadder}
             baseSeverity={severity}
+          />
+        </TabsContent>
+
+        <TabsContent value="scope">
+          <div className="space-y-6">
+            <div>
+              <Label>Scope filter</Label>
+              <div className="mt-2">
+                <ScopeFilterEditor
+                  value={scopeFilter}
+                  onChange={setScopeFilter}
+                />
+              </div>
+            </div>
+
+            <div className="border-t border-zinc-800 pt-5">
+              <Label>Flap guard (seconds)</Label>
+              <p className="text-xs text-zinc-500 mt-1">
+                Hold auto-clear for this many seconds after the underlying alert
+                resolves. A re-fire inside the window re-attaches to the same
+                incident — no churn in the incidents table. Leave blank to clear
+                immediately (legacy behavior). Suggested default:{" "}
+                <span className="font-mono">90</span> seconds (3× the 30s
+                evaluation interval, per the phase 2e design).
+              </p>
+              <div className="mt-2 flex items-center gap-3">
+                <Input
+                  type="number"
+                  min={0}
+                  value={flapGuardSeconds ?? ""}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    if (raw === "") {
+                      setFlapGuardSeconds(null);
+                      return;
+                    }
+                    const n = Number(raw);
+                    setFlapGuardSeconds(Number.isFinite(n) ? n : null);
+                  }}
+                  placeholder="blank = no guard"
+                  className="w-40 font-mono text-xs"
+                />
+                {flapGuardSeconds != null && flapGuardSeconds > 0 && (
+                  <span className="text-xs text-zinc-500">
+                    ≈{" "}
+                    {flapGuardSeconds < 60
+                      ? `${flapGuardSeconds}s`
+                      : flapGuardSeconds < 3600
+                        ? `${Math.floor(flapGuardSeconds / 60)}m ${
+                            flapGuardSeconds % 60
+                          }s`
+                        : `${Math.floor(flapGuardSeconds / 3600)}h ${Math.floor(
+                            (flapGuardSeconds % 3600) / 60,
+                          )}m`}
+                  </span>
+                )}
+                {flapGuardSeconds != null && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setFlapGuardSeconds(null)}
+                  >
+                    Clear
+                  </Button>
+                )}
+              </div>
+              {flapGuardInvalid && (
+                <div className="mt-2 rounded border border-red-900 bg-red-950/40 px-3 py-2 text-xs text-red-300">
+                  Flap guard must be a non-negative whole number of seconds.
+                </div>
+              )}
+            </div>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="deps">
+          <DependencyPicker
+            value={dependsOn}
+            onChange={setDependsOn}
+            availableRules={allRules}
+            currentRuleId={rule?.id}
           />
         </TabsContent>
       </Tabs>

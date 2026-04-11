@@ -30,6 +30,7 @@ from monctl_central.python_modules.router import router as python_modules_router
 from monctl_central.connectors.router import router as connectors_router
 from monctl_central.events.router import router as events_router
 from monctl_central.incident_rules.router import router as incident_rules_router
+from monctl_central.incidents.router import router as incidents_router
 from monctl_central.packs.router import router as packs_router
 from monctl_central.system.router import router as system_router
 from monctl_central.config_history.router import router as config_history_router
@@ -74,6 +75,7 @@ api_router.include_router(python_modules_router, prefix="/python-modules", tags=
 api_router.include_router(connectors_router, prefix="/connectors", tags=["connectors"])
 api_router.include_router(events_router, prefix="/events", tags=["events"])
 api_router.include_router(incident_rules_router, prefix="/incident-rules", tags=["incident-rules"])
+api_router.include_router(incidents_router, prefix="/incidents", tags=["incidents"])
 api_router.include_router(packs_router, prefix="/packs", tags=["packs"])
 api_router.include_router(system_router, prefix="/system", tags=["system"])
 api_router.include_router(config_history_router, tags=["config-history"])

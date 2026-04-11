@@ -18,6 +18,7 @@ import {
   Play,
   Search,
   Settings,
+  ShieldAlert,
   ShieldCheck,
   Tags,
   Zap,
@@ -111,6 +112,12 @@ const navGroups: NavGroup[] = [
     items: [
       { to: "/alerts", icon: Bell, label: "Alerts", resource: "alert" },
       { to: "/events", icon: Zap, label: "Events", resource: "event" },
+      {
+        to: "/incidents",
+        icon: ShieldAlert,
+        label: "Incidents",
+        resource: "event",
+      },
       {
         to: "/incident-rules",
         icon: ShieldCheck,
