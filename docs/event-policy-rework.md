@@ -194,6 +194,41 @@ rules per device subset.
   ```
   Clear with `scope_filter = NULL`. Mirror sync still ignores this field.
 
+## Phase 2d — Dependencies (shipped)
+
+Per-rule `depends_on` with optional `match_on` label list. Suppresses a
+child incident under a parent incident of another rule when both are on
+the same entity (as defined by `match_on`).
+
+- Per-rule field: `incident_rules.depends_on` (JSONB, nullable, already allocated).
+- Child incidents carry the link via `incidents.parent_incident_id` (already allocated).
+- Format:
+  ```json
+  {
+    "rule_ids": ["<parent-rule-uuid>", "..."],
+    "match_on": ["device_id", "device_name"]
+  }
+  ```
+
+  - `rule_ids`: required, non-empty list of parent rule UUIDs as strings.
+  - `match_on`: optional label-key list. Empty/missing = any open parent matches (too broad for most cases — prefer explicit keys).
+- Validation in `incidents/engine.py::_validate_depends_on`:
+  - Top-level dict, `rule_ids` a non-empty list of UUID strings, `match_on` a list of strings.
+  - Self-references in `rule_ids` are allowed in JSON but filtered out at runtime (a rule cannot suppress its own incidents).
+  - Malformed → log WARNING, treat as no dependencies.
+- Engine behavior:
+  - Parent candidates are loaded once per rule per cycle (one PG query, regardless of entity count).
+  - On new incident open: `_find_matching_parent` scans the cached parent list for one whose labels match every key in `match_on`. If found, the new incident is opened with `parent_incident_id` set. No separate state — a suppressed incident is still `state='open'`, it just carries a parent FK.
+  - On existing incident update: `_find_matching_parent` is re-run each cycle and `parent_incident_id` is updated if it changed. This means when a parent clears, child incidents are auto-unsuppressed on the next cycle; when a new parent opens that covers an existing primary, it gets pulled under.
+  - Changes log as `incident_suppression_changed rule=X entity=Y parent=Z was=W`.
+- **Non-goals**: no transitive parent resolution (a suppressed parent still counts as a parent for its own children). No demotion or state-flipping. The UI (phase 3) differentiates primary vs. suppressed by filtering `parent_incident_id IS NULL`.
+- No API/UI yet. Set via SQL:
+  ```sql
+  UPDATE incident_rules
+  SET depends_on = '{"rule_ids":["<parent-uuid>"],"match_on":["device_name"]}'::jsonb
+  WHERE id = '<child-rule-uuid>';
+  ```
+
 ## Out of scope (for the rework PR)
 
 - Label-based routing to different notification channels — that's a notification-layer concern.
