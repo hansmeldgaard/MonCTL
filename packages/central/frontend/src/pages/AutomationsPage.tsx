@@ -61,7 +61,6 @@ import {
   useDevices,
   useCredentials,
   useCredentialTypes,
-  useEventPolicies,
   useIncidentRules,
   useLabelKeys,
   useLabelValues,
@@ -725,13 +724,13 @@ function AutomationsTab({
                     <TableCell>
                       <Badge
                         variant={
-                          a.trigger_type === "event" ? "info" : "warning"
+                          a.trigger_type === "incident" ? "info" : "warning"
                         }
                       >
-                        {a.trigger_type === "event" ? (
+                        {a.trigger_type === "incident" ? (
                           <>
                             <Zap className="h-3 w-3 mr-1" />
-                            event
+                            incident
                           </>
                         ) : (
                           <>
@@ -742,8 +741,10 @@ function AutomationsTab({
                       </Badge>
                     </TableCell>
                     <TableCell className="text-xs text-zinc-400 font-mono">
-                      {a.trigger_type === "event"
-                        ? a.event_severity_filter || "any severity"
+                      {a.trigger_type === "incident"
+                        ? a.incident_state_trigger
+                          ? `on ${a.incident_state_trigger}`
+                          : "any transition"
                         : a.cron_expression || "-"}
                     </TableCell>
                     <TableCell>
@@ -857,8 +858,7 @@ function AutomationFormDialog({
   const [name, setName] = useState(automation?.name ?? "");
   const [description, setDescription] = useState(automation?.description ?? "");
   const [triggerType, setTriggerType] = useState(
-    (automation?.trigger_type ?? prefill?.trigger_type ?? "event") as
-      | "event"
+    (automation?.trigger_type ?? prefill?.trigger_type ?? "incident") as
       | "cron"
       | "incident",
   );
@@ -868,19 +868,11 @@ function AutomationFormDialog({
   );
   const [enabled, setEnabled] = useState(automation?.enabled ?? true);
 
-  // Events tab
-  const [severityFilter, setSeverityFilter] = useState(
-    automation?.event_severity_filter ?? prefill?.event_severity_filter ?? "",
-  );
-  const [selectedPolicyIds, setSelectedPolicyIds] = useState<string[]>(
-    automation?.event_policy_ids ?? [],
-  );
-  const [policySearch, setPolicySearch] = useState("");
-
-  // Incidents tab (phase cut-over step 1) — analogous to the event
-  // policy picker above, but selecting IncidentRules and the state
-  // transition to fire on. The new IncidentEngine dispatches
-  // on_incident_transition to automations with trigger_type="incident".
+  // Incidents tab (phase cut-over step 2) — the only event-producing
+  // trigger mode for new automations. The IncidentEngine dispatches
+  // `on_incident_transition` to automations with trigger_type="incident".
+  // The legacy event trigger was retired in alembic revision
+  // zp6q7r8s9t0u and migrated records all live on this path now.
   const [selectedIncidentRuleIds, setSelectedIncidentRuleIds] = useState<
     string[]
   >(automation?.incident_rule_ids ?? []);
@@ -934,8 +926,6 @@ function AutomationFormDialog({
   const availableActions = actionsData?.data ?? [];
   const { data: devicesResp } = useDevices({ limit: 500 });
   const allDevices = devicesResp?.data ?? [];
-  const { data: policiesResp } = useEventPolicies({ limit: 200 });
-  const allPolicies = policiesResp?.data ?? [];
   const { data: incidentRulesResp } = useIncidentRules({ limit: 500 });
   const allIncidentRules = incidentRulesResp?.data ?? [];
   const { data: labelKeys = [] } = useLabelKeys();
@@ -1008,13 +998,6 @@ function AutomationFormDialog({
       name: name.trim(),
       description: description.trim() || null,
       trigger_type: triggerType,
-      event_severity_filter:
-        triggerType === "event" ? severityFilter || null : null,
-      event_policy_ids:
-        triggerType === "event" && selectedPolicyIds.length > 0
-          ? selectedPolicyIds
-          : null,
-      event_label_filter: null,
       incident_rule_ids:
         triggerType === "incident" && selectedIncidentRuleIds.length > 0
           ? selectedIncidentRuleIds
@@ -1051,15 +1034,6 @@ function AutomationFormDialog({
 
   const isPending = createMut.isPending || updateMut.isPending;
 
-  const filteredPolicies = allPolicies.filter(
-    (p) =>
-      !policySearch ||
-      p.name.toLowerCase().includes(policySearch.toLowerCase()) ||
-      (p.definition_name || "")
-        .toLowerCase()
-        .includes(policySearch.toLowerCase()),
-  );
-
   const filteredDevices = allDevices.filter((d) => {
     if (!deviceSearch) return true;
     const q = deviceSearch.toLowerCase();
@@ -1083,13 +1057,6 @@ function AutomationFormDialog({
         <Tabs value={dialogTab} onChange={setDialogTab}>
           <TabsList>
             <TabTrigger value="general">General</TabTrigger>
-            {triggerType === "event" && (
-              <TabTrigger value="events">
-                Events{" "}
-                {selectedPolicyIds.length > 0 &&
-                  `(${selectedPolicyIds.length})`}
-              </TabTrigger>
-            )}
             {triggerType === "incident" && (
               <TabTrigger value="incidents">
                 Incidents{" "}
@@ -1127,13 +1094,10 @@ function AutomationFormDialog({
                   id="auto-trigger"
                   value={triggerType}
                   onChange={(e) =>
-                    setTriggerType(
-                      e.target.value as "event" | "cron" | "incident",
-                    )
+                    setTriggerType(e.target.value as "cron" | "incident")
                   }
                   disabled={isEdit}
                 >
-                  <option value="event">Event (legacy)</option>
                   <option value="incident">Incident transition</option>
                   <option value="cron">Cron Schedule</option>
                 </Select>
@@ -1192,105 +1156,14 @@ function AutomationFormDialog({
             </div>
           </TabsContent>
 
-          {/* ── Events Tab ── */}
-          <TabsContent value="events" className="space-y-4">
-            <div className="space-y-1.5">
-              <Label>
-                Event Policies{" "}
-                {selectedPolicyIds.length > 0 && (
-                  <span className="text-zinc-500">
-                    ({selectedPolicyIds.length} selected)
-                  </span>
-                )}
-              </Label>
-              <ClearableInput
-                placeholder="Search policies..."
-                value={policySearch}
-                onChange={(e) => setPolicySearch(e.target.value)}
-                onClear={() => setPolicySearch("")}
-                className="h-7 text-xs"
-              />
-              <div className="max-h-64 overflow-y-auto rounded-md border border-zinc-700 bg-zinc-900">
-                {allPolicies.length === 0 ? (
-                  <p className="text-xs text-zinc-500 px-3 py-2">
-                    No event policies configured
-                  </p>
-                ) : filteredPolicies.length === 0 ? (
-                  <p className="text-xs text-zinc-500 px-3 py-2">
-                    No policies match search
-                  </p>
-                ) : (
-                  filteredPolicies.map((p) => (
-                    <label
-                      key={p.id}
-                      className="flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-800 cursor-pointer text-sm text-zinc-300"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedPolicyIds.includes(p.id)}
-                        onChange={(e) => {
-                          if (e.target.checked)
-                            setSelectedPolicyIds((prev) => [...prev, p.id]);
-                          else
-                            setSelectedPolicyIds((prev) =>
-                              prev.filter((id) => id !== p.id),
-                            );
-                        }}
-                        className="rounded border-zinc-600"
-                      />
-                      <span className="flex-1 truncate">{p.name}</span>
-                      {p.definition_name && (
-                        <span className="text-zinc-600 text-xs truncate max-w-[160px]">
-                          {p.definition_name}
-                        </span>
-                      )}
-                      <Badge
-                        variant={
-                          p.event_severity === "critical"
-                            ? "destructive"
-                            : p.event_severity === "warning"
-                              ? "warning"
-                              : "default"
-                        }
-                        className="text-[10px] shrink-0"
-                      >
-                        {p.event_severity}
-                      </Badge>
-                    </label>
-                  ))
-                )}
-              </div>
-              <p className="text-xs text-zinc-500">
-                Leave empty to match all events. Select specific policies to
-                narrow the trigger.
-              </p>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="auto-severity">Severity Filter</Label>
-              <Select
-                id="auto-severity"
-                value={severityFilter}
-                onChange={(e) => setSeverityFilter(e.target.value)}
-              >
-                <option value="">Any severity</option>
-                <option value="info">Info</option>
-                <option value="warning">Warning</option>
-                <option value="critical">Critical</option>
-                <option value="emergency">Emergency</option>
-              </Select>
-            </div>
-          </TabsContent>
-
-          {/* ── Incidents Tab (phase cut-over step 1) ── */}
+          {/* ── Incidents Tab ── */}
           <TabsContent value="incidents" className="space-y-4">
             <div className="rounded border border-zinc-800 bg-zinc-900/60 p-3 text-xs text-zinc-400">
               <strong>Incident trigger</strong> fires this automation on state
-              transitions from the new IncidentEngine — opened, escalated (via
-              severity ladder), or cleared. The legacy event trigger is still
-              supported, but new automations should prefer incident triggers.
-              See <code className="font-mono">docs/event-policy-rework.md</code>{" "}
-              for the cut-over plan.
+              transitions from the IncidentEngine — opened, escalated (via
+              severity ladder), or cleared. The legacy event trigger was retired
+              in cut-over step 2; see{" "}
+              <code className="font-mono">docs/event-policy-rework.md</code>.
             </div>
 
             <div className="space-y-1.5">
@@ -1857,11 +1730,13 @@ function RunHistoryTab() {
                     <TableCell>
                       <Badge
                         variant={
-                          r.trigger_type === "event"
+                          r.trigger_type === "incident"
                             ? "info"
-                            : r.trigger_type === "cron"
-                              ? "warning"
-                              : "default"
+                            : r.trigger_type === "event"
+                              ? "info"
+                              : r.trigger_type === "cron"
+                                ? "warning"
+                                : "default"
                         }
                       >
                         {r.trigger_type}
@@ -2069,7 +1944,6 @@ function RunDetailDialog({
 
 interface AutomationPrefill {
   trigger_type?: string;
-  event_severity_filter?: string;
   device_ids?: string[];
 }
 

@@ -78,14 +78,11 @@ class EventEngine:
                 except Exception:
                     logger.exception("events_auto_clear_error")
 
-            # Notify automation engine of new events
-            if events_to_insert:
-                try:
-                    from monctl_central.automations.engine import AutomationEngine
-                    auto_engine = AutomationEngine(self._session_factory, self._ch)
-                    await auto_engine.on_new_events(events_to_insert)
-                except Exception:
-                    logger.exception("automation_event_trigger_error")
+            # Automation triggering happens on the IncidentEngine path now
+            # (cut-over step 2 — see docs/event-policy-rework.md). EventEngine
+            # keeps writing CH events for the historical Events UI, but it
+            # no longer fires automations. The `on_new_events` hook was
+            # removed from AutomationEngine in alembic revision zp6q7r8s9t0u.
 
     async def _evaluate_policy(
         self, session: AsyncSession, policy: EventPolicy

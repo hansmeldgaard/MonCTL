@@ -48,116 +48,16 @@ class AutomationEngine:
         self._session_factory = session_factory
         self._ch = ch_client
 
-    # ── Event-triggered automations ──────────────────────────────────────
-
-    async def on_new_events(self, events: list[dict]) -> None:
-        """Called by the event engine after new events are created."""
-        async with self._session_factory() as session:
-            automations = (
-                await session.execute(
-                    select(Automation)
-                    .where(
-                        Automation.trigger_type == "event",
-                        Automation.enabled == True,  # noqa: E712
-                    )
-                    .options(joinedload(Automation.steps).joinedload(AutomationStep.action))
-                )
-            ).unique().scalars().all()
-
-            if not automations:
-                return
-
-            for event in events:
-                for automation in automations:
-                    if self._event_matches(automation, event):
-                        device_id = event.get("device_id", "")
-                        if device_id and automation.cooldown_seconds > 0:
-                            last_run = await asyncio.to_thread(
-                                self._ch.get_last_rba_run_time,
-                                str(automation.id),
-                                device_id,
-                            )
-                            if last_run:
-                                elapsed = (datetime.now(timezone.utc) - last_run).total_seconds()
-                                if elapsed < automation.cooldown_seconds:
-                                    logger.debug(
-                                        "automation_cooldown_skip",
-                                        automation=automation.name,
-                                        device_id=device_id,
-                                        elapsed=elapsed,
-                                        cooldown=automation.cooldown_seconds,
-                                    )
-                                    continue
-
-                        asyncio.create_task(
-                            self._execute_automation(
-                                session_factory=self._session_factory,
-                                automation=automation,
-                                device_id=device_id,
-                                trigger_type="event",
-                                event_data=event,
-                                triggered_by="system:event",
-                            ),
-                            name=f"rba_{automation.id}_{device_id}",
-                        )
-
-    def _event_matches(self, automation: Automation, event: dict) -> bool:
-        """Check if an event matches the automation's trigger filters."""
-        # Event policy filter: only trigger for specific event policies
-        if automation.event_policy_ids:
-            event_policy_id = str(event.get("policy_id", ""))
-            if event_policy_id not in automation.event_policy_ids:
-                return False
-
-        if automation.event_severity_filter:
-            if event.get("severity", "") != automation.event_severity_filter:
-                return False
-
-        # Device scope: check if event's device is in the automation's device scope
-        device_ids = automation.device_ids or automation.cron_device_ids
-        if device_ids:
-            event_device_id = str(event.get("device_id", ""))
-            if event_device_id not in device_ids:
-                return False
-
-        # Device label filter
-        device_label_filter = automation.device_label_filter or automation.cron_device_label_filter
-        if device_label_filter:
-            event_data = event.get("data", "{}")
-            if isinstance(event_data, str):
-                try:
-                    event_data = json.loads(event_data)
-                except json.JSONDecodeError:
-                    event_data = {}
-            device_labels = event_data.get("labels", {})
-            for key, value in device_label_filter.items():
-                if device_labels.get(key) != value:
-                    return False
-
-        if automation.event_label_filter:
-            event_data = event.get("data", "{}")
-            if isinstance(event_data, str):
-                try:
-                    event_data = json.loads(event_data)
-                except json.JSONDecodeError:
-                    event_data = {}
-            device_labels = event_data.get("labels", {})
-            for key, value in automation.event_label_filter.items():
-                if device_labels.get(key) != value:
-                    return False
-
-        return True
-
     # ── Incident-triggered automations ───────────────────────────────────
     #
-    # Cut-over step 1 of the event policy rework. The new IncidentEngine
-    # calls `on_incident_transition` on opened / escalated / cleared state
-    # changes (see docs/event-policy-rework.md). Automations opt in by
-    # setting `trigger_type="incident"` plus filter fields
+    # The only event-producing hook after cut-over step 2 (see
+    # docs/event-policy-rework.md). The IncidentEngine calls
+    # `on_incident_transition` on opened / escalated / cleared state
+    # changes. Automations match via `trigger_type='incident'` plus
     # `incident_rule_ids` and `incident_state_trigger`. The legacy
-    # `on_new_events` hook still fires for `trigger_type="event"`
-    # automations in parallel — the two paths coexist until cut-over
-    # step 2 retires the old hook.
+    # `on_new_events` hook was retired in step 2 (alembic revision
+    # zp6q7r8s9t0u); EventEngine still writes CH events for historical
+    # queries but no longer fires automations.
 
     async def on_incident_transition(
         self,
@@ -206,7 +106,13 @@ class AutomationEngine:
                         device_id,
                     )
                     if last_run:
-                        elapsed = (datetime.now(timezone.utc) - last_run).total_seconds()
+                        # ClickHouse returns naive datetimes — coerce to UTC
+                        # so the subtraction against tz-aware `now()` works.
+                        if last_run.tzinfo is None:
+                            last_run = last_run.replace(tzinfo=timezone.utc)
+                        elapsed = (
+                            datetime.now(timezone.utc) - last_run
+                        ).total_seconds()
                         if elapsed < automation.cooldown_seconds:
                             logger.debug(
                                 "automation_cooldown_skip",
