@@ -18,6 +18,7 @@ import {
   Play,
   Search,
   Settings,
+  ShieldCheck,
   Tags,
   Zap,
 } from "lucide-react";
@@ -110,6 +111,12 @@ const navGroups: NavGroup[] = [
     items: [
       { to: "/alerts", icon: Bell, label: "Alerts", resource: "alert" },
       { to: "/events", icon: Zap, label: "Events", resource: "event" },
+      {
+        to: "/incident-rules",
+        icon: ShieldCheck,
+        label: "Incident Rules",
+        resource: "event",
+      },
       {
         to: "/automations",
         icon: Play,

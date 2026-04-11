@@ -8,6 +8,7 @@ import { AppDetailPage } from "@/pages/AppDetailPage.tsx";
 import { AssignmentsPage } from "@/pages/AssignmentsPage.tsx";
 import { AlertsPage } from "@/pages/AlertsPage.tsx";
 import { EventsPage } from "@/pages/EventsPage.tsx";
+import { IncidentRulesPage } from "@/pages/IncidentRulesPage.tsx";
 import { TemplatesPage } from "@/pages/TemplatesPage.tsx";
 import { PacksPage } from "@/pages/PacksPage.tsx";
 import { PackDetailPage } from "@/pages/PackDetailPage.tsx";
@@ -67,6 +68,7 @@ export function App() {
         <Route path="packs/:id" element={<PackDetailPage />} />
         <Route path="alerts" element={<AlertsPage />} />
         <Route path="events" element={<EventsPage />} />
+        <Route path="incident-rules" element={<IncidentRulesPage />} />
         <Route path="analytics/explorer" element={<SQLExplorerPage />} />
         <Route path="analytics/dashboards" element={<CustomDashboardsPage />} />
         <Route
