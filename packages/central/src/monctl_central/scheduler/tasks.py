@@ -69,23 +69,18 @@ class SchedulerRunner:
                     await self._evaluate_system_health()
                 # Alert evaluation runs every 30s
                 await self._evaluate_alerts()
-                # Event policy evaluation (runs after alerts)
-                await self._evaluate_event_policies()
-                # Incident engine (phase 1 shadow — runs after event policies)
+                # IncidentEngine — runs opened/escalated/cleared transitions
+                # and dispatches to AutomationEngine.on_incident_transition.
+                # The legacy EventEngine + event_policies sync were retired
+                # in the event policy rework's phase deprecation.
                 await self._evaluate_incidents()
-                # Cron automation evaluation (runs after events)
+                # Cron automation evaluation
                 await self._evaluate_cron_automations()
                 # Rollup + cleanup (checked every cycle, runs based on time)
                 await self._run_rollups()
                 # Alert instance sync every 5 min (every 10th cycle)
                 if cycle % 10 == 0:
                     await self._sync_alert_instances()
-                # Orphaned active_events cleanup every 5 min (offset from sync)
-                if cycle % 10 == 1:
-                    await self._cleanup_orphan_active_events()
-                # IncidentRule mirror sync every 5 min (offset from other housekeeping)
-                if cycle % 10 == 3:
-                    await self._sync_incident_rules()
                 # App cache TTL cleanup every 5 min (every 10th cycle, offset)
                 if cycle % 10 == 2:
                     await self._cleanup_app_cache()
@@ -483,64 +478,6 @@ class SchedulerRunner:
         except Exception:
             logger.exception("alert_instance_sync_error")
 
-    async def _cleanup_orphan_active_events(self) -> None:
-        """Drop active_events whose underlying assignment no longer exists.
-
-        The event engine keys its tracker on `{assignment_id}|{entity_key}`.
-        When an assignment is deleted the tracker row is orphaned and the CH
-        row it points to stays state=active forever. This task resolves them:
-        clears the CH row (if any) and deletes the tracker row.
-        """
-        if self._ch is None:
-            return
-        try:
-            from sqlalchemy import text
-
-            async with self._session_factory() as session:
-                # Rows whose entity_key prefix (before '|') is not a valid
-                # app_assignments.id. Cast via text() to avoid pulling the
-                # whole table into Python.
-                result = await session.execute(
-                    text("""
-                        SELECT ae.id, ae.clickhouse_event_id
-                        FROM active_events ae
-                        WHERE NOT EXISTS (
-                            SELECT 1 FROM app_assignments aa
-                            WHERE aa.id::text = split_part(ae.entity_key, '|', 1)
-                        )
-                    """)
-                )
-                orphans = result.all()
-                if not orphans:
-                    return
-
-                orphan_ids = [row[0] for row in orphans]
-                ch_ids = [row[1] for row in orphans if row[1]]
-
-                # Delete tracker rows
-                await session.execute(
-                    text("DELETE FROM active_events WHERE id = ANY(:ids)"),
-                    {"ids": orphan_ids},
-                )
-                await session.commit()
-
-                # Flip the CH rows these pointed at to cleared
-                if ch_ids:
-                    try:
-                        await asyncio.to_thread(
-                            self._ch.update_event_state,
-                            ch_ids, "cleared", "orphan_cleanup",
-                        )
-                    except Exception:
-                        logger.exception("orphan_ch_clear_error")
-
-                logger.info(
-                    "active_events_orphan_cleanup removed=%d ch_cleared=%d",
-                    len(orphan_ids), len(ch_ids),
-                )
-        except Exception:
-            logger.exception("orphan_cleanup_error")
-
     async def _evaluate_alerts(self) -> None:
         """Run alert engine evaluation if ClickHouse is available."""
         if self._ch is None:
@@ -566,30 +503,12 @@ class SchedulerRunner:
                 "monctl:scheduler:last_evaluate_alerts", utc_now().isoformat()
             )
 
-    async def _evaluate_event_policies(self) -> None:
-        """Run event engine evaluation if ClickHouse is available."""
-        if self._ch is None:
-            return
-
-        try:
-            from monctl_central.events.engine import EventEngine
-
-            engine = EventEngine(
-                session_factory=self._session_factory,
-                ch_client=self._ch,
-            )
-            await engine.evaluate_all()
-        except Exception:
-            logger.exception("event_policy_evaluation_error")
-
     async def _evaluate_incidents(self) -> None:
-        """Phase 1 shadow IncidentEngine — see docs/event-policy-rework.md.
-
-        Phase cut-over step 1: pass in an `AutomationEngine` instance so
-        incident transitions (opened / escalated / cleared) dispatch to
-        the new `on_incident_transition` hook. The legacy `on_new_events`
-        hook still fires in parallel for `trigger_type='event'`
-        automations in `_evaluate_event_policies`.
+        """IncidentEngine — dispatches opened/escalated/cleared transitions
+        to `AutomationEngine.on_incident_transition`. See
+        docs/event-policy-rework.md. The legacy EventEngine was retired
+        in phase deprecation (alembic revision zq7r8s9t0u1v); this is the
+        only event-producing hook now.
         """
         try:
             from monctl_central.incidents.engine import IncidentEngine
@@ -610,17 +529,6 @@ class SchedulerRunner:
             await engine.evaluate_all()
         except Exception:
             logger.exception("incident_engine_error")
-
-    async def _sync_incident_rules(self) -> None:
-        """Keep IncidentRule mirrors in sync with EventPolicy (phase 1 plumbing)."""
-        try:
-            from monctl_central.incidents.engine import (
-                sync_incident_rules_from_event_policies,
-            )
-
-            await sync_incident_rules_from_event_policies(self._session_factory)
-        except Exception:
-            logger.exception("incident_rules_sync_error")
 
     async def _evaluate_cron_automations(self) -> None:
         """Run cron automation evaluation if ClickHouse is available."""

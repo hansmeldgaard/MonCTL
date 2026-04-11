@@ -23,7 +23,6 @@ from monctl_central.storage.models import (
     DeviceCategoryTemplateBinding,
     DeviceType,
     DeviceTypeTemplateBinding,
-    EventPolicy,
     LabelKey,
     Pack,
     PackVersion,
@@ -160,38 +159,10 @@ async def export_pack(pack_id: uuid.UUID, db: AsyncSession) -> dict:
     if connectors:
         result["contents"]["connectors"] = [_export_connector(c) for c in connectors]
 
-    # Event policies (via alert definitions on pack apps)
-    if apps:
-        app_ids = [a.id for a in apps]
-        ep_rows = (await db.execute(
-            select(EventPolicy)
-            .join(AlertDefinition, EventPolicy.definition_id == AlertDefinition.id)
-            .where(AlertDefinition.app_id.in_(app_ids))
-            .options(selectinload(EventPolicy.definition))
-        )).scalars().all()
-        if ep_rows:
-            app_by_id = {a.id: a for a in apps}
-            ep_exports = []
-            for ep in ep_rows:
-                defn = ep.definition
-                app_obj = app_by_id.get(defn.app_id)
-                if not app_obj:
-                    continue
-                ep_exports.append({
-                    "name": ep.name,
-                    "description": ep.description,
-                    "app_name": app_obj.name,
-                    "alert_name": defn.name,
-                    "mode": ep.mode,
-                    "fire_count_threshold": ep.fire_count_threshold,
-                    "window_size": ep.window_size,
-                    "event_severity": ep.event_severity,
-                    "message_template": ep.message_template,
-                    "auto_clear_on_resolve": ep.auto_clear_on_resolve,
-                    "enabled": ep.enabled,
-                })
-            if ep_exports:
-                result["contents"]["event_policies"] = ep_exports
+    # EventPolicy export was retired in phase deprecation of the event
+    # policy rework. Rule configuration now lives in `incident_rules`
+    # and is managed via the Incident Rules UI rather than packs.
+    # TODO(phase-4?): optionally export `incident_rules` instead.
 
     # Template hierarchy bindings (category-level)
     cat_bindings = (await db.execute(
@@ -618,29 +589,24 @@ async def preview_import(data: dict, db: AsyncSession) -> dict:
                     ad_entry["status"] = "new"
             entities.append(ad_entry)
 
-    # Event policies
-    for ep in data.get("contents", {}).get("event_policies", []):
-        existing_ep = (await db.execute(
-            select(EventPolicy).where(EventPolicy.name == ep.get("name", ""))
-        )).scalar_one_or_none()
-        ep_entry: dict = {
-            "section": "event_policies",
-            "name": ep.get("name", "?"),
-            "status": "new",
-            "existing_pack": None,
-            "has_changes": None,
-        }
-        if existing_ep:
-            changed = (
-                existing_ep.mode != ep.get("mode", "consecutive")
-                or existing_ep.fire_count_threshold != ep.get("fire_count_threshold", 1)
-                or existing_ep.window_size != ep.get("window_size", 5)
-                or str(existing_ep.event_severity) != ep.get("event_severity", "warning")
-                or existing_ep.enabled != ep.get("enabled", True)
-            )
-            ep_entry["has_changes"] = changed
-            ep_entry["status"] = "upgrade" if changed else "unchanged"
-        entities.append(ep_entry)
+    # Legacy `event_policies` in the pack manifest are silently ignored
+    # in the preview after phase deprecation. If a user imports an older
+    # pack, the EP section is reported as skipped during import.
+    ep_items = data.get("contents", {}).get("event_policies", [])
+    if ep_items:
+        logger.info(
+            "pack_preview_ignoring_event_policies",
+            pack_uid=pack_uid,
+            count=len(ep_items),
+        )
+        for ep in ep_items:
+            entities.append({
+                "section": "event_policies",
+                "name": ep.get("name", "?"),
+                "status": "skipped_deprecated",
+                "existing_pack": None,
+                "has_changes": None,
+            })
 
     # Grafana dashboards (informational — not stored in DB)
     for gd in data.get("contents", {}).get("grafana_dashboards", []):
@@ -806,68 +772,18 @@ async def import_pack(
 
     await db.flush()
 
-    # Import event policies (after apps/alert definitions are created)
-    for ep_data in data.get("contents", {}).get("event_policies", []):
-        ep_name = ep_data.get("name", "")
-        app_name = ep_data.get("app_name", "")
-        alert_name = ep_data.get("alert_name", "")
-
-        # Resolve app → alert definition
-        app_row = (await db.execute(
-            select(App).where(App.name == app_name)
-        )).scalar_one_or_none()
-        if not app_row:
-            logger.warning("event_policy_skip_no_app", policy=ep_name, app_name=app_name)
-            stats["skipped"] += 1
-            continue
-
-        defn = (await db.execute(
-            select(AlertDefinition).where(
-                AlertDefinition.app_id == app_row.id,
-                AlertDefinition.name == alert_name,
-            )
-        )).scalar_one_or_none()
-        if not defn:
-            logger.warning("event_policy_skip_no_alert", policy=ep_name, alert_name=alert_name)
-            stats["skipped"] += 1
-            continue
-
-        existing_ep = (await db.execute(
-            select(EventPolicy).where(EventPolicy.name == ep_name)
-        )).scalar_one_or_none()
-
-        resolution_key = f"event_policies:{ep_name}"
-        resolution = resolutions.get(resolution_key, "skip" if existing_ep else "create")
-
-        if existing_ep and resolution == "skip":
-            stats["skipped"] += 1
-        elif existing_ep and resolution == "overwrite":
-            existing_ep.description = ep_data.get("description")
-            existing_ep.definition_id = defn.id
-            existing_ep.mode = ep_data.get("mode", "consecutive")
-            existing_ep.fire_count_threshold = ep_data.get("fire_count_threshold", 1)
-            existing_ep.window_size = ep_data.get("window_size", 5)
-            existing_ep.event_severity = ep_data.get("event_severity", "warning")
-            existing_ep.message_template = ep_data.get("message_template")
-            existing_ep.auto_clear_on_resolve = ep_data.get("auto_clear_on_resolve", True)
-            existing_ep.enabled = ep_data.get("enabled", True)
-            stats["updated"] += 1
-        elif not existing_ep:
-            db.add(EventPolicy(
-                name=ep_name,
-                description=ep_data.get("description"),
-                definition_id=defn.id,
-                mode=ep_data.get("mode", "consecutive"),
-                fire_count_threshold=ep_data.get("fire_count_threshold", 1),
-                window_size=ep_data.get("window_size", 5),
-                event_severity=ep_data.get("event_severity", "warning"),
-                message_template=ep_data.get("message_template"),
-                auto_clear_on_resolve=ep_data.get("auto_clear_on_resolve", True),
-                enabled=ep_data.get("enabled", True),
-            ))
-            stats["created"] += 1
-
-    await db.flush()
+    # Legacy `event_policies` in the pack manifest are silently skipped
+    # after phase deprecation. See docs/event-policy-rework.md — rule
+    # configuration now lives in `incident_rules` and is managed via
+    # the Incident Rules UI, not packs.
+    legacy_ep = data.get("contents", {}).get("event_policies", [])
+    if legacy_ep:
+        logger.warning(
+            "pack_import_ignoring_event_policies",
+            pack_uid=pack_uid,
+            count=len(legacy_ep),
+        )
+        stats["skipped"] += len(legacy_ep)
 
     # Import template hierarchy bindings (after all entities are imported)
     for binding_data in data.get("contents", {}).get("template_bindings_category", []):
@@ -965,10 +881,9 @@ def _build_manifest(data: dict) -> dict:
             else:
                 name_field = "key" if section == "label_keys" else "name"
                 manifest[section] = [item[name_field] for item in items]
-    # Event policies
-    ep_items = contents.get("event_policies", [])
-    if ep_items:
-        manifest["event_policies"] = [item["name"] for item in ep_items]
+    # `event_policies` entries in legacy pack data are dropped from the
+    # manifest — the model is gone. See phase deprecation notes in
+    # docs/event-policy-rework.md.
     return manifest
 
 

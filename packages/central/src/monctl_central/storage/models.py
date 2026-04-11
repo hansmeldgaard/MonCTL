@@ -978,62 +978,17 @@ class ConnectorVersion(Base):
     connector: Mapped["Connector"] = relationship(back_populates="versions")
 
 
-class EventPolicy(Base):
-    """Defines when an alert should be promoted to an event."""
-    __tablename__ = "event_policies"
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    definition_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("alert_definitions.id", ondelete="CASCADE"), nullable=False
-    )
-    mode: Mapped[str] = mapped_column(String(20), nullable=False, server_default="consecutive")
-    fire_count_threshold: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
-    window_size: Mapped[int] = mapped_column(Integer, nullable=False, server_default="5")
-    event_severity: Mapped[str] = mapped_column(String(20), nullable=False, server_default="warning")
-    message_template: Mapped[str | None] = mapped_column(Text, nullable=True)
-    auto_clear_on_resolve: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
-    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default="now()"
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default="now()"
-    )
-
-    definition: Mapped["AlertDefinition"] = relationship()
-
-
-class ActiveEvent(Base):
-    """Tracks which alert entity + policy combinations have an active event in ClickHouse."""
-    __tablename__ = "active_events"
-    __table_args__ = (
-        UniqueConstraint("policy_id", "entity_key", name="uq_active_event_policy_entity"),
-    )
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    policy_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("event_policies.id", ondelete="CASCADE"), nullable=False
-    )
-    entity_key: Mapped[str] = mapped_column(String(500), nullable=False)
-    clickhouse_event_id: Mapped[str] = mapped_column(String(36), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=text("now()")
-    )
-
-    policy: Mapped["EventPolicy"] = relationship()
-
-
 class IncidentRule(Base):
-    """Phase 1 of the event policy rework — mirrors EventPolicy today, will
-    grow correlation / ladders / dependencies / scope filters in phase 2+.
-    See docs/event-policy-rework.md.
+    """Operator-configured rule for promoting alerts to incidents.
+
+    After phase deprecation (see docs/event-policy-rework.md) this is
+    the only rule model in the system. Pre-existing rows with
+    `source='mirror'` (auto-synced from the legacy EventPolicy table)
+    were bulk-flipped to `source='native'` in alembic revision
+    zq7r8s9t0u1v; the mirror-sync task and the `source_policy_id` FK
+    were removed at the same time. New rules default to `'native'`.
     """
     __tablename__ = "incident_rules"
-    __table_args__ = (
-        UniqueConstraint("source_policy_id", name="uq_incident_rule_source_policy"),
-    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -1052,7 +1007,7 @@ class IncidentRule(Base):
         Boolean, nullable=False, server_default="true"
     )
 
-    # Phase 2 columns — reserved, unused by the phase-1 engine.
+    # Phase 2 configuration columns.
     scope_filter: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     severity_ladder: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     correlation_group: Mapped[str | None] = mapped_column(String(500), nullable=True)
@@ -1060,13 +1015,11 @@ class IncidentRule(Base):
     flap_guard_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
-    # "mirror" = auto-synced from an EventPolicy; "native" = operator-created (phase 2+)
-    source: Mapped[str] = mapped_column(String(20), nullable=False, server_default="mirror")
-    source_policy_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("event_policies.id", ondelete="SET NULL"),
-        nullable=True, index=True,
-    )
+    # Retained for historical tagging: 'mirror' = pre-deprecation
+    # auto-synced row (now editable as native), 'native' = operator-
+    # authored. Defaults to 'native' for any new row created after
+    # zq7r8s9t0u1v.
+    source: Mapped[str] = mapped_column(String(20), nullable=False, server_default="native")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
@@ -1075,7 +1028,6 @@ class IncidentRule(Base):
     )
 
     definition: Mapped["AlertDefinition"] = relationship()
-    source_policy: Mapped["EventPolicy | None"] = relationship()
 
 
 class Incident(Base):
