@@ -2013,10 +2013,14 @@ export interface Automation {
   id: string;
   name: string;
   description: string | null;
-  trigger_type: "event" | "cron";
+  trigger_type: "event" | "cron" | "incident";
   event_severity_filter: string | null;
   event_policy_ids: string[] | null;
   event_label_filter: Record<string, string> | null;
+  // Phase cut-over step 1 — trigger_type="incident" uses these in
+  // place of event_policy_ids/event_severity_filter.
+  incident_rule_ids: string[] | null;
+  incident_state_trigger: "opened" | "escalated" | "cleared" | "any" | null;
   cron_expression: string | null;
   cron_device_label_filter: Record<string, string> | null;
   cron_device_ids: string[] | null;
@@ -2046,7 +2050,7 @@ export interface AutomationRun {
   run_id: string;
   automation_id: string;
   automation_name: string;
-  trigger_type: "event" | "cron" | "manual";
+  trigger_type: "event" | "cron" | "manual" | "incident";
   event_id: string;
   event_severity: string;
   event_message: string;

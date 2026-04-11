@@ -62,6 +62,7 @@ import {
   useCredentials,
   useCredentialTypes,
   useEventPolicies,
+  useIncidentRules,
   useLabelKeys,
   useLabelValues,
 } from "@/api/hooks.ts";
@@ -858,7 +859,8 @@ function AutomationFormDialog({
   const [triggerType, setTriggerType] = useState(
     (automation?.trigger_type ?? prefill?.trigger_type ?? "event") as
       | "event"
-      | "cron",
+      | "cron"
+      | "incident",
   );
   const [cronExpr, setCronExpr] = useState(automation?.cron_expression ?? "");
   const [cooldown, setCooldown] = useState(
@@ -874,6 +876,18 @@ function AutomationFormDialog({
     automation?.event_policy_ids ?? [],
   );
   const [policySearch, setPolicySearch] = useState("");
+
+  // Incidents tab (phase cut-over step 1) — analogous to the event
+  // policy picker above, but selecting IncidentRules and the state
+  // transition to fire on. The new IncidentEngine dispatches
+  // on_incident_transition to automations with trigger_type="incident".
+  const [selectedIncidentRuleIds, setSelectedIncidentRuleIds] = useState<
+    string[]
+  >(automation?.incident_rule_ids ?? []);
+  const [incidentStateTrigger, setIncidentStateTrigger] = useState<
+    "opened" | "escalated" | "cleared" | "any"
+  >(automation?.incident_state_trigger ?? "opened");
+  const [incidentRuleSearch, setIncidentRuleSearch] = useState("");
 
   // Device scope tab
   const [deviceScope, setDeviceScope] = useState<"all" | "devices" | "labels">(
@@ -922,6 +936,8 @@ function AutomationFormDialog({
   const allDevices = devicesResp?.data ?? [];
   const { data: policiesResp } = useEventPolicies({ limit: 200 });
   const allPolicies = policiesResp?.data ?? [];
+  const { data: incidentRulesResp } = useIncidentRules({ limit: 500 });
+  const allIncidentRules = incidentRulesResp?.data ?? [];
   const { data: labelKeys = [] } = useLabelKeys();
   const { data: labelValues = [] } = useLabelValues(labelKey || null);
 
@@ -966,6 +982,16 @@ function AutomationFormDialog({
       setError("Cron expression is required.");
       return;
     }
+    if (
+      triggerType === "incident" &&
+      selectedIncidentRuleIds.length === 0 &&
+      !incidentStateTrigger
+    ) {
+      setError(
+        "Pick at least one incident rule or a state trigger for this automation.",
+      );
+      return;
+    }
 
     const stepsPayload = steps
       .filter((s) => s.action_id)
@@ -989,6 +1015,12 @@ function AutomationFormDialog({
           ? selectedPolicyIds
           : null,
       event_label_filter: null,
+      incident_rule_ids:
+        triggerType === "incident" && selectedIncidentRuleIds.length > 0
+          ? selectedIncidentRuleIds
+          : null,
+      incident_state_trigger:
+        triggerType === "incident" ? incidentStateTrigger : null,
       cron_expression: triggerType === "cron" ? cronExpr.trim() : null,
       cron_device_label_filter: null,
       cron_device_ids: null,
@@ -1058,6 +1090,13 @@ function AutomationFormDialog({
                   `(${selectedPolicyIds.length})`}
               </TabTrigger>
             )}
+            {triggerType === "incident" && (
+              <TabTrigger value="incidents">
+                Incidents{" "}
+                {selectedIncidentRuleIds.length > 0 &&
+                  `(${selectedIncidentRuleIds.length})`}
+              </TabTrigger>
+            )}
             <TabTrigger value="devices">
               Device Scope{" "}
               {deviceScope === "devices" &&
@@ -1088,11 +1127,14 @@ function AutomationFormDialog({
                   id="auto-trigger"
                   value={triggerType}
                   onChange={(e) =>
-                    setTriggerType(e.target.value as "event" | "cron")
+                    setTriggerType(
+                      e.target.value as "event" | "cron" | "incident",
+                    )
                   }
                   disabled={isEdit}
                 >
-                  <option value="event">Event</option>
+                  <option value="event">Event (legacy)</option>
+                  <option value="incident">Incident transition</option>
                   <option value="cron">Cron Schedule</option>
                 </Select>
               </div>
@@ -1237,6 +1279,132 @@ function AutomationFormDialog({
                 <option value="critical">Critical</option>
                 <option value="emergency">Emergency</option>
               </Select>
+            </div>
+          </TabsContent>
+
+          {/* ── Incidents Tab (phase cut-over step 1) ── */}
+          <TabsContent value="incidents" className="space-y-4">
+            <div className="rounded border border-zinc-800 bg-zinc-900/60 p-3 text-xs text-zinc-400">
+              <strong>Incident trigger</strong> fires this automation on state
+              transitions from the new IncidentEngine — opened, escalated (via
+              severity ladder), or cleared. The legacy event trigger is still
+              supported, but new automations should prefer incident triggers.
+              See <code className="font-mono">docs/event-policy-rework.md</code>{" "}
+              for the cut-over plan.
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="auto-incident-state">State Trigger</Label>
+              <Select
+                id="auto-incident-state"
+                value={incidentStateTrigger}
+                onChange={(e) =>
+                  setIncidentStateTrigger(
+                    e.target.value as
+                      | "opened"
+                      | "escalated"
+                      | "cleared"
+                      | "any",
+                  )
+                }
+              >
+                <option value="opened">Opened (new incident)</option>
+                <option value="escalated">
+                  Escalated (severity ladder promotion)
+                </option>
+                <option value="cleared">Cleared</option>
+                <option value="any">Any transition</option>
+              </Select>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>
+                Incident Rules{" "}
+                {selectedIncidentRuleIds.length > 0 && (
+                  <span className="text-zinc-500">
+                    ({selectedIncidentRuleIds.length} selected)
+                  </span>
+                )}
+              </Label>
+              <ClearableInput
+                placeholder="Search incident rules..."
+                value={incidentRuleSearch}
+                onChange={(e) => setIncidentRuleSearch(e.target.value)}
+                onClear={() => setIncidentRuleSearch("")}
+                className="h-7 text-xs"
+              />
+              <div className="max-h-64 overflow-y-auto rounded-md border border-zinc-700 bg-zinc-900">
+                {allIncidentRules.length === 0 ? (
+                  <p className="text-xs text-zinc-500 px-3 py-2">
+                    No incident rules configured
+                  </p>
+                ) : (
+                  allIncidentRules
+                    .filter(
+                      (r) =>
+                        !incidentRuleSearch ||
+                        r.name
+                          .toLowerCase()
+                          .includes(incidentRuleSearch.toLowerCase()) ||
+                        (r.definition_name ?? "")
+                          .toLowerCase()
+                          .includes(incidentRuleSearch.toLowerCase()),
+                    )
+                    .map((r) => (
+                      <label
+                        key={r.id}
+                        className="flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-800 cursor-pointer text-sm text-zinc-300"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedIncidentRuleIds.includes(r.id)}
+                          onChange={(e) => {
+                            if (e.target.checked)
+                              setSelectedIncidentRuleIds((prev) => [
+                                ...prev,
+                                r.id,
+                              ]);
+                            else
+                              setSelectedIncidentRuleIds((prev) =>
+                                prev.filter((id) => id !== r.id),
+                              );
+                          }}
+                          className="rounded border-zinc-600"
+                        />
+                        <span className="flex-1 truncate">{r.name}</span>
+                        {r.definition_name && (
+                          <span className="text-zinc-600 text-xs truncate max-w-[160px]">
+                            {r.definition_name}
+                          </span>
+                        )}
+                        <Badge
+                          variant={
+                            r.severity === "critical"
+                              ? "destructive"
+                              : r.severity === "warning"
+                                ? "warning"
+                                : "default"
+                          }
+                          className="text-[10px] shrink-0"
+                        >
+                          {r.severity}
+                        </Badge>
+                        <Badge
+                          variant={
+                            r.source === "mirror" ? "default" : "success"
+                          }
+                          className="text-[10px] shrink-0"
+                        >
+                          {r.source}
+                        </Badge>
+                      </label>
+                    ))
+                )}
+              </div>
+              <p className="text-xs text-zinc-500">
+                Leave empty to match all incident rules. Select specific rules
+                to narrow the trigger.
+              </p>
             </div>
           </TabsContent>
 

@@ -148,6 +148,139 @@ class AutomationEngine:
 
         return True
 
+    # ── Incident-triggered automations ───────────────────────────────────
+    #
+    # Cut-over step 1 of the event policy rework. The new IncidentEngine
+    # calls `on_incident_transition` on opened / escalated / cleared state
+    # changes (see docs/event-policy-rework.md). Automations opt in by
+    # setting `trigger_type="incident"` plus filter fields
+    # `incident_rule_ids` and `incident_state_trigger`. The legacy
+    # `on_new_events` hook still fires for `trigger_type="event"`
+    # automations in parallel — the two paths coexist until cut-over
+    # step 2 retires the old hook.
+
+    async def on_incident_transition(
+        self,
+        incident_id: str,
+        rule_id: str,
+        transition: str,
+        device_id: str,
+        severity: str,
+        message: str,
+        labels: dict,
+    ) -> None:
+        """Called by the IncidentEngine on an incident state transition.
+
+        `transition` is one of `"opened"`, `"escalated"`, or `"cleared"`.
+        Matches against enabled `trigger_type="incident"` automations
+        whose `incident_rule_ids` contains the rule and whose
+        `incident_state_trigger` covers the transition. Respects
+        per-device cooldown the same way `on_new_events` does.
+        """
+        async with self._session_factory() as session:
+            automations = (
+                await session.execute(
+                    select(Automation)
+                    .where(
+                        Automation.trigger_type == "incident",
+                        Automation.enabled == True,  # noqa: E712
+                    )
+                    .options(joinedload(Automation.steps).joinedload(AutomationStep.action))
+                )
+            ).unique().scalars().all()
+
+            if not automations:
+                return
+
+            for automation in automations:
+                if not self._incident_matches(
+                    automation, rule_id, transition, device_id, labels
+                ):
+                    continue
+
+                # Per-device cooldown — same semantics as on_new_events.
+                if device_id and automation.cooldown_seconds > 0:
+                    last_run = await asyncio.to_thread(
+                        self._ch.get_last_rba_run_time,
+                        str(automation.id),
+                        device_id,
+                    )
+                    if last_run:
+                        elapsed = (datetime.now(timezone.utc) - last_run).total_seconds()
+                        if elapsed < automation.cooldown_seconds:
+                            logger.debug(
+                                "automation_cooldown_skip",
+                                automation=automation.name,
+                                device_id=device_id,
+                                elapsed=elapsed,
+                                cooldown=automation.cooldown_seconds,
+                            )
+                            continue
+
+                # Reuse the existing `_execute_automation` path. Its
+                # `event_data` dict isn't actually coupled to the events
+                # table — it's just passed through to ActionContext
+                # (`event_id`, `event_severity`, `event_message`) and to
+                # the run log. Fill it with incident-equivalent fields so
+                # action scripts see a consistent envelope.
+                synthetic_event = {
+                    "id": incident_id,
+                    "severity": severity,
+                    "message": message,
+                    "device_id": device_id,
+                    "data": {"labels": labels or {}},
+                    # Extra fields specific to incident triggers, available
+                    # to action scripts that want them.
+                    "incident_id": incident_id,
+                    "incident_rule_id": rule_id,
+                    "incident_transition": transition,
+                }
+                asyncio.create_task(
+                    self._execute_automation(
+                        session_factory=self._session_factory,
+                        automation=automation,
+                        device_id=device_id,
+                        trigger_type="incident",
+                        event_data=synthetic_event,
+                        triggered_by=f"system:incident:{transition}",
+                    ),
+                    name=f"rba_incident_{automation.id}_{device_id}",
+                )
+
+    def _incident_matches(
+        self,
+        automation: Automation,
+        rule_id: str,
+        transition: str,
+        device_id: str,
+        labels: dict,
+    ) -> bool:
+        """Check if an incident transition matches an automation's filters."""
+        if automation.incident_rule_ids:
+            if rule_id not in automation.incident_rule_ids:
+                return False
+
+        # `incident_state_trigger` is one of "opened", "escalated",
+        # "cleared", or "any". NULL also means "any".
+        want = automation.incident_state_trigger
+        if want and want != "any" and want != transition:
+            return False
+
+        # Reuse the shared device filters that `_event_matches` honors.
+        device_ids = automation.device_ids or automation.cron_device_ids
+        if device_ids and device_id and device_id not in device_ids:
+            return False
+
+        device_label_filter = (
+            automation.device_label_filter or automation.cron_device_label_filter
+        )
+        if device_label_filter:
+            for key, value in device_label_filter.items():
+                if (labels or {}).get(key) != value:
+                    return False
+
+        return True
+
     # ── Cron-triggered automations ───────────────────────────────────────
 
     async def evaluate_cron_triggers(self) -> None:
@@ -288,7 +421,7 @@ class AutomationEngine:
             device = await session.get(Device, uuid.UUID(device_id)) if device_id else None
 
             device_name = device.name if device else ""
-            device_ip = device.ip_address if device else ""
+            device_ip = device.address if device else ""
             collector_id = ""
             collector_name = ""
 

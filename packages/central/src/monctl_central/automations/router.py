@@ -58,6 +58,11 @@ class CreateAutomationRequest(BaseModel):
     event_severity_filter: str | None = None
     event_policy_ids: list[str] | None = None
     event_label_filter: dict | None = None
+    # Phase cut-over step 1 — see docs/event-policy-rework.md.
+    # trigger_type="incident" uses these two fields in place of the
+    # event-specific ones above. Both sets coexist during the cut-over.
+    incident_rule_ids: list[str] | None = None
+    incident_state_trigger: str | None = None
     cron_expression: str | None = None
     cron_device_label_filter: dict | None = None
     cron_device_ids: list[str] | None = None
@@ -74,6 +79,8 @@ class UpdateAutomationRequest(BaseModel):
     event_severity_filter: str | None = None
     event_policy_ids: list[str] | None = None
     event_label_filter: dict | None = None
+    incident_rule_ids: list[str] | None = None
+    incident_state_trigger: str | None = None
     cron_expression: str | None = None
     cron_device_label_filter: dict | None = None
     cron_device_ids: list[str] | None = None
@@ -115,6 +122,8 @@ def _fmt_automation(a: Automation) -> dict:
         "event_severity_filter": a.event_severity_filter,
         "event_policy_ids": a.event_policy_ids,
         "event_label_filter": a.event_label_filter,
+        "incident_rule_ids": a.incident_rule_ids,
+        "incident_state_trigger": a.incident_state_trigger,
         "cron_expression": a.cron_expression,
         "cron_device_label_filter": a.cron_device_label_filter,
         "cron_device_ids": a.cron_device_ids,
@@ -341,8 +350,10 @@ async def create_automation(
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_permission("automation", "create")),
 ):
-    if request.trigger_type not in ("event", "cron"):
-        raise HTTPException(400, detail="trigger_type must be 'event' or 'cron'")
+    if request.trigger_type not in ("event", "cron", "incident"):
+        raise HTTPException(
+            400, detail="trigger_type must be 'event', 'cron', or 'incident'"
+        )
 
     if request.trigger_type == "cron":
         if not request.cron_expression:
@@ -353,6 +364,28 @@ async def create_automation(
         except (ValueError, KeyError) as e:
             raise HTTPException(400, detail=f"Invalid cron expression: {e}")
 
+    if request.trigger_type == "incident":
+        if (
+            request.incident_state_trigger
+            and request.incident_state_trigger
+            not in ("opened", "escalated", "cleared", "any")
+        ):
+            raise HTTPException(
+                400,
+                detail=(
+                    "incident_state_trigger must be one of "
+                    "'opened', 'escalated', 'cleared', 'any'"
+                ),
+            )
+        if not request.incident_rule_ids and not request.incident_state_trigger:
+            raise HTTPException(
+                400,
+                detail=(
+                    "incident trigger requires at least one of "
+                    "incident_rule_ids or incident_state_trigger"
+                ),
+            )
+
     automation = Automation(
         name=request.name,
         description=request.description,
@@ -360,6 +393,8 @@ async def create_automation(
         event_severity_filter=request.event_severity_filter,
         event_policy_ids=request.event_policy_ids,
         event_label_filter=request.event_label_filter,
+        incident_rule_ids=request.incident_rule_ids,
+        incident_state_trigger=request.incident_state_trigger,
         cron_expression=request.cron_expression,
         cron_device_label_filter=request.cron_device_label_filter,
         cron_device_ids=request.cron_device_ids,
@@ -423,6 +458,20 @@ async def update_automation(
         automation.event_policy_ids = request.event_policy_ids
     if request.event_label_filter is not None:
         automation.event_label_filter = request.event_label_filter
+    if request.incident_rule_ids is not None:
+        automation.incident_rule_ids = request.incident_rule_ids
+    if request.incident_state_trigger is not None:
+        if request.incident_state_trigger not in (
+            "opened", "escalated", "cleared", "any",
+        ):
+            raise HTTPException(
+                400,
+                detail=(
+                    "incident_state_trigger must be one of "
+                    "'opened', 'escalated', 'cleared', 'any'"
+                ),
+            )
+        automation.incident_state_trigger = request.incident_state_trigger
     if request.cron_expression is not None:
         try:
             from croniter import croniter

@@ -583,13 +583,29 @@ class SchedulerRunner:
             logger.exception("event_policy_evaluation_error")
 
     async def _evaluate_incidents(self) -> None:
-        """Phase 1 shadow IncidentEngine — see docs/event-policy-rework.md."""
+        """Phase 1 shadow IncidentEngine — see docs/event-policy-rework.md.
+
+        Phase cut-over step 1: pass in an `AutomationEngine` instance so
+        incident transitions (opened / escalated / cleared) dispatch to
+        the new `on_incident_transition` hook. The legacy `on_new_events`
+        hook still fires in parallel for `trigger_type='event'`
+        automations in `_evaluate_event_policies`.
+        """
         try:
             from monctl_central.incidents.engine import IncidentEngine
+            from monctl_central.automations.engine import AutomationEngine
+
+            automation_engine = None
+            if self._ch is not None:
+                automation_engine = AutomationEngine(
+                    session_factory=self._session_factory,
+                    ch_client=self._ch,
+                )
 
             engine = IncidentEngine(
                 session_factory=self._session_factory,
                 ch_client=self._ch,
+                automation_engine=automation_engine,
             )
             await engine.evaluate_all()
         except Exception:
