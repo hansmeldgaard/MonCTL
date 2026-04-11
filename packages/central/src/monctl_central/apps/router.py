@@ -14,6 +14,10 @@ import sqlalchemy as sa
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from monctl_central.apps.connector_declaration import (
+    ConnectorDeclarationError,
+    extract_required_connectors,
+)
 from monctl_central.dependencies import apply_tenant_filter, get_clickhouse, get_db, require_permission
 from monctl_common.validators import validate_semver, validate_uuid
 from monctl_central.storage.models import (
@@ -308,11 +312,12 @@ async def list_apps(
     result = await db.execute(stmt)
     apps = result.scalars().all()
 
-    # Batch-fetch connector names
+    # Batch-fetch connector names (skip empty/unfilled slots)
     all_connector_ids: set[uuid.UUID] = set()
     for a in apps:
         for b in a.connector_bindings:
-            all_connector_ids.add(b.connector_id)
+            if b.connector_id is not None:
+                all_connector_ids.add(b.connector_id)
     connector_names: dict[uuid.UUID, str] = {}
     if all_connector_ids:
         cn_rows = (await db.execute(
@@ -331,8 +336,10 @@ async def list_apps(
             "connector_bindings": [
                 {
                     "alias": b.alias,
-                    "connector_id": str(b.connector_id),
-                    "connector_name": connector_names.get(b.connector_id, ""),
+                    "connector_type": b.connector_type,
+                    "connector_id": str(b.connector_id) if b.connector_id else None,
+                    "connector_name": connector_names.get(b.connector_id, "") if b.connector_id else "",
+                    "is_orphaned": b.is_orphaned,
                 }
                 for b in a.connector_bindings
             ],
@@ -926,8 +933,8 @@ async def get_app(
     if app is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App not found")
 
-    # Load connector names for display
-    connector_ids = {b.connector_id for b in app.connector_bindings}
+    # Load connector names for display (skip empty/unfilled slots)
+    connector_ids = {b.connector_id for b in app.connector_bindings if b.connector_id is not None}
     connector_names: dict[uuid.UUID, str] = {}
     if connector_ids:
         from monctl_central.storage.models import Connector as ConnectorModel
@@ -953,11 +960,13 @@ async def get_app(
             "connector_bindings": [
                 {
                     "alias": b.alias,
-                    "connector_id": str(b.connector_id),
-                    "connector_name": connector_names.get(b.connector_id, ""),
+                    "connector_type": b.connector_type,
+                    "connector_id": str(b.connector_id) if b.connector_id else None,
+                    "connector_name": connector_names.get(b.connector_id, "") if b.connector_id else "",
                     "use_latest": b.use_latest,
                     "connector_version_id": str(b.connector_version_id) if b.connector_version_id else None,
                     "settings": b.settings or {},
+                    "is_orphaned": b.is_orphaned,
                 }
                 for b in app.connector_bindings
             ],
@@ -1007,7 +1016,14 @@ async def add_app_connector(
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_permission("app", "create")),
 ):
-    """Add a connector binding to an app."""
+    """Add a connector binding to an app (legacy / graceful-fallback path).
+
+    For modern apps that declare ``required_connectors`` in their Poller
+    source, slots are auto-created on version upload and filled via
+    ``PUT /apps/{app_id}/connectors/{alias}/assign``. This endpoint is
+    retained so operators can still wire connectors on legacy apps that
+    pre-date the slot model.
+    """
     app = await db.get(App, uuid.UUID(app_id))
     if not app:
         raise HTTPException(status_code=404, detail="App not found")
@@ -1022,6 +1038,10 @@ async def add_app_connector(
     if existing:
         raise HTTPException(status_code=409, detail=f"Alias '{request.alias}' already exists on this app")
 
+    connector = await db.get(Connector, uuid.UUID(request.connector_id))
+    if not connector:
+        raise HTTPException(status_code=404, detail="Connector not found")
+
     # Resolve version_id if use_latest
     version_id = None
     if request.connector_version_id:
@@ -1029,7 +1049,7 @@ async def add_app_connector(
     elif not request.use_latest:
         latest = (await db.execute(
             select(ConnectorVersion).where(
-                ConnectorVersion.connector_id == uuid.UUID(request.connector_id),
+                ConnectorVersion.connector_id == connector.id,
                 ConnectorVersion.is_latest == True,  # noqa: E712
             )
         )).scalar_one_or_none()
@@ -1038,7 +1058,8 @@ async def add_app_connector(
 
     binding = AppConnectorBinding(
         app_id=app.id,
-        connector_id=uuid.UUID(request.connector_id),
+        connector_id=connector.id,
+        connector_type=connector.connector_type,
         alias=request.alias,
         use_latest=request.use_latest,
         connector_version_id=version_id,
@@ -1081,7 +1102,13 @@ async def delete_app_connector(
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_permission("app", "delete")),
 ):
-    """Remove a connector binding from an app."""
+    """Remove a connector binding from an app.
+
+    For native slot-driven apps (where ``required_connectors`` is
+    declared in the Poller source) this should normally only be used to
+    clean up orphaned slots — the next version upload will re-sync the
+    declared ones anyway.
+    """
     binding = (await db.execute(
         select(AppConnectorBinding).where(
             AppConnectorBinding.app_id == uuid.UUID(app_id),
@@ -1091,6 +1118,95 @@ async def delete_app_connector(
     if not binding:
         raise HTTPException(status_code=404, detail="Connector binding not found")
     await db.delete(binding)
+
+
+class AssignConnectorToSlotRequest(BaseModel):
+    connector_id: str
+    connector_version_id: str | None = None
+    use_latest: bool = True
+    settings: dict = Field(default_factory=dict)
+
+
+@router.put("/{app_id}/connectors/{alias}/assign")
+async def assign_connector_to_slot(
+    app_id: str,
+    alias: str,
+    request: AssignConnectorToSlotRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_permission("app", "edit")),
+):
+    """Assign a concrete connector to an existing slot on an app.
+
+    This is the slot-first workflow: slots are pre-created from the
+    Poller source's ``required_connectors`` declaration on version
+    upload; the operator then uses this endpoint to pick which concrete
+    Connector fills each slot. The chosen connector's type must match
+    the slot's declared ``connector_type``.
+    """
+    binding = (
+        await db.execute(
+            select(AppConnectorBinding).where(
+                AppConnectorBinding.app_id == uuid.UUID(app_id),
+                AppConnectorBinding.alias == alias,
+            )
+        )
+    ).scalar_one_or_none()
+    if not binding:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Connector slot '{alias}' not found on this app",
+        )
+    if binding.is_orphaned:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Slot '{alias}' is orphaned (not declared by the current "
+                f"app version). Delete it or upload a version that declares it."
+            ),
+        )
+
+    connector = await db.get(Connector, uuid.UUID(request.connector_id))
+    if not connector:
+        raise HTTPException(status_code=404, detail="Connector not found")
+    if connector.connector_type != binding.connector_type:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Connector type mismatch: slot '{alias}' expects "
+                f"'{binding.connector_type}' but connector "
+                f"'{connector.name}' is '{connector.connector_type}'"
+            ),
+        )
+
+    # Resolve a concrete version_id if not supplied.
+    version_id: uuid.UUID | None = None
+    if request.connector_version_id:
+        version_id = uuid.UUID(request.connector_version_id)
+    elif not request.use_latest:
+        latest = (
+            await db.execute(
+                select(ConnectorVersion).where(
+                    ConnectorVersion.connector_id == connector.id,
+                    ConnectorVersion.is_latest == True,  # noqa: E712
+                )
+            )
+        ).scalar_one_or_none()
+        if latest:
+            version_id = latest.id
+
+    binding.connector_id = connector.id
+    binding.connector_version_id = version_id
+    binding.use_latest = request.use_latest
+    binding.settings = request.settings
+    await db.flush()
+    return {
+        "status": "success",
+        "data": {
+            "alias": binding.alias,
+            "connector_id": str(binding.connector_id),
+            "connector_type": binding.connector_type,
+        },
+    }
 
 
 @router.post("/assignments", status_code=status.HTTP_201_CREATED)
@@ -1103,6 +1219,29 @@ async def create_assignment(
     from sqlalchemy import update
     from monctl_central.storage.models import Collector, Device
     from monctl_common.utils import utc_now
+
+    # Block creation when the app has any unfilled (non-orphaned) connector
+    # slots declared by its Poller source. The operator must pick a
+    # concrete connector for every slot before the app can be deployed.
+    unfilled_slots = (
+        await db.execute(
+            select(AppConnectorBinding.alias, AppConnectorBinding.connector_type).where(
+                AppConnectorBinding.app_id == uuid.UUID(request.app_id),
+                AppConnectorBinding.is_orphaned.is_(False),
+                AppConnectorBinding.connector_id.is_(None),
+            )
+        )
+    ).all()
+    if unfilled_slots:
+        aliases = ", ".join(f"{alias} ({ctype})" for alias, ctype in unfilled_slots)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"App has unfilled connector slots: {aliases}. "
+                f"Assign a connector to each slot via "
+                f"PUT /apps/{{app_id}}/connectors/{{alias}}/assign before creating an assignment."
+            ),
+        )
 
     # Determine routing: specific collector, cluster, or group-level (collector_id=None)
     device_group_id: uuid.UUID | None = None
@@ -1668,6 +1807,99 @@ async def delete_app_version(
     await db.flush()
 
 
+async def _sync_connector_slots(
+    db: AsyncSession,
+    app_id: uuid.UUID,
+    source_code: str,
+    entry_class: str,
+) -> None:
+    """Reconcile ``AppConnectorBinding`` rows with the declaration on the
+    uploaded Poller source.
+
+    Graceful fallback semantics (see plan ``streamed-prancing-sunbeam``):
+
+    * Source does not declare ``required_connectors`` at all → legacy
+      app, leave existing bindings untouched.
+    * Source declares ``required_connectors = {}`` → explicit "no
+      connectors". Orphan any existing non-orphaned bindings.
+    * Source declares a populated dict → for each declared alias:
+        - New alias → create an empty slot (connector_id=NULL).
+        - Existing alias → update connector_type if it changed, and
+          un-orphan it if it was previously orphaned.
+      For each existing alias that is NOT in the declaration → mark
+      it orphaned (but keep the row so running assignments are not
+      silently broken).
+
+    The collector engine ignores orphaned slots when building the
+    runtime ``context.connectors`` dict.
+    """
+    try:
+        declared = extract_required_connectors(source_code, entry_class=entry_class)
+    except ConnectorDeclarationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid required_connectors declaration: {exc}",
+        ) from exc
+    except SyntaxError as exc:
+        # The source should already be valid Python to reach this point
+        # (it was just checksummed and stored), but defend against
+        # malformed input regardless.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Could not parse app source code: {exc}",
+        ) from exc
+
+    if declared is None:
+        # Legacy / graceful fallback — no declaration present. Leave the
+        # existing bindings on this app completely alone.
+        return
+
+    existing_rows = (
+        await db.execute(
+            select(AppConnectorBinding).where(AppConnectorBinding.app_id == app_id)
+        )
+    ).scalars().all()
+    existing_by_alias = {b.alias: b for b in existing_rows}
+
+    declared_aliases = set(declared.keys())
+    existing_aliases = set(existing_by_alias.keys())
+
+    # 1. Create slots for newly declared aliases.
+    for alias in declared_aliases - existing_aliases:
+        db.add(
+            AppConnectorBinding(
+                app_id=app_id,
+                alias=alias,
+                connector_type=declared[alias],
+                connector_id=None,
+                connector_version_id=None,
+                use_latest=True,
+                is_orphaned=False,
+            )
+        )
+
+    # 2. Update declared-and-existing aliases.
+    for alias in declared_aliases & existing_aliases:
+        row = existing_by_alias[alias]
+        # Type change (e.g. "snmp" → "ssh") means the existing
+        # connector_id can no longer satisfy the slot — clear it.
+        if row.connector_type != declared[alias]:
+            row.connector_type = declared[alias]
+            row.connector_id = None
+            row.connector_version_id = None
+        # Un-orphan if it was marked orphaned and is now declared again.
+        if row.is_orphaned:
+            row.is_orphaned = False
+
+    # 3. Orphan declared-away aliases (don't delete — running assignments
+    #    still reference them, and the operator may want to clean up
+    #    manually after checking).
+    for alias in existing_aliases - declared_aliases:
+        row = existing_by_alias[alias]
+        if not row.is_orphaned:
+            row.is_orphaned = True
+
+
 @router.post("/{app_id}/versions", status_code=status.HTTP_201_CREATED)
 async def create_app_version(
     app_id: str,
@@ -1711,6 +1943,17 @@ async def create_app_version(
     if should_be_latest:
         for v in app.versions:
             v.is_latest = False
+
+    # Sync connector slots from the uploaded Poller source. Only mutates
+    # slots on the latest version — older versions are historical and
+    # their contract is frozen.
+    if should_be_latest:
+        await _sync_connector_slots(
+            db,
+            app.id,
+            request.source_code,
+            request.entry_class,
+        )
 
     await db.flush()
     return {

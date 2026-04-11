@@ -13,16 +13,26 @@ from monctl_central.apps.connector_declaration import (
 # ── Happy-path ────────────────────────────────────────────────────────────
 
 
-def test_empty_when_not_declared():
+def test_none_when_not_declared():
+    """Legacy app that does not declare required_connectors at all.
+
+    The router uses this to decide "graceful fallback — leave existing
+    bindings alone".
+    """
     source = """
 class Poller:
     async def poll(self, context):
         return None
 """
-    assert extract_required_connectors(source) == {}
+    assert extract_required_connectors(source) is None
 
 
-def test_empty_dict_literal():
+def test_empty_dict_literal_declared():
+    """Explicit empty declaration (e.g. ping_check — no connector needed).
+
+    Distinct from "not declared"; the router uses this to orphan any
+    existing bindings.
+    """
     source = """
 class Poller:
     required_connectors = {}
@@ -71,7 +81,7 @@ from typing import ClassVar
 class Poller:
     required_connectors: ClassVar[dict[str, str]]
 """
-    assert extract_required_connectors(source) == {}
+    assert extract_required_connectors(source) is None
 
 
 def test_custom_entry_class_name():
@@ -186,7 +196,7 @@ required_connectors = {"snmp": "snmp"}
 class Poller:
     pass
 """
-    assert extract_required_connectors(source) == {}
+    assert extract_required_connectors(source) is None
 
 
 def test_ignores_declaration_on_wrong_class():
@@ -197,7 +207,7 @@ class Helper:
 class Poller:
     pass
 """
-    assert extract_required_connectors(source) == {}
+    assert extract_required_connectors(source) is None
 
 
 def test_returns_copy_not_reference():

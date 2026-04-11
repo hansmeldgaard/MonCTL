@@ -22,12 +22,19 @@ class ConnectorDeclarationError(ValueError):
 def extract_required_connectors(
     source: str,
     entry_class: str = "Poller",
-) -> dict[str, str]:
+) -> dict[str, str] | None:
     """Extract the ``required_connectors`` declaration from app source code.
 
-    Returns a dict mapping alias → connector_type. Returns an empty dict if
-    the class does not declare ``required_connectors`` (this is a valid
-    state — the app simply does not use any connector, like ``ping_check``).
+    Returns:
+        * ``None`` — the Poller class does **not** declare
+          ``required_connectors`` at all. The caller should treat this as
+          a legacy app and leave any existing bindings alone (graceful
+          fallback during the migration window).
+        * ``{}`` — the Poller class declares ``required_connectors = {}``
+          explicitly (e.g. ``ping_check``: no connectors needed). The
+          caller should sync slots accordingly and orphan any existing
+          ones that are still hanging around.
+        * ``{alias: connector_type, ...}`` — normal case, populated.
 
     Raises:
         ConnectorDeclarationError: If ``required_connectors`` is declared
@@ -48,8 +55,9 @@ def extract_required_connectors(
             rhs = _rhs(stmt)
             if rhs is None:
                 # Bare annotation (``required_connectors: dict[str, str]``)
-                # without a value — treat as "not declared".
-                return {}
+                # without a value — treat as "not declared" so legacy
+                # apps aren't broken by an incomplete type hint.
+                return None
 
             try:
                 value = ast.literal_eval(rhs)
@@ -77,7 +85,7 @@ def extract_required_connectors(
 
             return dict(value)
 
-    return {}
+    return None
 
 
 def _targets(stmt: ast.stmt) -> list[str]:
