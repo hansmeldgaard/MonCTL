@@ -194,27 +194,40 @@ rules per device subset.
   ```
   Clear with `scope_filter = NULL`. Mirror sync still ignores this field.
 
-## Phase 2e — Flap guard (shipped)
+## Phase 2d — Dependencies (shipped)
 
-Hold auto-clear for a configurable window so a flapping alert doesn't
-produce a new incident on every resolve/fire cycle. Implemented without
-a new schema column by leaning on `incidents.last_fired_at` which already
-tracks the most recent firing observation.
+Per-rule `depends_on` with optional `match_on` label list. Suppresses a
+child incident under a parent incident of another rule when both are on
+the same entity (as defined by `match_on`).
 
-- Per-rule field: `incident_rules.flap_guard_seconds` (int, nullable, already allocated in phase 1).
-- `NULL` or `0` → legacy immediate-clear behavior (phase 1–2d default).
-- Positive int → on resolve, clear is deferred until `(now - incident.last_fired_at) >= flap_guard_seconds`. Until then the incident stays `state='open'`.
-- Engine logic:
-  - Firing cycles still advance `last_fired_at` normally. If the alert flaps back within the guard window, the same incident keeps riding — no churn in `incidents` rows, no `parent_incident_id` reset, no severity ladder re-entry, no UI noise.
-  - Resolve cycles check the age. If under guard → log `incident_hold rule=X entity=Y age=Ns guard=Ms` and skip. Next cycle re-checks. If over guard → normal clear path runs (`state=cleared`, `cleared_reason='auto'`).
-  - Rule without `auto_clear_on_resolve` bypasses flap guard entirely (engine never clears those anyway).
-- **Why `last_fired_at` is enough** — no `pending_clear_at` column needed. The semantic "how long has this incident been not-firing" is exactly `now - last_fired_at`. A re-fire advances the timestamp, which resets the window. A sustained resolve makes the age grow until the threshold clears it.
-- **Default flap-guard value** (per design-doc question #5): 3× alert definition eval interval, clamped to [30s, 5min]. For this codebase the scheduler eval interval is 30s, so the natural default is **90s**. Enforced only in the UI (phase 3 will pre-fill this value). The engine treats NULL as no guard — operators must opt in explicitly.
-- Set via SQL:
-  ```sql
-  UPDATE incident_rules SET flap_guard_seconds = 90 WHERE id = '...';
+- Per-rule field: `incident_rules.depends_on` (JSONB, nullable, already allocated).
+- Child incidents carry the link via `incidents.parent_incident_id` (already allocated).
+- Format:
+  ```json
+  {
+    "rule_ids": ["<parent-rule-uuid>", "..."],
+    "match_on": ["device_id", "device_name"]
+  }
   ```
-  Clear with `flap_guard_seconds = NULL`. Mirror sync ignores this field.
+
+  - `rule_ids`: required, non-empty list of parent rule UUIDs as strings.
+  - `match_on`: optional label-key list. Empty/missing = any open parent matches (too broad for most cases — prefer explicit keys).
+- Validation in `incidents/engine.py::_validate_depends_on`:
+  - Top-level dict, `rule_ids` a non-empty list of UUID strings, `match_on` a list of strings.
+  - Self-references in `rule_ids` are allowed in JSON but filtered out at runtime (a rule cannot suppress its own incidents).
+  - Malformed → log WARNING, treat as no dependencies.
+- Engine behavior:
+  - Parent candidates are loaded once per rule per cycle (one PG query, regardless of entity count).
+  - On new incident open: `_find_matching_parent` scans the cached parent list for one whose labels match every key in `match_on`. If found, the new incident is opened with `parent_incident_id` set. No separate state — a suppressed incident is still `state='open'`, it just carries a parent FK.
+  - On existing incident update: `_find_matching_parent` is re-run each cycle and `parent_incident_id` is updated if it changed. This means when a parent clears, child incidents are auto-unsuppressed on the next cycle; when a new parent opens that covers an existing primary, it gets pulled under.
+  - Changes log as `incident_suppression_changed rule=X entity=Y parent=Z was=W`.
+- **Non-goals**: no transitive parent resolution (a suppressed parent still counts as a parent for its own children). No demotion or state-flipping. The UI (phase 3) differentiates primary vs. suppressed by filtering `parent_incident_id IS NULL`.
+- No API/UI yet. Set via SQL:
+  ```sql
+  UPDATE incident_rules
+  SET depends_on = '{"rule_ids":["<parent-uuid>"],"match_on":["device_name"]}'::jsonb
+  WHERE id = '<child-rule-uuid>';
+  ```
 
 ## Out of scope (for the rework PR)
 

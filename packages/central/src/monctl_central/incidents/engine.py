@@ -28,6 +28,7 @@ See docs/event-policy-rework.md.
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -181,6 +182,76 @@ def _validate_scope_filter(raw) -> dict[str, str] | None:
     return normalized
 
 
+def _validate_depends_on(raw) -> dict | None:
+    """Validate and normalize a depends_on JSONB value.
+
+    Returns `{"rule_ids": [uuid.UUID, ...], "match_on": [str, ...]}` or
+    `None` if missing/empty/malformed. Malformed values log at WARNING so
+    a single rule typo doesn't silently disable dependency suppression.
+
+    Format:
+    ```json
+    {
+      "rule_ids": ["uuid-str", ...],
+      "match_on": ["device_id", "device_name"]
+    }
+    ```
+
+    - `rule_ids`: list of parent IncidentRule UUIDs as strings. Required,
+      non-empty. Self-references are allowed (engine skips them at runtime).
+    - `match_on`: list of label keys. Optional (default empty list). When
+      non-empty, dependency only applies if the parent and child incidents
+      have equal non-null values for *every* key in the list. Empty list
+      means "any open parent incident of any listed rule suppresses" —
+      too broad for most cases, but supported.
+    - Transitive parents are not resolved — a suppressed parent still
+      counts as a valid parent for its children. Operators model the tree
+      explicitly if they care.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        logger.warning("incident_depends_on_invalid reason=not_a_dict value=%r", raw)
+        return None
+
+    rule_ids_raw = raw.get("rule_ids")
+    if not isinstance(rule_ids_raw, list) or not rule_ids_raw:
+        logger.warning(
+            "incident_depends_on_invalid reason=rule_ids_missing_or_empty"
+        )
+        return None
+
+    rule_ids: list[uuid.UUID] = []
+    for rid in rule_ids_raw:
+        if not isinstance(rid, str):
+            logger.warning(
+                "incident_depends_on_invalid reason=rule_id_not_string value=%r", rid
+            )
+            return None
+        try:
+            rule_ids.append(uuid.UUID(rid))
+        except (ValueError, TypeError):
+            logger.warning(
+                "incident_depends_on_invalid reason=rule_id_not_uuid value=%r", rid
+            )
+            return None
+
+    match_on_raw = raw.get("match_on", [])
+    if not isinstance(match_on_raw, list):
+        logger.warning("incident_depends_on_invalid reason=match_on_not_list")
+        return None
+    match_on: list[str] = []
+    for key in match_on_raw:
+        if not isinstance(key, str):
+            logger.warning(
+                "incident_depends_on_invalid reason=match_on_key_not_string value=%r", key
+            )
+            return None
+        match_on.append(key)
+
+    return {"rule_ids": rule_ids, "match_on": match_on}
+
+
 class IncidentEngine:
     """Phase 1 incident engine — observation only."""
 
@@ -257,6 +328,31 @@ class IncidentEngine:
 
         ladder = _validate_ladder(rule.severity_ladder)
         scope = _validate_scope_filter(rule.scope_filter)
+
+        # Dependency resolution: if this rule depends on other rules, load
+        # their currently-open incidents once and reuse for every entity in
+        # this rule. Parents from the *same* rule as the child are excluded
+        # (a rule can't suppress its own incidents). Transitive parents are
+        # not resolved — a suppressed parent still counts as a valid parent.
+        depends = _validate_depends_on(rule.depends_on)
+        if depends:
+            parent_rule_ids = [rid for rid in depends["rule_ids"] if rid != rule.id]
+            if parent_rule_ids:
+                parent_candidates = (
+                    await session.execute(
+                        select(Incident).where(
+                            Incident.rule_id.in_(parent_rule_ids),
+                            Incident.state == "open",
+                        )
+                    )
+                ).scalars().all()
+            else:
+                parent_candidates = []
+            match_on = depends["match_on"]
+        else:
+            parent_candidates = []
+            match_on = []
+
         now = datetime.now(timezone.utc)
         opened = updated = cleared = escalated = 0
 
@@ -287,6 +383,14 @@ class IncidentEngine:
                         continue
                     # Seed severity from ladder[0] if present, else rule default.
                     base_severity = ladder[0]["severity"] if ladder else rule.severity
+                    # Dependency: find a matching parent, if any. Suppressed
+                    # children share lifecycle with normal open incidents —
+                    # they still track fire counts, escalate, and auto-clear.
+                    # `parent_incident_id` carries the suppression link; phase 3
+                    # UI filters on `parent_incident_id IS NULL` to show primaries.
+                    parent_id = self._find_matching_parent(
+                        parent_candidates, match_on, inst.entity_labels or {}
+                    )
                     new_inc = Incident(
                         rule_id=rule.id,
                         entity_key=entity_key,
@@ -300,14 +404,16 @@ class IncidentEngine:
                         opened_at=now,
                         last_fired_at=now,
                         severity_reached_at=now,
+                        parent_incident_id=parent_id,
                     )
                     session.add(new_inc)
                     opened += 1
                     logger.info(
-                        "incident_opened rule=%s entity=%s device=%s severity=%s",
+                        "incident_opened rule=%s entity=%s device=%s severity=%s parent=%s",
                         rule.name, inst.entity_key or "-",
                         (inst.entity_labels or {}).get("device_name", "-"),
                         base_severity,
+                        str(parent_id) if parent_id else "-",
                     )
                 else:
                     incident.last_fired_at = now
@@ -317,6 +423,23 @@ class IncidentEngine:
                     if inst.entity_labels:
                         incident.labels = inst.entity_labels
                     updated += 1
+
+                    # Recompute parent on each cycle so parent clears
+                    # auto-unsuppress children, and new parents suppress
+                    # previously-primary incidents.
+                    if depends:
+                        new_parent_id = self._find_matching_parent(
+                            parent_candidates, match_on, incident.labels or {}
+                        )
+                        if new_parent_id != incident.parent_incident_id:
+                            old_parent_id = incident.parent_incident_id
+                            incident.parent_incident_id = new_parent_id
+                            logger.info(
+                                "incident_suppression_changed rule=%s entity=%s parent=%s was=%s",
+                                rule.name, inst.entity_key or "-",
+                                str(new_parent_id) if new_parent_id else "-",
+                                str(old_parent_id) if old_parent_id else "-",
+                            )
 
                     # Apply severity ladder (wall-clock time since opened_at).
                     if ladder and self._apply_ladder(incident, ladder, now):
@@ -358,6 +481,37 @@ class IncidentEngine:
                 )
 
         return opened, updated, cleared, escalated
+
+    @staticmethod
+    def _find_matching_parent(
+        parent_candidates: list[Incident],
+        match_on: list[str],
+        child_labels: dict,
+    ) -> uuid.UUID | None:
+        """Return the id of the first parent incident that matches the child.
+
+        If `match_on` is empty, the first parent wins (any open parent
+        suppresses). Otherwise every key in `match_on` must exist on both
+        the parent and the child labels and the values must be equal.
+        Returns None if no match is found.
+        """
+        for parent in parent_candidates:
+            if not match_on:
+                return parent.id
+            parent_labels = parent.labels or {}
+            matched = True
+            for key in match_on:
+                p_val = parent_labels.get(key)
+                c_val = child_labels.get(key)
+                if p_val is None or c_val is None:
+                    matched = False
+                    break
+                if str(p_val) != str(c_val):
+                    matched = False
+                    break
+            if matched:
+                return parent.id
+        return None
 
     @staticmethod
     def _entity_in_scope(inst: AlertEntity, scope: dict[str, str]) -> bool:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import uuid
 from contextlib import asynccontextmanager
@@ -15,6 +16,16 @@ from fastapi.staticfiles import StaticFiles
 
 from monctl_central.config import settings
 from monctl_central.dependencies import get_engine, get_session_factory
+
+# Apply configured log level to the stdlib root logger so that modules using
+# `logging.getLogger(__name__)` (e.g. incidents/engine, events/engine,
+# alerting/engine) actually emit at INFO. Without this call the stdlib root
+# defaults to WARNING and info-level lines from those modules are silently
+# dropped, making shadow-mode observability effectively blind.
+logging.basicConfig(
+    level=getattr(logging, settings.log_level.upper(), logging.INFO),
+    format="%(asctime)s %(name)s %(levelname)s %(message)s",
+)
 
 logger = structlog.get_logger()
 
