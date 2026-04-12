@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Bell, FileText, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
+import { Bell, FileText, Filter, Loader2, ShieldCheck } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -17,18 +17,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table.tsx";
-import {
-  useAlertInstances,
-  useAlertLog,
-  useAlertRules,
-  useInvertAlertDefinition,
-  useCreateAlertDefinition,
-} from "@/api/hooks.ts";
+import { useAlertInstances, useAlertLog, useAlertRules } from "@/api/hooks.ts";
 import { timeAgo, formatDate } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 import { useListState } from "@/hooks/useListState.ts";
 import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
-import { usePermissions } from "@/hooks/usePermissions.ts";
 import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
 import type {
@@ -525,16 +518,33 @@ function AlertLogTab({
                           {entry.definition_name}
                         </TableCell>
                         <TableCell className="text-zinc-300">
-                          {entry.device_id ? (
-                            <Link
-                              to={`/devices/${entry.device_id}`}
-                              className="text-brand-400 hover:text-brand-300 hover:underline"
-                            >
-                              {entry.device_name || entry.device_id}
-                            </Link>
-                          ) : (
-                            entry.device_name || "—"
-                          )}
+                          <div className="flex items-center gap-1">
+                            {entry.device_id ? (
+                              <Link
+                                to={`/devices/${entry.device_id}`}
+                                className="text-brand-400 hover:text-brand-300 hover:underline"
+                              >
+                                {entry.device_name || entry.device_id}
+                              </Link>
+                            ) : (
+                              <span>{entry.device_name || "—"}</span>
+                            )}
+                            {entry.device_name && (
+                              <button
+                                type="button"
+                                className="rounded p-0.5 text-zinc-600 hover:text-brand-400 hover:bg-brand-500/10 transition-colors cursor-pointer"
+                                title="Filter by this device"
+                                onClick={() =>
+                                  listState.setFilter(
+                                    "device_name",
+                                    entry.device_name,
+                                  )
+                                }
+                              >
+                                <Filter className="h-3 w-3" />
+                              </button>
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell className="text-zinc-400 text-xs font-mono">
                           {labels.if_name ||
@@ -592,33 +602,6 @@ function DefinitionsTab({
   meta: { limit: number; offset: number; count: number; total: number };
   isFetching: boolean;
 }) {
-  const { canCreate } = usePermissions();
-  const invertDef = useInvertAlertDefinition();
-  const createDef = useCreateAlertDefinition();
-  const [invertingId, setInvertingId] = useState<string | null>(null);
-
-  const handleCreateRecovery = async (defnId: string) => {
-    setInvertingId(defnId);
-    try {
-      const res = await invertDef.mutateAsync(defnId);
-      const data = res.data;
-      await createDef.mutateAsync({
-        app_id: data.app_id,
-        name: data.suggested_name,
-        expression: data.inverted_expression,
-        window: data.window,
-        severity: data.severity,
-      });
-    } catch {
-      // silently fail — user sees the button stop spinning
-    } finally {
-      setInvertingId(null);
-    }
-  };
-
-  const hasChanged = (expr: string) =>
-    /\bCHANGED\b/.test(expr) && !/[><=!]/.test(expr);
-
   return (
     <Card>
       <CardHeader>
@@ -641,6 +624,16 @@ function DefinitionsTab({
                 onFilterChange={(v) => listState.setFilter("name", v)}
               />
               <FilterableSortHead
+                col="app_name"
+                label="App"
+                sortable={false}
+                sortBy={listState.sortBy}
+                sortDir={listState.sortDir}
+                onSort={listState.handleSort}
+                filterValue={listState.filters.app_name}
+                onFilterChange={(v) => listState.setFilter("app_name", v)}
+              />
+              <FilterableSortHead
                 col="expression"
                 label="Expression"
                 sortable={false}
@@ -661,7 +654,6 @@ function DefinitionsTab({
               />
               <TableHead>Instances</TableHead>
               <TableHead>Active</TableHead>
-              <TableHead className="w-12"></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -682,6 +674,18 @@ function DefinitionsTab({
                   <TableCell className="font-medium text-zinc-100">
                     {defn.name}
                   </TableCell>
+                  <TableCell className="text-zinc-400">
+                    {defn.app_name ? (
+                      <Link
+                        to={`/apps/${defn.app_id}`}
+                        className="text-brand-400 hover:text-brand-300 hover:underline"
+                      >
+                        {defn.app_name}
+                      </Link>
+                    ) : (
+                      "—"
+                    )}
+                  </TableCell>
                   <TableCell className="text-zinc-400 font-mono text-xs max-w-xs truncate">
                     {defn.expression}
                   </TableCell>
@@ -699,24 +703,6 @@ function DefinitionsTab({
                       <Badge variant="destructive">{defn.firing_count}</Badge>
                     ) : (
                       <span className="text-zinc-500">0</span>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {canCreate("alert") && !hasChanged(defn.expression) && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-zinc-500 hover:text-brand-400"
-                        title="Create Recovery Alert"
-                        disabled={invertingId === defn.id}
-                        onClick={() => handleCreateRecovery(defn.id)}
-                      >
-                        {invertingId === defn.id ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <RefreshCw className="h-3.5 w-3.5" />
-                        )}
-                      </Button>
                     )}
                   </TableCell>
                 </TableRow>

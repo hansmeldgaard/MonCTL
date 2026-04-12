@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator
@@ -29,12 +30,36 @@ from monctl_common.utils import utc_now
 router = APIRouter()
 
 
+# ── Helpers ──────────────────────────────────────────────
+
+
+def _ensure_utc(rows: list[dict]) -> list[dict]:
+    """Ensure datetime values from ClickHouse carry a UTC marker.
+
+    ClickHouse returns naive Python datetimes (no tzinfo). FastAPI
+    serialises them as `"2026-04-11T08:30:10"` without a `Z` suffix.
+    JavaScript's `new Date("...")` then parses that as *browser-local
+    time* rather than UTC, producing a timezone-dependent shift.
+
+    This helper walks each dict, finds `datetime` values, and replaces
+    them with UTC-aware equivalents so FastAPI emits `"...+00:00"`.
+    Runs in O(rows × columns); the overhead is negligible for the
+    typical ≤1000 rows returned by alert log / entity queries.
+    """
+    for row in rows:
+        for key, val in row.items():
+            if isinstance(val, datetime) and val.tzinfo is None:
+                row[key] = val.replace(tzinfo=timezone.utc)
+    return rows
+
+
 # ── Formatters ───────────────────────────────────────────
 
 def _fmt_definition(d: AlertDefinition, instance_counts: dict | None = None) -> dict:
     result = {
         "id": str(d.id),
         "app_id": str(d.app_id),
+        "app_name": d.app.name if d.app else None,
         "name": d.name,
         "description": d.description,
         "expression": d.expression,
@@ -192,7 +217,7 @@ async def list_alert_definitions(
     total = (await db.execute(count_stmt)).scalar() or 0
 
     # Main query
-    stmt = select(AlertDefinition)
+    stmt = select(AlertDefinition).options(selectinload(AlertDefinition.app))
     for f in filters:
         stmt = stmt.where(f)
 
@@ -679,7 +704,7 @@ async def query_alert_log(
 ):
     """Query the alert fire/clear log from ClickHouse."""
     tenant_id = auth.get("tenant_id")
-    rows = ch.query_alert_log(
+    rows = _ensure_utc(ch.query_alert_log(
         definition_id=definition_id,
         entity_key=entity_key,
         device_id=device_id,
@@ -694,7 +719,7 @@ async def query_alert_log(
         sort_dir=sort_dir,
         limit=limit,
         offset=offset,
-    )
+    ))
     total = ch.count_alert_log(
         definition_id=definition_id,
         entity_key=entity_key,
