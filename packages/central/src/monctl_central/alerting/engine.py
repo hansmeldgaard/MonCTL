@@ -102,6 +102,11 @@ class AlertEngine:
             logger.debug("eval_definition_no_instances name=%s", defn.name)
             return []
 
+        # Determine which assignments have fresh data since last evaluation
+        fresh_aids = await self._fresh_assignments(
+            target_table, instances, compiled.is_config_changed
+        )
+
         logger.debug(
             "eval_definition name=%s table=%s instances=%d",
             defn.name, target_table, len(instances),
@@ -154,6 +159,7 @@ class AlertEngine:
         for inst in instances:
             key = (str(inst.assignment_id), inst.entity_key)
             is_firing = key in firing_keys
+            has_fresh_data = str(inst.assignment_id) in fresh_aids
 
             inst.fire_history = (inst.fire_history or [])[-19:] + [is_firing]
             inst.last_evaluated_at = now
@@ -174,10 +180,11 @@ class AlertEngine:
                 else:
                     inst.fire_count += 1
 
-                # Write "fire" record to alert_log
-                log_records.append(self._build_log_record(
-                    defn, inst, "fire", now
-                ))
+                # Write fire log only when this assignment has new data
+                if has_fresh_data:
+                    log_records.append(self._build_log_record(
+                        defn, inst, "fire", now
+                    ))
             else:
                 if inst.state == "firing":
                     inst.state = "resolved"
@@ -449,6 +456,64 @@ class AlertEngine:
                     break
 
         return firing
+
+
+    async def _fresh_assignments(
+        self,
+        target_table: str,
+        instances: list[AlertEntity],
+        is_config_changed: bool,
+    ) -> set[str]:
+        """Return the set of assignment_ids that have received new data
+        since their last evaluation.  Assignments evaluated for the first
+        time (last_evaluated_at IS NULL) are always considered fresh.
+        """
+        # Collect per-assignment cutoff (oldest last_evaluated_at)
+        cutoff_by_aid: dict[str, datetime | None] = {}
+        for inst in instances:
+            aid = str(inst.assignment_id)
+            if inst.last_evaluated_at is None:
+                cutoff_by_aid[aid] = None  # first eval → always fresh
+            elif aid not in cutoff_by_aid:
+                cutoff_by_aid[aid] = inst.last_evaluated_at
+            elif cutoff_by_aid[aid] is not None and inst.last_evaluated_at < cutoff_by_aid[aid]:
+                cutoff_by_aid[aid] = inst.last_evaluated_at
+
+        # Assignments with no prior evaluation are always fresh
+        fresh: set[str] = set()
+        aids_to_check: dict[str, datetime] = {}
+        for aid, cutoff in cutoff_by_aid.items():
+            if cutoff is None:
+                fresh.add(aid)
+            else:
+                ts = cutoff if cutoff.tzinfo else cutoff.replace(tzinfo=timezone.utc)
+                aids_to_check[aid] = ts
+
+        if not aids_to_check:
+            return fresh
+
+        # Use the oldest cutoff across all assignments for a single cheap query
+        oldest = min(aids_to_check.values())
+        aid_list = ", ".join(f"'{a}'" for a in aids_to_check)
+        table = "config" if is_config_changed else target_table
+
+        sql = (
+            f"SELECT DISTINCT toString(assignment_id) AS aid FROM {table} "
+            f"WHERE assignment_id IN ({aid_list}) "
+            f"AND received_at > {{cutoff:DateTime64(3, 'UTC')}}"
+        )
+
+        try:
+            rows = await asyncio.to_thread(
+                self._ch.query_for_alert, sql, {"cutoff": oldest}
+            )
+            fresh.update(row["aid"] for row in rows)
+        except Exception:
+            # On error, treat all as fresh to avoid suppressing alerts
+            logger.debug("fresh_assignments_check_error table=%s", table)
+            fresh.update(aids_to_check)
+
+        return fresh
 
 
 def _fmt_number(v: float | None) -> str:

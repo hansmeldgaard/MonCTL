@@ -68,8 +68,8 @@
           },
           {
             "name": "High SNMP Latency",
-            "description": "SNMP RTT is elevated (warn band)",
-            "expression": "avg(rtt_ms) > snmp_rtt_warn_ms AND avg(rtt_ms) < snmp_rtt_crit_ms",
+            "description": "SNMP RTT exceeds the warning threshold",
+            "expression": "last(rtt_ms) > snmp_rtt_warn_ms",
             "window": "5m",
             "enabled": true,
             "message_template": "High SNMP latency on {device_name}: {value}ms"
@@ -77,7 +77,7 @@
           {
             "name": "Critical SNMP Latency",
             "description": "SNMP RTT exceeds the critical threshold",
-            "expression": "avg(rtt_ms) > snmp_rtt_crit_ms",
+            "expression": "last(rtt_ms) > snmp_rtt_crit_ms",
             "window": "5m",
             "enabled": true,
             "message_template": "Critical SNMP latency on {device_name}: {value}ms"

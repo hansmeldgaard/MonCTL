@@ -81,8 +81,8 @@
           },
           {
             "name": "Ping - High RTT Warning",
-            "description": "Average ping RTT is elevated (between warn and crit thresholds)",
-            "expression": "avg(rtt_ms) > rtt_ms_warn AND avg(rtt_ms) < rtt_ms_crit",
+            "description": "Average ping RTT exceeds the warning threshold",
+            "expression": "last(rtt_ms) > rtt_ms_warn",
             "window": "5m",
             "enabled": true,
             "message_template": "High ping latency to {device_name}: {value}ms (> {rtt_ms_warn}ms)"
@@ -90,15 +90,15 @@
           {
             "name": "Ping - High RTT Critical",
             "description": "Average ping RTT exceeds the critical threshold",
-            "expression": "avg(rtt_ms) > rtt_ms_crit",
+            "expression": "last(rtt_ms) > rtt_ms_crit",
             "window": "5m",
             "enabled": true,
             "message_template": "Critical ping latency to {device_name}: {value}ms (> {rtt_ms_crit}ms)"
           },
           {
             "name": "Ping - Packet Loss Warning",
-            "description": "Partial packet loss over the window (between warn and crit)",
-            "expression": "(1 - avg(reachable)) * 100 > loss_pct_warn AND (1 - avg(reachable)) * 100 < loss_pct_crit",
+            "description": "Packet loss exceeds the warning threshold",
+            "expression": "last(packet_loss_pct) > loss_pct_warn",
             "window": "5m",
             "enabled": true,
             "message_template": "Packet loss to {device_name}: {value}%"
@@ -106,7 +106,7 @@
           {
             "name": "Ping - Packet Loss Critical",
             "description": "High packet loss over the window (>= crit)",
-            "expression": "(1 - avg(reachable)) * 100 > loss_pct_crit",
+            "expression": "last(packet_loss_pct) > loss_pct_crit",
             "window": "5m",
             "enabled": true,
             "message_template": "Critical packet loss to {device_name}: {value}%"
