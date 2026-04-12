@@ -531,6 +531,7 @@ export interface CredentialTemplate {
 export interface AlertDefinition {
   id: string;
   app_id: string;
+  app_name?: string;
   name: string;
   description: string | null;
   expression: string;

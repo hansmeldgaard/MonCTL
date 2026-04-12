@@ -21,7 +21,6 @@ import {
   ShieldAlert,
   ShieldCheck,
   Tags,
-  Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils.ts";
 import { useUpgradeBadge } from "@/api/hooks.ts";
@@ -111,7 +110,6 @@ const navGroups: NavGroup[] = [
     label: "Alerting",
     items: [
       { to: "/alerts", icon: Bell, label: "Alerts", resource: "alert" },
-      { to: "/events", icon: Zap, label: "Events", resource: "event" },
       {
         to: "/incidents",
         icon: ShieldAlert,
