@@ -494,27 +494,28 @@ export function UpgradesPage() {
                   Clear ({selectedNodes.size})
                 </Button>
               )}
-              {rebootableSelectedNodes.length > 0 && (
+              {selectedNodes.size > 0 && (
                 <Button
                   size="sm"
                   onClick={() => {
                     restartNodes.mutate({
-                      node_hostnames: Array.from(selectedNodes).filter(
-                        (h) =>
-                          allNodes.find((n) => n.hostname === h)
-                            ?.reboot_required,
-                      ),
+                      node_hostnames: Array.from(selectedNodes),
                       strategy: "rolling",
                     });
                   }}
                   disabled={restartNodes.isPending}
+                  title={
+                    rebootableSelectedNodes.length < selectedNodes.size
+                      ? `${selectedNodes.size - rebootableSelectedNodes.length} of these have no pending reboot — they will still be restarted`
+                      : undefined
+                  }
                 >
                   {restartNodes.isPending ? (
                     <Loader2 className="h-3 w-3 animate-spin mr-1" />
                   ) : (
                     <RefreshCw className="h-3 w-3 mr-1" />
                   )}
-                  Rolling Restart Selected ({rebootableSelectedNodes.length})
+                  Rolling Restart Selected ({selectedNodes.size})
                 </Button>
               )}
             </div>
