@@ -16,8 +16,11 @@ from __future__ import annotations
 import uuid
 
 import sqlalchemy as sa
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from pydantic import BaseModel, Field
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -69,6 +72,9 @@ async def list_incidents(
     rule_name: str | None = Query(
         default=None, description="Filter by rule name (ilike)"
     ),
+    device_id: str | None = Query(
+        default=None, description="Filter by device_id"
+    ),
     device_name: str | None = Query(
         default=None, description="Filter by device_name label (ilike)"
     ),
@@ -100,6 +106,11 @@ async def list_incidents(
     if rule_name:
         stmt = stmt.join(IncidentRule, Incident.rule_id == IncidentRule.id)
         stmt = stmt.where(IncidentRule.name.ilike(f"%{rule_name}%"))
+    if device_id:
+        try:
+            stmt = stmt.where(Incident.device_id == uuid.UUID(device_id))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid device_id")
     if device_name:
         # labels is JSONB; filter by device_name text search.
         stmt = stmt.where(
@@ -167,3 +178,38 @@ async def get_incident(
     if incident is None:
         raise HTTPException(status_code=404, detail="Not found")
     return {"status": "success", "data": _fmt_incident(incident)}
+
+
+class BulkClearRequest(BaseModel):
+    incident_ids: list[str] = Field(min_length=1, max_length=500)
+
+
+@router.post("/clear")
+async def clear_incidents(
+    req: BulkClearRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_permission("event", "manage")),
+):
+    """Manually clear one or more open incidents.
+
+    Sets `state='cleared'`, `cleared_at=now`, `cleared_reason='manual'`
+    on every open incident whose id is in the request. Already-cleared
+    incidents are silently ignored. The engine will not re-open them
+    automatically while the underlying alert remains firing — the next
+    firing cycle treats the entity as a new incident.
+    """
+    try:
+        ids = [uuid.UUID(i) for i in req.incident_ids]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid incident_id")
+
+    now = datetime.now(timezone.utc)
+    result = await db.execute(
+        update(Incident)
+        .where(Incident.id.in_(ids), Incident.state == "open")
+        .values(state="cleared", cleared_at=now, cleared_reason="manual")
+    )
+    return {
+        "status": "success",
+        "data": {"cleared": int(result.rowcount or 0)},
+    }

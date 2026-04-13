@@ -28,6 +28,7 @@ from sqlalchemy.orm import selectinload
 
 from monctl_central.dependencies import get_db, require_permission
 from monctl_central.incidents.engine import (
+    _validate_companion_ids,
     _validate_depends_on,
     _validate_ladder,
     _validate_scope_filter,
@@ -41,6 +42,7 @@ router = APIRouter()
 
 _VALID_SEVERITIES = {"info", "warning", "critical", "emergency"}
 _VALID_MODES = {"consecutive", "cumulative"}
+_VALID_COMPANION_MODES = {"any", "all"}
 
 
 # ── Formatter ────────────────────────────────────────────────
@@ -65,6 +67,8 @@ def _fmt_rule(r: IncidentRule) -> dict:
         "scope_filter": r.scope_filter,
         "depends_on": r.depends_on,
         "flap_guard_seconds": r.flap_guard_seconds,
+        "clear_on_companion_ids": r.clear_on_companion_ids,
+        "clear_companion_mode": r.clear_companion_mode,
         "enabled": r.enabled,
         "source": r.source,
         "created_at": r.created_at.isoformat() if r.created_at else None,
@@ -130,6 +134,24 @@ def _reject_if_depends_on_invalid(raw) -> None:
         )
 
 
+def _reject_if_companion_ids_invalid(raw) -> None:
+    """Accept None or empty list (feature disabled). Reject malformed shape."""
+    if raw is None:
+        return
+    if not isinstance(raw, list):
+        raise HTTPException(
+            status_code=400,
+            detail="clear_on_companion_ids must be a list of UUID strings.",
+        )
+    if not raw:
+        return
+    if _validate_companion_ids(raw) is None:
+        raise HTTPException(
+            status_code=400,
+            detail="clear_on_companion_ids must be a list of UUID strings.",
+        )
+
+
 # ── Request schemas ─────────────────────────────────────────
 
 
@@ -147,6 +169,8 @@ class CreateIncidentRuleRequest(BaseModel):
     scope_filter: dict | None = None
     depends_on: dict | None = None
     flap_guard_seconds: int | None = Field(default=None, ge=0)
+    clear_on_companion_ids: list[str] | None = None
+    clear_companion_mode: str = Field(default="any")
     enabled: bool = True
 
     @field_validator("definition_id")
@@ -171,6 +195,13 @@ class CreateIncidentRuleRequest(BaseModel):
             raise ValueError("mode must be 'consecutive' or 'cumulative'")
         return v
 
+    @field_validator("clear_companion_mode")
+    @classmethod
+    def check_companion_mode(cls, v: str) -> str:
+        if v not in _VALID_COMPANION_MODES:
+            raise ValueError("clear_companion_mode must be 'any' or 'all'")
+        return v
+
 
 class UpdateIncidentRuleRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
@@ -185,6 +216,8 @@ class UpdateIncidentRuleRequest(BaseModel):
     scope_filter: dict | None = None
     depends_on: dict | None = None
     flap_guard_seconds: int | None = Field(default=None, ge=0)
+    clear_on_companion_ids: list[str] | None = None
+    clear_companion_mode: str | None = None
     enabled: bool | None = None
 
     @field_validator("severity")
@@ -201,6 +234,13 @@ class UpdateIncidentRuleRequest(BaseModel):
     def check_mode(cls, v: str | None) -> str | None:
         if v is not None and v not in _VALID_MODES:
             raise ValueError("mode must be 'consecutive' or 'cumulative'")
+        return v
+
+    @field_validator("clear_companion_mode")
+    @classmethod
+    def check_companion_mode(cls, v: str | None) -> str | None:
+        if v is not None and v not in _VALID_COMPANION_MODES:
+            raise ValueError("clear_companion_mode must be 'any' or 'all'")
         return v
 
 
@@ -322,6 +362,7 @@ async def create_incident_rule(
     _reject_if_ladder_invalid(req.severity_ladder)
     _reject_if_scope_invalid(req.scope_filter)
     _reject_if_depends_on_invalid(req.depends_on)
+    _reject_if_companion_ids_invalid(req.clear_on_companion_ids)
 
     rule = IncidentRule(
         name=req.name,
@@ -337,6 +378,8 @@ async def create_incident_rule(
         scope_filter=req.scope_filter,
         depends_on=req.depends_on,
         flap_guard_seconds=req.flap_guard_seconds,
+        clear_on_companion_ids=req.clear_on_companion_ids,
+        clear_companion_mode=req.clear_companion_mode,
         enabled=req.enabled,
         source="native",
     )
@@ -380,6 +423,8 @@ async def update_incident_rule(
         _reject_if_scope_invalid(updates["scope_filter"])
     if "depends_on" in updates:
         _reject_if_depends_on_invalid(updates["depends_on"])
+    if "clear_on_companion_ids" in updates:
+        _reject_if_companion_ids_invalid(updates["clear_on_companion_ids"])
 
     for field, value in updates.items():
         setattr(rule, field, value)
