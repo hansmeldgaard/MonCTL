@@ -251,6 +251,39 @@ def _validate_depends_on(raw) -> dict | None:
     return {"rule_ids": rule_ids, "match_on": match_on}
 
 
+def _validate_companion_ids(raw) -> list[uuid.UUID] | None:
+    """Normalize `clear_on_companion_ids` JSONB into a list of UUIDs.
+
+    Accepts `None`, an empty list, or a list of UUID strings. Returns
+    `None` on "feature disabled" (missing/empty) or on invalid input —
+    invalid input is logged at WARNING so a single-rule typo doesn't
+    silently disable the companion-clear path for that rule.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, list) or not raw:
+        if raw != []:
+            logger.warning(
+                "incident_companion_ids_invalid reason=not_a_list value=%r", raw
+            )
+        return None
+    result: list[uuid.UUID] = []
+    for rid in raw:
+        if not isinstance(rid, str):
+            logger.warning(
+                "incident_companion_ids_invalid reason=not_string value=%r", rid
+            )
+            return None
+        try:
+            result.append(uuid.UUID(rid))
+        except (ValueError, TypeError):
+            logger.warning(
+                "incident_companion_ids_invalid reason=not_uuid value=%r", rid
+            )
+            return None
+    return result
+
+
 class IncidentEngine:
     """Phase 1 incident engine — observation + automation trigger (cut-over step 1).
 
@@ -548,7 +581,95 @@ class IncidentEngine:
                     rule.name, inst.entity_key or "-",
                 )
 
+        # Companion-alert clear pass: an incident can also be cleared
+        # when a *different* alert (the paired "healthy" / recovery
+        # check) is resolved for the same entity_key. This is
+        # independent of the rule's own alert state — e.g. an incident
+        # opened by "latency > 100ms" can be cleared by a separate
+        # "latency < 50ms" healthy alert, or by ALL of a set of
+        # companion alerts going healthy (mode='all'). Scoped to the
+        # same `inst.entity_key` so the clear only applies to the
+        # matching device/assignment.
+        companion_ids = _validate_companion_ids(rule.clear_on_companion_ids)
+        if companion_ids and any(i.state == "open" for i in open_incidents):
+            cleared += await self._apply_companion_clear(
+                session, rule, companion_ids, open_incidents, now,
+                transitions, _record,
+            )
+
         return opened, updated, cleared, escalated
+
+    async def _apply_companion_clear(
+        self,
+        session: AsyncSession,
+        rule: IncidentRule,
+        companion_ids: list[uuid.UUID],
+        open_incidents: list[Incident],
+        now: datetime,
+        transitions: list[dict],
+        record_fn,
+    ) -> int:
+        """Clear still-open incidents whose companion alerts are healthy.
+
+        Loads `AlertEntity` rows for every companion definition once,
+        groups by their own entity_key (the suffix after the
+        assignment pipe separator), then for each still-open incident
+        under this rule decides if the companion condition is met
+        (any/all). Entity matching uses the same suffix-of-entity_key
+        convention as Incident.entity_key (`"{assignment_id}|{suffix}"`).
+        """
+        mode = (rule.clear_companion_mode or "any").lower()
+        if mode not in ("any", "all"):
+            mode = "any"
+
+        # Load all candidate companion AlertEntities in one query.
+        companion_entities = (
+            await session.execute(
+                select(AlertEntity).where(
+                    AlertEntity.definition_id.in_(companion_ids),
+                    AlertEntity.enabled == True,  # noqa: E712
+                )
+            )
+        ).scalars().all()
+
+        # Index by (definition_id, raw entity_key) for fast lookup per incident.
+        companion_by_defn_key: dict[tuple[uuid.UUID, str], str] = {}
+        for ce in companion_entities:
+            companion_by_defn_key[(ce.definition_id, ce.entity_key or "")] = ce.state
+
+        cleared_count = 0
+        for incident in open_incidents:
+            if incident.state != "open":
+                continue
+            # Incident.entity_key is "{assignment_id}|{raw_entity_key}".
+            raw_key = incident.entity_key.split("|", 1)[1] if "|" in incident.entity_key else incident.entity_key
+
+            companion_states = [
+                companion_by_defn_key.get((cid, raw_key)) for cid in companion_ids
+            ]
+            # A companion with no matching entity row (state=None) is
+            # treated as "not healthy" for ALL mode (conservative —
+            # missing signal shouldn't clear), but is simply skipped
+            # for ANY mode (wait for a real healthy signal).
+            if mode == "all":
+                if not all(s == "resolved" for s in companion_states):
+                    continue
+                reason = "companion_all_healthy"
+            else:
+                if not any(s == "resolved" for s in companion_states):
+                    continue
+                reason = "companion_any_healthy"
+
+            incident.state = "cleared"
+            incident.cleared_at = now
+            incident.cleared_reason = reason
+            cleared_count += 1
+            record_fn(incident, "cleared")
+            logger.info(
+                "incident_cleared rule=%s entity=%s reason=%s",
+                rule.name, raw_key or "-", reason,
+            )
+        return cleared_count
 
     @staticmethod
     def _find_matching_parent(

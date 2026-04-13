@@ -1014,6 +1014,18 @@ class IncidentRule(Base):
     depends_on: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     flap_guard_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    # Companion-alert clear (phase follow-up after event-policy deprecation).
+    # List of AlertDefinition UUIDs (as strings in JSONB) whose healthy
+    # (resolved) state for the same entity should clear this incident.
+    # `clear_companion_mode` decides how multiple companions combine:
+    # "any" = clear if ANY companion is healthy, "all" = clear only when
+    # every listed companion is healthy. Scoped by entity_key so the
+    # clear only applies to the matching device/assignment.
+    clear_on_companion_ids: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    clear_companion_mode: Mapped[str] = mapped_column(
+        String(10), nullable=False, server_default="any"
+    )
+
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     # Retained for historical tagging: 'mirror' = pre-deprecation
     # auto-synced row (now editable as native), 'native' = operator-
