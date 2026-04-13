@@ -70,7 +70,6 @@ import type {
   UserWithTenants,
   ConnectorSummary,
   ConnectorDetail,
-  MonitoringEvent,
   Incident,
   IncidentRule,
   Pack,
@@ -549,17 +548,17 @@ export function useDeviceAlertLog(
   });
 }
 
-export function useDeviceActiveEvents(
+export function useDeviceActiveIncidents(
   deviceId: string,
   params: ListParams = {},
 ) {
   return useQuery({
-    queryKey: ["events-active", "device", deviceId, params],
+    queryKey: ["incidents", "active", "device", deviceId, params],
     queryFn: () => {
       const qs = buildListQs(params);
       const sep = qs.includes("?") ? "&" : "?";
-      return apiGet<MonitoringEvent[]>(
-        `/events/active${qs}${sep}device_id=${deviceId}`,
+      return apiGet<Incident[]>(
+        `/incidents${qs}${sep}state=open&device_id=${deviceId}`,
       );
     },
     placeholderData: keepPreviousData,
@@ -568,17 +567,17 @@ export function useDeviceActiveEvents(
   });
 }
 
-export function useDeviceClearedEvents(
+export function useDeviceClearedIncidents(
   deviceId: string,
   params: ListParams = {},
 ) {
   return useQuery({
-    queryKey: ["events-cleared", "device", deviceId, params],
+    queryKey: ["incidents", "cleared", "device", deviceId, params],
     queryFn: () => {
       const qs = buildListQs(params);
       const sep = qs.includes("?") ? "&" : "?";
-      return apiGet<MonitoringEvent[]>(
-        `/events/cleared${qs}${sep}device_id=${deviceId}`,
+      return apiGet<Incident[]>(
+        `/incidents${qs}${sep}state=cleared&device_id=${deviceId}`,
       );
     },
     placeholderData: keepPreviousData,
@@ -3118,56 +3117,10 @@ export function useCloneConnectorVersion() {
   });
 }
 
-// ── Events ───────────────────────────────────────────────
-
-export function useActiveEvents(params: ListParams = {}) {
-  return useQuery({
-    queryKey: ["events-active", params],
-    queryFn: () =>
-      apiGet<MonitoringEvent[]>(`/events/active${buildListQs(params)}`),
-    placeholderData: keepPreviousData,
-    refetchInterval: POLL_LIST,
-  });
-}
-
-export function useClearedEvents(params: ListParams = {}) {
-  return useQuery({
-    queryKey: ["events-cleared", params],
-    queryFn: () =>
-      apiGet<MonitoringEvent[]>(`/events/cleared${buildListQs(params)}`),
-    placeholderData: keepPreviousData,
-    refetchInterval: POLL_LIST,
-  });
-}
-
-export function useAcknowledgeEvents() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (eventIds: string[]) =>
-      apiPost("/events/acknowledge", { event_ids: eventIds }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["events-active"] });
-      qc.invalidateQueries({ queryKey: ["events-cleared"] });
-    },
-  });
-}
-
-export function useClearEvents() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (eventIds: string[]) =>
-      apiPost("/events/clear", { event_ids: eventIds }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["events-active"] });
-      qc.invalidateQueries({ queryKey: ["events-cleared"] });
-    },
-  });
-}
-
-// EventPolicy CRUD hooks were retired in the event policy rework's
-// phase deprecation. Rule configuration lives in `useIncidentRules`
-// below. Historical events are still queryable via `useActiveEvents` /
-// `useClearedEvents` from the CH events table.
+// Legacy /events/* hooks (useActiveEvents, useClearedEvents,
+// useAcknowledgeEvents, useClearEvents) were removed in the full
+// rename to incidents. See `useIncidents`, `useDeviceActiveIncidents`,
+// `useDeviceClearedIncidents`, `useClearIncidents` below.
 
 // ── Incident Rules ─────────────────────────────────────────
 
@@ -3244,6 +3197,17 @@ export function useIncidents(params: ListParams = {}) {
       }>(`/incidents${qs}`),
     placeholderData: keepPreviousData,
     refetchInterval: POLL_LIST,
+  });
+}
+
+export function useClearIncidents() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (incidentIds: string[]) =>
+      apiPost("/incidents/clear", { incident_ids: incidentIds }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["incidents"] });
+    },
   });
 }
 

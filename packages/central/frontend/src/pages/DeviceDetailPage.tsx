@@ -123,10 +123,9 @@ import {
   usePollConfigNow,
   useUpdateInterfacePreferences,
   useDeviceAlertLog,
-  useDeviceActiveEvents,
-  useDeviceClearedEvents,
-  useAcknowledgeEvents,
-  useClearEvents,
+  useDeviceActiveIncidents,
+  useDeviceClearedIncidents,
+  useClearIncidents,
   useDiscoverDevice,
   useDeviceTypes,
   useResolveTemplates,
@@ -143,7 +142,7 @@ import type {
   DeviceThresholdRow,
   ConfigDiffEntry,
   AlertLogEntry,
-  MonitoringEvent,
+  Incident,
   ResolvedTemplateResult,
   InterfaceRule,
   InterfaceRecord,
@@ -1060,8 +1059,14 @@ function OverviewTab({ deviceId }: { deviceId: string }) {
       (c: any) => c.role === "availability" || c.role === "latency",
     );
     if (!monitoringChecks.length) return null;
+    // Use last *successful* timestamp — a run of timeouts writes rows
+    // with a current executed_at but is not evidence of fresh data.
     const latest = monitoringChecks.reduce((newest: number, check: any) => {
-      const ts = new Date(check.executed_at).getTime();
+      const okTs =
+        check.last_success_at ||
+        (check.error_category ? null : check.executed_at);
+      if (!okTs) return newest;
+      const ts = new Date(okTs).getTime();
       return ts > newest ? ts : newest;
     }, 0);
     if (latest === 0) return null;
@@ -1127,17 +1132,17 @@ function OverviewTab({ deviceId }: { deviceId: string }) {
         </CardContent>
       </Card>
 
-      {/* Events placeholder */}
+      {/* Incidents & Alerts placeholder */}
       <Card>
         <CardHeader>
           <CardTitle className="text-zinc-400 text-sm">
-            Events &amp; Alerts
+            Incidents &amp; Alerts
           </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex flex-col items-center justify-center py-8 text-zinc-600">
             <p className="text-sm">
-              Event log and alert history coming in a future update.
+              Incident log and alert history coming in a future update.
             </p>
           </div>
         </CardContent>
@@ -5754,8 +5759,31 @@ function ChecksTab({ deviceId }: { deviceId: string }) {
                     <TableCell className="text-zinc-400 text-sm">
                       {check.collector_name ?? "—"}
                     </TableCell>
-                    <TableCell className="text-zinc-500 text-sm">
-                      {timeAgo(check.executed_at)}
+                    <TableCell className="text-sm">
+                      {(() => {
+                        const err = (check as any).error_category || "";
+                        const lastOk = (check as any).last_success_at;
+                        // When the latest poll errored, show the last
+                        // successful sample time in amber; "executed_at"
+                        // of an error poll is not evidence of fresh data.
+                        if (err) {
+                          return (
+                            <span
+                              className="text-amber-400"
+                              title={`${err} — last successful: ${lastOk ? formatDate(lastOk, tz) : "never"}`}
+                            >
+                              {lastOk
+                                ? `${timeAgo(lastOk)} (stale)`
+                                : `no data (${err})`}
+                            </span>
+                          );
+                        }
+                        return (
+                          <span className="text-zinc-500">
+                            {timeAgo(check.executed_at)}
+                          </span>
+                        );
+                      })()}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -6323,7 +6351,7 @@ function DeviceAlertHistory({ deviceId }: { deviceId: string }) {
   );
 }
 
-function EventsTab({ deviceId }: { deviceId: string }) {
+function IncidentsTab({ deviceId }: { deviceId: string }) {
   const [subTab, setSubTab] = useState<"active" | "cleared">("active");
   return (
     <div className="space-y-4">
@@ -6339,25 +6367,24 @@ function EventsTab({ deviceId }: { deviceId: string }) {
         ))}
       </div>
       {subTab === "active" ? (
-        <DeviceActiveEvents deviceId={deviceId} />
+        <DeviceActiveIncidents deviceId={deviceId} />
       ) : (
-        <DeviceClearedEvents deviceId={deviceId} />
+        <DeviceClearedIncidents deviceId={deviceId} />
       )}
     </div>
   );
 }
 
-function DeviceActiveEvents({ deviceId }: { deviceId: string }) {
+function DeviceActiveIncidents({ deviceId }: { deviceId: string }) {
   const { pageSize, scrollMode } = useTablePreferences();
   const listState = useListState({
     columns: [
       { key: "severity", label: "Severity", filterable: false },
-      { key: "source", label: "Source" },
-      { key: "policy_name", label: "Policy", sortable: false },
-      { key: "message", label: "Message", sortable: false },
-      { key: "occurred_at", label: "Occurred", filterable: false },
+      { key: "rule_name", label: "Rule", sortable: false },
+      { key: "message", label: "Message", sortable: false, filterable: false },
+      { key: "opened_at", label: "Opened", filterable: false },
     ],
-    defaultSortBy: "occurred_at",
+    defaultSortBy: "opened_at",
     defaultSortDir: "desc",
     defaultPageSize: pageSize,
     scrollMode,
@@ -6366,8 +6393,8 @@ function DeviceActiveEvents({ deviceId }: { deviceId: string }) {
     data: response,
     isLoading,
     isFetching,
-  } = useDeviceActiveEvents(deviceId, listState.params);
-  const events = (response as any)?.data ?? [];
+  } = useDeviceActiveIncidents(deviceId, listState.params);
+  const incidents = (response as any)?.data ?? [];
   const meta = (response as any)?.meta ?? {
     limit: 50,
     offset: 0,
@@ -6375,8 +6402,7 @@ function DeviceActiveEvents({ deviceId }: { deviceId: string }) {
     total: 0,
   };
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const ackMut = useAcknowledgeEvents();
-  const clearMut = useClearEvents();
+  const clearMut = useClearIncidents();
 
   const toggle = (id: string) =>
     setSelected((prev) => {
@@ -6386,9 +6412,9 @@ function DeviceActiveEvents({ deviceId }: { deviceId: string }) {
       return n;
     });
   const toggleAll = () =>
-    selected.size === events.length
+    selected.size === incidents.length
       ? setSelected(new Set())
-      : setSelected(new Set(events.map((e: any) => e.id)));
+      : setSelected(new Set(incidents.map((i: Incident) => i.id)));
 
   if (isLoading)
     return (
@@ -6400,13 +6426,13 @@ function DeviceActiveEvents({ deviceId }: { deviceId: string }) {
         </CardContent>
       </Card>
     );
-  if (events.length === 0)
+  if (incidents.length === 0)
     return (
       <Card>
         <CardContent className="py-12">
           <div className="flex flex-col items-center justify-center text-zinc-500">
             <Zap className="h-10 w-10 mb-3 text-zinc-600" />
-            <p className="text-sm">No active events for this device</p>
+            <p className="text-sm">No active incidents for this device</p>
           </div>
         </CardContent>
       </Card>
@@ -6417,21 +6443,10 @@ function DeviceActiveEvents({ deviceId }: { deviceId: string }) {
       <CardHeader>
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-2">
-            <Zap className="h-4 w-4" /> Active Events ({meta.total})
+            <Zap className="h-4 w-4" /> Active Incidents ({meta.total})
           </CardTitle>
           {selected.size > 0 && (
             <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={ackMut.isPending}
-                onClick={async () => {
-                  await ackMut.mutateAsync([...selected]);
-                  setSelected(new Set());
-                }}
-              >
-                <Check className="h-3.5 w-3.5" /> Acknowledge ({selected.size})
-              </Button>
               <Button
                 size="sm"
                 variant="outline"
@@ -6454,7 +6469,9 @@ function DeviceActiveEvents({ deviceId }: { deviceId: string }) {
               <TableHead className="w-10">
                 <input
                   type="checkbox"
-                  checked={selected.size === events.length && events.length > 0}
+                  checked={
+                    selected.size === incidents.length && incidents.length > 0
+                  }
                   onChange={toggleAll}
                   className="accent-brand-500 cursor-pointer"
                 />
@@ -6468,38 +6485,20 @@ function DeviceActiveEvents({ deviceId }: { deviceId: string }) {
                 filterable={false}
               />
               <FilterableSortHead
-                col="source"
-                label="Source"
+                col="rule_name"
+                label="Rule"
                 sortBy={listState.sortBy}
                 sortDir={listState.sortDir}
                 onSort={listState.handleSort}
-                filterValue={listState.filters.source}
-                onFilterChange={(v) => listState.setFilter("source", v)}
-              />
-              <FilterableSortHead
-                col="policy_name"
-                label="Policy"
-                sortBy={listState.sortBy}
-                sortDir={listState.sortDir}
-                onSort={listState.handleSort}
-                filterValue={listState.filters.policy_name}
-                onFilterChange={(v) => listState.setFilter("policy_name", v)}
+                filterValue={listState.filters.rule_name}
+                onFilterChange={(v) => listState.setFilter("rule_name", v)}
                 sortable={false}
               />
+              <TableHead>Message</TableHead>
+              <TableHead>Fires</TableHead>
               <FilterableSortHead
-                col="message"
-                label="Message"
-                sortBy={listState.sortBy}
-                sortDir={listState.sortDir}
-                onSort={listState.handleSort}
-                filterValue={listState.filters.message}
-                onFilterChange={(v) => listState.setFilter("message", v)}
-                sortable={false}
-              />
-              <TableHead>State</TableHead>
-              <FilterableSortHead
-                col="occurred_at"
-                label="Occurred"
+                col="opened_at"
+                label="Opened"
                 sortBy={listState.sortBy}
                 sortDir={listState.sortDir}
                 onSort={listState.handleSort}
@@ -6508,40 +6507,31 @@ function DeviceActiveEvents({ deviceId }: { deviceId: string }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {events.map((evt: MonitoringEvent) => (
-              <TableRow key={evt.id}>
+            {incidents.map((inc: Incident) => (
+              <TableRow key={inc.id}>
                 <TableCell>
                   <input
                     type="checkbox"
-                    checked={selected.has(evt.id)}
-                    onChange={() => toggle(evt.id)}
+                    checked={selected.has(inc.id)}
+                    onChange={() => toggle(inc.id)}
                     className="accent-brand-500 cursor-pointer"
                   />
                 </TableCell>
                 <TableCell>
-                  <SeverityBadge severity={evt.severity} />
+                  <SeverityBadge severity={inc.severity} />
                 </TableCell>
-                <TableCell className="text-xs text-zinc-400">
-                  {evt.source}
-                </TableCell>
-                <TableCell className="text-xs">{evt.policy_name}</TableCell>
+                <TableCell className="text-xs">{inc.rule_name}</TableCell>
                 <TableCell
                   className="text-xs text-zinc-300 max-w-[300px] truncate"
-                  title={evt.message}
+                  title={inc.message}
                 >
-                  {evt.message}
+                  {inc.message}
                 </TableCell>
-                <TableCell>
-                  <Badge
-                    variant={
-                      evt.state === "acknowledged" ? "warning" : "default"
-                    }
-                  >
-                    {evt.state}
-                  </Badge>
+                <TableCell className="text-xs text-zinc-400">
+                  {inc.fire_count}
                 </TableCell>
                 <TableCell className="text-xs text-zinc-400 whitespace-nowrap">
-                  {timeAgo(evt.occurred_at)}
+                  {timeAgo(inc.opened_at)}
                 </TableCell>
               </TableRow>
             ))}
@@ -6563,16 +6553,15 @@ function DeviceActiveEvents({ deviceId }: { deviceId: string }) {
   );
 }
 
-function DeviceClearedEvents({ deviceId }: { deviceId: string }) {
+function DeviceClearedIncidents({ deviceId }: { deviceId: string }) {
   const { pageSize, scrollMode } = useTablePreferences();
   const listState = useListState({
     columns: [
       { key: "severity", label: "Severity", filterable: false },
-      { key: "source", label: "Source" },
-      { key: "policy_name", label: "Policy", sortable: false },
-      { key: "occurred_at", label: "Occurred", filterable: false },
+      { key: "rule_name", label: "Rule", sortable: false },
+      { key: "opened_at", label: "Opened", filterable: false },
     ],
-    defaultSortBy: "occurred_at",
+    defaultSortBy: "opened_at",
     defaultSortDir: "desc",
     defaultPageSize: pageSize,
     scrollMode,
@@ -6581,8 +6570,8 @@ function DeviceClearedEvents({ deviceId }: { deviceId: string }) {
     data: response,
     isLoading,
     isFetching,
-  } = useDeviceClearedEvents(deviceId, listState.params);
-  const events = (response as any)?.data ?? [];
+  } = useDeviceClearedIncidents(deviceId, listState.params);
+  const incidents = (response as any)?.data ?? [];
   const meta = (response as any)?.meta ?? {
     limit: 50,
     offset: 0,
@@ -6600,13 +6589,13 @@ function DeviceClearedEvents({ deviceId }: { deviceId: string }) {
         </CardContent>
       </Card>
     );
-  if (events.length === 0)
+  if (incidents.length === 0)
     return (
       <Card>
         <CardContent className="py-12">
           <div className="flex flex-col items-center justify-center text-zinc-500">
             <Zap className="h-10 w-10 mb-3 text-zinc-600" />
-            <p className="text-sm">No cleared events for this device</p>
+            <p className="text-sm">No cleared incidents for this device</p>
           </div>
         </CardContent>
       </Card>
@@ -6616,7 +6605,7 @@ function DeviceClearedEvents({ deviceId }: { deviceId: string }) {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <Clock className="h-4 w-4" /> Cleared Events ({meta.total})
+          <Clock className="h-4 w-4" /> Cleared Incidents ({meta.total})
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -6632,62 +6621,49 @@ function DeviceClearedEvents({ deviceId }: { deviceId: string }) {
                 filterable={false}
               />
               <FilterableSortHead
-                col="source"
-                label="Source"
+                col="rule_name"
+                label="Rule"
                 sortBy={listState.sortBy}
                 sortDir={listState.sortDir}
                 onSort={listState.handleSort}
-                filterValue={listState.filters.source}
-                onFilterChange={(v) => listState.setFilter("source", v)}
-              />
-              <FilterableSortHead
-                col="policy_name"
-                label="Policy"
-                sortBy={listState.sortBy}
-                sortDir={listState.sortDir}
-                onSort={listState.handleSort}
-                filterValue={listState.filters.policy_name}
-                onFilterChange={(v) => listState.setFilter("policy_name", v)}
+                filterValue={listState.filters.rule_name}
+                onFilterChange={(v) => listState.setFilter("rule_name", v)}
                 sortable={false}
               />
               <TableHead>Message</TableHead>
               <FilterableSortHead
-                col="occurred_at"
-                label="Occurred"
+                col="opened_at"
+                label="Opened"
                 sortBy={listState.sortBy}
                 sortDir={listState.sortDir}
                 onSort={listState.handleSort}
                 filterable={false}
               />
               <TableHead>Cleared</TableHead>
-              <TableHead>Cleared By</TableHead>
+              <TableHead>Reason</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {events.map((evt: MonitoringEvent) => (
-              <TableRow key={evt.id}>
+            {incidents.map((inc: Incident) => (
+              <TableRow key={inc.id}>
                 <TableCell>
-                  <SeverityBadge severity={evt.severity} />
+                  <SeverityBadge severity={inc.severity} />
                 </TableCell>
-                <TableCell className="text-xs text-zinc-400">
-                  {evt.source}
-                </TableCell>
-                <TableCell className="text-xs">{evt.policy_name}</TableCell>
+                <TableCell className="text-xs">{inc.rule_name}</TableCell>
                 <TableCell
                   className="text-xs text-zinc-300 max-w-[300px] truncate"
-                  title={evt.message}
+                  title={inc.message}
                 >
-                  {evt.message}
+                  {inc.message}
                 </TableCell>
                 <TableCell className="text-xs text-zinc-400 whitespace-nowrap">
-                  {timeAgo(evt.occurred_at)}
+                  {timeAgo(inc.opened_at)}
                 </TableCell>
                 <TableCell className="text-xs text-zinc-400 whitespace-nowrap">
-                  {evt.cleared_at ? timeAgo(evt.cleared_at) : "\u2014"}
+                  {inc.cleared_at ? timeAgo(inc.cleared_at) : "\u2014"}
                 </TableCell>
                 <TableCell className="text-xs text-zinc-400">
-                  {evt.cleared_by ||
-                    (evt.event_type === "alert_resolved" ? "auto" : "\u2014")}
+                  {inc.cleared_reason || "\u2014"}
                 </TableCell>
               </TableRow>
             ))}
@@ -7231,10 +7207,10 @@ export function DeviceDetailPage() {
               Alerts
             </span>
           </TabTrigger>
-          <TabTrigger value="events">
+          <TabTrigger value="incidents">
             <span className="flex items-center gap-1.5">
               <Zap className="h-3.5 w-3.5" />
-              Events
+              Incidents
             </span>
           </TabTrigger>
           <TabTrigger value="thresholds">
@@ -7281,8 +7257,8 @@ export function DeviceDetailPage() {
         <TabsContent value="alerts">
           <AlertsTab deviceId={deviceId} />
         </TabsContent>
-        <TabsContent value="events">
-          <EventsTab deviceId={deviceId} />
+        <TabsContent value="incidents">
+          <IncidentsTab deviceId={deviceId} />
         </TabsContent>
         <TabsContent value="thresholds">
           <ThresholdsTab deviceId={deviceId} />

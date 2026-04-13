@@ -1614,6 +1614,16 @@ async def submit_results(
                     logger.warning("discovery_processing_failed",
                                    device_id=device_id_resolved, error=str(_disc_exc))
         else:
+            # Extract packet_loss_pct from metrics (emitted by ping_check)
+            loss_pct = 0.0
+            for m in (r.metrics or []):
+                if isinstance(m, dict) and m.get("name") == "packet_loss_pct":
+                    try:
+                        loss_pct = float(m.get("value", 0))
+                    except (TypeError, ValueError):
+                        pass
+                    break
+
             row = {
                 "_target_table": target_table,
                 "assignment_id": str(assignment_id),
@@ -1627,6 +1637,7 @@ async def submit_results(
                 "rtt_ms": r.rtt_ms or 0.0,
                 "response_time_ms": r.response_time_ms or 0.0,
                 "reachable": 1 if r.reachable else 0,
+                "packet_loss_pct": loss_pct,
                 "status_code": 0,
                 "metric_names": metric_names,
                 "metric_values": metric_values,

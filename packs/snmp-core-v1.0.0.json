@@ -64,22 +64,29 @@
             "expression": "last(reachable) == 0",
             "window": "5m",
             "enabled": true,
+            "severity": "critical",
             "message_template": "SNMP unreachable: {device_name}"
           },
           {
             "name": "High SNMP Latency",
-            "description": "SNMP RTT is elevated (warn band)",
-            "expression": "avg(rtt_ms) > snmp_rtt_warn_ms AND avg(rtt_ms) < snmp_rtt_crit_ms",
+            "description": "SNMP RTT exceeds the warning threshold",
+            "expression": "last(rtt_ms) > snmp_rtt_warn_ms",
             "window": "5m",
             "enabled": true,
+            "severity": "warning",
+            "ladder_key": "snmp_rtt",
+            "ladder_rank": 1,
             "message_template": "High SNMP latency on {device_name}: {value}ms"
           },
           {
             "name": "Critical SNMP Latency",
             "description": "SNMP RTT exceeds the critical threshold",
-            "expression": "avg(rtt_ms) > snmp_rtt_crit_ms",
+            "expression": "last(rtt_ms) > snmp_rtt_crit_ms",
             "window": "5m",
             "enabled": true,
+            "severity": "critical",
+            "ladder_key": "snmp_rtt",
+            "ladder_rank": 2,
             "message_template": "Critical SNMP latency on {device_name}: {value}ms"
           }
         ]

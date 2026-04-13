@@ -457,6 +457,19 @@ class AlertDefinition(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     message_template: Mapped[str | None] = mapped_column(Text)
     pack_origin: Mapped[str | None] = mapped_column(String(255))
+    # Severity label persisted on the definition (not just incidents).
+    # Engine writes it into alert_log so downstream consumers and the
+    # severity-ladder dedup can treat warning vs critical as first-class.
+    severity: Mapped[str] = mapped_column(String(20), nullable=False, server_default="warning")
+    # Severity ladder family: alert defs that share a non-null ladder_key
+    # are siblings covering the same signal at different thresholds.
+    # While a higher-rank (numerically greater) sibling is firing for a
+    # given (assignment, entity_key), lower-rank siblings are suppressed
+    # — they neither fire nor write to alert_log. When the higher clears
+    # the lower is free to fire on the next evaluation cycle. Null
+    # ladder_key means the def stands alone (legacy behaviour).
+    ladder_key: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    ladder_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
@@ -1013,6 +1026,18 @@ class IncidentRule(Base):
     correlation_group: Mapped[str | None] = mapped_column(String(500), nullable=True)
     depends_on: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     flap_guard_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Companion-alert clear (phase follow-up after event-policy deprecation).
+    # List of AlertDefinition UUIDs (as strings in JSONB) whose healthy
+    # (resolved) state for the same entity should clear this incident.
+    # `clear_companion_mode` decides how multiple companions combine:
+    # "any" = clear if ANY companion is healthy, "all" = clear only when
+    # every listed companion is healthy. Scoped by entity_key so the
+    # clear only applies to the matching device/assignment.
+    clear_on_companion_ids: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    clear_companion_mode: Mapped[str] = mapped_column(
+        String(10), nullable=False, server_default="any"
+    )
 
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     # Retained for historical tagging: 'mirror' = pre-deprecation

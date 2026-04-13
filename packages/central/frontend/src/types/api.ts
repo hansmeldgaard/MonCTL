@@ -278,6 +278,9 @@ export interface CheckResult {
   status_code: number | null;
   performance_data: Record<string, unknown> | null;
   executed_at: string;
+  last_success_at?: string | null;
+  error_category?: string;
+  error_message?: string | null;
   execution_time_ms: number | null;
   started_at: string | null;
   collector_name: string | null;
@@ -531,6 +534,7 @@ export interface CredentialTemplate {
 export interface AlertDefinition {
   id: string;
   app_id: string;
+  app_name?: string;
   name: string;
   description: string | null;
   expression: string;
@@ -699,37 +703,9 @@ export interface PerformanceAppSummary {
   component_types: Record<string, PerformanceComponentType>;
 }
 
-// ── Events ────────────────────────────────────────────────
-
-export interface MonitoringEvent {
-  id: string;
-  event_type: string;
-  definition_id: string;
-  definition_name: string;
-  policy_id: string;
-  policy_name: string;
-  collector_id: string;
-  device_id: string;
-  app_id: string;
-  source: string;
-  severity: string;
-  message: string;
-  data: Record<string, unknown>;
-  state: string;
-  occurred_at: string;
-  received_at: string;
-  acknowledged_at: string | null;
-  acknowledged_by: string | null;
-  cleared_at: string | null;
-  cleared_by: string | null;
-  collector_name: string;
-  device_name: string;
-  app_name: string;
-}
-
-// EventPolicy was retired in the event policy rework's phase
-// deprecation. Rule configuration now lives on `IncidentRule` below.
-// Historical events are still queryable via the MonitoringEvent type.
+// The legacy `MonitoringEvent` type and `/events/*` endpoints were
+// removed in the full events→incidents rename. All historical and
+// live event data now flows through the `Incident` model below.
 
 // ── IncidentRule (phase 3 native editor) ──────────────────────
 //
@@ -769,6 +745,8 @@ export interface IncidentRule {
   scope_filter: IncidentRuleScopeFilter | null;
   depends_on: IncidentRuleDependsOn | null;
   flap_guard_seconds: number | null;
+  clear_on_companion_ids: string[] | null;
+  clear_companion_mode: "any" | "all";
   enabled: boolean;
   source: "mirror" | "native";
   source_policy_id: string | null;

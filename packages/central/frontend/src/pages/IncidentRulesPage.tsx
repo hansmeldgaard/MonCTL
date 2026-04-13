@@ -414,6 +414,12 @@ function IncidentRuleDialog({
   const [dependsOn, setDependsOn] = useState<IncidentRuleDependsOn | null>(
     rule?.depends_on ?? null,
   );
+  const [companionIds, setCompanionIds] = useState<string[]>(
+    rule?.clear_on_companion_ids ?? [],
+  );
+  const [companionMode, setCompanionMode] = useState<"any" | "all">(
+    rule?.clear_companion_mode ?? "any",
+  );
   const [error, setError] = useState<string | null>(null);
 
   // All rules are needed for the dependency picker's parent select —
@@ -513,6 +519,8 @@ function IncidentRuleDialog({
             scope_filter: scopeFilter,
             flap_guard_seconds: flapGuardSeconds,
             depends_on: dependsOn,
+            clear_on_companion_ids: companionIds.length ? companionIds : null,
+            clear_companion_mode: companionMode,
           });
         }
       } else {
@@ -532,6 +540,8 @@ function IncidentRuleDialog({
           scope_filter: scopeFilter,
           flap_guard_seconds: flapGuardSeconds,
           depends_on: dependsOn,
+          clear_on_companion_ids: companionIds.length ? companionIds : null,
+          clear_companion_mode: companionMode,
         });
       }
       onClose();
@@ -558,6 +568,7 @@ function IncidentRuleDialog({
       open
       onClose={onClose}
       size="lg"
+      className="!max-w-3xl h-[720px]"
       title={
         isEdit
           ? `${isMirror ? "View" : "Edit"} Incident Rule — ${rule!.name}`
@@ -569,35 +580,54 @@ function IncidentRuleDialog({
         onChange={(v) => setActiveTab(v as "settings" | "ladder" | "scope")}
       >
         <TabsList>
-          <TabTrigger value="settings">Settings</TabTrigger>
-          <TabTrigger value="ladder">
-            Severity Ladder
-            {ladder && ladder.length > 0 && (
-              <span className="ml-1.5 rounded-full bg-brand-500/20 px-1.5 py-0.5 text-[10px] text-brand-300">
-                {ladder.length}
-              </span>
-            )}
+          <TabTrigger value="settings" className="min-w-[10rem]">
+            <span className="inline-flex items-center justify-center gap-1.5 w-full">
+              Settings
+              <span className="inline-block w-4" />
+            </span>
           </TabTrigger>
-          <TabTrigger value="scope">
-            Scope &amp; Flap Guard
-            {(() => {
-              const n =
-                (scopeFilter && Object.keys(scopeFilter).length > 0 ? 1 : 0) +
-                (flapGuardSeconds != null && flapGuardSeconds > 0 ? 1 : 0);
-              return n > 0 ? (
-                <span className="ml-1.5 rounded-full bg-brand-500/20 px-1.5 py-0.5 text-[10px] text-brand-300">
-                  {n}
-                </span>
-              ) : null;
-            })()}
-          </TabTrigger>
-          <TabTrigger value="deps">
-            Dependencies
-            {dependsOn && dependsOn.rule_ids.length > 0 && (
-              <span className="ml-1.5 rounded-full bg-brand-500/20 px-1.5 py-0.5 text-[10px] text-brand-300">
-                {dependsOn.rule_ids.length}
+          <TabTrigger value="ladder" className="min-w-[11rem]">
+            <span className="inline-flex items-center justify-center gap-1.5 w-full">
+              Severity Ladder
+              <span className="inline-flex w-4 justify-center">
+                {ladder && ladder.length > 0 ? (
+                  <span className="rounded-full bg-brand-500/20 px-1.5 py-0.5 text-[10px] text-brand-300">
+                    {ladder.length}
+                  </span>
+                ) : null}
               </span>
-            )}
+            </span>
+          </TabTrigger>
+          <TabTrigger value="scope" className="min-w-[13rem]">
+            <span className="inline-flex items-center justify-center gap-1.5 w-full">
+              Scope &amp; Flap Guard
+              <span className="inline-flex w-4 justify-center">
+                {(() => {
+                  const n =
+                    (scopeFilter && Object.keys(scopeFilter).length > 0
+                      ? 1
+                      : 0) +
+                    (flapGuardSeconds != null && flapGuardSeconds > 0 ? 1 : 0);
+                  return n > 0 ? (
+                    <span className="rounded-full bg-brand-500/20 px-1.5 py-0.5 text-[10px] text-brand-300">
+                      {n}
+                    </span>
+                  ) : null;
+                })()}
+              </span>
+            </span>
+          </TabTrigger>
+          <TabTrigger value="deps" className="min-w-[11rem]">
+            <span className="inline-flex items-center justify-center gap-1.5 w-full">
+              Dependencies
+              <span className="inline-flex w-4 justify-center">
+                {dependsOn && dependsOn.rule_ids.length > 0 ? (
+                  <span className="rounded-full bg-brand-500/20 px-1.5 py-0.5 text-[10px] text-brand-300">
+                    {dependsOn.rule_ids.length}
+                  </span>
+                ) : null}
+              </span>
+            </span>
           </TabTrigger>
         </TabsList>
 
@@ -825,6 +855,99 @@ function IncidentRuleDialog({
                   Flap guard must be a non-negative whole number of seconds.
                 </div>
               )}
+            </div>
+
+            <div className="border-t border-zinc-800 pt-5">
+              <Label>Clear on companion alert</Label>
+              <p className="text-xs text-zinc-500 mt-1">
+                Clear the incident when a <em>different</em> alert is healthy
+                for the same entity — e.g. a recovery / pairing check. Select
+                one or more companion alert definitions below. This runs in
+                addition to{" "}
+                <span className="font-mono">auto_clear_on_resolve</span>.
+              </p>
+
+              <div className="mt-3 flex items-center gap-4">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="companion-mode"
+                    value="any"
+                    checked={companionMode === "any"}
+                    onChange={() => setCompanionMode("any")}
+                    className="accent-brand-500"
+                    disabled={baseFieldsDisabled}
+                  />
+                  <span className="text-sm text-zinc-300">
+                    Any companion healthy
+                  </span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="companion-mode"
+                    value="all"
+                    checked={companionMode === "all"}
+                    onChange={() => setCompanionMode("all")}
+                    className="accent-brand-500"
+                    disabled={baseFieldsDisabled}
+                  />
+                  <span className="text-sm text-zinc-300">
+                    All companions healthy
+                  </span>
+                </label>
+              </div>
+
+              <div className="mt-3 space-y-2">
+                {companionIds.map((cid) => {
+                  const defn = definitions.find((d) => d.id === cid);
+                  return (
+                    <div
+                      key={cid}
+                      className="flex items-center justify-between rounded border border-zinc-800 bg-zinc-900/40 px-3 py-2"
+                    >
+                      <span className="text-xs text-zinc-200 font-mono">
+                        {defn?.name ?? cid}
+                      </span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        disabled={baseFieldsDisabled}
+                        onClick={() =>
+                          setCompanionIds(companionIds.filter((x) => x !== cid))
+                        }
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  );
+                })}
+                <Select
+                  value=""
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (!v) return;
+                    if (!companionIds.includes(v)) {
+                      setCompanionIds([...companionIds, v]);
+                    }
+                  }}
+                  disabled={baseFieldsDisabled}
+                >
+                  <option value="">
+                    {companionIds.length
+                      ? "Add another companion alert…"
+                      : "Select companion alert definition…"}
+                  </option>
+                  {definitions
+                    .filter((d) => !companionIds.includes(d.id))
+                    .map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.name}
+                      </option>
+                    ))}
+                </Select>
+              </div>
             </div>
           </div>
         </TabsContent>

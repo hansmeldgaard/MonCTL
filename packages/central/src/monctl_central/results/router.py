@@ -63,6 +63,7 @@ def _format_ch_row(r: dict) -> dict:
         "status_code": int(status_code) if status_code and status_code > 0 else None,
         "role": r.get("role", ""),
         "error_message": r.get("error_message", "") or None,
+        "error_category": r.get("error_category", "") or "",
         "executed_at": _ensure_utc_iso(r.get("executed_at")) or "",
         "received_at": _ensure_utc_iso(r.get("received_at")) or "",
         "execution_time_ms": round(exec_time * 1000, 2) if exec_time and exec_time > 0 else None,
@@ -479,11 +480,45 @@ async def device_status(
     if not rows:
         logger.warning("device_status: 0 checks returned from ClickHouse for device %s", device_id)
 
+    # Per-assignment last *successful* executed_at. Used by the UI
+    # freshness indicator so a run of timeouts doesn't keep advancing
+    # the "data received X min ago" timestamp — error polls write rows
+    # with current received_at/executed_at but the data itself is stale.
+    last_success_by_aid: dict[str, str] = {}
+    try:
+        client = ch._get_client()
+        for t in ("availability_latency", "performance", "interface", "config"):
+            try:
+                res = client.query(
+                    f"SELECT toString(assignment_id) AS aid, "
+                    f"       max(executed_at) AS last_ok "
+                    f"FROM {t} "
+                    f"WHERE device_id = {{device_id:UUID}} "
+                    f"  AND error_category = '' "
+                    f"GROUP BY assignment_id",
+                    parameters={"device_id": device_id},
+                )
+                for row in res.named_results():
+                    aid = row.get("aid")
+                    last_ok = row.get("last_ok")
+                    if not aid or last_ok is None:
+                        continue
+                    iso = _ensure_utc_iso(last_ok) or ""
+                    prev = last_success_by_aid.get(aid)
+                    if prev is None or iso > prev:
+                        last_success_by_aid[aid] = iso
+            except Exception as exc:
+                if not ch._is_table_missing_error(exc):
+                    logger.debug("last_success query failed for %s: %s", t, exc)
+    except Exception:
+        logger.exception("last_success lookup failed for device %s", device_id)
+
     checks = []
     for r in rows:
         formatted = _format_ch_row(r)
+        aid = formatted["assignment_id"]
         checks.append({
-            "assignment_id": formatted["assignment_id"],
+            "assignment_id": aid,
             "collector_id": formatted["collector_id"],
             "app_name": formatted["app_name"],
             "role": formatted["role"],
@@ -495,6 +530,9 @@ async def device_status(
             "response_time_ms": formatted["response_time_ms"],
             "status_code": formatted["status_code"],
             "executed_at": formatted["executed_at"],
+            "last_success_at": last_success_by_aid.get(aid) or None,
+            "error_category": formatted.get("error_category", ""),
+            "error_message": formatted.get("error_message"),
             "execution_time_ms": formatted["execution_time_ms"],
             **({"metric_names": formatted["metric_names"],
                 "metric_values": formatted["metric_values"]}

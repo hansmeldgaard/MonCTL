@@ -813,6 +813,43 @@ def validate_expression(
             f"Expression references {len(metrics)} metrics — consider splitting into separate alerts"
         )
 
+    # Check for exclusive-range anti-pattern: metric > $warn AND metric < $crit
+    def _arith_repr(node) -> str | None:
+        """Stable string repr of an arithmetic subtree for equality comparison."""
+        if isinstance(node, AggCall):
+            return f"{node.func}({node.metric})"
+        if isinstance(node, ArithOp):
+            left = _arith_repr(node.left)
+            right = _arith_repr(node.right)
+            if left and right:
+                return f"({left}{node.op}{right})"
+        if isinstance(node, NumericLiteral):
+            return str(node.value)
+        return None
+
+    def _check_exclusive_range(n: ASTNode) -> None:
+        if isinstance(n, BoolOp) and n.op == "AND":
+            if isinstance(n.left, Comparison) and isinstance(n.right, Comparison):
+                left_repr = _arith_repr(n.left.left) if not isinstance(n.left.left, str) else None
+                right_repr = _arith_repr(n.right.left) if not isinstance(n.right.left, str) else None
+                if left_repr and right_repr and left_repr == right_repr:
+                    gt_ops = {">", ">="}
+                    lt_ops = {"<", "<="}
+                    if (n.left.op in gt_ops and n.right.op in lt_ops) or \
+                       (n.left.op in lt_ops and n.right.op in gt_ops):
+                        warnings.append(
+                            f"Exclusive range on {left_repr}: alert will clear when "
+                            f"value crosses into the next severity band. "
+                            f"Remove the upper bound to keep the alert active."
+                        )
+            _check_exclusive_range(n.left)
+            _check_exclusive_range(n.right)
+        elif isinstance(n, BoolOp):
+            _check_exclusive_range(n.left)
+            _check_exclusive_range(n.right)
+
+    _check_exclusive_range(ast)
+
     return ValidationResult(
         valid=len(errors) == 0,
         errors=errors,

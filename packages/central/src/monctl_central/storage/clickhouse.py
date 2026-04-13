@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS availability_latency ON CLUSTER '{cluster}'
     rtt_ms             Float64       DEFAULT 0,
     response_time_ms   Float64       DEFAULT 0,
     reachable          UInt8         DEFAULT 1,
+    packet_loss_pct    Float32       DEFAULT 0,
     status_code        UInt16        DEFAULT 0,
 
     executed_at        DateTime64(3, 'UTC'),
@@ -249,6 +250,7 @@ CREATE TABLE IF NOT EXISTS availability_latency
     rtt_ms             Float64       DEFAULT 0,
     response_time_ms   Float64       DEFAULT 0,
     reachable          UInt8         DEFAULT 1,
+    packet_loss_pct    Float32       DEFAULT 0,
     status_code        UInt16        DEFAULT 0,
 
     executed_at        DateTime64(3, 'UTC'),
@@ -610,7 +612,7 @@ _ALERT_LOG_INSERT_COLUMNS = [
 _AVAIL_INSERT_COLUMNS = [
     "assignment_id", "collector_id", "app_id", "device_id",
     "state", "output", "error_message", "error_category",
-    "rtt_ms", "response_time_ms", "reachable", "status_code",
+    "rtt_ms", "response_time_ms", "reachable", "packet_loss_pct", "status_code",
     "executed_at", "execution_time", "started_at",
     "collector_name", "device_name", "app_name", "role", "tenant_id", "tenant_name",
 ]
@@ -1475,6 +1477,8 @@ class ClickHouseClient:
             # Add error_category to availability_latency and performance tables
             "ALTER TABLE availability_latency ADD COLUMN IF NOT EXISTS error_category LowCardinality(String) DEFAULT '' AFTER error_message",
             "ALTER TABLE performance ADD COLUMN IF NOT EXISTS error_category LowCardinality(String) DEFAULT '' AFTER error_message",
+            # Add packet_loss_pct to availability_latency (from ping_check metric)
+            "ALTER TABLE availability_latency ADD COLUMN IF NOT EXISTS packet_loss_pct Float32 DEFAULT 0 AFTER reachable",
         ]
         for alter_sql in _TENANT_NAME_ALTERS:
             try:
