@@ -77,7 +77,10 @@ async def get_node_uptime(node_ip: str) -> float | None:
             resp = await client.get(f"http://{node_ip}:{SIDECAR_PORT}/system")
             if resp.status_code == 200:
                 data = resp.json()
-                return data.get("uptime_seconds")
+                # /system returns uptime nested under "host" (sidecar payload
+                # shape). Fall back to top-level for older sidecars.
+                host = data.get("host") or {}
+                return host.get("uptime_seconds") or data.get("uptime_seconds")
     except Exception:
         return None
     return None
