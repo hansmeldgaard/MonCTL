@@ -52,11 +52,30 @@ class AlertEngine:
                 )
             ).scalars().all()
 
+            # Preload severity-ladder active state: for every
+            # (ladder_key, assignment_id, entity_key) collect the set
+            # of ranks currently firing. _evaluate_definition consults
+            # and mutates this so the *highest* firing rank suppresses
+            # lower-rank siblings (and supersedes them when a new high
+            # rank opens this cycle). Definitions with no ladder_key
+            # are unaffected.
+            ladder_state = await self._load_ladder_state(session)
+
+            # Evaluate higher-rank (more severe) ladder definitions
+            # first so a newly-firing critical suppresses the warning
+            # in the same cycle rather than one cycle later.
+            definitions_sorted = sorted(
+                definitions,
+                key=lambda d: -(d.ladder_rank or 0),
+            )
+
             logger.info("alert_eval_cycle definition_count=%d", len(definitions))
 
-            for defn in definitions:
+            for defn in definitions_sorted:
                 try:
-                    records = await self._evaluate_definition(session, defn)
+                    records = await self._evaluate_definition(
+                        session, defn, ladder_state
+                    )
                     alert_log_records.extend(records)
                 except Exception:
                     logger.exception(
@@ -76,8 +95,45 @@ class AlertEngine:
             except Exception:
                 logger.exception("alert_log_insert_error")
 
+    async def _load_ladder_state(
+        self, session: AsyncSession
+    ) -> dict[tuple[str, str, str], set[int]]:
+        """Snapshot currently-firing ladder siblings.
+
+        Key: (ladder_key, assignment_id, entity_key).
+        Value: set of ranks currently firing for that ladder at that
+        entity. Used by `_evaluate_definition` to decide whether a
+        lower-rank sibling should be suppressed (higher rank active)
+        or cleared with reason "superseded".
+        """
+        rows = (
+            await session.execute(
+                select(
+                    AlertDefinition.ladder_key,
+                    AlertDefinition.ladder_rank,
+                    AlertEntity.assignment_id,
+                    AlertEntity.entity_key,
+                )
+                .join(AlertEntity, AlertEntity.definition_id == AlertDefinition.id)
+                .where(
+                    AlertDefinition.ladder_key.isnot(None),
+                    AlertDefinition.ladder_rank.isnot(None),
+                    AlertEntity.state == "firing",
+                )
+            )
+        ).all()
+
+        state: dict[tuple[str, str, str], set[int]] = {}
+        for ladder_key, rank, aid, ekey in rows:
+            key = (ladder_key, str(aid), ekey or "")
+            state.setdefault(key, set()).add(int(rank))
+        return state
+
     async def _evaluate_definition(
-        self, session: AsyncSession, defn: AlertDefinition
+        self,
+        session: AsyncSession,
+        defn: AlertDefinition,
+        ladder_state: dict[tuple[str, str, str], set[int]] | None = None,
     ) -> list[dict]:
         """Evaluate one alert definition. Returns alert_log records."""
         target_table = defn.app.target_table
@@ -159,6 +215,11 @@ class AlertEngine:
         # Build alert_log records and update instance states
         log_records: list[dict] = []
 
+        # Ladder parameters for this definition (None for stand-alone defs).
+        ladder_key = defn.ladder_key
+        ladder_rank = defn.ladder_rank
+        has_ladder = bool(ladder_key and ladder_rank is not None)
+
         for inst in instances:
             has_fresh_data = str(inst.assignment_id) in fresh_aids
             # Without fresh data, the ClickHouse query result is either
@@ -172,6 +233,38 @@ class AlertEngine:
 
             key = (str(inst.assignment_id), inst.entity_key)
             is_firing = key in firing_keys
+
+            # Severity ladder suppression: if a strictly higher-rank
+            # sibling is active for the same (ladder_key, assignment,
+            # entity_key), this lower-rank def must not fire. If it is
+            # already firing we emit a single "clear" with reason
+            # superseded and leave the state as resolved. The caller
+            # seeded `ladder_state` with pre-cycle firing ranks, and we
+            # update it as we go (higher ranks iterate first).
+            suppressed_by_ladder = False
+            if has_ladder and ladder_state is not None:
+                lkey = (ladder_key, str(inst.assignment_id), inst.entity_key or "")
+                active_ranks = ladder_state.get(lkey, set())
+                if any(r > ladder_rank for r in active_ranks):
+                    suppressed_by_ladder = True
+
+            if suppressed_by_ladder:
+                if inst.state == "firing":
+                    inst.state = "resolved"
+                    inst.last_cleared_at = now
+                    inst.fire_count = 0
+                    inst.last_evaluated_at = now
+                    log_records.append(
+                        self._build_log_record(defn, inst, "clear", now)
+                    )
+                    if has_ladder:
+                        ladder_state.setdefault(
+                            (ladder_key, str(inst.assignment_id), inst.entity_key or ""),
+                            set(),
+                        ).discard(ladder_rank)
+                else:
+                    inst.last_evaluated_at = now
+                continue
 
             inst.fire_history = (inst.fire_history or [])[-19:] + [is_firing]
             inst.last_evaluated_at = now
@@ -192,6 +285,15 @@ class AlertEngine:
                 else:
                     inst.fire_count += 1
 
+                # Register in ladder state so lower-rank siblings
+                # evaluated later in the cycle see us firing and
+                # suppress themselves.
+                if has_ladder and ladder_state is not None:
+                    ladder_state.setdefault(
+                        (ladder_key, str(inst.assignment_id), inst.entity_key or ""),
+                        set(),
+                    ).add(ladder_rank)
+
                 log_records.append(self._build_log_record(
                     defn, inst, "fire", now
                 ))
@@ -200,6 +302,11 @@ class AlertEngine:
                     inst.state = "resolved"
                     inst.last_cleared_at = now
                     inst.fire_count = 0
+                    if has_ladder and ladder_state is not None:
+                        ladder_state.setdefault(
+                            (ladder_key, str(inst.assignment_id), inst.entity_key or ""),
+                            set(),
+                        ).discard(ladder_rank)
                     await send_notifications(defn, str(inst.assignment_id), "resolved")
 
                     # Write exactly one "clear" record
@@ -224,7 +331,7 @@ class AlertEngine:
             "definition_name": defn.name,
             "entity_key": inst.entity_key or "",
             "action": action,
-            "severity": "",
+            "severity": getattr(defn, "severity", "") or "",
             "current_value": float(inst.current_value) if inst.current_value is not None else 0.0,
             "threshold_value": 0.0,
             "expression": defn.expression,
@@ -348,8 +455,15 @@ class AlertEngine:
                 self._ch.query_for_alert, scoped_sql, params
             )
         except Exception:
+            # Propagate: a ClickHouse query failure must NOT be
+            # interpreted as "no entity firing". Doing so would
+            # spuriously clear every currently-firing entity whose
+            # fresh check happened to pass this cycle. Let the outer
+            # handler in `_evaluate_definition` catch and skip the def
+            # for this cycle, preserving existing state until the next
+            # successful query.
             logger.exception("ch_query_error sql=%s", scoped_sql[:200])
-            return {}
+            raise
 
         firing: dict[tuple[str, str], dict] = {}
         for row in rows:
@@ -527,12 +641,21 @@ class AlertEngine:
         aid_list = ", ".join(f"'{a}'" for a in aids_to_check)
         table = "config" if is_config_changed else target_table
 
+        # Exclude error rows (error_category != '') from freshness.
+        # A timeout/unreachable poll still writes a row with a current
+        # received_at, which — if counted as "fresh" — would cause the
+        # engine to re-evaluate with a NULL metric and spuriously clear
+        # already-firing alerts. Only *successful* samples count as
+        # fresh evidence. The `config` table does not carry
+        # error_category on legacy deployments, but the filter is still
+        # safe (column defaults to '').
         sql = (
             f"SELECT toString(assignment_id) AS aid, "
             f"       max(received_at) AS max_rcv "
             f"FROM {table} "
             f"WHERE assignment_id IN ({aid_list}) "
             f"  AND received_at > {{cutoff:DateTime64(3, 'UTC')}} "
+            f"  AND error_category = '' "
             f"GROUP BY assignment_id"
         )
 
@@ -541,9 +664,16 @@ class AlertEngine:
                 self._ch.query_for_alert, sql, {"cutoff": oldest}
             )
         except Exception:
-            # On error, treat all as fresh to avoid suppressing alerts
-            logger.debug("fresh_assignments_check_error table=%s", table)
-            return fresh | set(aids_to_check)
+            # On freshness-query failure, return an EMPTY fresh set so
+            # every already-seen assignment skips evaluation this cycle.
+            # The previous behaviour ("treat all as fresh") combined
+            # with a concurrent main-query failure produced spurious
+            # clears: has_fresh_data=True + empty firing_keys → each
+            # firing entity got written as cleared. Preferring false
+            # negatives (one cycle of skipped eval) over false positives
+            # (ghost clears logged forever) is the safe choice.
+            logger.warning("fresh_assignments_check_error table=%s", table)
+            return fresh
 
         for row in rows:
             aid = row.get("aid")

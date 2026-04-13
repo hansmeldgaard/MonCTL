@@ -1059,8 +1059,14 @@ function OverviewTab({ deviceId }: { deviceId: string }) {
       (c: any) => c.role === "availability" || c.role === "latency",
     );
     if (!monitoringChecks.length) return null;
+    // Use last *successful* timestamp — a run of timeouts writes rows
+    // with a current executed_at but is not evidence of fresh data.
     const latest = monitoringChecks.reduce((newest: number, check: any) => {
-      const ts = new Date(check.executed_at).getTime();
+      const okTs =
+        check.last_success_at ||
+        (check.error_category ? null : check.executed_at);
+      if (!okTs) return newest;
+      const ts = new Date(okTs).getTime();
       return ts > newest ? ts : newest;
     }, 0);
     if (latest === 0) return null;
@@ -5753,8 +5759,31 @@ function ChecksTab({ deviceId }: { deviceId: string }) {
                     <TableCell className="text-zinc-400 text-sm">
                       {check.collector_name ?? "—"}
                     </TableCell>
-                    <TableCell className="text-zinc-500 text-sm">
-                      {timeAgo(check.executed_at)}
+                    <TableCell className="text-sm">
+                      {(() => {
+                        const err = (check as any).error_category || "";
+                        const lastOk = (check as any).last_success_at;
+                        // When the latest poll errored, show the last
+                        // successful sample time in amber; "executed_at"
+                        // of an error poll is not evidence of fresh data.
+                        if (err) {
+                          return (
+                            <span
+                              className="text-amber-400"
+                              title={`${err} — last successful: ${lastOk ? formatDate(lastOk, tz) : "never"}`}
+                            >
+                              {lastOk
+                                ? `${timeAgo(lastOk)} (stale)`
+                                : `no data (${err})`}
+                            </span>
+                          );
+                        }
+                        return (
+                          <span className="text-zinc-500">
+                            {timeAgo(check.executed_at)}
+                          </span>
+                        );
+                      })()}
                     </TableCell>
                   </TableRow>
                 ))}

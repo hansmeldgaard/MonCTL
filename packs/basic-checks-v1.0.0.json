@@ -77,6 +77,7 @@
             "expression": "last(reachable) == 0",
             "window": "5m",
             "enabled": true,
+            "severity": "critical",
             "message_template": "Device {device_name} is unreachable via ICMP"
           },
           {
@@ -85,6 +86,9 @@
             "expression": "last(rtt_ms) > rtt_ms_warn",
             "window": "5m",
             "enabled": true,
+            "severity": "warning",
+            "ladder_key": "ping_rtt",
+            "ladder_rank": 1,
             "message_template": "High ping latency to {device_name}: {value}ms (> {rtt_ms_warn}ms)"
           },
           {
@@ -93,6 +97,9 @@
             "expression": "last(rtt_ms) > rtt_ms_crit",
             "window": "5m",
             "enabled": true,
+            "severity": "critical",
+            "ladder_key": "ping_rtt",
+            "ladder_rank": 2,
             "message_template": "Critical ping latency to {device_name}: {value}ms (> {rtt_ms_crit}ms)"
           },
           {
@@ -101,6 +108,9 @@
             "expression": "last(packet_loss_pct) > loss_pct_warn",
             "window": "5m",
             "enabled": true,
+            "severity": "warning",
+            "ladder_key": "ping_loss",
+            "ladder_rank": 1,
             "message_template": "Packet loss to {device_name}: {value}%"
           },
           {
@@ -109,6 +119,9 @@
             "expression": "last(packet_loss_pct) > loss_pct_crit",
             "window": "5m",
             "enabled": true,
+            "severity": "critical",
+            "ladder_key": "ping_loss",
+            "ladder_rank": 2,
             "message_template": "Critical packet loss to {device_name}: {value}%"
           }
         ]

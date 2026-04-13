@@ -278,6 +278,9 @@ export interface CheckResult {
   status_code: number | null;
   performance_data: Record<string, unknown> | null;
   executed_at: string;
+  last_success_at?: string | null;
+  error_category?: string;
+  error_message?: string | null;
   execution_time_ms: number | null;
   started_at: string | null;
   collector_name: string | null;

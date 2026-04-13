@@ -1214,13 +1214,27 @@ async def _sync_app_alert_definitions(
         name = ad_data["name"]
         if name in existing_by_name:
             existing_def = existing_by_name[name]
-            # Update if expression differs
-            if existing_def.expression != ad_data["expression"]:
+            # Update if expression differs, or if ladder/severity metadata
+            # changed — ladder wiring is pack-authored and must flow on
+            # re-import even when the expression is unchanged.
+            new_severity = ad_data.get("severity", "warning")
+            new_ladder_key = ad_data.get("ladder_key")
+            new_ladder_rank = ad_data.get("ladder_rank")
+            meta_changed = (
+                existing_def.expression != ad_data["expression"]
+                or existing_def.severity != new_severity
+                or existing_def.ladder_key != new_ladder_key
+                or existing_def.ladder_rank != new_ladder_rank
+            )
+            if meta_changed:
                 existing_def.expression = ad_data["expression"]
                 existing_def.window = ad_data.get("window", "5m")
                 existing_def.enabled = ad_data.get("enabled", True)
                 existing_def.description = ad_data.get("description")
                 existing_def.message_template = ad_data.get("message_template")
+                existing_def.severity = new_severity
+                existing_def.ladder_key = new_ladder_key
+                existing_def.ladder_rank = new_ladder_rank
                 existing_def.pack_origin = pack_uid
         else:
             # Create new definition
@@ -1232,6 +1246,9 @@ async def _sync_app_alert_definitions(
                 enabled=ad_data.get("enabled", True),
                 description=ad_data.get("description"),
                 message_template=ad_data.get("message_template"),
+                severity=ad_data.get("severity", "warning"),
+                ladder_key=ad_data.get("ladder_key"),
+                ladder_rank=ad_data.get("ladder_rank"),
                 pack_origin=pack_uid,
             )
             db.add(existing_def)

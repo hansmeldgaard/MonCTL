@@ -64,6 +64,7 @@
             "expression": "last(reachable) == 0",
             "window": "5m",
             "enabled": true,
+            "severity": "critical",
             "message_template": "SNMP unreachable: {device_name}"
           },
           {
@@ -72,6 +73,9 @@
             "expression": "last(rtt_ms) > snmp_rtt_warn_ms",
             "window": "5m",
             "enabled": true,
+            "severity": "warning",
+            "ladder_key": "snmp_rtt",
+            "ladder_rank": 1,
             "message_template": "High SNMP latency on {device_name}: {value}ms"
           },
           {
@@ -80,6 +84,9 @@
             "expression": "last(rtt_ms) > snmp_rtt_crit_ms",
             "window": "5m",
             "enabled": true,
+            "severity": "critical",
+            "ladder_key": "snmp_rtt",
+            "ladder_rank": 2,
             "message_template": "Critical SNMP latency on {device_name}: {value}ms"
           }
         ]
