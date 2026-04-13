@@ -28,6 +28,9 @@ from monctl_central.storage.models import (
 
 logger = logging.getLogger(__name__)
 
+# Sentinel to distinguish "key not in dict" from "key present with value None".
+_UNSET = object()
+
 
 class AlertEngine:
     """Evaluates all enabled AlertEntities against ClickHouse data."""
@@ -157,9 +160,18 @@ class AlertEngine:
         log_records: list[dict] = []
 
         for inst in instances:
+            has_fresh_data = str(inst.assignment_id) in fresh_aids
+            # Without fresh data, the ClickHouse query result is either
+            # unchanged (stale window) or empty (race between eval and
+            # collector forward — window contains no rows because the
+            # next data point hasn't been inserted yet). Either way,
+            # this cycle carries no new evidence for this entity and
+            # must not mutate its state or produce log records.
+            if not has_fresh_data:
+                continue
+
             key = (str(inst.assignment_id), inst.entity_key)
             is_firing = key in firing_keys
-            has_fresh_data = str(inst.assignment_id) in fresh_aids
 
             inst.fire_history = (inst.fire_history or [])[-19:] + [is_firing]
             inst.last_evaluated_at = now
@@ -180,11 +192,9 @@ class AlertEngine:
                 else:
                     inst.fire_count += 1
 
-                # Write fire log only when this assignment has new data
-                if has_fresh_data:
-                    log_records.append(self._build_log_record(
-                        defn, inst, "fire", now
-                    ))
+                log_records.append(self._build_log_record(
+                    defn, inst, "fire", now
+                ))
             else:
                 if inst.state == "firing":
                     inst.state = "resolved"
@@ -465,53 +475,92 @@ class AlertEngine:
         is_config_changed: bool,
     ) -> set[str]:
         """Return the set of assignment_ids that have received new data
-        since their last evaluation.  Assignments evaluated for the first
-        time (last_evaluated_at IS NULL) are always considered fresh.
+        since *their own* last evaluation.
+
+        Filtering happens per-assignment: an assignment is "fresh" iff
+        ClickHouse has rows for it with received_at > its own
+        last_evaluated_at. Using a single global cutoff would return
+        false positives whenever assignments in the same definition
+        have divergent last_evaluated_at values — an assignment whose
+        data was already processed can still appear newer than some
+        *other* assignment's older cutoff.
+
+        Assignments with last_evaluated_at IS NULL are always considered
+        fresh (first-time evaluation).
         """
-        # Collect per-assignment cutoff (oldest last_evaluated_at)
+        # Collect per-assignment cutoff: the oldest last_evaluated_at
+        # seen across all instances for that assignment.  If any instance
+        # for an aid has never been evaluated, treat the whole aid as
+        # first-time (cutoff = None → always fresh).
         cutoff_by_aid: dict[str, datetime | None] = {}
         for inst in instances:
             aid = str(inst.assignment_id)
+            prev = cutoff_by_aid.get(aid, _UNSET)
             if inst.last_evaluated_at is None:
-                cutoff_by_aid[aid] = None  # first eval → always fresh
-            elif aid not in cutoff_by_aid:
+                cutoff_by_aid[aid] = None
+            elif prev is _UNSET:
                 cutoff_by_aid[aid] = inst.last_evaluated_at
-            elif cutoff_by_aid[aid] is not None and inst.last_evaluated_at < cutoff_by_aid[aid]:
+            elif prev is not None and inst.last_evaluated_at < prev:
                 cutoff_by_aid[aid] = inst.last_evaluated_at
+            # else: prev is None (first-time) — keep as None
 
-        # Assignments with no prior evaluation are always fresh
         fresh: set[str] = set()
         aids_to_check: dict[str, datetime] = {}
         for aid, cutoff in cutoff_by_aid.items():
             if cutoff is None:
                 fresh.add(aid)
             else:
-                ts = cutoff if cutoff.tzinfo else cutoff.replace(tzinfo=timezone.utc)
-                aids_to_check[aid] = ts
+                aids_to_check[aid] = (
+                    cutoff if cutoff.tzinfo else cutoff.replace(tzinfo=timezone.utc)
+                )
 
         if not aids_to_check:
             return fresh
 
-        # Use the oldest cutoff across all assignments for a single cheap query
+        # Batch query: max(received_at) per assignment. We filter with a
+        # cheap global prefilter (the oldest cutoff minus a small guard)
+        # to bound the scan; then compare per-aid in Python against each
+        # assignment's own cutoff. Without the per-aid compare, any aid
+        # whose data is newer than the oldest cutoff would be flagged
+        # fresh — including aids whose data is already fully processed.
         oldest = min(aids_to_check.values())
         aid_list = ", ".join(f"'{a}'" for a in aids_to_check)
         table = "config" if is_config_changed else target_table
 
         sql = (
-            f"SELECT DISTINCT toString(assignment_id) AS aid FROM {table} "
+            f"SELECT toString(assignment_id) AS aid, "
+            f"       max(received_at) AS max_rcv "
+            f"FROM {table} "
             f"WHERE assignment_id IN ({aid_list}) "
-            f"AND received_at > {{cutoff:DateTime64(3, 'UTC')}}"
+            f"  AND received_at > {{cutoff:DateTime64(3, 'UTC')}} "
+            f"GROUP BY assignment_id"
         )
 
         try:
             rows = await asyncio.to_thread(
                 self._ch.query_for_alert, sql, {"cutoff": oldest}
             )
-            fresh.update(row["aid"] for row in rows)
         except Exception:
             # On error, treat all as fresh to avoid suppressing alerts
             logger.debug("fresh_assignments_check_error table=%s", table)
-            fresh.update(aids_to_check)
+            return fresh | set(aids_to_check)
+
+        for row in rows:
+            aid = row.get("aid")
+            max_rcv = row.get("max_rcv")
+            if aid is None or max_rcv is None:
+                continue
+            if not isinstance(max_rcv, datetime):
+                # ClickHouse driver may return str — best effort parse
+                try:
+                    max_rcv = datetime.fromisoformat(str(max_rcv))
+                except ValueError:
+                    continue
+            if max_rcv.tzinfo is None:
+                max_rcv = max_rcv.replace(tzinfo=timezone.utc)
+            aid_cutoff = aids_to_check.get(aid)
+            if aid_cutoff is not None and max_rcv > aid_cutoff:
+                fresh.add(aid)
 
         return fresh
 
