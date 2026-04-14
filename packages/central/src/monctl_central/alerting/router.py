@@ -62,10 +62,9 @@ def _fmt_definition(d: AlertDefinition, instance_counts: dict | None = None) -> 
         "app_name": d.app.name if d.app else None,
         "name": d.name,
         "description": d.description,
-        "expression": d.expression,
+        "severity_tiers": d.severity_tiers or [],
         "window": d.window,
         "enabled": d.enabled,
-        "message_template": d.message_template,
         "pack_origin": d.pack_origin,
         "created_at": d.created_at.isoformat() if d.created_at else None,
         "updated_at": d.updated_at.isoformat() if d.updated_at else None,
@@ -92,6 +91,7 @@ def _fmt_entity(i: AlertEntity) -> dict:
         "device_id": str(i.device_id) if i.device_id else None,
         "enabled": i.enabled,
         "state": i.state,
+        "severity": i.severity,
         "display_state": _display_state(i.state),
         "current_value": i.current_value,
         "fire_count": i.fire_count,
@@ -121,14 +121,49 @@ def _fmt_override(o: ThresholdOverride) -> dict:
 
 # ── Request models ───────────────────────────────────────
 
+class SeverityTier(BaseModel):
+    severity: str = Field(min_length=1, max_length=20)
+    # Healthy tiers use expression=None; non-healthy tiers require a
+    # DSL expression. See _validate_tier_list.
+    expression: str | None = Field(default=None, max_length=2000)
+    message_template: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("severity")
+    @classmethod
+    def check_severity(cls, v: str) -> str:
+        allowed = ("info", "warning", "critical", "emergency", "healthy")
+        if v not in allowed:
+            raise ValueError(f"severity must be one of {allowed}")
+        return v
+
+
+def _validate_tier_list(tiers: list[SeverityTier]) -> None:
+    """Cross-tier invariants: at most one healthy tier (null expression),
+    non-healthy tiers must have an expression, severities unique."""
+    seen: set[str] = set()
+    healthy_count = 0
+    for i, t in enumerate(tiers):
+        if t.severity in seen:
+            raise ValueError(f"duplicate severity '{t.severity}' at severity_tiers[{i}]")
+        seen.add(t.severity)
+        if t.severity == "healthy":
+            healthy_count += 1
+            if t.expression:
+                raise ValueError(f"healthy tier at severity_tiers[{i}] must not have an expression")
+        else:
+            if not t.expression:
+                raise ValueError(f"severity_tiers[{i}] requires an expression")
+    if healthy_count > 1:
+        raise ValueError("at most one healthy tier is allowed")
+
+
 class CreateAlertDefinitionRequest(BaseModel):
     app_id: str
     name: str = Field(min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=2000)
-    expression: str = Field(min_length=1, max_length=2000)
+    severity_tiers: list[SeverityTier] = Field(min_length=1)
     window: str = Field(default="5m", max_length=10)
     enabled: bool = True
-    message_template: str | None = Field(default=None, max_length=2000)
 
     @field_validator("app_id")
     @classmethod
@@ -141,20 +176,32 @@ class CreateAlertDefinitionRequest(BaseModel):
     def check_window(cls, v: str) -> str:
         return validate_alert_window(v)
 
+    @field_validator("severity_tiers")
+    @classmethod
+    def check_tiers(cls, v: list[SeverityTier]) -> list[SeverityTier]:
+        _validate_tier_list(v)
+        return v
+
 
 class UpdateAlertDefinitionRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=2000)
-    expression: str | None = Field(default=None, min_length=1, max_length=2000)
+    severity_tiers: list[SeverityTier] | None = Field(default=None, min_length=1)
     window: str | None = Field(default=None, max_length=10)
     enabled: bool | None = None
-    message_template: str | None = Field(default=None, max_length=2000)
 
     @field_validator("window")
     @classmethod
     def check_window(cls, v: str | None) -> str | None:
         if v is not None:
             return validate_alert_window(v)
+        return v
+
+    @field_validator("severity_tiers")
+    @classmethod
+    def check_tiers(cls, v: list[SeverityTier] | None) -> list[SeverityTier] | None:
+        if v is not None:
+            _validate_tier_list(v)
         return v
 
 
@@ -208,7 +255,9 @@ async def list_alert_definitions(
     if name:
         filters.append(AlertDefinition.name.ilike(f"%{name}%"))
     if expression:
-        filters.append(AlertDefinition.expression.ilike(f"%{expression}%"))
+        # severity_tiers is JSONB; cast to text for a substring search
+        # across all tier expressions at once.
+        filters.append(sa.cast(AlertDefinition.severity_tiers, sa.Text).ilike(f"%{expression}%"))
 
     # Count total
     count_stmt = select(sa.func.count()).select_from(AlertDefinition)
@@ -265,25 +314,31 @@ async def create_alert_definition(
     if not app:
         raise HTTPException(status_code=404, detail="App not found")
 
-    validation = validate_expression(request.expression, app.target_table)
-    if not validation.valid:
-        raise HTTPException(
-            status_code=400, detail=f"Invalid expression: {validation.error}"
-        )
+    tiers_payload = [t.model_dump() for t in request.severity_tiers]
+    for i, tier in enumerate(tiers_payload):
+        # Only non-healthy tiers carry an expression to validate.
+        expr = tier.get("expression")
+        if not expr:
+            continue
+        validation = validate_expression(expr, app.target_table)
+        if not validation.valid:
+            raise HTTPException(
+                status_code=400,
+                detail=f"severity_tiers[{i}] invalid expression: {validation.error}",
+            )
 
     defn = AlertDefinition(
         app_id=uuid.UUID(request.app_id),
         name=request.name,
         description=request.description,
-        expression=request.expression,
+        severity_tiers=tiers_payload,
         window=request.window,
         enabled=request.enabled,
-        message_template=request.message_template,
     )
     db.add(defn)
     await db.flush()
 
-    # Auto-sync threshold variables from expression
+    # Auto-sync threshold variables across every tier's expression.
     await sync_threshold_variables(db, uuid.UUID(request.app_id), defn, app.target_table)
 
     # Auto-create instances for all existing assignments
@@ -303,7 +358,10 @@ async def get_alert_definition(
     defn = await db.get(
         AlertDefinition,
         uuid.UUID(definition_id),
-        options=[selectinload(AlertDefinition.entities)],
+        options=[
+            selectinload(AlertDefinition.entities),
+            selectinload(AlertDefinition.app),
+        ],
     )
     if not defn:
         raise HTTPException(status_code=404, detail="Not found")
@@ -325,16 +383,21 @@ async def update_alert_definition(
     if not defn:
         raise HTTPException(status_code=404, detail="Not found")
 
-    if request.expression is not None:
+    if request.severity_tiers is not None:
         app = await db.get(App, defn.app_id)
         target_table = app.target_table if app else "availability_latency"
-        validation = validate_expression(request.expression, target_table)
-        if not validation.valid:
-            raise HTTPException(
-                status_code=400, detail=f"Invalid expression: {validation.error}"
-            )
-        defn.expression = request.expression
-        # Re-sync threshold variables when expression changes
+        tiers_payload = [t.model_dump() for t in request.severity_tiers]
+        for i, tier in enumerate(tiers_payload):
+            expr = tier.get("expression")
+            if not expr:
+                continue
+            validation = validate_expression(expr, target_table)
+            if not validation.valid:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"severity_tiers[{i}] invalid expression: {validation.error}",
+                )
+        defn.severity_tiers = tiers_payload
         await sync_threshold_variables(db, defn.app_id, defn, target_table)
 
     if request.name is not None:
@@ -345,8 +408,6 @@ async def update_alert_definition(
         defn.window = request.window
     if request.enabled is not None:
         defn.enabled = request.enabled
-    if request.message_template is not None:
-        defn.message_template = request.message_template
 
     defn.updated_at = utc_now()
     return {"status": "success", "data": _fmt_definition(defn)}
@@ -376,8 +437,15 @@ async def invert_alert_definition(
     if defn is None:
         raise HTTPException(status_code=404, detail="Definition not found")
 
+    # For a multi-tier def we invert the highest-severity tier's
+    # expression (the "most problematic" threshold) — that's what a
+    # recovery alert should target.
+    tiers = defn.severity_tiers or []
+    if not tiers:
+        raise HTTPException(status_code=400, detail="Definition has no severity_tiers")
+    top_expr = tiers[-1].get("expression", "")
     try:
-        inverted = invert_expression(defn.expression)
+        inverted = invert_expression(top_expr)
     except (ValueError, Exception) as e:
         raise HTTPException(status_code=400, detail=f"Cannot invert expression: {e}")
 
@@ -386,7 +454,7 @@ async def invert_alert_definition(
         "data": {
             "suggested_name": f"{defn.name} — Recovery",
             "inverted_expression": inverted,
-            "original_expression": defn.expression,
+            "original_expression": top_expr,
             "window": defn.window,
             "app_id": str(defn.app_id),
         },
@@ -463,7 +531,7 @@ async def list_alert_instances(
         defn = await db.get(AlertDefinition, inst.definition_id)
         if defn:
             data["definition_name"] = defn.name
-            data["definition_expression"] = defn.expression
+            data["definition_severity_tiers"] = defn.severity_tiers or []
             app = await db.get(App, defn.app_id)
             data["app_name"] = app.name if app else ""
         assignment = await db.get(AppAssignment, inst.assignment_id)
@@ -495,7 +563,7 @@ async def list_active_instances(
         defn = await db.get(AlertDefinition, inst.definition_id)
         if defn:
             data["definition_name"] = defn.name
-            data["definition_expression"] = defn.expression
+            data["definition_severity_tiers"] = defn.severity_tiers or []
             app = await db.get(App, defn.app_id)
             data["app_name"] = app.name if app else ""
         assignment = await db.get(AppAssignment, inst.assignment_id)
@@ -543,7 +611,7 @@ async def list_resolved_instances(
         defn = await db.get(AlertDefinition, inst.definition_id)
         if defn:
             data["definition_name"] = defn.name
-            data["definition_expression"] = defn.expression
+            data["definition_severity_tiers"] = defn.severity_tiers or []
             app = await db.get(App, defn.app_id)
             data["app_name"] = app.name if app else ""
         assignment = await db.get(AppAssignment, inst.assignment_id)

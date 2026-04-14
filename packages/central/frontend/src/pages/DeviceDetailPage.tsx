@@ -6088,75 +6088,100 @@ function DeviceActiveAlerts({ deviceId }: { deviceId: string }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {instances.map((inst: any) => (
-              <TableRow
-                key={inst.id}
-                className={inst.state === "firing" ? "bg-red-500/5" : ""}
-              >
-                <TableCell>
-                  <Badge
-                    variant={
-                      inst.state === "firing"
-                        ? "destructive"
-                        : inst.state === "resolved"
-                          ? "warning"
-                          : "success"
-                    }
-                  >
-                    {inst.state === "firing"
-                      ? "ACTIVE"
-                      : inst.state === "resolved"
-                        ? "CLEARED"
-                        : inst.state.toUpperCase()}
-                  </Badge>
-                </TableCell>
-                <TableCell className="font-medium">
-                  {inst.definition_name ?? "\u2014"}
-                  {inst.entity_labels?.if_name && (
-                    <span className="ml-1.5 text-xs text-zinc-500">
-                      ({inst.entity_labels.if_name})
-                    </span>
-                  )}
-                </TableCell>
-                <TableCell className="text-zinc-400 text-sm">
-                  {inst.app_name ?? "\u2014"}
-                </TableCell>
-                <TableCell className="text-zinc-400 text-xs font-mono">
-                  {inst.entity_labels?.if_name ||
-                    inst.entity_labels?.component ||
-                    inst.entity_key ||
-                    "\u2014"}
-                </TableCell>
-                <TableCell className="font-mono text-xs">
-                  {inst.current_value != null
-                    ? Number(inst.current_value).toFixed(2)
-                    : "\u2014"}
-                </TableCell>
-                <TableCell className="font-mono text-xs">
-                  {inst.fire_count ?? 0}
-                </TableCell>
-                <TableCell className="text-xs text-zinc-400">
-                  {inst.started_firing_at
-                    ? timeAgo(inst.started_firing_at)
-                    : "\u2014"}
-                </TableCell>
-                <TableCell className="text-center">
-                  <button
-                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${inst.enabled ? "bg-brand-500" : "bg-zinc-600"}`}
-                    onClick={() =>
-                      updateInstance.mutate({
-                        id: inst.id,
-                        enabled: !inst.enabled,
-                      })
-                    }
-                  >
-                    <span
-                      className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${inst.enabled ? "translate-x-4.5" : "translate-x-0.5"}`}
-                    />
-                  </button>
-                </TableCell>
-              </TableRow>
-            ))}
+            {instances.map((inst: any) => {
+              const sev: string | null = inst.severity ?? null;
+              const rowClass =
+                sev === "critical"
+                  ? "bg-red-500/10"
+                  : sev === "warning"
+                    ? "bg-orange-500/10"
+                    : sev === "info"
+                      ? "bg-sky-500/10"
+                      : inst.state === "firing"
+                        ? "bg-red-500/5"
+                        : "";
+              const pillClass =
+                sev === "critical"
+                  ? "bg-red-600 text-white"
+                  : sev === "warning"
+                    ? "bg-orange-600 text-white"
+                    : sev === "info"
+                      ? "bg-sky-600 text-white"
+                      : "bg-zinc-700 text-zinc-200";
+              return (
+                <TableRow key={inst.id} className={rowClass}>
+                  <TableCell>
+                    {inst.state === "firing" ? (
+                      <span
+                        className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${pillClass}`}
+                      >
+                        {sev ?? "firing"}
+                      </span>
+                    ) : (
+                      <Badge
+                        variant={
+                          inst.state === "resolved" ? "warning" : "success"
+                        }
+                      >
+                        {inst.state === "resolved"
+                          ? "CLEARED"
+                          : inst.state.toUpperCase()}
+                      </Badge>
+                    )}
+                  </TableCell>
+                  <TableCell className="font-medium">
+                    <Link
+                      to={`/alerts/definitions/${inst.definition_id}`}
+                      className="text-brand-400 hover:text-brand-300 hover:underline"
+                    >
+                      {inst.definition_name ?? "\u2014"}
+                    </Link>
+                    {inst.entity_labels?.if_name && (
+                      <span className="ml-1.5 text-xs text-zinc-500">
+                        ({inst.entity_labels.if_name})
+                      </span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-zinc-400 text-sm">
+                    {inst.app_name ?? "\u2014"}
+                  </TableCell>
+                  <TableCell className="text-zinc-400 text-xs font-mono">
+                    {inst.entity_labels?.if_name ||
+                      inst.entity_labels?.component ||
+                      inst.entity_key ||
+                      "\u2014"}
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {inst.current_value != null
+                      ? Number(inst.current_value).toFixed(2)
+                      : "\u2014"}
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {inst.fire_count ?? 0}
+                  </TableCell>
+                  <TableCell className="text-xs text-zinc-400">
+                    {inst.started_firing_at
+                      ? timeAgo(inst.started_firing_at)
+                      : "\u2014"}
+                  </TableCell>
+                  <TableCell className="text-center">
+                    <button
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${inst.enabled ? "bg-brand-500" : "bg-zinc-600"}`}
+                      onClick={() =>
+                        updateInstance.mutate({
+                          id: inst.id,
+                          enabled: !inst.enabled,
+                        })
+                      }
+                    >
+                      <span
+                        className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${inst.enabled ? "translate-x-4.5" : "translate-x-0.5"}`}
+                      />
+                    </button>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
         <PaginationBar
@@ -6221,12 +6246,22 @@ function DeviceAlertHistory({ deviceId }: { deviceId: string }) {
                 { val: undefined, label: "All", cls: "" },
                 {
                   val: "fire",
-                  label: "Fires",
+                  label: "Fire",
                   cls: "bg-red-500/20 text-red-400",
                 },
                 {
+                  val: "escalate",
+                  label: "Escalate",
+                  cls: "bg-orange-500/20 text-orange-400",
+                },
+                {
+                  val: "downgrade",
+                  label: "Downgrade",
+                  cls: "bg-amber-500/20 text-amber-400",
+                },
+                {
                   val: "clear",
-                  label: "Clears",
+                  label: "Clear",
                   cls: "bg-green-500/20 text-green-400",
                 },
               ] as const
@@ -6291,46 +6326,69 @@ function DeviceAlertHistory({ deviceId }: { deviceId: string }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {logEntries.map((entry: AlertLogEntry, idx: number) => (
-                  <TableRow
-                    key={`${entry.definition_id}-${entry.occurred_at}-${idx}`}
-                    className={
-                      entry.action === "fire"
-                        ? "bg-red-500/5"
-                        : "bg-green-500/5"
-                    }
-                  >
-                    <TableCell>
-                      <Badge
-                        variant={
-                          entry.action === "fire" ? "destructive" : "success"
-                        }
-                      >
-                        {entry.action}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="font-medium">
-                      {entry.definition_name}
-                    </TableCell>
-                    <TableCell className="text-zinc-400 text-xs font-mono">
-                      {entry.entity_key || "\u2014"}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">
-                      {entry.current_value != null
-                        ? Number(entry.current_value).toFixed(2)
-                        : "\u2014"}
-                    </TableCell>
-                    <TableCell
-                      className="text-xs text-zinc-400 max-w-[200px] truncate"
-                      title={entry.message}
+                {logEntries.map((entry: AlertLogEntry, idx: number) => {
+                  const sev = entry.severity;
+                  const rowClass =
+                    sev === "critical"
+                      ? "bg-red-500/10"
+                      : sev === "warning"
+                        ? "bg-orange-500/10"
+                        : sev === "info"
+                          ? "bg-sky-500/10"
+                          : sev === "healthy"
+                            ? "bg-green-500/10"
+                            : "bg-zinc-800/20";
+                  const pillClass =
+                    sev === "critical"
+                      ? "bg-red-600 text-white"
+                      : sev === "warning"
+                        ? "bg-orange-600 text-white"
+                        : sev === "info"
+                          ? "bg-sky-600 text-white"
+                          : sev === "healthy"
+                            ? "bg-green-600 text-white"
+                            : "bg-zinc-600 text-white";
+                  return (
+                    <TableRow
+                      key={`${entry.definition_id}-${entry.occurred_at}-${idx}`}
+                      className={rowClass}
                     >
-                      {entry.message || "\u2014"}
-                    </TableCell>
-                    <TableCell className="text-xs text-zinc-400 whitespace-nowrap">
-                      {timeAgo(entry.occurred_at)}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                      <TableCell>
+                        <div className="flex items-center gap-1">
+                          <Badge className={pillClass}>{sev || "—"}</Badge>
+                          <span className="text-[10px] uppercase text-zinc-500">
+                            {entry.action}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="font-medium">
+                        <Link
+                          to={`/alerts/definitions/${entry.definition_id}`}
+                          className="text-brand-400 hover:text-brand-300 hover:underline"
+                        >
+                          {entry.definition_name}
+                        </Link>
+                      </TableCell>
+                      <TableCell className="text-zinc-400 text-xs font-mono">
+                        {entry.entity_key || "\u2014"}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {entry.current_value != null
+                          ? Number(entry.current_value).toFixed(2)
+                          : "\u2014"}
+                      </TableCell>
+                      <TableCell
+                        className="text-xs text-zinc-400 max-w-[200px] truncate"
+                        title={entry.message}
+                      >
+                        {entry.message || "\u2014"}
+                      </TableCell>
+                      <TableCell className="text-xs text-zinc-400 whitespace-nowrap">
+                        {timeAgo(entry.occurred_at)}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
             <PaginationBar

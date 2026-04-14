@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, Fragment } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 import { formatDate } from "@/lib/utils.ts";
@@ -2124,11 +2124,12 @@ function ThresholdsTab({ appId }: { appId: string }) {
       for (const v of variables) {
         const refs: { definition_id: string; definition_name: string }[] = [];
         for (const d of definitions) {
-          if (d.expression) {
-            const re = new RegExp(`(?:>|<|>=|<=|==|!=)\\s*${v.name}\\b`);
-            if (re.test(d.expression)) {
-              refs.push({ definition_id: d.id, definition_name: d.name });
-            }
+          const tiers = d.severity_tiers ?? [];
+          const re = new RegExp(`(?:>|<|>=|<=|==|!=)\\s*${v.name}\\b`);
+          if (
+            tiers.some((t) => t.expression != null && re.test(t.expression))
+          ) {
+            refs.push({ definition_id: d.id, definition_name: d.name });
           }
         }
         usage[v.id] = refs;
@@ -2521,6 +2522,7 @@ function AlertsTab({
     versions: Array<{ id: string; version: string; is_latest: boolean }>;
   };
 }) {
+  const navigate = useNavigate();
   const { data: definitionsResp, isLoading } = useAlertDefinitions(appId);
   const definitions = definitionsResp?.data ?? [];
   const { data: metrics } = useAlertMetrics(appId);
@@ -2536,7 +2538,15 @@ function AlertsTab({
   );
   const [editId, setEditId] = useState<string | null>(null);
   const formNameField = useField("", validateName);
+  // Single-expression form state kept for UI compatibility. On submit
+  // we wrap it into a one-tier severity_tiers list. Existing multi-tier
+  // defs are flagged read-only (form blocked) so operators can inspect
+  // them but must use the API for structural edits.
   const [formExpression, setFormExpression] = useState("");
+  const [formSeverity, setFormSeverity] = useState<
+    "info" | "warning" | "critical" | "emergency"
+  >("warning");
+  const [formMultiTier, setFormMultiTier] = useState(false);
   const formWindowField = useField("5m", validateAlertWindow);
   const [formEnabled, setFormEnabled] = useState(true);
   const [formMessageTemplate, setFormMessageTemplate] = useState("");
@@ -2551,22 +2561,16 @@ function AlertsTab({
     setEditId(null);
     formNameField.reset(prefill?.name ?? "");
     setFormExpression(prefill?.expression ?? "");
+    setFormSeverity("warning");
+    setFormMultiTier(false);
     formWindowField.reset(prefill?.window ?? "5m");
     setFormEnabled(true);
     setFormMessageTemplate("");
     setFormError(null);
   };
 
-  const openEdit = (defn: AppAlertDefinition) => {
-    setFormMode("edit");
-    setEditId(defn.id);
-    formNameField.reset(defn.name);
-    setFormExpression(defn.expression);
-    formWindowField.reset(defn.window);
-    setFormEnabled(defn.enabled);
-    setFormMessageTemplate(defn.message_template ?? "");
-    setFormError(null);
-  };
+  // Inline editing happens on the dedicated /alerts/definitions/:id page.
+  // The inline form here is used only for quick creation on this app.
 
   const closeForm = () => {
     setFormMode("closed");
@@ -2579,25 +2583,46 @@ function AlertsTab({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
+    if (formMultiTier) {
+      setFormError(
+        "Multi-tier definitions are read-only in the UI for now — edit via API.",
+      );
+      return;
+    }
     if (!validateAll(formNameField, formWindowField)) return;
+    // Build a minimal two-tier def: healthy recovery + the one severity
+    // the inline form configures. Full multi-tier edits happen on the
+    // dedicated detail page.
+    const fallbackMsg =
+      formMessageTemplate || `${formNameField.value} on {device_name}`;
+    const tiers = [
+      {
+        severity: "healthy",
+        expression: null,
+        message_template: `${formNameField.value} on {device_name} recovered`,
+      },
+      {
+        severity: formSeverity,
+        expression: formExpression,
+        message_template: fallbackMsg,
+      },
+    ];
     try {
       if (formMode === "edit" && editId) {
         await updateDef.mutateAsync({
           id: editId,
           name: formNameField.value,
-          expression: formExpression,
+          severity_tiers: tiers,
           window: formWindowField.value,
           enabled: formEnabled,
-          message_template: formMessageTemplate || undefined,
         });
       } else {
         await createDef.mutateAsync({
           app_id: appId,
           name: formNameField.value,
-          expression: formExpression,
+          severity_tiers: tiers,
           window: formWindowField.value,
           enabled: formEnabled,
-          message_template: formMessageTemplate || undefined,
         });
       }
       closeForm();
@@ -3014,13 +3039,32 @@ function AlertsTab({
                 <TableRow
                   key={defn.id}
                   className={`cursor-pointer ${editId === defn.id ? "bg-zinc-800/50" : "hover:bg-zinc-800/30"}`}
-                  onClick={() => openEdit(defn)}
+                  onClick={() => navigate(`/alerts/definitions/${defn.id}`)}
                 >
                   <TableCell className="font-medium text-zinc-100">
                     {defn.name}
                   </TableCell>
-                  <TableCell className="text-zinc-400 font-mono text-xs max-w-xs truncate">
-                    {defn.expression}
+                  <TableCell className="text-zinc-400 font-mono text-xs max-w-xs">
+                    <div className="space-y-0.5">
+                      {(defn.severity_tiers ?? []).map((t, i) => (
+                        <div key={i} className="flex items-center gap-1.5">
+                          <span
+                            className={`inline-flex items-center rounded px-1 text-[10px] uppercase font-semibold ${
+                              t.severity === "critical"
+                                ? "bg-red-600 text-white"
+                                : t.severity === "warning"
+                                  ? "bg-orange-600 text-white"
+                                  : t.severity === "info"
+                                    ? "bg-sky-600 text-white"
+                                    : "bg-zinc-600 text-white"
+                            }`}
+                          >
+                            {t.severity}
+                          </span>
+                          <span className="truncate">{t.expression}</span>
+                        </div>
+                      ))}
+                    </div>
                   </TableCell>
                   <TableCell className="text-zinc-400">{defn.window}</TableCell>
                   <TableCell>
@@ -3030,8 +3074,14 @@ function AlertsTab({
                   </TableCell>
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <div className="flex gap-0.5">
-                      {(!/\bCHANGED\b/.test(defn.expression) ||
-                        /[><=!]/.test(defn.expression)) && (
+                      {(() => {
+                        const topExpr =
+                          (defn.severity_tiers ?? []).slice(-1)[0]
+                            ?.expression ?? "";
+                        return (
+                          !/\bCHANGED\b/.test(topExpr) || /[><=!]/.test(topExpr)
+                        );
+                      })() && (
                         <Button
                           size="sm"
                           variant="ghost"

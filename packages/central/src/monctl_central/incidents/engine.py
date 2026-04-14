@@ -479,8 +479,14 @@ class IncidentEngine:
                     # Threshold check mirrors the EventEngine's consecutive/cumulative logic.
                     if not self._meets_threshold(rule, inst):
                         continue
-                    # Seed severity from ladder[0] if present, else rule default.
-                    base_severity = ladder[0]["severity"] if ladder else rule.severity
+                    # Seed severity: prefer the alert's live per-entity
+                    # severity (set by the tiered alert engine), fall
+                    # back to the rule's ladder step 0, then rule default.
+                    base_severity = (
+                        inst.severity
+                        or (ladder[0]["severity"] if ladder else None)
+                        or rule.severity
+                    )
                     # Dependency: find a matching parent, if any. Suppressed
                     # children share lifecycle with normal open incidents —
                     # they still track fire counts, escalate, and auto-clear.

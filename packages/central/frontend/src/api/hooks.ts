@@ -386,12 +386,14 @@ export function useCreateAlertDefinition() {
     mutationFn: (data: {
       app_id: string;
       name: string;
-      expression: string;
+      severity_tiers: {
+        severity: string;
+        expression: string | null;
+        message_template: string;
+      }[];
       window?: string;
-      severity?: string;
       enabled?: boolean;
       description?: string;
-      message_template?: string;
     }) => apiPost("/alerts/definitions", data),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["alert-definitions"] });
