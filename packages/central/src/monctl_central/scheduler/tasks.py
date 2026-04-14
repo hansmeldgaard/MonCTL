@@ -620,7 +620,8 @@ class SchedulerRunner:
             any(device_name) AS device_name,
             any(if_name) AS if_name,
             any(tenant_id) AS tenant_id,
-            any(tenant_name) AS tenant_name
+            any(tenant_name) AS tenant_name,
+            max(counter_bits) AS counter_bits
         FROM interface
         WHERE executed_at >= toStartOfHour(now() - INTERVAL 1 HOUR)
           AND executed_at < toStartOfHour(now())
@@ -715,7 +716,8 @@ class SchedulerRunner:
             any(device_name) AS device_name,
             any(if_name) AS if_name,
             any(tenant_id) AS tenant_id,
-            any(tenant_name) AS tenant_name
+            any(tenant_name) AS tenant_name,
+            max(counter_bits) AS counter_bits
         FROM interface_hourly
         WHERE hour >= toStartOfDay(now() - INTERVAL 1 DAY)
           AND hour < toStartOfDay(now())
