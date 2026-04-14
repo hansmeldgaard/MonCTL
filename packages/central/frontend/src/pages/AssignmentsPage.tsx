@@ -390,9 +390,26 @@ export function AssignmentsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <ListChecks className="h-4 w-4" />
-            App Assignments
+          <CardTitle className="flex items-center gap-2 justify-between">
+            <span className="flex items-center gap-2">
+              <ListChecks className="h-4 w-4" />
+              App Assignments
+            </span>
+            <label className="flex items-center gap-2 text-xs font-normal text-zinc-400">
+              Version
+              <select
+                value={listState.filters.version_status ?? ""}
+                onChange={(e) =>
+                  listState.setFilter("version_status", e.target.value)
+                }
+                className="bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-200 focus:outline-none focus:border-brand-500"
+              >
+                <option value="">All</option>
+                <option value="on_latest">On latest</option>
+                <option value="stale">Stale (not on latest)</option>
+                <option value="pinned">Pinned (use_latest=false)</option>
+              </select>
+            </label>
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -567,6 +584,16 @@ export function AssignmentsPage() {
                             latest
                           </Badge>
                         )}
+                        {!assignment.is_on_latest &&
+                          assignment.latest_version && (
+                            <Badge
+                              variant="warning"
+                              className="text-[10px]"
+                              title={`Latest available: v${assignment.latest_version}`}
+                            >
+                              stale → v{assignment.latest_version}
+                            </Badge>
+                          )}
                       </div>
                     </TableCell>
                     <TableCell>

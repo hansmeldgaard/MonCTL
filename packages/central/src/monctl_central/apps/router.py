@@ -496,6 +496,10 @@ async def list_assignments(
     schedule_value: str | None = Query(default=None),
     credential_name: str | None = Query(default=None),
     enabled: bool | None = Query(default=None),
+    version_status: str | None = Query(
+        default=None,
+        description="Filter by version status: 'on_latest', 'stale', or 'pinned'",
+    ),
     sort_by: str = Query(default="app_name"),
     sort_dir: str = Query(default="asc"),
     limit: int = Query(default=50, le=500),
@@ -557,6 +561,31 @@ async def list_assignments(
             stmt = stmt.where(c)
     if enabled is not None:
         stmt = stmt.where(AppAssignment.enabled == enabled)
+    if version_status:
+        from sqlalchemy.orm import aliased
+        _LatestV = aliased(AppVersion)
+        stmt = stmt.outerjoin(
+            _LatestV,
+            sa.and_(
+                _LatestV.app_id == AppAssignment.app_id,
+                _LatestV.is_latest.is_(True),
+            ),
+        )
+        on_latest_expr = sa.or_(
+            AppAssignment.use_latest.is_(True),
+            AppAssignment.app_version_id == _LatestV.id,
+        )
+        if version_status == "pinned":
+            stmt = stmt.where(AppAssignment.use_latest.is_(False))
+        elif version_status == "stale":
+            stmt = stmt.where(sa.not_(on_latest_expr))
+        elif version_status == "on_latest":
+            stmt = stmt.where(on_latest_expr)
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="version_status must be one of: on_latest, stale, pinned",
+            )
 
     # Join CollectorGroup for sorting if not already joined for filtering
     if sort_by == "collector_group_name" and not _joined_collector_group:
@@ -633,14 +662,16 @@ async def list_assignments(
         cred_rows = (await db.execute(cred_stmt)).all()
         cred_name_map = {r.id: r.name for r in cred_rows}
 
-    # Pre-load latest versions for use_latest resolution
+    # Pre-load latest versions for every app referenced in the result.
+    # Needed both to resolve the displayed version for use_latest=True
+    # rows AND to compute is_on_latest for pinned rows (so the UI can
+    # surface "this pinned assignment is still on the current version"
+    # vs "pinned and lagging behind").
     latest_version_map: dict[uuid.UUID, AppVersion] = {}
-    use_latest_app_ids = {
-        row.AppAssignment.app_id for row in rows if row.AppAssignment.use_latest
-    }
-    if use_latest_app_ids:
+    all_app_ids = {row.AppAssignment.app_id for row in rows}
+    if all_app_ids:
         latest_stmt = select(AppVersion).where(
-            AppVersion.app_id.in_(use_latest_app_ids),
+            AppVersion.app_id.in_(all_app_ids),
             AppVersion.is_latest == True,  # noqa: E712
         )
         latest_result = await db.execute(latest_stmt)
@@ -694,6 +725,20 @@ async def list_assignments(
                     ),
                 },
                 "app_version_id": str(row.AppAssignment.app_version_id),
+                "latest_version": (
+                    latest_version_map[row.AppAssignment.app_id].version
+                    if row.AppAssignment.app_id in latest_version_map
+                    else None
+                ),
+                "is_on_latest": (
+                    row.AppAssignment.use_latest
+                    or (
+                        row.AppAssignment.app_id in latest_version_map
+                        and row.AppAssignment.app_version_id
+                        == latest_version_map[row.AppAssignment.app_id].id
+                    )
+                ),
+                "use_latest": bool(row.AppAssignment.use_latest),
                 "device": (
                     {
                         "id": str(devices[row.AppAssignment.device_id].id),

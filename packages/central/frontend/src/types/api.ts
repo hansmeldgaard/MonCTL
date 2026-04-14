@@ -371,6 +371,8 @@ export interface Assignment {
   config: Record<string, unknown>;
   enabled: boolean;
   use_latest: boolean;
+  latest_version?: string | null;
+  is_on_latest?: boolean;
   credential_id: string | null;
   credential_name: string | null;
   credential_overrides?: {
@@ -790,6 +792,7 @@ export interface Incident {
   correlation_key: string | null;
   parent_incident_id: string | null;
   severity_reached_at: string | null;
+  live_severity: string | null;
   created_at: string;
   updated_at: string;
 }
