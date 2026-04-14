@@ -38,10 +38,9 @@ async def _send_webhook(
             "definition_id": str(defn.id),
             "definition_name": defn.name,
             "app_id": str(defn.app_id),
-            "severity": defn.severity,
+            "severity_tiers": defn.severity_tiers or [],
             "state": state,
             "assignment_id": assignment_id,
-            "expression": defn.expression,
         }
     }
 

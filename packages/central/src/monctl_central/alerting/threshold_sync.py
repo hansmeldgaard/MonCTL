@@ -34,8 +34,19 @@ async def sync_threshold_variables(
     """
     warnings: list[str] = []
 
-    validation = validate_expression(definition.expression, target_table)
-    if not validation.valid:
+    # Collect threshold refs across every tier. The definition has no
+    # top-level `expression` anymore — each tier carries its own.
+    all_refs = []
+    for tier in definition.severity_tiers or []:
+        expr = tier.get("expression", "")
+        if not expr:
+            continue
+        validation = validate_expression(expr, target_table)
+        if not validation.valid:
+            continue
+        all_refs.extend(validation.threshold_refs)
+
+    if not all_refs:
         return warnings
 
     # Build hint lookup: param_key -> hint dict
@@ -53,16 +64,21 @@ async def sync_threshold_variables(
         ).scalars().all()
     }
 
-    for ref in validation.threshold_refs:
+    # Dedupe refs by (name, is_named) — multiple tiers often reference the
+    # same threshold_var (e.g. warn + crit both use rtt_ms_warn / crit).
+    seen: set[tuple[str, bool]] = set()
+    for ref in all_refs:
+        key = (ref.name, ref.is_named)
+        if key in seen:
+            continue
+        seen.add(key)
         if ref.is_named:
-            # Named reference -- must already exist
             if ref.name not in existing_vars:
                 warnings.append(
                     f"Threshold variable '{ref.name}' not found. "
                     f"Create it in the Thresholds tab first."
                 )
         else:
-            # Inline value -- auto-create variable if it doesn't exist
             hint = hints.get(ref.name, {})
             existing = existing_vars.get(ref.name)
             if existing is None:

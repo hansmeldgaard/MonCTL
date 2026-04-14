@@ -386,9 +386,8 @@ export function useCreateAlertDefinition() {
     mutationFn: (data: {
       app_id: string;
       name: string;
-      expression: string;
+      severity_tiers: { severity: string; expression: string }[];
       window?: string;
-      severity?: string;
       enabled?: boolean;
       description?: string;
       message_template?: string;

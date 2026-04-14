@@ -8,6 +8,50 @@ from fastapi import HTTPException
 
 
 _VALID_UNITS = {"percent", "ms", "seconds", "bytes", "count", "ratio", "dBm", "pps", "bps"}
+_VALID_SEVERITIES = ("info", "warning", "critical", "emergency")
+_VALID_WINDOWS = ("30s", "1m", "5m", "15m", "1h", "6h", "1d")
+
+
+def _validate_severity_tiers(alert_def: dict, app_name: str) -> None:
+    """Validate the severity_tiers list on an alert definition.
+
+    Accepts the new `severity_tiers: [{severity, expression}, ...]` shape
+    and silently up-converts a legacy single-expression shape (top-level
+    `expression` + optional `severity`) so hand-written packs during the
+    cutover still work. A missing expression OR empty tier list is an error.
+    """
+    name = alert_def.get("name", "?")
+    tiers = alert_def.get("severity_tiers")
+    if not tiers and alert_def.get("expression"):
+        tiers = [{
+            "severity": alert_def.get("severity", "warning"),
+            "expression": alert_def["expression"],
+        }]
+        alert_def["severity_tiers"] = tiers
+    if not tiers:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Alert definition '{name}' in app '{app_name}' requires "
+                   "severity_tiers (or a top-level expression for legacy packs)",
+        )
+    for i, tier in enumerate(tiers):
+        if not tier.get("expression"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Alert '{name}' severity_tiers[{i}] requires an expression",
+            )
+        sev = tier.get("severity", "warning")
+        if sev not in _VALID_SEVERITIES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Alert '{name}' severity_tiers[{i}].severity must be one of "
+                       f"{_VALID_SEVERITIES}",
+            )
+    if alert_def.get("window") and alert_def["window"] not in _VALID_WINDOWS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Alert definition '{name}': invalid window value",
+        )
 
 
 def _validate_threshold_defaults(alert_def: dict) -> None:
@@ -89,20 +133,7 @@ def validate_pack_schema(data: dict) -> None:
                         detail=f"Alert definition in app '{app['name']}' version "
                                f"'{ver.get('version', '?')}' requires a name",
                     )
-                if not alert_def.get("expression"):
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Alert definition '{alert_def.get('name', '?')}' in app "
-                               f"'{app['name']}' requires an expression",
-                    )
-                if alert_def.get("severity") and alert_def["severity"] not in (
-                    "info", "warning", "critical", "emergency",
-                ):
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Alert definition '{alert_def['name']}': "
-                               "severity must be info/warning/critical/emergency",
-                    )
+                _validate_severity_tiers(alert_def, app["name"])
                 if alert_def.get("window") and alert_def["window"] not in (
                     "30s", "1m", "5m", "15m", "1h", "6h", "1d",
                 ):
@@ -119,12 +150,7 @@ def validate_pack_schema(data: dict) -> None:
                     status_code=400,
                     detail=f"Alert definition in app '{app['name']}' requires a name",
                 )
-            if not alert_def.get("expression"):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Alert definition '{alert_def.get('name', '?')}' in app "
-                           f"'{app['name']}' requires an expression",
-                )
+            _validate_severity_tiers(alert_def, app["name"])
             _validate_threshold_defaults(alert_def)
 
         # App-level threshold_variables

@@ -2,10 +2,10 @@
   "monctl_pack": "1.0",
   "pack_uid": "basic-checks",
   "name": "Basic Checks (Ping, Port, HTTP)",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Fundamental reachability checks: ICMP ping, TCP port, and HTTP/HTTPS endpoint monitoring.",
   "author": "MonCTL",
-  "changelog": "v1.1.0 - Ship canonical alert_definitions + event_policies for ping/port/http",
+  "changelog": "v1.2.0 - Collapse warning+critical alert pairs into single defs with severity_tiers",
   "exported_at": null,
   "contents": {
     "apps": [
@@ -74,55 +74,46 @@
           {
             "name": "Ping - Device Unreachable",
             "description": "Device did not respond to any ICMP echo during the window",
-            "expression": "last(reachable) == 0",
             "window": "5m",
             "enabled": true,
-            "severity": "critical",
+            "severity_tiers": [
+              { "severity": "critical", "expression": "last(reachable) == 0" }
+            ],
             "message_template": "Device {device_name} is unreachable via ICMP"
           },
           {
-            "name": "Ping - High RTT Warning",
-            "description": "Average ping RTT exceeds the warning threshold",
-            "expression": "last(rtt_ms) > rtt_ms_warn",
+            "name": "Ping - High RTT",
+            "description": "Ping RTT exceeds the warning or critical threshold",
             "window": "5m",
             "enabled": true,
-            "severity": "warning",
-            "ladder_key": "ping_rtt",
-            "ladder_rank": 1,
-            "message_template": "High ping latency to {device_name}: {value}ms (> {rtt_ms_warn}ms)"
+            "severity_tiers": [
+              {
+                "severity": "warning",
+                "expression": "last(rtt_ms) > rtt_ms_warn"
+              },
+              {
+                "severity": "critical",
+                "expression": "last(rtt_ms) > rtt_ms_crit"
+              }
+            ],
+            "message_template": "Ping latency to {device_name}: {value}ms"
           },
           {
-            "name": "Ping - High RTT Critical",
-            "description": "Average ping RTT exceeds the critical threshold",
-            "expression": "last(rtt_ms) > rtt_ms_crit",
+            "name": "Ping - Packet Loss",
+            "description": "Packet loss exceeds the warning or critical threshold",
             "window": "5m",
             "enabled": true,
-            "severity": "critical",
-            "ladder_key": "ping_rtt",
-            "ladder_rank": 2,
-            "message_template": "Critical ping latency to {device_name}: {value}ms (> {rtt_ms_crit}ms)"
-          },
-          {
-            "name": "Ping - Packet Loss Warning",
-            "description": "Packet loss exceeds the warning threshold",
-            "expression": "last(packet_loss_pct) > loss_pct_warn",
-            "window": "5m",
-            "enabled": true,
-            "severity": "warning",
-            "ladder_key": "ping_loss",
-            "ladder_rank": 1,
+            "severity_tiers": [
+              {
+                "severity": "warning",
+                "expression": "last(packet_loss_pct) > loss_pct_warn"
+              },
+              {
+                "severity": "critical",
+                "expression": "last(packet_loss_pct) > loss_pct_crit"
+              }
+            ],
             "message_template": "Packet loss to {device_name}: {value}%"
-          },
-          {
-            "name": "Ping - Packet Loss Critical",
-            "description": "High packet loss over the window (>= crit)",
-            "expression": "last(packet_loss_pct) > loss_pct_crit",
-            "window": "5m",
-            "enabled": true,
-            "severity": "critical",
-            "ladder_key": "ping_loss",
-            "ladder_rank": 2,
-            "message_template": "Critical packet loss to {device_name}: {value}%"
           }
         ]
       },
@@ -161,17 +152,21 @@
           {
             "name": "Port - Unreachable",
             "description": "Configured TCP port is not accepting connections",
-            "expression": "last(reachable) == 0",
             "window": "5m",
             "enabled": true,
+            "severity_tiers": [
+              { "severity": "critical", "expression": "last(reachable) == 0" }
+            ],
             "message_template": "TCP port unreachable on {device_name}"
           },
           {
             "name": "Port - Slow Connect",
             "description": "TCP connect time is high",
-            "expression": "avg(rtt_ms) > 1000",
             "window": "5m",
             "enabled": true,
+            "severity_tiers": [
+              { "severity": "warning", "expression": "avg(rtt_ms) > 1000" }
+            ],
             "message_template": "Slow TCP connect to {device_name}: {value}ms"
           }
         ]
@@ -222,17 +217,21 @@
           {
             "name": "HTTP - Unreachable",
             "description": "HTTP endpoint returned an unexpected status or was unreachable",
-            "expression": "last(reachable) == 0",
             "window": "5m",
             "enabled": true,
+            "severity_tiers": [
+              { "severity": "critical", "expression": "last(reachable) == 0" }
+            ],
             "message_template": "HTTP endpoint unhealthy on {device_name}"
           },
           {
             "name": "HTTP - Slow Response",
             "description": "HTTP response time exceeds 2s on average",
-            "expression": "avg(rtt_ms) > 2000",
             "window": "5m",
             "enabled": true,
+            "severity_tiers": [
+              { "severity": "warning", "expression": "avg(rtt_ms) > 2000" }
+            ],
             "message_template": "Slow HTTP response from {device_name}: {value}ms"
           }
         ]

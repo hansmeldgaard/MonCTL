@@ -531,13 +531,18 @@ export interface CredentialTemplate {
 
 // ── Alerts ────────────────────────────────────────────────
 
+export interface SeverityTier {
+  severity: "info" | "warning" | "critical" | "emergency";
+  expression: string;
+}
+
 export interface AlertDefinition {
   id: string;
   app_id: string;
   app_name?: string;
   name: string;
   description: string | null;
-  expression: string;
+  severity_tiers: SeverityTier[];
   window: string;
   enabled: boolean;
   message_template: string | null;
@@ -558,6 +563,7 @@ export interface AlertEntity {
   device_id: string | null;
   enabled: boolean;
   state: "ok" | "firing" | "resolved";
+  severity: string | null;
   display_state: "active" | "cleared" | null;
   current_value: number | null;
   fire_count: number;
@@ -571,7 +577,7 @@ export interface AlertEntity {
   threshold_values: Record<string, number>;
   created_at: string;
   definition_name?: string;
-  definition_expression?: string;
+  definition_severity_tiers?: SeverityTier[];
   app_name?: string;
   device_name?: string;
 }
@@ -584,7 +590,7 @@ export interface AlertLogEntry {
   definition_id: string;
   definition_name: string;
   entity_key: string;
-  action: "fire" | "clear";
+  action: "fire" | "escalate" | "downgrade" | "clear";
   severity: string;
   current_value: number;
   threshold_value: number;

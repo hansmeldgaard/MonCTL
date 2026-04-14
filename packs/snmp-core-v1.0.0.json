@@ -2,10 +2,10 @@
   "monctl_pack": "1.0",
   "pack_uid": "snmp-core",
   "name": "SNMP Core Monitoring",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Core SNMP monitoring apps: reachability check, interface polling, device discovery, and uptime tracking.",
   "author": "MonCTL",
-  "changelog": "v1.1.0 - Ship canonical alert_definitions + event_policies for snmp_check and snmp_uptime",
+  "changelog": "v1.2.0 - Collapse warning+critical SNMP latency pair into single def with severity_tiers",
   "exported_at": null,
   "contents": {
     "apps": [
@@ -61,33 +61,29 @@
           {
             "name": "SNMP Unreachable",
             "description": "Device did not respond to SNMP poll during the window",
-            "expression": "last(reachable) == 0",
             "window": "5m",
             "enabled": true,
-            "severity": "critical",
+            "severity_tiers": [
+              { "severity": "critical", "expression": "last(reachable) == 0" }
+            ],
             "message_template": "SNMP unreachable: {device_name}"
           },
           {
-            "name": "High SNMP Latency",
-            "description": "SNMP RTT exceeds the warning threshold",
-            "expression": "last(rtt_ms) > snmp_rtt_warn_ms",
+            "name": "SNMP Latency",
+            "description": "SNMP RTT exceeds the warning or critical threshold",
             "window": "5m",
             "enabled": true,
-            "severity": "warning",
-            "ladder_key": "snmp_rtt",
-            "ladder_rank": 1,
-            "message_template": "High SNMP latency on {device_name}: {value}ms"
-          },
-          {
-            "name": "Critical SNMP Latency",
-            "description": "SNMP RTT exceeds the critical threshold",
-            "expression": "last(rtt_ms) > snmp_rtt_crit_ms",
-            "window": "5m",
-            "enabled": true,
-            "severity": "critical",
-            "ladder_key": "snmp_rtt",
-            "ladder_rank": 2,
-            "message_template": "Critical SNMP latency on {device_name}: {value}ms"
+            "severity_tiers": [
+              {
+                "severity": "warning",
+                "expression": "last(rtt_ms) > snmp_rtt_warn_ms"
+              },
+              {
+                "severity": "critical",
+                "expression": "last(rtt_ms) > snmp_rtt_crit_ms"
+              }
+            ],
+            "message_template": "SNMP latency on {device_name}: {value}ms"
           }
         ]
       },
@@ -166,9 +162,14 @@
           {
             "name": "Device Rebooted",
             "description": "Device uptime dropped below reboot detection threshold \u2014 likely a recent reboot. Named threshold 'reboot_threshold' is configurable per-device via thresholds.",
-            "expression": "last(uptime_seconds) < reboot_threshold",
             "window": "5m",
             "enabled": true,
+            "severity_tiers": [
+              {
+                "severity": "warning",
+                "expression": "last(uptime_seconds) < reboot_threshold"
+              }
+            ],
             "message_template": "Device {device_name} rebooted (uptime {value}s)"
           }
         ]

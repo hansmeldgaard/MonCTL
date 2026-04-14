@@ -304,47 +304,77 @@ function ActiveAlertsTab({
                     </TableCell>
                   </TableRow>
                 ) : (
-                  alerts.map((alert) => (
-                    <TableRow key={alert.id} className="bg-red-500/5">
-                      <TableCell className="font-medium text-zinc-100">
-                        {alert.definition_name ?? alert.definition_id}
-                      </TableCell>
-                      <TableCell className="text-zinc-400">
-                        {alert.app_name ?? ""}
-                      </TableCell>
-                      <TableCell className="text-zinc-300">
-                        {alert.device_id ? (
-                          <Link
-                            to={`/devices/${alert.device_id}`}
-                            className="text-brand-400 hover:text-brand-300 hover:underline"
-                          >
-                            {alert.device_name ?? alert.device_id}
-                          </Link>
-                        ) : (
-                          (alert.device_name ?? "—")
-                        )}
-                      </TableCell>
-                      <TableCell className="text-zinc-400 text-xs font-mono">
-                        {alert.entity_labels?.if_name ||
-                          alert.entity_labels?.component ||
-                          alert.entity_key ||
-                          "—"}
-                      </TableCell>
-                      <TableCell className="text-zinc-300">
-                        {alert.current_value != null
-                          ? Number(alert.current_value).toFixed(1)
-                          : "—"}
-                      </TableCell>
-                      <TableCell className="text-zinc-400">
-                        {alert.fire_count}
-                      </TableCell>
-                      <TableCell className="text-zinc-500">
-                        {alert.started_firing_at
-                          ? timeAgo(alert.started_firing_at)
-                          : "—"}
-                      </TableCell>
-                    </TableRow>
-                  ))
+                  alerts.map((alert) => {
+                    const sev = alert.severity ?? "";
+                    const rowClass =
+                      sev === "critical"
+                        ? "bg-red-500/10"
+                        : sev === "warning"
+                          ? "bg-orange-500/10"
+                          : sev === "info"
+                            ? "bg-sky-500/10"
+                            : "bg-red-500/5";
+                    const pillClass =
+                      sev === "critical"
+                        ? "bg-red-600 text-white"
+                        : sev === "warning"
+                          ? "bg-orange-600 text-white"
+                          : sev === "info"
+                            ? "bg-sky-600 text-white"
+                            : "bg-zinc-600 text-white";
+                    return (
+                      <TableRow key={alert.id} className={rowClass}>
+                        <TableCell className="font-medium text-zinc-100">
+                          <div className="flex items-center gap-2">
+                            {sev && (
+                              <span
+                                className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs font-semibold uppercase ${pillClass}`}
+                              >
+                                {sev}
+                              </span>
+                            )}
+                            <span>
+                              {alert.definition_name ?? alert.definition_id}
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-zinc-400">
+                          {alert.app_name ?? ""}
+                        </TableCell>
+                        <TableCell className="text-zinc-300">
+                          {alert.device_id ? (
+                            <Link
+                              to={`/devices/${alert.device_id}`}
+                              className="text-brand-400 hover:text-brand-300 hover:underline"
+                            >
+                              {alert.device_name ?? alert.device_id}
+                            </Link>
+                          ) : (
+                            (alert.device_name ?? "—")
+                          )}
+                        </TableCell>
+                        <TableCell className="text-zinc-400 text-xs font-mono">
+                          {alert.entity_labels?.if_name ||
+                            alert.entity_labels?.component ||
+                            alert.entity_key ||
+                            "—"}
+                        </TableCell>
+                        <TableCell className="text-zinc-300">
+                          {alert.current_value != null
+                            ? Number(alert.current_value).toFixed(1)
+                            : "—"}
+                        </TableCell>
+                        <TableCell className="text-zinc-400">
+                          {alert.fire_count}
+                        </TableCell>
+                        <TableCell className="text-zinc-500">
+                          {alert.started_firing_at
+                            ? timeAgo(alert.started_firing_at)
+                            : "—"}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
                 )}
               </TableBody>
             </Table>
@@ -390,14 +420,14 @@ function AlertLogTab({
           <FileText className="h-4 w-4" />
           Alert Log ({meta.total})
           <div className="ml-auto flex items-center gap-1">
-            {["", "fire", "clear"].map((v) => (
+            {["", "fire", "escalate", "downgrade", "clear"].map((v) => (
               <Button
                 key={v}
                 variant={action === v ? "secondary" : "ghost"}
                 size="sm"
                 onClick={() => onActionChange(v)}
               >
-                {v === "" ? "All" : v === "fire" ? "Fire" : "Clear"}
+                {v === "" ? "All" : v.charAt(0).toUpperCase() + v.slice(1)}
               </Button>
             ))}
           </div>
@@ -497,7 +527,11 @@ function AlertLogTab({
                         className={
                           entry.action === "fire"
                             ? "bg-red-500/5"
-                            : "bg-green-500/5"
+                            : entry.action === "escalate"
+                              ? "bg-orange-500/5"
+                              : entry.action === "downgrade"
+                                ? "bg-amber-500/5"
+                                : "bg-green-500/5"
                         }
                       >
                         <TableCell className="text-zinc-500 text-xs whitespace-nowrap">
@@ -505,13 +539,18 @@ function AlertLogTab({
                         </TableCell>
                         <TableCell>
                           <Badge
-                            variant={
+                            className={
                               entry.action === "fire"
-                                ? "destructive"
-                                : "success"
+                                ? "bg-red-600 text-white"
+                                : entry.action === "escalate"
+                                  ? "bg-orange-600 text-white"
+                                  : entry.action === "downgrade"
+                                    ? "bg-amber-500 text-black"
+                                    : "bg-green-600 text-white"
                             }
                           >
                             {entry.action}
+                            {entry.severity ? ` ${entry.severity}` : ""}
                           </Badge>
                         </TableCell>
                         <TableCell className="font-medium text-zinc-100">
@@ -686,8 +725,27 @@ function DefinitionsTab({
                       "—"
                     )}
                   </TableCell>
-                  <TableCell className="text-zinc-400 font-mono text-xs max-w-xs truncate">
-                    {defn.expression}
+                  <TableCell className="text-zinc-400 font-mono text-xs max-w-xs">
+                    <div className="space-y-0.5 truncate">
+                      {(defn.severity_tiers ?? []).map((t, i) => (
+                        <div key={i} className="flex items-center gap-1.5">
+                          <span
+                            className={`inline-flex items-center rounded px-1 text-[10px] uppercase font-semibold ${
+                              t.severity === "critical"
+                                ? "bg-red-600 text-white"
+                                : t.severity === "warning"
+                                  ? "bg-orange-600 text-white"
+                                  : t.severity === "info"
+                                    ? "bg-sky-600 text-white"
+                                    : "bg-zinc-600 text-white"
+                            }`}
+                          >
+                            {t.severity}
+                          </span>
+                          <span className="truncate">{t.expression}</span>
+                        </div>
+                      ))}
+                    </div>
                   </TableCell>
                   <TableCell className="text-zinc-400">{defn.window}</TableCell>
                   <TableCell>

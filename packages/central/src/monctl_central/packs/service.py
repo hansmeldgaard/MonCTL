@@ -261,29 +261,35 @@ def _export_app(
         for ad in alert_definitions:
             ad_dict = {
                 "name": ad.name,
-                "expression": ad.expression,
+                "severity_tiers": ad.severity_tiers or [],
                 "window": ad.window,
                 "enabled": ad.enabled,
                 "description": ad.description,
                 "message_template": ad.message_template,
             }
-            # Include threshold_defaults from threshold variables (backward compat)
+            # Collect threshold_defaults from all tiers' expressions so a
+            # re-import onto a clean install still resolves named thresholds.
             if tv_by_name:
-                validation = validate_expression(ad.expression, a.target_table)
-                if validation.valid and validation.threshold_params:
-                    param_names = {p.name for p in validation.threshold_params}
-                    relevant = [tv_by_name[n] for n in param_names if n in tv_by_name]
-                    if relevant:
-                        ad_dict["threshold_defaults"] = [
-                            {
-                                "param_key": v.name,
-                                "default_value": v.default_value,
-                                "display_name": v.display_name,
-                                "unit": v.unit,
-                                "description": v.description,
-                            }
-                            for v in relevant
-                        ]
+                param_names: set[str] = set()
+                for tier in ad.severity_tiers or []:
+                    expr = tier.get("expression", "")
+                    if not expr:
+                        continue
+                    validation = validate_expression(expr, a.target_table)
+                    if validation.valid and validation.threshold_params:
+                        param_names.update(p.name for p in validation.threshold_params)
+                relevant = [tv_by_name[n] for n in param_names if n in tv_by_name]
+                if relevant:
+                    ad_dict["threshold_defaults"] = [
+                        {
+                            "param_key": v.name,
+                            "default_value": v.default_value,
+                            "display_name": v.display_name,
+                            "unit": v.unit,
+                            "description": v.description,
+                        }
+                        for v in relevant
+                    ]
             d["alert_definitions"].append(ad_dict)
     return d
 
@@ -1212,51 +1218,57 @@ async def _sync_app_alert_definitions(
 
     for ad_data in alert_defs_data:
         name = ad_data["name"]
+        # Pack schema: alert defs now carry an ordered `severity_tiers`
+        # list — no more top-level `expression`/`severity`/`ladder_key`.
+        new_tiers = ad_data.get("severity_tiers") or []
+        if not new_tiers and ad_data.get("expression"):
+            # Backwards-compat for older hand-authored packs: synthesise
+            # a single-tier list from the legacy shape so the import
+            # still succeeds rather than silently writing an empty def.
+            new_tiers = [{
+                "severity": ad_data.get("severity", "warning"),
+                "expression": ad_data["expression"],
+            }]
+
         if name in existing_by_name:
             existing_def = existing_by_name[name]
-            # Update if expression differs, or if ladder/severity metadata
-            # changed — ladder wiring is pack-authored and must flow on
-            # re-import even when the expression is unchanged.
-            new_severity = ad_data.get("severity", "warning")
-            new_ladder_key = ad_data.get("ladder_key")
-            new_ladder_rank = ad_data.get("ladder_rank")
-            meta_changed = (
-                existing_def.expression != ad_data["expression"]
-                or existing_def.severity != new_severity
-                or existing_def.ladder_key != new_ladder_key
-                or existing_def.ladder_rank != new_ladder_rank
-            )
-            if meta_changed:
-                existing_def.expression = ad_data["expression"]
+            # Re-sync on any pack-authored change: tier list, window,
+            # message template, description, enabled flag.
+            if (
+                existing_def.severity_tiers != new_tiers
+                or existing_def.window != ad_data.get("window", "5m")
+                or existing_def.message_template != ad_data.get("message_template")
+                or existing_def.description != ad_data.get("description")
+                or existing_def.enabled != ad_data.get("enabled", True)
+            ):
+                existing_def.severity_tiers = new_tiers
                 existing_def.window = ad_data.get("window", "5m")
                 existing_def.enabled = ad_data.get("enabled", True)
                 existing_def.description = ad_data.get("description")
                 existing_def.message_template = ad_data.get("message_template")
-                existing_def.severity = new_severity
-                existing_def.ladder_key = new_ladder_key
-                existing_def.ladder_rank = new_ladder_rank
                 existing_def.pack_origin = pack_uid
         else:
-            # Create new definition
             existing_def = AlertDefinition(
                 app_id=app.id,
                 name=name,
-                expression=ad_data["expression"],
+                severity_tiers=new_tiers,
                 window=ad_data.get("window", "5m"),
                 enabled=ad_data.get("enabled", True),
                 description=ad_data.get("description"),
                 message_template=ad_data.get("message_template"),
-                severity=ad_data.get("severity", "warning"),
-                ladder_key=ad_data.get("ladder_key"),
-                ladder_rank=ad_data.get("ladder_rank"),
                 pack_origin=pack_uid,
             )
             db.add(existing_def)
             await db.flush()
             existing_by_name[name] = existing_def
-            # Auto-create AlertEntities for existing assignments
-            from monctl_central.alerting.instance_sync import sync_instances_for_definition
-            await sync_instances_for_definition(db, existing_def)
+
+    # Ensure every def (new OR existing) has AlertEntities for all its
+    # app's assignments. sync_instances_for_definition is idempotent —
+    # it skips assignments that already have an entity. This is what
+    # backfills entities after a migration that wiped the table.
+    from monctl_central.alerting.instance_sync import sync_instances_for_definition
+    for defn in existing_by_name.values():
+        await sync_instances_for_definition(db, defn)
 
     # Sync threshold variables for all definitions
     from monctl_central.alerting.threshold_sync import sync_threshold_variables

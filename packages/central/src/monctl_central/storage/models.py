@@ -452,24 +452,17 @@ class AlertDefinition(Base):
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
-    expression: Mapped[str] = mapped_column(Text, nullable=False)
+    # Ordered list of severity tiers, lowest severity first. Each tier is
+    # `{"severity": "warning"|"critical"|..., "expression": "<DSL>"}`.
+    # Engine evaluates every tier each cycle and picks the highest tier
+    # whose expression matched as the effective severity for the entity.
+    # Single-tier defs behave exactly like the old single-expression
+    # defs (e.g. "Ping - Device Unreachable" has one critical tier).
+    severity_tiers: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
     window: Mapped[str] = mapped_column(String(20), nullable=False, server_default="5m")
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     message_template: Mapped[str | None] = mapped_column(Text)
     pack_origin: Mapped[str | None] = mapped_column(String(255))
-    # Severity label persisted on the definition (not just incidents).
-    # Engine writes it into alert_log so downstream consumers and the
-    # severity-ladder dedup can treat warning vs critical as first-class.
-    severity: Mapped[str] = mapped_column(String(20), nullable=False, server_default="warning")
-    # Severity ladder family: alert defs that share a non-null ladder_key
-    # are siblings covering the same signal at different thresholds.
-    # While a higher-rank (numerically greater) sibling is firing for a
-    # given (assignment, entity_key), lower-rank siblings are suppressed
-    # — they neither fire nor write to alert_log. When the higher clears
-    # the lower is free to fire on the next evaluation cycle. Null
-    # ladder_key means the def stands alone (legacy behaviour).
-    ladder_key: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
-    ladder_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
@@ -505,6 +498,10 @@ class AlertEntity(Base):
     )
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     state: Mapped[str] = mapped_column(String(20), nullable=False, server_default="ok")
+    # Current severity while state='firing'. NULL when ok or resolved.
+    # Changes (without clearing) trigger an `escalate` / `downgrade`
+    # entry in alert_log; a full firing→ok transition triggers `clear`.
+    severity: Mapped[str | None] = mapped_column(String(20), nullable=True)
     current_value: Mapped[float | None] = mapped_column(Float, nullable=True)
     fire_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     fire_history: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")

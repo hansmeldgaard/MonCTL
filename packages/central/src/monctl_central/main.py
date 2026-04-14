@@ -152,10 +152,10 @@ async def lifespan(app: FastAPI):
                 async with factory() as pack_session:
                     stats = await import_pack(pack_data, resolutions, pack_session)
                     await pack_session.commit()
-                if stats["created"] > 0:
-                    logger.info("builtin_pack_imported", pack=pack_file, **stats)
+                if stats.get("created", 0) > 0:
+                    logger.info("builtin_pack_imported pack=%s stats=%s", pack_file, stats)
                 else:
-                    logger.debug("builtin_pack_skipped", pack=pack_file)
+                    logger.debug("builtin_pack_skipped pack=%s", pack_file)
             except Exception as exc:
                 logger.warning("builtin_pack_import_failed", pack=pack_file, error=str(exc))
 

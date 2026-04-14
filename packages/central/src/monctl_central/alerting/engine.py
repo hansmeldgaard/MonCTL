@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from monctl_central.alerting import severity as _sev
 from monctl_central.alerting.dsl import compile_to_sql, parse_expression
 from monctl_central.alerting.notifier import send_notifications
 from monctl_central.storage.clickhouse import ClickHouseClient
@@ -30,6 +31,23 @@ logger = logging.getLogger(__name__)
 
 # Sentinel to distinguish "key not in dict" from "key present with value None".
 _UNSET = object()
+
+
+def _expression_for_severity(defn, severity: str | None) -> str:
+    """Return the DSL expression for the given severity tier on `defn`.
+
+    Falls back to the first tier's expression when `severity` is None
+    (clear events have no live severity by the time log records are
+    built) or unknown.
+    """
+    tiers = defn.severity_tiers or []
+    if not tiers:
+        return ""
+    if severity:
+        for t in tiers:
+            if t.get("severity") == severity:
+                return t.get("expression", "")
+    return tiers[0].get("expression", "")
 
 
 class AlertEngine:
@@ -52,30 +70,11 @@ class AlertEngine:
                 )
             ).scalars().all()
 
-            # Preload severity-ladder active state: for every
-            # (ladder_key, assignment_id, entity_key) collect the set
-            # of ranks currently firing. _evaluate_definition consults
-            # and mutates this so the *highest* firing rank suppresses
-            # lower-rank siblings (and supersedes them when a new high
-            # rank opens this cycle). Definitions with no ladder_key
-            # are unaffected.
-            ladder_state = await self._load_ladder_state(session)
-
-            # Evaluate higher-rank (more severe) ladder definitions
-            # first so a newly-firing critical suppresses the warning
-            # in the same cycle rather than one cycle later.
-            definitions_sorted = sorted(
-                definitions,
-                key=lambda d: -(d.ladder_rank or 0),
-            )
-
             logger.info("alert_eval_cycle definition_count=%d", len(definitions))
 
-            for defn in definitions_sorted:
+            for defn in definitions:
                 try:
-                    records = await self._evaluate_definition(
-                        session, defn, ladder_state
-                    )
+                    records = await self._evaluate_definition(session, defn)
                     alert_log_records.extend(records)
                 except Exception:
                     logger.exception(
@@ -95,56 +94,48 @@ class AlertEngine:
             except Exception:
                 logger.exception("alert_log_insert_error")
 
-    async def _load_ladder_state(
-        self, session: AsyncSession
-    ) -> dict[tuple[str, str, str], set[int]]:
-        """Snapshot currently-firing ladder siblings.
-
-        Key: (ladder_key, assignment_id, entity_key).
-        Value: set of ranks currently firing for that ladder at that
-        entity. Used by `_evaluate_definition` to decide whether a
-        lower-rank sibling should be suppressed (higher rank active)
-        or cleared with reason "superseded".
-        """
-        rows = (
-            await session.execute(
-                select(
-                    AlertDefinition.ladder_key,
-                    AlertDefinition.ladder_rank,
-                    AlertEntity.assignment_id,
-                    AlertEntity.entity_key,
-                )
-                .join(AlertEntity, AlertEntity.definition_id == AlertDefinition.id)
-                .where(
-                    AlertDefinition.ladder_key.isnot(None),
-                    AlertDefinition.ladder_rank.isnot(None),
-                    AlertEntity.state == "firing",
-                )
-            )
-        ).all()
-
-        state: dict[tuple[str, str, str], set[int]] = {}
-        for ladder_key, rank, aid, ekey in rows:
-            key = (ladder_key, str(aid), ekey or "")
-            state.setdefault(key, set()).add(int(rank))
-        return state
-
     async def _evaluate_definition(
         self,
         session: AsyncSession,
         defn: AlertDefinition,
-        ladder_state: dict[tuple[str, str, str], set[int]] | None = None,
     ) -> list[dict]:
-        """Evaluate one alert definition. Returns alert_log records."""
-        target_table = defn.app.target_table
+        """Evaluate one tiered alert definition. Returns alert_log records.
 
-        # Parse and compile expression
-        try:
-            ast = parse_expression(defn.expression)
-            compiled = compile_to_sql(ast, target_table, defn.window)
-        except Exception:
-            logger.exception("dsl_compile_error definition_id=%s", defn.id)
+        Each tier is an independent DSL expression; the engine evaluates
+        them all and picks the HIGHEST-severity tier whose expression
+        matched as the effective severity for the entity. Log actions
+        are chosen relative to the entity's previous severity:
+
+          - ok → severity X  : `fire`
+          - sev A → sev B > A: `escalate`
+          - sev A → sev B < A: `downgrade`
+          - sev A → sev A    : no-op (still firing at same severity)
+          - firing → ok      : `clear`
+
+        This replaces the old ladder_key/ladder_rank coordination
+        between sibling defs — a ladder is now one definition.
+        """
+        target_table = defn.app.target_table
+        tiers: list[dict] = list(defn.severity_tiers or [])
+        if not tiers:
+            logger.debug("eval_definition_no_tiers name=%s", defn.name)
             return []
+
+        # Parse and compile every tier's expression up front. If any
+        # tier fails to compile the whole definition is skipped for
+        # this cycle — partial evaluation could mis-classify severity.
+        compiled_tiers: list[tuple[str, object]] = []
+        for tier in tiers:
+            try:
+                ast = parse_expression(tier["expression"])
+                compiled = compile_to_sql(ast, target_table, defn.window)
+                compiled_tiers.append((tier["severity"], compiled))
+            except Exception:
+                logger.exception(
+                    "dsl_compile_error definition_id=%s tier=%s",
+                    defn.id, tier.get("severity"),
+                )
+                return []
 
         # Load enabled instances
         instances = (
@@ -161,17 +152,13 @@ class AlertEngine:
             logger.debug("eval_definition_no_instances name=%s", defn.name)
             return []
 
-        # Determine which assignments have fresh data since last evaluation
-        fresh_aids = await self._fresh_assignments(
-            target_table, instances, compiled.is_config_changed
-        )
+        # Freshness check runs once — target_table and config-changed
+        # flag are uniform across tiers for a single definition (they
+        # come from the app + window, not the expression).
+        is_cc = getattr(compiled_tiers[0][1], "is_config_changed", False)
+        fresh_aids = await self._fresh_assignments(target_table, instances, is_cc)
 
-        logger.debug(
-            "eval_definition name=%s table=%s instances=%d",
-            defn.name, target_table, len(instances),
-        )
-
-        # Load threshold variables for this app
+        # Threshold vars + overrides (same for every tier of the def)
         threshold_vars = (
             await session.execute(
                 select(ThresholdVariable)
@@ -181,7 +168,6 @@ class AlertEngine:
         var_by_name: dict[str, ThresholdVariable] = {v.name: v for v in threshold_vars}
         var_ids = [v.id for v in threshold_vars]
 
-        # Load threshold overrides for these variables
         overrides_by_device: dict[uuid.UUID, dict[str, dict[str, ThresholdOverride]]] = {}
         if var_ids:
             overrides = (
@@ -197,122 +183,85 @@ class AlertEngine:
 
         now = datetime.now(timezone.utc)
 
-        # Config CHANGED: special evaluation path
-        if compiled.is_config_changed:
-            firing_keys = await self._evaluate_config_changed(
-                defn, instances, compiled.config_changed_key or ""
-            )
-        else:
-            firing_keys = await self._execute_compiled_query(
-                compiled, instances, overrides_by_device, var_by_name
-            )
+        # Evaluate every tier. Each returns firing_keys: {(aid, entity_key): fire_data}
+        tier_results: list[tuple[str, dict]] = []
+        for severity, compiled in compiled_tiers:
+            if is_cc:
+                fk = await self._evaluate_config_changed(
+                    defn, instances, getattr(compiled, "config_changed_key", "") or ""
+                )
+            else:
+                fk = await self._execute_compiled_query(
+                    compiled, instances, overrides_by_device, var_by_name
+                )
+            tier_results.append((severity, fk))
 
+        total_firing = sum(len(fk) for _, fk in tier_results)
         logger.info(
-            "eval_definition_result name=%s firing=%d total_instances=%d",
-            defn.name, len(firing_keys), len(instances),
+            "eval_definition_result name=%s tiers=%d firing_total=%d instances=%d",
+            defn.name, len(tier_results), total_firing, len(instances),
         )
 
-        # Build alert_log records and update instance states
         log_records: list[dict] = []
 
-        # Ladder parameters for this definition (None for stand-alone defs).
-        ladder_key = defn.ladder_key
-        ladder_rank = defn.ladder_rank
-        has_ladder = bool(ladder_key and ladder_rank is not None)
-
         for inst in instances:
-            has_fresh_data = str(inst.assignment_id) in fresh_aids
-            # Without fresh data, the ClickHouse query result is either
-            # unchanged (stale window) or empty (race between eval and
-            # collector forward — window contains no rows because the
-            # next data point hasn't been inserted yet). Either way,
-            # this cycle carries no new evidence for this entity and
-            # must not mutate its state or produce log records.
-            if not has_fresh_data:
+            if str(inst.assignment_id) not in fresh_aids:
                 continue
 
             key = (str(inst.assignment_id), inst.entity_key)
-            is_firing = key in firing_keys
 
-            # Severity ladder suppression: if a strictly higher-rank
-            # sibling is active for the same (ladder_key, assignment,
-            # entity_key), this lower-rank def must not fire. If it is
-            # already firing we emit a single "clear" with reason
-            # superseded and leave the state as resolved. The caller
-            # seeded `ladder_state` with pre-cycle firing ranks, and we
-            # update it as we go (higher ranks iterate first).
-            suppressed_by_ladder = False
-            if has_ladder and ladder_state is not None:
-                lkey = (ladder_key, str(inst.assignment_id), inst.entity_key or "")
-                active_ranks = ladder_state.get(lkey, set())
-                if any(r > ladder_rank for r in active_ranks):
-                    suppressed_by_ladder = True
+            # Effective severity = highest-rank tier that matched
+            effective_sev: str | None = None
+            fire_data: dict = {}
+            for severity, fk in tier_results:
+                if key in fk and _sev.compare(severity, effective_sev) > 0:
+                    effective_sev = severity
+                    fire_data = fk[key]
 
-            if suppressed_by_ladder:
-                if inst.state == "firing":
-                    inst.state = "resolved"
-                    inst.last_cleared_at = now
-                    inst.fire_count = 0
-                    inst.last_evaluated_at = now
-                    log_records.append(
-                        self._build_log_record(defn, inst, "clear", now)
-                    )
-                    if has_ladder:
-                        ladder_state.setdefault(
-                            (ladder_key, str(inst.assignment_id), inst.entity_key or ""),
-                            set(),
-                        ).discard(ladder_rank)
-                else:
-                    inst.last_evaluated_at = now
-                continue
-
-            inst.fire_history = (inst.fire_history or [])[-19:] + [is_firing]
+            inst.fire_history = (inst.fire_history or [])[-19:] + [effective_sev is not None]
             inst.last_evaluated_at = now
 
-            if is_firing:
-                firing_data = firing_keys.get(key, {})
-                inst.current_value = firing_data.get("value")
-                if firing_data.get("labels"):
-                    inst.entity_labels = firing_data["labels"]
-                inst.metric_values = firing_data.get("metric_values", {})
-                inst.threshold_values = firing_data.get("threshold_values", {})
+            prev_sev = inst.severity
+            prev_state = inst.state
 
-                if inst.state != "firing":
-                    inst.state = "firing"
-                    inst.started_firing_at = now
-                    inst.fire_count = 1
-                    await send_notifications(defn, str(inst.assignment_id), "firing")
-                else:
-                    inst.fire_count += 1
-
-                # Register in ladder state so lower-rank siblings
-                # evaluated later in the cycle see us firing and
-                # suppress themselves.
-                if has_ladder and ladder_state is not None:
-                    ladder_state.setdefault(
-                        (ladder_key, str(inst.assignment_id), inst.entity_key or ""),
-                        set(),
-                    ).add(ladder_rank)
-
-                log_records.append(self._build_log_record(
-                    defn, inst, "fire", now
-                ))
-            else:
-                if inst.state == "firing":
+            if effective_sev is None:
+                # Not firing any tier → clear if previously firing.
+                if prev_state == "firing":
                     inst.state = "resolved"
+                    inst.severity = None
                     inst.last_cleared_at = now
                     inst.fire_count = 0
-                    if has_ladder and ladder_state is not None:
-                        ladder_state.setdefault(
-                            (ladder_key, str(inst.assignment_id), inst.entity_key or ""),
-                            set(),
-                        ).discard(ladder_rank)
                     await send_notifications(defn, str(inst.assignment_id), "resolved")
+                    log_records.append(self._build_log_record(defn, inst, "clear", now))
+                continue
 
-                    # Write exactly one "clear" record
-                    log_records.append(self._build_log_record(
-                        defn, inst, "clear", now
-                    ))
+            # Firing at some severity — record metric data from the
+            # winning tier (value/labels/thresholds).
+            inst.current_value = fire_data.get("value")
+            if fire_data.get("labels"):
+                inst.entity_labels = fire_data["labels"]
+            inst.metric_values = fire_data.get("metric_values", {})
+            inst.threshold_values = fire_data.get("threshold_values", {})
+
+            if prev_state != "firing":
+                # Fresh fire from ok/resolved.
+                inst.state = "firing"
+                inst.severity = effective_sev
+                inst.started_firing_at = now
+                inst.fire_count = 1
+                await send_notifications(defn, str(inst.assignment_id), "firing")
+                log_records.append(self._build_log_record(defn, inst, "fire", now))
+            else:
+                # Already firing — evaluate severity transition.
+                inst.fire_count += 1
+                cmp = _sev.compare(effective_sev, prev_sev)
+                if cmp > 0:
+                    inst.severity = effective_sev
+                    log_records.append(self._build_log_record(defn, inst, "escalate", now))
+                elif cmp < 0:
+                    inst.severity = effective_sev
+                    log_records.append(self._build_log_record(defn, inst, "downgrade", now))
+                # same severity → fire_count updated, no log record
 
         return log_records
 
@@ -331,10 +280,15 @@ class AlertEngine:
             "definition_name": defn.name,
             "entity_key": inst.entity_key or "",
             "action": action,
-            "severity": getattr(defn, "severity", "") or "",
+            # Live severity from the instance (set by the tier-eval loop).
+            # For `clear` actions the instance's severity has already been
+            # reset to None — fall back to an empty string.
+            "severity": (inst.severity or ""),
             "current_value": float(inst.current_value) if inst.current_value is not None else 0.0,
             "threshold_value": 0.0,
-            "expression": defn.expression,
+            # `expression` column in alert_log carries the effective tier's
+            # expression — the one whose match drove the action (if any).
+            "expression": _expression_for_severity(defn, inst.severity),
             "device_id": str(inst.device_id) if inst.device_id else _zero,
             "device_name": labels.get("device_name", ""),
             "assignment_id": str(inst.assignment_id),
