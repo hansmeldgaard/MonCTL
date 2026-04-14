@@ -620,16 +620,17 @@ class AlertEngine:
         # received_at, which — if counted as "fresh" — would cause the
         # engine to re-evaluate with a NULL metric and spuriously clear
         # already-firing alerts. Only *successful* samples count as
-        # fresh evidence. The `config` table does not carry
-        # error_category on legacy deployments, but the filter is still
-        # safe (column defaults to '').
+        # fresh evidence. The `config` table has no error_category
+        # column (collector only writes successful diff rows there), so
+        # the filter is omitted for it.
+        error_filter = "" if table == "config" else "  AND error_category = '' "
         sql = (
             f"SELECT toString(assignment_id) AS aid, "
             f"       max(received_at) AS max_rcv "
             f"FROM {table} "
             f"WHERE assignment_id IN ({aid_list}) "
             f"  AND received_at > {{cutoff:DateTime64(3, 'UTC')}} "
-            f"  AND error_category = '' "
+            f"{error_filter}"
             f"GROUP BY assignment_id"
         )
 

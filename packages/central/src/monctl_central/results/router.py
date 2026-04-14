@@ -489,12 +489,15 @@ async def device_status(
         client = ch._get_client()
         for t in ("availability_latency", "performance", "interface", "config"):
             try:
+                # config table has no error_category column — all rows there
+                # are successful diffs by construction.
+                err_filter = "" if t == "config" else "  AND error_category = '' "
                 res = client.query(
                     f"SELECT toString(assignment_id) AS aid, "
                     f"       max(executed_at) AS last_ok "
                     f"FROM {t} "
                     f"WHERE device_id = {{device_id:UUID}} "
-                    f"  AND error_category = '' "
+                    f"{err_filter}"
                     f"GROUP BY assignment_id",
                     parameters={"device_id": device_id},
                 )
