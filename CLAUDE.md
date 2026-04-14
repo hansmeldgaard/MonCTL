@@ -154,6 +154,7 @@ packages/
 - **DSL**: `avg(metric) > 80`, `rate(octets) * 8 / 1e6 > 500`, `field CHANGED`, `state IN (...)`. Compiled to ClickHouse SQL.
 - **4-level threshold hierarchy**: expression default → app_value → device override → entity override.
 - **Engine**: 30s evaluation cycle. Writes fire/clear to `alert_log` ClickHouse table.
+- **Positive-clear via healthy tier**: If the healthy tier carries an expression (e.g. `rtt_ms < rtt_ms_warn`) it acts as an explicit clear signal — an active alert only clears when that expression matches. Non-matching cycles where no fire tier matched leave the entity untouched (no spurious reset). Blank healthy expression → legacy auto-clear on any non-matching cycle.
 - **Events**: Promote alerts via `EventPolicy` (fire_count or fire_history window).
 
 ### Template Hierarchy

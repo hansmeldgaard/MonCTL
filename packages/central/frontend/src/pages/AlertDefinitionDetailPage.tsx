@@ -99,7 +99,7 @@ export function AlertDefinitionDetailPage() {
   const addTier = (severity: SeverityTier["severity"]) => {
     const tier: SeverityTier = {
       severity,
-      expression: severity === "healthy" ? null : "",
+      expression: "",
       message_template:
         severity === "healthy"
           ? `${defn.name} on {device_name} recovered`
@@ -117,8 +117,7 @@ export function AlertDefinitionDetailPage() {
       // so the API error is nicer to read.
       const toSend = (tiers ?? []).map((t) => ({
         severity: t.severity,
-        expression:
-          t.severity === "healthy" ? null : (t.expression || "").trim() || null,
+        expression: (t.expression || "").trim() || null,
         message_template: (t.message_template || "").trim(),
       }));
       for (const t of toSend) {
@@ -215,11 +214,13 @@ export function AlertDefinitionDetailPage() {
         </CardHeader>
         <CardContent>
           <p className="mb-3 text-xs text-zinc-500">
-            Each tier is evaluated independently per cycle. The engine picks the
-            highest-severity tier whose expression matches as the live severity.
-            The <span className="font-semibold">healthy</span> tier has no
-            expression — its message is the one-time recovery line logged when
-            the alert clears.
+            Each tier is evaluated independently per cycle. The engine picks
+            the highest-severity tier whose expression matches as the live
+            severity. The <span className="font-semibold">healthy</span> tier
+            never fires an alert — it only <em>clears</em> an already-active
+            one. With an expression set it acts as a positive-clear signal;
+            leave it blank to fall back to the legacy behavior (any
+            non-matching sample clears the alert).
           </p>
           <div className="space-y-3">
             {sortedTiers.map((t, idx) => (
@@ -242,21 +243,29 @@ export function AlertDefinitionDetailPage() {
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>
                 </div>
-                {t.severity !== "healthy" && (
-                  <div>
-                    <label className="mb-1 block text-xs text-zinc-400">
-                      Expression
-                    </label>
-                    <Input
-                      value={t.expression ?? ""}
-                      onChange={(e) =>
-                        updateTier(idx, { expression: e.target.value })
-                      }
-                      placeholder="e.g. rtt_ms > rtt_ms_warn"
-                      className="font-mono text-sm"
-                    />
-                  </div>
-                )}
+                <div>
+                  <label className="mb-1 block text-xs text-zinc-400">
+                    Expression{t.severity === "healthy" ? " (optional)" : ""}
+                  </label>
+                  <Input
+                    value={t.expression ?? ""}
+                    onChange={(e) =>
+                      updateTier(idx, { expression: e.target.value })
+                    }
+                    placeholder={
+                      t.severity === "healthy"
+                        ? "e.g. rtt_ms < 50  (leave blank for legacy auto-clear)"
+                        : "e.g. rtt_ms > rtt_ms_warn"
+                    }
+                    className="font-mono text-sm"
+                  />
+                  {t.severity === "healthy" && (
+                    <p className="mt-1 text-xs text-zinc-500">
+                      When this matches, an active alert clears. Blank =
+                      legacy auto-clear on any non-matching cycle.
+                    </p>
+                  )}
+                </div>
                 <div>
                   <label className="mb-1 block text-xs text-zinc-400">
                     Message template

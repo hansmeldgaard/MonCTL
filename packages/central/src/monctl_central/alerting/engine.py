@@ -121,14 +121,32 @@ class AlertEngine:
             logger.debug("eval_definition_no_tiers name=%s", defn.name)
             return []
 
-        # Parse and compile every NON-HEALTHY tier's expression up front.
-        # The healthy tier (if any) has no expression — it's a metadata
-        # carrier for the recovery message template. If any other tier
-        # fails to compile the whole definition is skipped for this
-        # cycle — partial evaluation could mis-classify severity.
+        # Parse and compile every tier's expression up front. Non-healthy
+        # tiers fire the alert; the healthy tier (if it has an expression)
+        # acts as a POSITIVE CLEAR — it only clears an already-firing entity
+        # and never fires a new one. If a healthy tier has no expression,
+        # we fall back to the legacy behavior (any non-matching sample
+        # clears the entity) for back-compat. If any tier fails to compile
+        # the whole definition is skipped for this cycle — partial
+        # evaluation could mis-classify severity.
         compiled_tiers: list[tuple[str, object]] = []
+        healthy_compiled: object | None = None
         for tier in tiers:
-            if tier.get("severity") == "healthy" or not tier.get("expression"):
+            if tier.get("severity") == "healthy":
+                expr = tier.get("expression") or ""
+                if not expr:
+                    continue
+                try:
+                    ast = parse_expression(expr)
+                    healthy_compiled = compile_to_sql(ast, target_table, defn.window)
+                except Exception:
+                    logger.exception(
+                        "dsl_compile_error_healthy definition_id=%s",
+                        defn.id,
+                    )
+                    return []
+                continue
+            if not tier.get("expression"):
                 continue
             try:
                 ast = parse_expression(tier["expression"])
@@ -203,10 +221,28 @@ class AlertEngine:
                 )
             tier_results.append((severity, fk))
 
+        # Evaluate the healthy tier too, if it has an expression. Matching
+        # keys here represent entities for which a POSITIVE clear signal
+        # is present this cycle.
+        healthy_keys: set[tuple[str, str]] = set()
+        if healthy_compiled is not None:
+            if is_cc:
+                healthy_fk = await self._evaluate_config_changed(
+                    defn,
+                    instances,
+                    getattr(healthy_compiled, "config_changed_key", "") or "",
+                )
+            else:
+                healthy_fk = await self._execute_compiled_query(
+                    healthy_compiled, instances, overrides_by_device, var_by_name
+                )
+            healthy_keys = set(healthy_fk.keys())
+
         total_firing = sum(len(fk) for _, fk in tier_results)
         logger.info(
-            "eval_definition_result name=%s tiers=%d firing_total=%d instances=%d",
+            "eval_definition_result name=%s tiers=%d firing_total=%d instances=%d healthy_positive=%s",
             defn.name, len(tier_results), total_firing, len(instances),
+            healthy_compiled is not None,
         )
 
         log_records: list[dict] = []
@@ -225,14 +261,30 @@ class AlertEngine:
                     effective_sev = severity
                     fire_data = fk[key]
 
-            inst.fire_history = (inst.fire_history or [])[-19:] + [effective_sev is not None]
             inst.last_evaluated_at = now
-
             prev_sev = inst.severity
             prev_state = inst.state
 
             if effective_sev is None:
-                # Not firing any tier → clear if previously firing.
+                # No fire tier matched. Behavior depends on whether a
+                # healthy-tier expression is defined:
+                #   * healthy defined + matches → positive clear
+                #   * healthy defined + no match → ambiguous middle,
+                #     no state change, no log, no fire_history update
+                #   * healthy not defined → legacy auto-clear (back-compat)
+                if healthy_compiled is not None:
+                    if key in healthy_keys and prev_state == "firing":
+                        inst.fire_history = (inst.fire_history or [])[-19:] + [False]
+                        inst.state = "resolved"
+                        inst.severity = None
+                        inst.last_cleared_at = now
+                        inst.fire_count = 0
+                        await send_notifications(defn, str(inst.assignment_id), "resolved")
+                        log_records.append(self._build_log_record(defn, inst, "clear", now))
+                    # else: ambiguous middle — skip entirely (no history append)
+                    continue
+                # Legacy: clear on any non-matching cycle.
+                inst.fire_history = (inst.fire_history or [])[-19:] + [False]
                 if prev_state == "firing":
                     inst.state = "resolved"
                     inst.severity = None
@@ -241,6 +293,9 @@ class AlertEngine:
                     await send_notifications(defn, str(inst.assignment_id), "resolved")
                     log_records.append(self._build_log_record(defn, inst, "clear", now))
                 continue
+
+            # A fire tier matched — record it in history before continuing.
+            inst.fire_history = (inst.fire_history or [])[-19:] + [True]
 
             # Firing at some severity — record metric data from the
             # winning tier (value/labels/thresholds).

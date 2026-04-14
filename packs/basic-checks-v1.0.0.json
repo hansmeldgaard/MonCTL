@@ -97,7 +97,7 @@
             "severity_tiers": [
               {
                 "severity": "healthy",
-                "expression": null,
+                "expression": "rtt_ms < rtt_ms_warn",
                 "message_template": "Ping latency to {device_name} recovered to {value}ms"
               },
               {
