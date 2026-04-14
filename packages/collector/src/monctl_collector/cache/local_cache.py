@@ -244,11 +244,10 @@ class LocalCache:
                 "updated_at": job.updated_at,
                 "connector_bindings": [
                     {
-                        "alias": b.alias,
+                        "connector_type": b.connector_type,
                         "connector_id": b.connector_id,
                         "connector_version_id": b.connector_version_id,
                         "credential_name": b.credential_name,
-                        "use_latest": b.use_latest,
                         "settings": b.settings,
                         "connector_checksum": b.connector_checksum,
                     }

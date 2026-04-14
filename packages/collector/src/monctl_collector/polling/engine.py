@@ -159,11 +159,10 @@ class PollEngine:
         for j in raw_jobs:
             bindings = [
                 ConnectorBinding(
-                    alias=b["alias"],
+                    connector_type=b["connector_type"],
                     connector_id=b["connector_id"],
                     connector_version_id=b["connector_version_id"],
                     credential_name=b.get("credential_name"),
-                    use_latest=b.get("use_latest", False),
                     settings=b.get("settings", {}),
                     connector_checksum=b.get("connector_checksum", ""),
                 )
@@ -322,7 +321,7 @@ class PollEngine:
                     )
                     fail_phase = "connect"
                     await connector.connect(job.device_host or "")
-                    connectors[binding.alias] = connector
+                    connectors[binding.connector_type] = connector
                 fail_phase = "poll"
 
                 # Build app cache accessor via gRPC to cache-node

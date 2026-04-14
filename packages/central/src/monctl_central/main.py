@@ -591,41 +591,40 @@ class SshConnector:
     # ── Seed app-level connector bindings ─────────────────────────────────
     from monctl_central.storage.models import App, AppConnectorBinding
 
-    _APP_CONNECTOR_REQUIREMENTS: dict[str, list[dict[str, str]]] = {
-        "snmp_check": [{"alias": "snmp", "connector_name": "snmp"}],
-        "snmp_interface_poller": [{"alias": "snmp", "connector_name": "snmp"}],
-        "snmp_discovery": [{"alias": "snmp", "connector_name": "snmp"}],
+    _APP_CONNECTOR_REQUIREMENTS: dict[str, list[str]] = {
+        "snmp_check": ["snmp"],
+        "snmp_interface_poller": ["snmp"],
+        "snmp_discovery": ["snmp"],
     }
 
     async with factory() as session:
-        for app_name, bindings in _APP_CONNECTOR_REQUIREMENTS.items():
+        for app_name, connector_names in _APP_CONNECTOR_REQUIREMENTS.items():
             app = (await session.execute(
                 select(App).where(App.name == app_name)
             )).scalar_one_or_none()
             if app is None:
                 continue
-            for binding_spec in bindings:
+            for connector_name in connector_names:
+                connector = (await session.execute(
+                    select(Connector).where(Connector.name == connector_name)
+                )).scalar_one_or_none()
+                if connector is None:
+                    continue
                 existing = (await session.execute(
                     select(AppConnectorBinding).where(
                         AppConnectorBinding.app_id == app.id,
-                        AppConnectorBinding.alias == binding_spec["alias"],
+                        AppConnectorBinding.connector_type == connector.connector_type,
                     )
                 )).scalar_one_or_none()
                 if existing:
                     continue
-                connector = (await session.execute(
-                    select(Connector).where(Connector.name == binding_spec["connector_name"])
-                )).scalar_one_or_none()
-                if connector is None:
-                    continue
                 session.add(AppConnectorBinding(
                     app_id=app.id,
                     connector_id=connector.id,
-                    alias=binding_spec["alias"],
-                    use_latest=True,
+                    connector_type=connector.connector_type,
                 ))
                 logger.info("app_connector_binding_seeded",
-                            app=app_name, alias=binding_spec["alias"])
+                            app=app_name, connector_type=connector.connector_type)
         await session.commit()
 
     # ── ClickHouse schema init ─────────────────────────────────────────────

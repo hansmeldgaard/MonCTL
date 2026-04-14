@@ -12,12 +12,16 @@ if TYPE_CHECKING:
 
 @dataclass
 class ConnectorBinding:
-    """A connector bound to a job via its assignment."""
-    alias: str                         # named reference (e.g. "snmp")
+    """A connector bound to a job via its assignment.
+
+    Keyed by ``connector_type`` (e.g. "snmp", "ssh"). At most one
+    binding per connector_type per assignment. The runtime key used by
+    ``context.connectors[...]`` is the connector_type.
+    """
+    connector_type: str                # e.g. "snmp", "ssh"
     connector_id: str                  # connector UUID
-    connector_version_id: str          # connector version UUID
+    connector_version_id: str          # connector version UUID (resolved)
     credential_name: str | None = None # credential name (resolved by CredentialManager)
-    use_latest: bool = False
     settings: dict = field(default_factory=dict)
     connector_checksum: str = ""       # sha256 from central for cache invalidation
 
@@ -180,5 +184,5 @@ class PollContext:
     node_id: str              # collector node hostname
     device_host: str          # resolved device address
     parameters: dict          # resolved parameters (credentials substituted)
-    connectors: dict = field(default_factory=dict)  # alias → connector instance
+    connectors: dict = field(default_factory=dict)  # connector_type → connector instance
     cache: AppCacheAccessor | None = None  # shared cache accessor
