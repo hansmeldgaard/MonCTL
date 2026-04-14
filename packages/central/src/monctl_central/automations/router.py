@@ -12,6 +12,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
+from monctl_central.common.filters import ilike_filter
 from monctl_central.dependencies import get_db, get_clickhouse, get_session_factory, require_permission
 from monctl_central.storage.models import Action, Automation, AutomationStep
 
@@ -156,8 +157,9 @@ async def list_actions(
     count_stmt = select(func.count(Action.id))
 
     if search:
-        stmt = stmt.where(Action.name.ilike(f"%{search}%"))
-        count_stmt = count_stmt.where(Action.name.ilike(f"%{search}%"))
+        if (c := ilike_filter(Action.name, search)) is not None:
+            stmt = stmt.where(c)
+            count_stmt = count_stmt.where(c)
     if target:
         stmt = stmt.where(Action.target == target)
         count_stmt = count_stmt.where(Action.target == target)
@@ -296,8 +298,9 @@ async def list_automations(
     count_stmt = select(func.count(Automation.id))
 
     if search:
-        stmt = stmt.where(Automation.name.ilike(f"%{search}%"))
-        count_stmt = count_stmt.where(Automation.name.ilike(f"%{search}%"))
+        if (c := ilike_filter(Automation.name, search)) is not None:
+            stmt = stmt.where(c)
+            count_stmt = count_stmt.where(c)
     if trigger_type:
         stmt = stmt.where(Automation.trigger_type == trigger_type)
         count_stmt = count_stmt.where(Automation.trigger_type == trigger_type)

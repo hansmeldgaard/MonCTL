@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from monctl_central.common.filters import ilike_filter
 from monctl_central.dependencies import get_db, require_permission
 from monctl_central.storage.models import (
     AssignmentConnectorBinding,
@@ -142,11 +143,14 @@ async def list_connectors(
     base_stmt = select(Connector)
 
     if name:
-        base_stmt = base_stmt.where(Connector.name.ilike(f"%{name}%"))
+        if (c := ilike_filter(Connector.name, name)) is not None:
+            base_stmt = base_stmt.where(c)
     if connector_type:
-        base_stmt = base_stmt.where(Connector.connector_type.ilike(f"%{connector_type}%"))
+        if (c := ilike_filter(Connector.connector_type, connector_type)) is not None:
+            base_stmt = base_stmt.where(c)
     if description:
-        base_stmt = base_stmt.where(Connector.description.ilike(f"%{description}%"))
+        if (c := ilike_filter(Connector.description, description)) is not None:
+            base_stmt = base_stmt.where(c)
 
     sort_col = SORT_MAP.get(sort_by, Connector.name)
     base_stmt = base_stmt.order_by(sort_col.desc() if sort_dir == "desc" else sort_col.asc())
