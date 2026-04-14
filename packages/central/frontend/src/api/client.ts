@@ -4,10 +4,12 @@ const BASE_URL = "/v1";
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  detail: unknown;
+  constructor(status: number, message: string, detail?: unknown) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.detail = detail;
   }
 }
 
@@ -96,13 +98,22 @@ async function request<T>(
 
   if (!res.ok) {
     let message = "Unknown error";
+    let detail: unknown = undefined;
     try {
       const body = await res.json();
-      message = body.detail ?? JSON.stringify(body);
+      detail = body.detail;
+      if (typeof detail === "string") {
+        message = detail;
+      } else if (detail && typeof detail === "object") {
+        message =
+          (detail as { message?: string }).message ?? JSON.stringify(detail);
+      } else {
+        message = JSON.stringify(body);
+      }
     } catch {
       message = await res.text().catch(() => "Unknown error");
     }
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, message, detail);
   }
 
   // 204 No Content (and any other empty-body success) has no JSON to parse.
@@ -200,13 +211,22 @@ export async function apiPostFormData<T>(
 
   if (!res.ok) {
     let message = "Unknown error";
+    let detail: unknown = undefined;
     try {
       const body = await res.json();
-      message = body.detail ?? JSON.stringify(body);
+      detail = body.detail;
+      if (typeof detail === "string") {
+        message = detail;
+      } else if (detail && typeof detail === "object") {
+        message =
+          (detail as { message?: string }).message ?? JSON.stringify(detail);
+      } else {
+        message = JSON.stringify(body);
+      }
     } catch {
       message = await res.text().catch(() => "Unknown error");
     }
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, message, detail);
   }
 
   return res.json() as Promise<ApiResponse<T>>;

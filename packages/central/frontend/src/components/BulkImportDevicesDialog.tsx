@@ -12,6 +12,10 @@ import {
   useCredentials,
   useTenants,
 } from "@/api/hooks.ts";
+import { ApiError } from "@/api/client.ts";
+import type { DuplicateCandidate } from "@/types/api.ts";
+
+type DuplicateRow = { address: string; candidates: DuplicateCandidate[] };
 
 const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
 const IPV6_RE = /^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$/;
@@ -73,7 +77,9 @@ export function BulkImportDevicesDialog({
   const [result, setResult] = useState<{
     created: number;
     discovery_queued: number;
+    skipped: number;
   } | null>(null);
+  const [duplicates, setDuplicates] = useState<DuplicateRow[] | null>(null);
 
   const parsed = useMemo(() => parseAddresses(rawInput), [rawInput]);
 
@@ -98,6 +104,7 @@ export function BulkImportDevicesDialog({
     setLabels({});
     setError(null);
     setResult(null);
+    setDuplicates(null);
   }
 
   function handleClose() {
@@ -131,10 +138,14 @@ export function BulkImportDevicesDialog({
       return;
     }
 
+    await submit(false);
+  }
+
+  async function submit(force: boolean) {
+    setError(null);
     const cleanCreds = Object.fromEntries(
       Object.entries(deviceCreds).filter(([, v]) => v !== ""),
     );
-
     try {
       const resp = await bulkImport.mutateAsync({
         addresses: parsed.valid,
@@ -142,12 +153,27 @@ export function BulkImportDevicesDialog({
         collector_group_id: collectorGroupId,
         credentials: cleanCreds,
         labels: Object.keys(labels).length > 0 ? labels : undefined,
+        force: force || undefined,
       });
+      setDuplicates(null);
       setResult({
         created: resp.data.created,
         discovery_queued: resp.data.discovery_queued,
+        skipped: resp.data.skipped_duplicates?.length ?? 0,
       });
     } catch (err) {
+      if (
+        err instanceof ApiError &&
+        err.status === 409 &&
+        err.detail &&
+        typeof err.detail === "object" &&
+        (err.detail as { code?: string }).code === "duplicate_candidate"
+      ) {
+        const dups =
+          (err.detail as { duplicates?: DuplicateRow[] }).duplicates ?? [];
+        setDuplicates(dups);
+        return;
+      }
       setError(err instanceof Error ? err.message : "Import failed");
     }
   }
@@ -162,6 +188,12 @@ export function BulkImportDevicesDialog({
             </span>{" "}
             device
             {result.created !== 1 ? "s" : ""} created.
+            {result.skipped > 0 && (
+              <span className="text-amber-400 ml-1">
+                {result.skipped} duplicate{result.skipped !== 1 ? "s" : ""}{" "}
+                skipped.
+              </span>
+            )}
             {result.discovery_queued > 0 && (
               <span className="text-zinc-400 ml-1">
                 SNMP discovery queued for {result.discovery_queued} — names will
@@ -339,19 +371,56 @@ export function BulkImportDevicesDialog({
           {/* Error */}
           {error && <p className="text-sm text-red-400">{error}</p>}
 
+          {/* Duplicates warning */}
+          {duplicates && duplicates.length > 0 && (
+            <div className="rounded border border-amber-600/40 bg-amber-950/30 p-3 space-y-2">
+              <p className="text-sm text-amber-300">
+                {duplicates.length} of {parsed.valid.length} address
+                {parsed.valid.length !== 1 ? "es" : ""} already exist in this
+                tenant:
+              </p>
+              <ul className="text-xs text-amber-200 space-y-0.5 max-h-40 overflow-y-auto font-mono">
+                {duplicates.map((d) => (
+                  <li key={d.address}>
+                    {d.address}
+                    {d.candidates[0] ? ` — ${d.candidates[0].name}` : ""}
+                  </li>
+                ))}
+              </ul>
+              <p className="text-xs text-zinc-400">
+                Click "Import anyway" to create the non-duplicate addresses only
+                (the {duplicates.length} listed above will be skipped).
+              </p>
+            </div>
+          )}
+
           <DialogFooter>
             <Button type="button" variant="secondary" onClick={handleClose}>
               Cancel
             </Button>
-            <Button type="submit" disabled={bulkImport.isPending}>
-              {bulkImport.isPending && (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              )}
-              Import{" "}
-              {parsed.valid.length > 0
-                ? `${parsed.valid.length} Device${parsed.valid.length !== 1 ? "s" : ""}`
-                : "Devices"}
-            </Button>
+            {duplicates && duplicates.length > 0 ? (
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={bulkImport.isPending}
+                onClick={() => submit(true)}
+              >
+                {bulkImport.isPending && (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                )}
+                Import anyway ({parsed.valid.length - duplicates.length} new)
+              </Button>
+            ) : (
+              <Button type="submit" disabled={bulkImport.isPending}>
+                {bulkImport.isPending && (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                )}
+                Import{" "}
+                {parsed.valid.length > 0
+                  ? `${parsed.valid.length} Device${parsed.valid.length !== 1 ? "s" : ""}`
+                  : "Devices"}
+              </Button>
+            )}
           </DialogFooter>
         </form>
       )}

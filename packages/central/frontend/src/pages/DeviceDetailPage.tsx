@@ -6981,6 +6981,47 @@ function ThresholdRow({
 
 // ── Main Page ────────────────────────────────────────────
 
+function DuplicateBanner({ device }: { device: DeviceModel | undefined }) {
+  const meta = (device?.metadata ?? {}) as Record<string, unknown>;
+  const rawDupOf = meta.duplicate_of;
+  const dupIds = Array.isArray(rawDupOf)
+    ? rawDupOf.filter((x): x is string => typeof x === "string")
+    : [];
+  const { data: firstDup } = useDevice(dupIds[0]);
+  if (dupIds.length === 0) return null;
+  const basis = meta.serial
+    ? `hardware serial ${String(meta.serial)}`
+    : "sysName + sysObjectID";
+  return (
+    <div className="flex items-start gap-2 rounded border border-amber-600/40 bg-amber-950/30 p-3 text-sm">
+      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+      <div className="flex-1 space-y-1">
+        <p className="text-amber-300">
+          Possible duplicate device —{" "}
+          {dupIds.length === 1
+            ? "matches"
+            : `matches ${dupIds.length} other devices on`}{" "}
+          {basis}.
+        </p>
+        <p className="text-xs text-amber-200">
+          {firstDup ? (
+            <Link to={`/devices/${dupIds[0]}`} className="underline">
+              {firstDup.name} ({firstDup.address})
+            </Link>
+          ) : (
+            <Link to={`/devices/${dupIds[0]}`} className="underline font-mono">
+              {dupIds[0]}
+            </Link>
+          )}
+          {dupIds.length > 1 && (
+            <span className="text-zinc-400"> +{dupIds.length - 1} more</span>
+          )}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export function DeviceDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { data: deviceResults, isLoading: resultsLoading } =
@@ -7140,6 +7181,9 @@ export function DeviceDetailPage() {
           </Button>
         </div>
       </div>
+
+      {/* Possible-duplicate banner */}
+      <DuplicateBanner device={device} />
 
       {/* Auto-Assign Preview Dialog */}
       <Dialog

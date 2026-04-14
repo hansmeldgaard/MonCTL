@@ -17,6 +17,8 @@ import {
   useTenants,
 } from "@/api/hooks.ts";
 import { LabelEditor } from "@/components/LabelEditor.tsx";
+import { ApiError } from "@/api/client.ts";
+import type { DuplicateCandidate } from "@/types/api.ts";
 
 function formatCredentialType(type: string): string {
   return type
@@ -47,6 +49,9 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
   const [deviceCreds, setDeviceCreds] = useState<Record<string, string>>({});
   const [labels, setLabels] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
+  const [duplicates, setDuplicates] = useState<DuplicateCandidate[] | null>(
+    null,
+  );
 
   const credsByType = useMemo(() => {
     const map: Record<string, typeof credentials> = {};
@@ -69,6 +74,7 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
     setDeviceCreds({});
     setLabels({});
     setError(null);
+    setDuplicates(null);
   }
 
   function handleClose() {
@@ -76,9 +82,43 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
     onClose();
   }
 
+  async function submit(force: boolean) {
+    setError(null);
+    try {
+      await createDevice.mutateAsync({
+        name: nameField.value.trim(),
+        address: addressField.value.trim(),
+        tenant_id: tenantId || undefined,
+        collector_group_id: collectorGroupId || undefined,
+        device_type_id: deviceTypeId || undefined,
+        credentials: deviceCreds,
+        labels: Object.keys(labels).length > 0 ? labels : undefined,
+        force: force || undefined,
+      });
+      reset();
+      onClose();
+    } catch (err) {
+      if (
+        err instanceof ApiError &&
+        err.status === 409 &&
+        err.detail &&
+        typeof err.detail === "object" &&
+        (err.detail as { code?: string }).code === "duplicate_candidate"
+      ) {
+        const candidates =
+          (err.detail as { candidates?: DuplicateCandidate[] }).candidates ??
+          [];
+        setDuplicates(candidates);
+        return;
+      }
+      setError(err instanceof Error ? err.message : "Failed to create device");
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    setDuplicates(null);
 
     if (!validateAll(nameField, addressField)) return;
 
@@ -92,21 +132,7 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
       return;
     }
 
-    try {
-      await createDevice.mutateAsync({
-        name: nameField.value.trim(),
-        address: addressField.value.trim(),
-        tenant_id: tenantId || undefined,
-        collector_group_id: collectorGroupId || undefined,
-        device_type_id: deviceTypeId || undefined,
-        credentials: deviceCreds,
-        labels: Object.keys(labels).length > 0 ? labels : undefined,
-      });
-      reset();
-      onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create device");
-    }
+    await submit(false);
   }
 
   return (
@@ -293,16 +319,55 @@ export function AddDeviceDialog({ open, onClose }: AddDeviceDialogProps) {
         {/* Error */}
         {error && <p className="text-sm text-red-400">{error}</p>}
 
+        {/* Duplicate warning */}
+        {duplicates && duplicates.length > 0 && (
+          <div className="rounded border border-amber-600/40 bg-amber-950/30 p-3 space-y-2">
+            <p className="text-sm text-amber-300">
+              A device with this address already exists:
+            </p>
+            <ul className="text-xs text-amber-200 space-y-0.5">
+              {duplicates.map((c) => (
+                <li key={c.id}>
+                  <span className="font-mono">{c.address}</span>
+                  {" — "}
+                  {c.name}
+                  {c.sys_name && c.sys_name !== c.name
+                    ? ` (sysName: ${c.sys_name})`
+                    : ""}
+                </li>
+              ))}
+            </ul>
+            <p className="text-xs text-zinc-400">
+              Click "Add anyway" if this is a different physical device that
+              happens to share the same management address.
+            </p>
+          </div>
+        )}
+
         <DialogFooter>
           <Button type="button" variant="secondary" onClick={handleClose}>
             Cancel
           </Button>
-          <Button type="submit" disabled={createDevice.isPending}>
-            {createDevice.isPending && (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            )}
-            Add Device
-          </Button>
+          {duplicates && duplicates.length > 0 ? (
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={createDevice.isPending}
+              onClick={() => submit(true)}
+            >
+              {createDevice.isPending && (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              )}
+              Add anyway
+            </Button>
+          ) : (
+            <Button type="submit" disabled={createDevice.isPending}>
+              {createDevice.isPending && (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              )}
+              Add Device
+            </Button>
+          )}
         </DialogFooter>
       </form>
     </Dialog>

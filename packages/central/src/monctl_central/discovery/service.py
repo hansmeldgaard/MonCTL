@@ -69,7 +69,7 @@ async def process_discovery_result(
 
     # 1. Update device metadata with raw SNMP data
     metadata = dict(device.metadata_ or {})
-    for key in ("sys_object_id", "sys_descr", "sys_name", "sys_location", "sys_contact"):
+    for key in ("sys_object_id", "sys_descr", "sys_name", "sys_location", "sys_contact", "serial"):
         val = config_data.get(key)
         if val:
             metadata[key] = val
@@ -107,6 +107,26 @@ async def process_discovery_result(
         metadata["model"] = model
     if os_family:
         metadata["os_family"] = os_family
+
+    # Post-discovery duplicate detection: compare identity fields against other
+    # devices in the same tenant. Runs before we assign the metadata so we can
+    # stash duplicate_of into the same JSONB write.
+    dup_of = await _find_identity_duplicates(device, metadata, db)
+    if dup_of:
+        metadata["duplicate_of"] = dup_of
+        metadata["duplicate_detected_at"] = datetime.now(timezone.utc).isoformat()
+        changes["duplicate_of"] = ",".join(dup_of)
+        logger.warning(
+            "discovery_duplicate_detected",
+            device_id=device_id,
+            matches=dup_of,
+            serial=metadata.get("serial"),
+            sys_name=metadata.get("sys_name"),
+            sys_object_id=metadata.get("sys_object_id"),
+        )
+    else:
+        metadata.pop("duplicate_of", None)
+        metadata.pop("duplicate_detected_at", None)
 
     device.metadata_ = metadata
 
@@ -558,6 +578,51 @@ def _check_eligibility(
 
     logger.info("eligibility_passed", app=app_name, device=device_id)
     return True
+
+
+async def _find_identity_duplicates(
+    device: Device,
+    metadata: dict,
+    db: AsyncSession,
+) -> list[str]:
+    """Return IDs of other devices in the same tenant that share a stable
+    identity with `device`.
+
+    Precedence:
+      1. Hardware serial (entPhysicalSerialNum) — strongest signal.
+      2. sys_name + sys_object_id — fallback only when neither side has a serial.
+         A mismatched serial is a *negative* signal and suppresses the fallback.
+    """
+    serial = (metadata.get("serial") or "").strip()
+    sys_name = (metadata.get("sys_name") or "").strip()
+    sys_object_id = (metadata.get("sys_object_id") or "").strip()
+
+    if not serial and not (sys_name and sys_object_id):
+        return []
+
+    stmt = select(Device.id, Device.metadata_).where(Device.id != device.id)
+    if device.tenant_id is None:
+        stmt = stmt.where(Device.tenant_id.is_(None))
+    else:
+        stmt = stmt.where(Device.tenant_id == device.tenant_id)
+
+    rows = (await db.execute(stmt)).all()
+    matches: list[str] = []
+    for other_id, other_meta in rows:
+        other_meta = other_meta or {}
+        other_serial = (other_meta.get("serial") or "").strip()
+        if serial and other_serial and serial == other_serial:
+            matches.append(str(other_id))
+            continue
+        if serial or other_serial:
+            continue
+        if not (sys_name and sys_object_id):
+            continue
+        other_sn = (other_meta.get("sys_name") or "").strip()
+        other_oid = (other_meta.get("sys_object_id") or "").strip()
+        if other_sn == sys_name and other_oid == sys_object_id:
+            matches.append(str(other_id))
+    return matches
 
 
 async def _has_apps_with_eligibility_oids(device_type: DeviceType, db: AsyncSession) -> bool:
