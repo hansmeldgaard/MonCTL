@@ -37,11 +37,12 @@ message GetJobsRequest {
 }
 
 message ConnectorBindingProto {
-  string alias                = 1;
+  string connector_type       = 1;
   string connector_id         = 2;
   string connector_version_id = 3;
   string credential_name      = 4;
-  bool   use_latest           = 5;
+  // field 5 retired (was use_latest bool)
+  reserved 5;
   string settings_json        = 6;
 }
 

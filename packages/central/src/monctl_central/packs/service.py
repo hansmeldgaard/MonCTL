@@ -1019,34 +1019,32 @@ async def _sync_connector_bindings_for_app(
     if not bindings_data:
         return
     for b in bindings_data:
-        alias = b.get("alias", "")
         connector_name = b.get("connector_name", "")
-        if not alias or not connector_name:
+        if not connector_name:
             continue
-        # Check if binding already exists for this alias
-        existing = (await db.execute(
-            select(AppConnectorBinding).where(
-                AppConnectorBinding.app_id == app.id,
-                AppConnectorBinding.alias == alias,
-            )
-        )).scalar_one_or_none()
-        if existing:
-            continue
-        # Resolve connector by name
+        # Resolve connector by name first so we can use its type as the key.
         connector = (await db.execute(
             select(Connector).where(Connector.name == connector_name)
         )).scalar_one_or_none()
         if connector is None:
             logger.warning(
-                "connector_binding_skip_no_connector app=%s alias=%s connector_name=%s",
-                app.name, alias, connector_name,
+                "connector_binding_skip_no_connector app=%s connector_name=%s",
+                app.name, connector_name,
             )
+            continue
+        # Check if a binding for this connector type already exists.
+        existing = (await db.execute(
+            select(AppConnectorBinding).where(
+                AppConnectorBinding.app_id == app.id,
+                AppConnectorBinding.connector_type == connector.connector_type,
+            )
+        )).scalar_one_or_none()
+        if existing:
             continue
         db.add(AppConnectorBinding(
             app_id=app.id,
             connector_id=connector.id,
-            alias=alias,
-            use_latest=True,
+            connector_type=connector.connector_type,
         ))
     await db.flush()
 

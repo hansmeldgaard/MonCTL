@@ -4,7 +4,7 @@ import { Key } from "lucide-react";
 interface CredentialCellProps {
   credentialName: string | null;
   credentialOverrides?: {
-    alias: string;
+    connector_type: string;
     credential_id: string;
     credential_name: string;
   }[];
@@ -22,7 +22,7 @@ export function CredentialCell({
     return (
       <div className="flex flex-wrap gap-1">
         {overrides.map((ov) => (
-          <Badge key={ov.alias} variant="info" className="text-[10px] gap-1">
+          <Badge key={ov.connector_type} variant="info" className="text-[10px] gap-1">
             <Key className="h-2.5 w-2.5" />
             {ov.credential_name}
           </Badge>

@@ -14,6 +14,10 @@ import sqlalchemy as sa
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from monctl_central.apps.connector_declaration import (
+    ConnectorDeclarationError,
+    extract_required_connectors,
+)
 from monctl_central.common.filters import ilike_filter
 from monctl_central.dependencies import apply_tenant_filter, get_clickhouse, get_db, require_permission
 from monctl_common.validators import validate_semver, validate_uuid
@@ -133,8 +137,7 @@ class ConnectorBindingInput(BaseModel):
     connector_id: str
     connector_version_id: str | None = None
     credential_id: str | None = None
-    alias: str
-    use_latest: bool = False
+    connector_type: str
     settings: dict = Field(default_factory=dict)
 
 
@@ -309,11 +312,12 @@ async def list_apps(
     result = await db.execute(stmt)
     apps = result.scalars().all()
 
-    # Batch-fetch connector names
+    # Batch-fetch connector names (skip empty/unfilled slots)
     all_connector_ids: set[uuid.UUID] = set()
     for a in apps:
         for b in a.connector_bindings:
-            all_connector_ids.add(b.connector_id)
+            if b.connector_id is not None:
+                all_connector_ids.add(b.connector_id)
     connector_names: dict[uuid.UUID, str] = {}
     if all_connector_ids:
         cn_rows = (await db.execute(
@@ -331,9 +335,10 @@ async def list_apps(
             "vendor_oid_prefix": a.vendor_oid_prefix,
             "connector_bindings": [
                 {
-                    "alias": b.alias,
-                    "connector_id": str(b.connector_id),
-                    "connector_name": connector_names.get(b.connector_id, ""),
+                    "connector_type": b.connector_type,
+                    "connector_id": str(b.connector_id) if b.connector_id else None,
+                    "connector_name": connector_names.get(b.connector_id, "") if b.connector_id else "",
+                    "is_orphaned": b.is_orphaned,
                 }
                 for b in a.connector_bindings
             ],
@@ -618,7 +623,7 @@ async def list_assignments(
         )
         override_result = await db.execute(override_stmt)
         for ov in override_result.scalars().all():
-            overrides_map.setdefault(ov.assignment_id, {})[ov.alias] = ov.credential_id
+            overrides_map.setdefault(ov.assignment_id, {})[ov.connector_type] = ov.credential_id
             all_cred_ids.add(ov.credential_id)
 
     # Fetch all credential names in one query
@@ -655,17 +660,17 @@ async def list_assignments(
     ) -> str | None:
         """Resolve effective device-level credential name for display.
 
-        Uses device.credentials JSONB matching connector alias.
+        Uses device.credentials JSONB matching connector type.
         """
         if not assignment.device_id or assignment.device_id not in devs:
             return None
         dev = devs[assignment.device_id]
         if dev.credentials and app.connector_bindings:
             for cb in app.connector_bindings:
-                alias = cb.alias
-                if alias in dev.credentials:
+                ctype = cb.connector_type
+                if ctype in dev.credentials:
                     try:
-                        cred_id = uuid.UUID(str(dev.credentials[alias]))
+                        cred_id = uuid.UUID(str(dev.credentials[ctype]))
                         name = cred_names.get(cred_id)
                         if name:
                             return name
@@ -722,11 +727,11 @@ async def list_assignments(
                 "credential_name": cred_name_map.get(row.AppAssignment.credential_id) if row.AppAssignment.credential_id else None,
                 "credential_overrides": [
                     {
-                        "alias": alias,
+                        "connector_type": ctype,
                         "credential_id": str(cred_id),
                         "credential_name": cred_name_map.get(cred_id, ""),
                     }
-                    for alias, cred_id in overrides_map.get(row.AppAssignment.id, {}).items()
+                    for ctype, cred_id in overrides_map.get(row.AppAssignment.id, {}).items()
                 ],
                 "device_default_credential_name": _resolve_device_credential_name(
                     row.AppAssignment, row.App, devices, cred_name_map,
@@ -735,10 +740,11 @@ async def list_assignments(
                     {
                         "id": str(b.id),
                         "connector_id": str(b.connector_id),
-                        "connector_version_id": str(b.connector_version_id),
+                        "connector_version_id": (
+                            str(b.connector_version_id) if b.connector_version_id else None
+                        ),
                         "credential_id": str(b.credential_id) if b.credential_id else None,
-                        "alias": b.alias,
-                        "use_latest": b.use_latest,
+                        "connector_type": b.connector_type,
                         "settings": b.settings,
                     }
                     for b in row.AppAssignment.connector_bindings
@@ -930,8 +936,8 @@ async def get_app(
     if app is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App not found")
 
-    # Load connector names for display
-    connector_ids = {b.connector_id for b in app.connector_bindings}
+    # Load connector names for display (skip empty/unfilled slots)
+    connector_ids = {b.connector_id for b in app.connector_bindings if b.connector_id is not None}
     connector_names: dict[uuid.UUID, str] = {}
     if connector_ids:
         from monctl_central.storage.models import Connector as ConnectorModel
@@ -956,12 +962,12 @@ async def get_app(
             ],
             "connector_bindings": [
                 {
-                    "alias": b.alias,
-                    "connector_id": str(b.connector_id),
-                    "connector_name": connector_names.get(b.connector_id, ""),
-                    "use_latest": b.use_latest,
+                    "connector_type": b.connector_type,
+                    "connector_id": str(b.connector_id) if b.connector_id else None,
+                    "connector_name": connector_names.get(b.connector_id, "") if b.connector_id else "",
                     "connector_version_id": str(b.connector_version_id) if b.connector_version_id else None,
                     "settings": b.settings or {},
+                    "is_orphaned": b.is_orphaned,
                 }
                 for b in app.connector_bindings
             ],
@@ -973,10 +979,9 @@ async def get_app(
 
 
 class AppConnectorBindingInput(BaseModel):
-    alias: str = Field(min_length=1, max_length=64)
+    connector_type: str = Field(min_length=1, max_length=32)
     connector_id: str = Field(min_length=1)
-    use_latest: bool = True
-    connector_version_id: str | None = None
+    connector_version_id: str | None = None  # None = latest at resolve time
     settings: dict = Field(default_factory=dict)
 
 
@@ -993,11 +998,11 @@ async def list_app_connectors(
         "status": "success",
         "data": [
             {
-                "alias": b.alias,
-                "connector_id": str(b.connector_id),
-                "use_latest": b.use_latest,
+                "connector_type": b.connector_type,
+                "connector_id": str(b.connector_id) if b.connector_id else None,
                 "connector_version_id": str(b.connector_version_id) if b.connector_version_id else None,
                 "settings": b.settings or {},
+                "is_orphaned": b.is_orphaned,
             }
             for b in rows
         ],
@@ -1011,52 +1016,61 @@ async def add_app_connector(
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_permission("app", "create")),
 ):
-    """Add a connector binding to an app."""
+    """Add a connector binding to an app (legacy / graceful-fallback path).
+
+    For modern apps that declare ``required_connectors`` in their Poller
+    source, slots are auto-created on version upload and filled via
+    ``PUT /apps/{app_id}/connectors/{connector_type}/assign``.
+    """
     app = await db.get(App, uuid.UUID(app_id))
     if not app:
         raise HTTPException(status_code=404, detail="App not found")
 
-    # Check for duplicate alias
+    # One binding per connector_type per app.
     existing = (await db.execute(
         select(AppConnectorBinding).where(
             AppConnectorBinding.app_id == app.id,
-            AppConnectorBinding.alias == request.alias,
+            AppConnectorBinding.connector_type == request.connector_type,
         )
     )).scalar_one_or_none()
     if existing:
-        raise HTTPException(status_code=409, detail=f"Alias '{request.alias}' already exists on this app")
+        raise HTTPException(
+            status_code=409,
+            detail=f"Connector type '{request.connector_type}' already bound on this app",
+        )
 
-    # Resolve version_id if use_latest
-    version_id = None
-    if request.connector_version_id:
-        version_id = uuid.UUID(request.connector_version_id)
-    elif not request.use_latest:
-        latest = (await db.execute(
-            select(ConnectorVersion).where(
-                ConnectorVersion.connector_id == uuid.UUID(request.connector_id),
-                ConnectorVersion.is_latest == True,  # noqa: E712
-            )
-        )).scalar_one_or_none()
-        if latest:
-            version_id = latest.id
+    connector = await db.get(Connector, uuid.UUID(request.connector_id))
+    if not connector:
+        raise HTTPException(status_code=404, detail="Connector not found")
+    if connector.connector_type != request.connector_type:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Connector type mismatch: requested '{request.connector_type}' "
+                f"but connector '{connector.name}' is '{connector.connector_type}'"
+            ),
+        )
+
+    version_id = (
+        uuid.UUID(request.connector_version_id) if request.connector_version_id else None
+    )
 
     binding = AppConnectorBinding(
         app_id=app.id,
-        connector_id=uuid.UUID(request.connector_id),
-        alias=request.alias,
-        use_latest=request.use_latest,
+        connector_id=connector.id,
+        connector_type=connector.connector_type,
         connector_version_id=version_id,
         settings=request.settings,
     )
     db.add(binding)
     await db.flush()
-    return {"status": "success", "data": {"alias": binding.alias}}
+    return {"status": "success", "data": {"connector_type": binding.connector_type}}
 
 
-@router.put("/{app_id}/connectors/{alias}")
+@router.put("/{app_id}/connectors/{connector_type}")
 async def update_app_connector(
     app_id: str,
-    alias: str,
+    connector_type: str,
     request: AppConnectorBindingInput,
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_permission("app", "edit")),
@@ -1065,23 +1079,24 @@ async def update_app_connector(
     binding = (await db.execute(
         select(AppConnectorBinding).where(
             AppConnectorBinding.app_id == uuid.UUID(app_id),
-            AppConnectorBinding.alias == alias,
+            AppConnectorBinding.connector_type == connector_type,
         )
     )).scalar_one_or_none()
     if not binding:
         raise HTTPException(status_code=404, detail="Connector binding not found")
 
     binding.connector_id = uuid.UUID(request.connector_id)
-    binding.use_latest = request.use_latest
-    binding.connector_version_id = uuid.UUID(request.connector_version_id) if request.connector_version_id else None
+    binding.connector_version_id = (
+        uuid.UUID(request.connector_version_id) if request.connector_version_id else None
+    )
     binding.settings = request.settings
-    return {"status": "success", "data": {"alias": binding.alias}}
+    return {"status": "success", "data": {"connector_type": binding.connector_type}}
 
 
-@router.delete("/{app_id}/connectors/{alias}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{app_id}/connectors/{connector_type}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_app_connector(
     app_id: str,
-    alias: str,
+    connector_type: str,
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_permission("app", "delete")),
 ):
@@ -1089,12 +1104,78 @@ async def delete_app_connector(
     binding = (await db.execute(
         select(AppConnectorBinding).where(
             AppConnectorBinding.app_id == uuid.UUID(app_id),
-            AppConnectorBinding.alias == alias,
+            AppConnectorBinding.connector_type == connector_type,
         )
     )).scalar_one_or_none()
     if not binding:
         raise HTTPException(status_code=404, detail="Connector binding not found")
     await db.delete(binding)
+
+
+class AssignConnectorToSlotRequest(BaseModel):
+    connector_id: str
+    connector_version_id: str | None = None  # None = latest at resolve time
+    settings: dict = Field(default_factory=dict)
+
+
+@router.put("/{app_id}/connectors/{connector_type}/assign")
+async def assign_connector_to_slot(
+    app_id: str,
+    connector_type: str,
+    request: AssignConnectorToSlotRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_permission("app", "edit")),
+):
+    """Assign a concrete connector to an existing slot on an app."""
+    binding = (
+        await db.execute(
+            select(AppConnectorBinding).where(
+                AppConnectorBinding.app_id == uuid.UUID(app_id),
+                AppConnectorBinding.connector_type == connector_type,
+            )
+        )
+    ).scalar_one_or_none()
+    if not binding:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Connector slot for type '{connector_type}' not found on this app",
+        )
+    if binding.is_orphaned:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Slot '{connector_type}' is orphaned (not declared by the current "
+                f"app version). Delete it or upload a version that declares it."
+            ),
+        )
+
+    connector = await db.get(Connector, uuid.UUID(request.connector_id))
+    if not connector:
+        raise HTTPException(status_code=404, detail="Connector not found")
+    if connector.connector_type != connector_type:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Connector type mismatch: slot expects '{connector_type}' but "
+                f"connector '{connector.name}' is '{connector.connector_type}'"
+            ),
+        )
+
+    version_id = (
+        uuid.UUID(request.connector_version_id) if request.connector_version_id else None
+    )
+
+    binding.connector_id = connector.id
+    binding.connector_version_id = version_id
+    binding.settings = request.settings
+    await db.flush()
+    return {
+        "status": "success",
+        "data": {
+            "connector_type": binding.connector_type,
+            "connector_id": str(binding.connector_id),
+        },
+    }
 
 
 @router.post("/assignments", status_code=status.HTTP_201_CREATED)
@@ -1107,6 +1188,30 @@ async def create_assignment(
     from sqlalchemy import update
     from monctl_central.storage.models import Collector, Device
     from monctl_common.utils import utc_now
+
+    # Block creation when the app has any unfilled (non-orphaned) connector
+    # slots declared by its Poller source. The operator must pick a
+    # concrete connector for every slot before the app can be deployed.
+    unfilled_slots = (
+        await db.execute(
+            select(AppConnectorBinding.connector_type).where(
+                AppConnectorBinding.app_id == uuid.UUID(request.app_id),
+                AppConnectorBinding.is_orphaned.is_(False),
+                AppConnectorBinding.connector_id.is_(None),
+            )
+        )
+    ).all()
+    if unfilled_slots:
+        types = ", ".join(ctype for (ctype,) in unfilled_slots)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"App has unfilled connector slots: {types}. "
+                f"Assign a connector to each slot via "
+                f"PUT /apps/{{app_id}}/connectors/{{connector_type}}/assign "
+                f"before creating an assignment."
+            ),
+        )
 
     # Determine routing: specific collector, cluster, or group-level (collector_id=None)
     device_group_id: uuid.UUID | None = None
@@ -1188,25 +1293,17 @@ async def create_assignment(
 
     # Create connector bindings if provided
     for binding in request.connector_bindings:
-        version_id = binding.connector_version_id
-        if not version_id:
-            # Resolve latest version for this connector
-            latest = (await db.execute(
-                select(ConnectorVersion).where(
-                    ConnectorVersion.connector_id == uuid.UUID(binding.connector_id),
-                    ConnectorVersion.is_latest == True,  # noqa: E712
-                )
-            )).scalar_one_or_none()
-            if not latest:
-                raise HTTPException(status_code=400, detail=f"No latest version for connector {binding.connector_id}")
-            version_id = str(latest.id)
+        version_id = (
+            uuid.UUID(binding.connector_version_id)
+            if binding.connector_version_id
+            else None
+        )
         acb = AssignmentConnectorBinding(
             assignment_id=assignment.id,
             connector_id=uuid.UUID(binding.connector_id),
-            connector_version_id=uuid.UUID(version_id),
+            connector_version_id=version_id,
             credential_id=uuid.UUID(binding.credential_id) if binding.credential_id else None,
-            alias=binding.alias,
-            use_latest=binding.use_latest,
+            connector_type=binding.connector_type,
             settings=binding.settings,
         )
         db.add(acb)
@@ -1383,24 +1480,17 @@ async def update_assignment(
             )
         )
         for binding in request.connector_bindings:
-            version_id = binding.connector_version_id
-            if not version_id:
-                latest = (await db.execute(
-                    select(ConnectorVersion).where(
-                        ConnectorVersion.connector_id == uuid.UUID(binding.connector_id),
-                        ConnectorVersion.is_latest == True,  # noqa: E712
-                    )
-                )).scalar_one_or_none()
-                if not latest:
-                    raise HTTPException(status_code=400, detail=f"No latest version for connector {binding.connector_id}")
-                version_id = str(latest.id)
+            version_id = (
+                uuid.UUID(binding.connector_version_id)
+                if binding.connector_version_id
+                else None
+            )
             acb = AssignmentConnectorBinding(
                 assignment_id=assignment.id,
                 connector_id=uuid.UUID(binding.connector_id),
-                connector_version_id=uuid.UUID(version_id),
+                connector_version_id=version_id,
                 credential_id=uuid.UUID(binding.credential_id) if binding.credential_id else None,
-                alias=binding.alias,
-                use_latest=binding.use_latest,
+                connector_type=binding.connector_type,
                 settings=binding.settings,
             )
             db.add(acb)
@@ -1672,6 +1762,99 @@ async def delete_app_version(
     await db.flush()
 
 
+async def _sync_connector_slots(
+    db: AsyncSession,
+    app_id: uuid.UUID,
+    source_code: str,
+    entry_class: str,
+) -> None:
+    """Reconcile ``AppConnectorBinding`` rows with the declaration on the
+    uploaded Poller source. Slots are keyed by ``connector_type``.
+
+    * Source does not declare ``required_connectors`` → legacy app,
+      leave existing bindings untouched.
+    * Source declares ``required_connectors = []`` → explicit "no
+      connectors". Orphan any existing non-orphaned bindings.
+    * Source declares ``["snmp", ...]`` → for each declared type:
+        - New type → create an empty slot (connector_id=NULL). If a
+          single Connector of that type exists, auto-fill connector_id
+          to keep onboarding friction low.
+        - Existing type → un-orphan if it was orphaned.
+      For each existing type NOT in the declaration → mark orphaned
+      (keep the row so running assignments don't silently break).
+
+    The collector engine ignores orphaned slots at runtime.
+    """
+    try:
+        declared = extract_required_connectors(source_code, entry_class=entry_class)
+    except ConnectorDeclarationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid required_connectors declaration: {exc}",
+        ) from exc
+    except SyntaxError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Could not parse app source code: {exc}",
+        ) from exc
+
+    if declared is None:
+        return
+
+    # Dedupe preserving order (the parser already rejects duplicates,
+    # but be defensive when a dict-form legacy declaration is used).
+    seen: set[str] = set()
+    declared_types: list[str] = []
+    for ctype in declared:
+        if ctype in seen:
+            continue
+        seen.add(ctype)
+        declared_types.append(ctype)
+
+    existing_rows = (
+        await db.execute(
+            select(AppConnectorBinding).where(AppConnectorBinding.app_id == app_id)
+        )
+    ).scalars().all()
+    existing_by_type = {b.connector_type: b for b in existing_rows}
+
+    declared_set = set(declared_types)
+    existing_set = set(existing_by_type.keys())
+
+    # 1. Create slots for newly declared types.
+    for ctype in declared_types:
+        if ctype in existing_set:
+            continue
+        # Auto-fill connector_id if there's exactly one candidate.
+        auto_conn = (
+            await db.execute(
+                select(Connector).where(Connector.connector_type == ctype).limit(2)
+            )
+        ).scalars().all()
+        picked = auto_conn[0].id if len(auto_conn) == 1 else None
+        db.add(
+            AppConnectorBinding(
+                app_id=app_id,
+                connector_type=ctype,
+                connector_id=picked,
+                connector_version_id=None,
+                is_orphaned=False,
+            )
+        )
+
+    # 2. Un-orphan declared-and-existing types.
+    for ctype in declared_set & existing_set:
+        row = existing_by_type[ctype]
+        if row.is_orphaned:
+            row.is_orphaned = False
+
+    # 3. Orphan declared-away types.
+    for ctype in existing_set - declared_set:
+        row = existing_by_type[ctype]
+        if not row.is_orphaned:
+            row.is_orphaned = True
+
+
 @router.post("/{app_id}/versions", status_code=status.HTTP_201_CREATED)
 async def create_app_version(
     app_id: str,
@@ -1715,6 +1898,17 @@ async def create_app_version(
     if should_be_latest:
         for v in app.versions:
             v.is_latest = False
+
+    # Sync connector slots from the uploaded Poller source. Only mutates
+    # slots on the latest version — older versions are historical and
+    # their contract is frozen.
+    if should_be_latest:
+        await _sync_connector_slots(
+            db,
+            app.id,
+            request.source_code,
+            request.entry_class,
+        )
 
     await db.flush()
     return {

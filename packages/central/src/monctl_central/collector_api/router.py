@@ -136,7 +136,7 @@ def _resolve_credential_refs(
     The <ref> can be:
       - A credential name directly (e.g. "SSH - monctl") → use as-is
       - __device_default__ → resolve from assignment or device credentials
-      - A connector alias (e.g. "snmp") → look up in device.credentials JSONB
+      - A connector type (e.g. "snmp") → look up in device.credentials JSONB
     """
     cred_names_set = set(cred_name_map.values())
     resolved = {}
@@ -167,7 +167,7 @@ def _resolve_credential_refs(
                     except (ValueError, TypeError):
                         continue
         else:
-            # Case 3: connector alias — look up in device credentials JSONB
+            # Case 3: connector type — look up in device credentials JSONB
             if device and device.credentials and ref in device.credentials:
                 try:
                     cred_id = uuid.UUID(str(device.credentials[ref]))
@@ -381,7 +381,7 @@ async def get_jobs(
     override_result = await db.execute(override_stmt)
     overrides_map: dict[uuid.UUID, dict[str, uuid.UUID]] = {}
     for ov in override_result.scalars().all():
-        overrides_map.setdefault(ov.assignment_id, {})[ov.alias] = ov.credential_id
+        overrides_map.setdefault(ov.assignment_id, {})[ov.connector_type] = ov.credential_id
 
     # Pre-load latest connector versions for use_latest resolution
     latest_cv_stmt = select(ConnectorVersion).where(ConnectorVersion.is_latest == True)  # noqa: E712
@@ -395,13 +395,16 @@ async def get_jobs(
     for row in rows:
         for acb in app_bindings_map.get(row.App.id, []):
             vid = acb.connector_version_id
-            if acb.use_latest:
-                vid = latest_connector_versions.get(acb.connector_id, vid)
+            if vid is None and acb.connector_id is not None:
+                vid = latest_connector_versions.get(acb.connector_id)
             if vid:
                 all_cv_ids.add(vid)
         for b in (row.AppAssignment.connector_bindings or []):
-            if b.connector_version_id:
-                all_cv_ids.add(b.connector_version_id)
+            vid = b.connector_version_id
+            if vid is None and b.connector_id is not None:
+                vid = latest_connector_versions.get(b.connector_id)
+            if vid:
+                all_cv_ids.add(vid)
     cv_checksum_map: dict[uuid.UUID, str] = {}
     if all_cv_ids:
         cv_stmt = select(ConnectorVersion.id, ConnectorVersion.checksum).where(
@@ -427,8 +430,8 @@ async def get_jobs(
                     all_cred_ids.add(uuid.UUID(str(cred_val)))
                 except (ValueError, TypeError):
                     pass
-    for alias_map in overrides_map.values():
-        all_cred_ids.update(alias_map.values())
+    for ov_map in overrides_map.values():
+        all_cred_ids.update(ov_map.values())
 
     cred_name_map: dict[uuid.UUID, str] = {}
     if all_cred_ids:
@@ -497,65 +500,83 @@ async def get_jobs(
         cred_overrides = overrides_map.get(assignment.id, {})
 
         bindings = []
-        # Build assignment-level binding overrides keyed by alias
+        # Build assignment-level binding overrides keyed by connector_type.
         assign_binding_map: dict[str, "AssignmentConnectorBinding"] = {}
         for b in (assignment.connector_bindings or []):
-            assign_binding_map[b.alias] = b
+            assign_binding_map[b.connector_type] = b
 
         if app_cbs:
-            # New path: read from app connector bindings
             for acb in app_cbs:
-                # Check if assignment has an override for this alias
-                assign_override = assign_binding_map.get(acb.alias)
+                # Skip unfilled / orphaned slots defensively.
+                if acb.is_orphaned:
+                    continue
+                if acb.connector_id is None:
+                    logger.warning(
+                        "assignment_has_unfilled_slot",
+                        assignment_id=str(assignment.id),
+                        connector_type=acb.connector_type,
+                    )
+                    continue
 
-                # Resolve connector version
-                version_id = acb.connector_version_id
-                if assign_override:
+                assign_override = assign_binding_map.get(acb.connector_type)
+                effective_connector_id = (
+                    assign_override.connector_id if assign_override else acb.connector_id
+                )
+
+                # Resolve connector version: assignment override > app binding
+                # > latest (when version_id is NULL).
+                version_id: uuid.UUID | None = None
+                if assign_override and assign_override.connector_version_id:
                     version_id = assign_override.connector_version_id
-                if acb.use_latest:
-                    cid = assign_override.connector_id if assign_override else acb.connector_id
-                    version_id = latest_connector_versions.get(cid, version_id)
+                elif acb.connector_version_id:
+                    version_id = acb.connector_version_id
+                else:
+                    version_id = latest_connector_versions.get(effective_connector_id)
 
-                # Resolve credential: override > assignment binding > assignment > device > default
+                # Resolve credential: override > assignment binding >
+                # assignment > device.credentials keyed by connector_type.
                 cred_id: uuid.UUID | None = None
-                if acb.alias in cred_overrides:
-                    cred_id = cred_overrides[acb.alias]
+                if acb.connector_type in cred_overrides:
+                    cred_id = cred_overrides[acb.connector_type]
                 elif assign_override and assign_override.credential_id:
                     cred_id = assign_override.credential_id
                 elif assignment.credential_id:
                     cred_id = assignment.credential_id
-                elif device and device.credentials and acb.alias in device.credentials:
-                    # Per-protocol credential from device.credentials JSONB
+                elif (
+                    device
+                    and device.credentials
+                    and acb.connector_type in device.credentials
+                ):
                     try:
-                        cred_id = uuid.UUID(str(device.credentials[acb.alias]))
+                        cred_id = uuid.UUID(str(device.credentials[acb.connector_type]))
                     except (ValueError, TypeError):
                         pass
 
-                # Merge settings: app-level defaults + assignment-level overrides
                 merged_settings = dict(acb.settings or {})
                 if assign_override and assign_override.settings:
                     merged_settings.update(assign_override.settings)
 
                 bindings.append({
-                    "alias": acb.alias,
-                    "connector_id": str(assign_override.connector_id if assign_override else acb.connector_id),
+                    "connector_type": acb.connector_type,
+                    "connector_id": str(effective_connector_id),
                     "connector_version_id": str(version_id) if version_id else None,
                     "credential_name": cred_name_map.get(cred_id) if cred_id else None,
-                    "use_latest": acb.use_latest,
                     "settings": merged_settings,
                     "connector_checksum": cv_checksum_map.get(version_id, "") if version_id else "",
                 })
         else:
-            # Fallback: legacy assignment connector bindings (for apps not yet migrated)
+            # Fallback for apps that pre-date slot sync (no AppConnectorBinding rows).
             for b in (assignment.connector_bindings or []):
+                vid = b.connector_version_id
+                if vid is None and b.connector_id is not None:
+                    vid = latest_connector_versions.get(b.connector_id)
                 bindings.append({
-                    "alias": b.alias,
+                    "connector_type": b.connector_type,
                     "connector_id": str(b.connector_id),
-                    "connector_version_id": str(b.connector_version_id),
+                    "connector_version_id": str(vid) if vid else None,
                     "credential_name": cred_name_map.get(b.credential_id) if b.credential_id else None,
-                    "use_latest": b.use_latest,
                     "settings": b.settings or {},
-                    "connector_checksum": cv_checksum_map.get(b.connector_version_id, "") if b.connector_version_id else "",
+                    "connector_checksum": cv_checksum_map.get(vid, "") if vid else "",
                 })
 
         jobs.append({
@@ -654,15 +675,16 @@ async def get_jobs(
                 # Build connector bindings for discovery job
                 disc_bindings = []
                 for acb in disc_app_cbs:
+                    if acb.is_orphaned or acb.connector_id is None:
+                        continue
                     version_id = acb.connector_version_id
-                    if acb.use_latest:
-                        version_id = latest_connector_versions.get(acb.connector_id, version_id)
+                    if version_id is None:
+                        version_id = latest_connector_versions.get(acb.connector_id)
                     disc_bindings.append({
-                        "alias": acb.alias,
+                        "connector_type": acb.connector_type,
                         "connector_id": str(acb.connector_id),
                         "connector_version_id": str(version_id) if version_id else None,
                         "credential_name": disc_cred_name,
-                        "use_latest": acb.use_latest,
                         "settings": acb.settings or {},
                         "connector_checksum": cv_checksum_map.get(version_id, "") if version_id else "",
                     })

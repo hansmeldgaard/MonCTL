@@ -374,7 +374,7 @@ export interface Assignment {
   credential_id: string | null;
   credential_name: string | null;
   credential_overrides?: {
-    alias: string;
+    connector_type: string;
     credential_id: string;
     credential_name: string;
   }[];
@@ -400,7 +400,7 @@ export interface DeviceAssignment {
   credential_id: string | null;
   credential_name: string | null;
   credential_overrides?: {
-    alias: string;
+    connector_type: string;
     credential_id: string;
     credential_name: string;
   }[];
@@ -451,9 +451,10 @@ export interface AppSummary {
   target_table: string;
   vendor_oid_prefix?: string | null;
   connector_bindings?: {
-    alias: string;
-    connector_id: string;
+    connector_type: string;
+    connector_id: string | null;
     connector_name: string;
+    is_orphaned: boolean;
   }[];
 }
 
@@ -465,12 +466,18 @@ export interface AppVersion {
 }
 
 export interface AppConnectorBindingInfo {
-  alias: string;
-  connector_id: string;
+  connector_type: string;
+  /** `null` when the slot exists (from the Poller declaration) but no
+   *  concrete connector has been picked yet. */
+  connector_id: string | null;
   connector_name: string;
-  use_latest: boolean;
+  /** `null` means "use latest version at resolve time". */
   connector_version_id: string | null;
   settings: Record<string, unknown>;
+  /** `true` when a newer version of the app source no longer declares
+   *  this slot. The row is retained so existing assignments continue to
+   *  work but the operator should clean up. */
+  is_orphaned: boolean;
 }
 
 export interface AppDetail extends AppSummary {
@@ -1316,11 +1323,10 @@ export interface ConnectorDetail {
 
 export interface ConnectorBindingInfo {
   id: string;
-  alias: string;
+  connector_type: string;
   connector_id: string;
-  connector_version_id: string;
+  connector_version_id: string | null;
   credential_id: string | null;
-  use_latest: boolean;
   settings: Record<string, unknown>;
 }
 

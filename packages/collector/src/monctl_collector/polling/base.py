@@ -31,6 +31,7 @@ Error categories — all apps MUST set ``error_category`` on error results:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import ClassVar
 
 from monctl_collector.jobs.models import PollContext, PollResult
 
@@ -46,7 +47,30 @@ class BasePoller(ABC):
     The engine maintains exactly one instance per (app_id, version) so that
     `setup()` can cache expensive one-time initialisation (e.g. SNMP walk
     result, TLS session, device MIB tree).
+
+    Connector requirements:
+        Subclasses SHOULD declare which connectors they need via the
+        ``required_connectors`` class attribute — a list of connector
+        types. ``poll()`` looks up connectors via
+        ``context.connectors[connector_type]`` (the type is the key).
+        The central server reads this declaration at app-version upload
+        time and pre-creates the matching binding slots so the operator
+        only has to pick a concrete connector per slot.
+
+        Examples::
+
+            required_connectors = ["snmp"]           # single SNMP
+            required_connectors = ["snmp", "ssh"]    # dual protocol
+            required_connectors = []                 # no connector (e.g. ping)
+
+        The declaration MUST be a literal list of non-empty strings so
+        the central server can extract it via AST parsing without
+        executing the app source code. Duplicate types are rejected at
+        upload time — an app may have at most one binding per connector
+        type.
     """
+
+    required_connectors: ClassVar[list[str]] = []
 
     async def setup(self) -> None:
         """One-time initialisation called before the first poll.

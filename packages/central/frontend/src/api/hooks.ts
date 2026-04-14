@@ -1445,11 +1445,10 @@ export function useUpdateAssignment() {
         collector_id?: string | null;
         credential_id?: string | null;
         connector_bindings?: {
-          alias: string;
+          connector_type: string;
           connector_id: string;
-          connector_version_id: string;
+          connector_version_id?: string | null;
           credential_id?: string | null;
-          use_latest?: boolean;
           settings?: Record<string, unknown>;
         }[];
       };
@@ -1531,11 +1530,10 @@ export function useCreateAssignment() {
       use_latest?: boolean;
       credential_id?: string | null;
       connector_bindings?: {
-        alias: string;
+        connector_type: string;
         connector_id: string;
         connector_version_id?: string | null;
         credential_id?: string | null;
-        use_latest?: boolean;
         settings?: Record<string, unknown>;
       }[];
     }) => apiPost<{ id: string }>("/apps/assignments", data),
@@ -2161,9 +2159,8 @@ export function useAddAppConnector() {
     }: {
       appId: string;
       data: {
-        alias: string;
+        connector_type: string;
         connector_id: string;
-        use_latest?: boolean;
         connector_version_id?: string | null;
         settings?: Record<string, unknown>;
       };
@@ -2177,10 +2174,40 @@ export function useAddAppConnector() {
 export function useDeleteAppConnector() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ appId, alias }: { appId: string; alias: string }) =>
-      apiDelete(`/apps/${appId}/connectors/${alias}`),
+    mutationFn: ({ appId, connectorType }: { appId: string; connectorType: string }) =>
+      apiDelete(`/apps/${appId}/connectors/${connectorType}`),
     onSuccess: (_res, { appId }) => {
       qc.invalidateQueries({ queryKey: ["app-detail", appId] });
+    },
+  });
+}
+
+/**
+ * Assign a concrete Connector to a slot declared by an app's Poller code.
+ *
+ * The slot must already exist (it is auto-created on version upload
+ * from the `required_connectors` class attribute). The chosen
+ * connector's type must match the slot's declared `connector_type`.
+ */
+export function useAssignConnectorToSlot() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      appId,
+      connectorType,
+      data,
+    }: {
+      appId: string;
+      connectorType: string;
+      data: {
+        connector_id: string;
+        connector_version_id?: string | null;
+        settings?: Record<string, unknown>;
+      };
+    }) => apiPut(`/apps/${appId}/connectors/${connectorType}/assign`, data),
+    onSuccess: (_res, { appId }) => {
+      qc.invalidateQueries({ queryKey: ["app-detail", appId] });
+      qc.invalidateQueries({ queryKey: ["apps"] });
     },
   });
 }

@@ -70,8 +70,9 @@ import {
   useDeleteAlertDefinition,
   useUpdateAlertDefinition,
   useInvertAlertDefinition,
-  useAddAppConnector,
   useDeleteAppConnector,
+  useAssignConnectorToSlot,
+  useConnectorDetail,
   useConnectors,
   useAppConfigKeys,
   useAppThresholds,
@@ -174,15 +175,16 @@ export function AppDetailPage() {
     null,
   );
 
-  // Connector binding state
-  const addConnector = useAddAppConnector();
+  // Connector binding state — slots are declared by the Poller source
+  // (``required_connectors``) and pre-created on version upload. The
+  // operator only picks which concrete Connector fills each slot.
+  const assignConnector = useAssignConnectorToSlot();
   const deleteConnector = useDeleteAppConnector();
   const { data: connectorsResp } = useConnectors();
   const connectorsList = connectorsResp?.data ?? [];
-  const [connBindOpen, setConnBindOpen] = useState(false);
-  const [connBindAlias, setConnBindAlias] = useState("");
-  const [connBindConnectorId, setConnBindConnectorId] = useState("");
-  const [connBindError, setConnBindError] = useState<string | null>(null);
+  const [slotAssignError, setSlotAssignError] = useState<
+    Record<string, string>
+  >({});
 
   // Eligibility tab state
   const startEligTest = useStartEligibilityTest();
@@ -508,157 +510,187 @@ export function AppDetailPage() {
             </CardContent>
           </Card>
 
-          {/* Required Connectors */}
+          {/* Required Connectors — slot-driven */}
           <Card className="mt-4">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Plug className="h-4 w-4" /> Required Connectors
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  className="ml-auto gap-1.5"
-                  onClick={() => {
-                    setConnBindAlias("");
-                    setConnBindConnectorId("");
-                    setConnBindError(null);
-                    setConnBindOpen(true);
-                  }}
-                >
-                  <Plus className="h-3 w-3" /> Add Connector
-                </Button>
               </CardTitle>
             </CardHeader>
             <CardContent>
               {app.connector_bindings && app.connector_bindings.length > 0 ? (
-                <div className="space-y-2">
-                  {app.connector_bindings.map((cb) => (
-                    <div
-                      key={cb.alias}
-                      className="flex items-center justify-between rounded-md bg-zinc-800/50 px-4 py-3"
-                    >
-                      <div className="flex items-center gap-3">
-                        <Badge variant="info" className="text-xs gap-1">
-                          <Plug className="h-2.5 w-2.5" />
-                          {cb.connector_name || cb.alias}
-                        </Badge>
-                        <code className="text-xs text-zinc-400 bg-zinc-900 px-1.5 py-0.5 rounded">
-                          alias: {cb.alias}
-                        </code>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {cb.use_latest ? (
-                          <Badge variant="success" className="text-xs">
-                            latest
-                          </Badge>
-                        ) : (
-                          <Badge variant="default" className="text-xs">
-                            pinned
-                          </Badge>
-                        )}
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-6 w-6 p-0 text-zinc-500 hover:text-red-400"
-                          onClick={() => {
-                            if (id)
-                              deleteConnector.mutate({
-                                appId: id,
-                                alias: cb.alias,
-                              });
-                          }}
+                <>
+                  <p className="text-xs text-zinc-500 mb-3">
+                    Slots declared by the app's Poller code
+                    (<code className="text-zinc-400">required_connectors</code>).
+                    Pick which concrete connector fills each slot.
+                  </p>
+                  <div className="space-y-2">
+                    {app.connector_bindings.map((cb) => {
+                      const matching = connectorsList.filter(
+                        (c) => c.connector_type === cb.connector_type,
+                      );
+                      const err = slotAssignError[cb.connector_type];
+                      if (cb.is_orphaned) {
+                        return (
+                          <div
+                            key={cb.connector_type}
+                            className="flex items-center justify-between rounded-md border border-amber-900/50 bg-amber-950/20 px-4 py-3"
+                          >
+                            <div className="flex items-center gap-3">
+                              <Badge variant="warning" className="text-xs">
+                                orphaned
+                              </Badge>
+                              <code className="text-xs text-zinc-300 bg-zinc-900 px-1.5 py-0.5 rounded">
+                                {cb.connector_type}
+                              </code>
+                              <span className="text-xs text-zinc-500">
+                                No longer declared by the current app version.
+                              </span>
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-6 px-2 text-zinc-500 hover:text-red-400"
+                              onClick={() => {
+                                if (id)
+                                  deleteConnector.mutate({
+                                    appId: id,
+                                    connectorType: cb.connector_type,
+                                  });
+                              }}
+                            >
+                              <Trash2 className="h-3 w-3 mr-1" /> Remove
+                            </Button>
+                          </div>
+                        );
+                      }
+                      return (
+                        <div
+                          key={cb.connector_type}
+                          className="rounded-md bg-zinc-800/50 px-4 py-3 space-y-2"
                         >
-                          <Trash2 className="h-3 w-3" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-zinc-500">
+                              type:
+                            </span>
+                            <Badge variant="default" className="text-xs">
+                              {cb.connector_type}
+                            </Badge>
+                            {cb.connector_id ? (
+                              <Badge
+                                variant="success"
+                                className="text-xs ml-auto"
+                              >
+                                <Check className="h-2.5 w-2.5 mr-0.5" />
+                                configured
+                              </Badge>
+                            ) : (
+                              <Badge
+                                variant="warning"
+                                className="text-xs ml-auto"
+                              >
+                                needs connector
+                              </Badge>
+                            )}
+                          </div>
+                          <select
+                            className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100"
+                            value={cb.connector_id ?? ""}
+                            disabled={assignConnector.isPending}
+                            onChange={(e) => {
+                              const connectorId = e.target.value;
+                              if (!id || !connectorId) return;
+                              setSlotAssignError((prev) => {
+                                const next = { ...prev };
+                                delete next[cb.connector_type];
+                                return next;
+                              });
+                              assignConnector.mutate(
+                                {
+                                  appId: id,
+                                  connectorType: cb.connector_type,
+                                  data: {
+                                    connector_id: connectorId,
+                                    connector_version_id: null,
+                                  },
+                                },
+                                {
+                                  onError: (mutErr: unknown) =>
+                                    setSlotAssignError((prev) => ({
+                                      ...prev,
+                                      [cb.connector_type]:
+                                        mutErr instanceof Error
+                                          ? mutErr.message
+                                          : String(mutErr),
+                                    })),
+                                },
+                              );
+                            }}
+                          >
+                            <option value="">
+                              — Select a {cb.connector_type} connector —
+                            </option>
+                            {matching.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.name}
+                                {c.description ? ` — ${c.description}` : ""}
+                              </option>
+                            ))}
+                          </select>
+                          {cb.connector_id && (
+                            <SlotVersionPicker
+                              connectorId={cb.connector_id}
+                              versionId={cb.connector_version_id}
+                              disabled={assignConnector.isPending}
+                              onChange={(newVersionId) => {
+                                if (!id || !cb.connector_id) return;
+                                setSlotAssignError((prev) => {
+                                  const next = { ...prev };
+                                  delete next[cb.connector_type];
+                                  return next;
+                                });
+                                assignConnector.mutate(
+                                  {
+                                    appId: id,
+                                    connectorType: cb.connector_type,
+                                    data: {
+                                      connector_id: cb.connector_id,
+                                      connector_version_id: newVersionId,
+                                    },
+                                  },
+                                  {
+                                    onError: (mutErr: unknown) =>
+                                      setSlotAssignError((prev) => ({
+                                        ...prev,
+                                        [cb.connector_type]:
+                                          mutErr instanceof Error
+                                            ? mutErr.message
+                                            : String(mutErr),
+                                      })),
+                                  },
+                                );
+                              }}
+                            />
+                          )}
+                          {err && (
+                            <p className="text-xs text-red-400">{err}</p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
               ) : (
                 <p className="text-sm text-zinc-500">
-                  No connectors bound. Click "Add Connector" to bind one.
+                  This app declares no connector requirements. Upload a
+                  version whose Poller class sets{" "}
+                  <code className="text-zinc-400">required_connectors</code>
+                  {" "}to add slots.
                 </p>
               )}
             </CardContent>
           </Card>
-
-          {/* Add Connector Binding Dialog */}
-          {connBindOpen && (
-            <Dialog
-              open
-              onClose={() => setConnBindOpen(false)}
-              title="Add Connector Binding"
-            >
-              <div className="space-y-4">
-                <div>
-                  <Label>Alias</Label>
-                  <Input
-                    placeholder='e.g. "snmp"'
-                    value={connBindAlias}
-                    onChange={(e) => setConnBindAlias(e.target.value)}
-                  />
-                  <p className="text-xs text-zinc-500 mt-1">
-                    The alias your app code uses to reference this connector
-                    (e.g. context.connectors["snmp"])
-                  </p>
-                </div>
-                <div>
-                  <Label>Connector</Label>
-                  <select
-                    className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100"
-                    value={connBindConnectorId}
-                    onChange={(e) => setConnBindConnectorId(e.target.value)}
-                  >
-                    <option value="">Select a connector...</option>
-                    {connectorsList?.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name} — {c.description}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                {connBindError && (
-                  <p className="text-sm text-red-400">{connBindError}</p>
-                )}
-              </div>
-              <DialogFooter>
-                <Button
-                  variant="secondary"
-                  onClick={() => setConnBindOpen(false)}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  onClick={() => {
-                    if (!connBindAlias.trim() || !connBindConnectorId) {
-                      setConnBindError("Alias and connector are required");
-                      return;
-                    }
-                    if (!id) return;
-                    addConnector.mutate(
-                      {
-                        appId: id,
-                        data: {
-                          alias: connBindAlias.trim(),
-                          connector_id: connBindConnectorId,
-                          use_latest: true,
-                        },
-                      },
-                      {
-                        onSuccess: () => setConnBindOpen(false),
-                        onError: (err: unknown) =>
-                          setConnBindError(
-                            err instanceof Error ? err.message : String(err),
-                          ),
-                      },
-                    );
-                  }}
-                  disabled={addConnector.isPending}
-                >
-                  {addConnector.isPending ? "Adding..." : "Add"}
-                </Button>
-              </DialogFooter>
-            </Dialog>
-          )}
         </TabsContent>
 
         <TabsContent value="versions">
@@ -1154,6 +1186,44 @@ function VersionCodeView({ version }: { version: VersionDetail }) {
         </div>
       )}
     </div>
+  );
+}
+
+function SlotVersionPicker({
+  connectorId,
+  versionId,
+  disabled,
+  onChange,
+}: {
+  connectorId: string;
+  versionId: string | null;
+  disabled: boolean;
+  onChange: (versionId: string | null) => void;
+}) {
+  const { data: detail, isLoading } = useConnectorDetail(connectorId);
+  const versions = detail?.versions ?? [];
+  const latest = versions.find((v) => v.is_latest);
+  const currentValue = versionId ?? "";
+  return (
+    <select
+      className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100"
+      value={currentValue}
+      disabled={disabled || isLoading}
+      onChange={(e) => {
+        const v = e.target.value;
+        onChange(v === "" ? null : v);
+      }}
+    >
+      <option value="">
+        Latest{latest ? ` (${latest.version})` : ""}
+      </option>
+      {versions.map((v) => (
+        <option key={v.id} value={v.id}>
+          {v.version}
+          {v.is_latest ? " — latest" : ""}
+        </option>
+      ))}
+    </select>
   );
 }
 

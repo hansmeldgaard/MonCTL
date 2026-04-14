@@ -92,11 +92,10 @@ class CentralAPIClient:
         for j in data.get("jobs", []):
             bindings = [
                 ConnectorBinding(
-                    alias=b["alias"],
+                    connector_type=b["connector_type"],
                     connector_id=b["connector_id"],
                     connector_version_id=b["connector_version_id"],
                     credential_name=b.get("credential_name"),
-                    use_latest=b.get("use_latest", False),
                     settings=b.get("settings", {}),
                 )
                 for b in j.get("connector_bindings", [])

@@ -222,11 +222,10 @@ class PeerChannelPool:
 def _job_to_dict(j: pb.JobWithProfile) -> dict:
     bindings = [
         {
-            "alias": b.alias,
+            "connector_type": b.connector_type,
             "connector_id": b.connector_id,
             "connector_version_id": b.connector_version_id,
             "credential_name": b.credential_name or None,
-            "use_latest": b.use_latest,
             "settings": json.loads(b.settings_json) if b.settings_json else {},
         }
         for b in j.connector_bindings

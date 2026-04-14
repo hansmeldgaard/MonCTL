@@ -255,12 +255,12 @@ export function AppsPage() {
                             <div className="flex flex-wrap gap-1">
                               {app.connector_bindings.map((cb) => (
                                 <Badge
-                                  key={cb.alias}
+                                  key={cb.connector_type}
                                   variant="info"
                                   className="text-xs gap-1"
                                 >
                                   <Plug className="h-2.5 w-2.5" />
-                                  {cb.connector_name || cb.alias}
+                                  {cb.connector_name || cb.connector_type}
                                 </Badge>
                               ))}
                             </div>

@@ -53,11 +53,10 @@ class CollectorPeerServicer(pb_grpc.CollectorPeerServicer):
         for job_def, profile in jobs:
             pb_bindings = [
                 pb.ConnectorBindingProto(
-                    alias=b.alias,
+                    connector_type=b.connector_type,
                     connector_id=b.connector_id,
                     connector_version_id=b.connector_version_id,
                     credential_name=b.credential_name or "",
-                    use_latest=b.use_latest,
                     settings_json=json.dumps(b.settings) if b.settings else "{}",
                 )
                 for b in job_def.connector_bindings

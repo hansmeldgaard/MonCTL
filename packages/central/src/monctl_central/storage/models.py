@@ -1109,9 +1109,16 @@ class Incident(Base):
 
 
 class AssignmentConnectorBinding(Base):
-    """Binds a connector (with optional credential) to an app assignment."""
+    """Binds a connector (with optional credential) to an app assignment.
+
+    The slot is keyed by ``connector_type`` (denormalized from
+    ``connectors.connector_type``). ``connector_version_id`` is nullable —
+    NULL means "resolve the latest version at /jobs time".
+    """
     __tablename__ = "assignment_connector_bindings"
-    __table_args__ = (UniqueConstraint("assignment_id", "alias"),)
+    __table_args__ = (
+        UniqueConstraint("assignment_id", "connector_type", name="uq_assignment_binding_type"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     assignment_id: Mapped[uuid.UUID] = mapped_column(
@@ -1120,14 +1127,13 @@ class AssignmentConnectorBinding(Base):
     connector_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("connectors.id", ondelete="RESTRICT"), nullable=False
     )
-    connector_version_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("connector_versions.id", ondelete="RESTRICT"), nullable=False
+    connector_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("connector_versions.id", ondelete="RESTRICT"), nullable=True
     )
     credential_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("credentials.id", ondelete="SET NULL"), nullable=True
     )
-    alias: Mapped[str] = mapped_column(String(64), nullable=False)
-    use_latest: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    connector_type: Mapped[str] = mapped_column(String(32), nullable=False)
     settings: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default="now()"
@@ -1137,48 +1143,62 @@ class AssignmentConnectorBinding(Base):
 
 
 class AppConnectorBinding(Base):
-    """Declares a connector requirement for an app.
+    """Declares a connector *slot* that an app needs.
 
-    An app can require multiple connectors (e.g., SNMP + SSH).
-    Each binding has an alias that the app uses to reference the connector
-    in its code via context.connectors[alias].
+    Each row represents one connector slot as declared by the Poller class
+    via its ``required_connectors`` class attribute (parsed at version
+    upload time). The slot is keyed by ``connector_type``, which is also
+    the key the app uses at runtime (``context.connectors[connector_type]``).
+    Only one binding per (app, connector_type) is allowed.
+
+    ``connector_id`` is nullable because a slot can exist before the
+    operator has picked which concrete connector fills it. An App cannot
+    be deployed (no assignments allowed) until every non-orphaned slot
+    has a connector_id set.
+
+    ``is_orphaned=True`` marks a slot that was removed by a newer version
+    of the app source but is retained so existing assignments keep
+    working. The collector engine ignores orphaned slots when building
+    the runtime connectors dict.
     """
     __tablename__ = "app_connector_bindings"
     __table_args__ = (
-        UniqueConstraint("app_id", "alias", name="uq_app_connector_alias"),
+        UniqueConstraint("app_id", "connector_type", name="uq_app_connector_type"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     app_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("apps.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    connector_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("connectors.id", ondelete="RESTRICT"), nullable=False
+    connector_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("connectors.id", ondelete="RESTRICT"), nullable=True
     )
-    alias: Mapped[str] = mapped_column(String(64), nullable=False)
-    use_latest: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    connector_type: Mapped[str] = mapped_column(String(32), nullable=False)
     connector_version_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("connector_versions.id", ondelete="SET NULL"), nullable=True
     )
     settings: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    is_orphaned: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
 
     app: Mapped["App"] = relationship(back_populates="connector_bindings")
-    connector: Mapped["Connector"] = relationship()
+    connector: Mapped["Connector | None"] = relationship()
     connector_version: Mapped["ConnectorVersion | None"] = relationship()
 
 
 class AssignmentCredentialOverride(Base):
-    """Per-assignment credential override for a specific connector alias."""
+    """Per-assignment credential override keyed by connector_type."""
     __tablename__ = "assignment_credential_overrides"
     __table_args__ = (
-        UniqueConstraint("assignment_id", "alias", name="uq_assignment_cred_override_alias"),
+        UniqueConstraint(
+            "assignment_id", "connector_type", name="uq_assignment_cred_override_type"
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     assignment_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("app_assignments.id", ondelete="CASCADE"), nullable=False
     )
-    alias: Mapped[str] = mapped_column(String(64), nullable=False)
+    connector_type: Mapped[str] = mapped_column(String(32), nullable=False)
     credential_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("credentials.id", ondelete="CASCADE"), nullable=False
     )
