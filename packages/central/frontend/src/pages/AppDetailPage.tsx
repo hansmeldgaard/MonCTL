@@ -72,6 +72,7 @@ import {
   useInvertAlertDefinition,
   useDeleteAppConnector,
   useAssignConnectorToSlot,
+  useConnectorDetail,
   useConnectors,
   useAppConfigKeys,
   useAppThresholds,
@@ -637,6 +638,41 @@ export function AppDetailPage() {
                               </option>
                             ))}
                           </select>
+                          {cb.connector_id && (
+                            <SlotVersionPicker
+                              connectorId={cb.connector_id}
+                              versionId={cb.connector_version_id}
+                              disabled={assignConnector.isPending}
+                              onChange={(newVersionId) => {
+                                if (!id || !cb.connector_id) return;
+                                setSlotAssignError((prev) => {
+                                  const next = { ...prev };
+                                  delete next[cb.connector_type];
+                                  return next;
+                                });
+                                assignConnector.mutate(
+                                  {
+                                    appId: id,
+                                    connectorType: cb.connector_type,
+                                    data: {
+                                      connector_id: cb.connector_id,
+                                      connector_version_id: newVersionId,
+                                    },
+                                  },
+                                  {
+                                    onError: (mutErr: unknown) =>
+                                      setSlotAssignError((prev) => ({
+                                        ...prev,
+                                        [cb.connector_type]:
+                                          mutErr instanceof Error
+                                            ? mutErr.message
+                                            : String(mutErr),
+                                      })),
+                                  },
+                                );
+                              }}
+                            />
+                          )}
                           {err && (
                             <p className="text-xs text-red-400">{err}</p>
                           )}
@@ -1150,6 +1186,44 @@ function VersionCodeView({ version }: { version: VersionDetail }) {
         </div>
       )}
     </div>
+  );
+}
+
+function SlotVersionPicker({
+  connectorId,
+  versionId,
+  disabled,
+  onChange,
+}: {
+  connectorId: string;
+  versionId: string | null;
+  disabled: boolean;
+  onChange: (versionId: string | null) => void;
+}) {
+  const { data: detail, isLoading } = useConnectorDetail(connectorId);
+  const versions = detail?.versions ?? [];
+  const latest = versions.find((v) => v.is_latest);
+  const currentValue = versionId ?? "";
+  return (
+    <select
+      className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100"
+      value={currentValue}
+      disabled={disabled || isLoading}
+      onChange={(e) => {
+        const v = e.target.value;
+        onChange(v === "" ? null : v);
+      }}
+    >
+      <option value="">
+        Latest{latest ? ` (${latest.version})` : ""}
+      </option>
+      {versions.map((v) => (
+        <option key={v.id} value={v.id}>
+          {v.version}
+          {v.is_latest ? " — latest" : ""}
+        </option>
+      ))}
+    </select>
   );
 }
 
