@@ -12,6 +12,7 @@ from sqlalchemy import select, desc, delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from monctl_central.common.filters import ilike_filter
 from monctl_central.dependencies import get_db, require_permission
 from monctl_central.storage.models import (
     App,
@@ -333,9 +334,11 @@ async def list_templates(
     base_stmt = select(Template)
 
     if name:
-        base_stmt = base_stmt.where(Template.name.ilike(f"%{name}%"))
+        if (c := ilike_filter(Template.name, name)) is not None:
+            base_stmt = base_stmt.where(c)
     if description:
-        base_stmt = base_stmt.where(Template.description.ilike(f"%{description}%"))
+        if (c := ilike_filter(Template.description, description)) is not None:
+            base_stmt = base_stmt.where(c)
 
     sort_col = SORT_MAP.get(sort_by, Template.name)
     base_stmt = base_stmt.order_by(sort_col.desc() if sort_dir == "desc" else sort_col.asc())

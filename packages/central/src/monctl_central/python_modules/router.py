@@ -15,6 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from monctl_central.common.filters import ilike_filter
 from monctl_central.config import settings
 from monctl_central.dependencies import get_db, require_admin, require_auth
 from monctl_central.storage.models import (
@@ -224,9 +225,11 @@ async def list_modules(
     # Count total matching modules
     count_stmt = select(sa.func.count()).select_from(PythonModule)
     if name:
-        count_stmt = count_stmt.where(PythonModule.name.ilike(f"%{name}%"))
+        if (c := ilike_filter(PythonModule.name, name)) is not None:
+            count_stmt = count_stmt.where(c)
     if description:
-        count_stmt = count_stmt.where(PythonModule.description.ilike(f"%{description}%"))
+        if (c := ilike_filter(PythonModule.description, description)) is not None:
+            count_stmt = count_stmt.where(c)
     total = (await db.execute(count_stmt)).scalar() or 0
 
     # Main query
@@ -240,9 +243,11 @@ async def list_modules(
         .outerjoin(WheelFile, PythonModuleVersion.id == WheelFile.module_version_id)
     )
     if name:
-        stmt = stmt.where(PythonModule.name.ilike(f"%{name}%"))
+        if (c := ilike_filter(PythonModule.name, name)) is not None:
+            stmt = stmt.where(c)
     if description:
-        stmt = stmt.where(PythonModule.description.ilike(f"%{description}%"))
+        if (c := ilike_filter(PythonModule.description, description)) is not None:
+            stmt = stmt.where(c)
 
     SORT_MAP = {
         "name": PythonModule.name,

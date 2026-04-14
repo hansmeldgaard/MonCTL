@@ -26,6 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from monctl_central.common.filters import ilike_filter
 from monctl_central.dependencies import get_db, require_permission
 from monctl_central.incidents.engine import (
     _validate_companion_ids,
@@ -273,12 +274,14 @@ async def list_incident_rules(
     stmt = select(IncidentRule).options(selectinload(IncidentRule.definition))
 
     if name:
-        stmt = stmt.where(IncidentRule.name.ilike(f"%{name}%"))
+        if (c := ilike_filter(IncidentRule.name, name)) is not None:
+            stmt = stmt.where(c)
     if definition_name:
         stmt = stmt.join(
             AlertDefinition, IncidentRule.definition_id == AlertDefinition.id
         )
-        stmt = stmt.where(AlertDefinition.name.ilike(f"%{definition_name}%"))
+        if (c := ilike_filter(AlertDefinition.name, definition_name)) is not None:
+            stmt = stmt.where(c)
     if severity:
         stmt = stmt.where(IncidentRule.severity == severity)
     if source:
@@ -289,12 +292,15 @@ async def list_incident_rules(
         stmt = stmt.outerjoin(
             AlertDefinition, IncidentRule.definition_id == AlertDefinition.id
         )
-        stmt = stmt.where(
-            sa.or_(
-                IncidentRule.name.ilike(f"%{search}%"),
-                AlertDefinition.name.ilike(f"%{search}%"),
+        negate = search.startswith("!")
+        s = search[1:] if negate else (search[1:] if search.startswith("\\!") else search)
+        if s:
+            pattern = f"%{s}%"
+            disj = sa.or_(
+                IncidentRule.name.ilike(pattern),
+                AlertDefinition.name.ilike(pattern),
             )
-        )
+            stmt = stmt.where(sa.not_(disj) if negate else disj)
 
     count_stmt = select(sa.func.count()).select_from(stmt.subquery())
     total = (await db.execute(count_stmt)).scalar() or 0
