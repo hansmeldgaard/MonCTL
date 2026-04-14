@@ -461,7 +461,8 @@ class AlertDefinition(Base):
     severity_tiers: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
     window: Mapped[str] = mapped_column(String(20), nullable=False, server_default="5m")
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
-    message_template: Mapped[str | None] = mapped_column(Text)
+    # Per-tier `message_template` lives inside each severity_tiers entry;
+    # no def-level template. Recovery/clear messages use the healthy tier.
     pack_origin: Mapped[str | None] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")

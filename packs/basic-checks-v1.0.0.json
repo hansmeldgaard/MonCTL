@@ -2,10 +2,10 @@
   "monctl_pack": "1.0",
   "pack_uid": "basic-checks",
   "name": "Basic Checks (Ping, Port, HTTP)",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Fundamental reachability checks: ICMP ping, TCP port, and HTTP/HTTPS endpoint monitoring.",
   "author": "MonCTL",
-  "changelog": "v1.2.0 - Collapse warning+critical alert pairs into single defs with severity_tiers",
+  "changelog": "v1.3.0 - Per-tier message_template + healthy tier for recovery messages",
   "exported_at": null,
   "contents": {
     "apps": [
@@ -77,9 +77,17 @@
             "window": "5m",
             "enabled": true,
             "severity_tiers": [
-              { "severity": "critical", "expression": "last(reachable) == 0" }
-            ],
-            "message_template": "Device {device_name} is unreachable via ICMP"
+              {
+                "severity": "healthy",
+                "expression": null,
+                "message_template": "Device {device_name} is reachable again via ICMP"
+              },
+              {
+                "severity": "critical",
+                "expression": "reachable == 0",
+                "message_template": "Device {device_name} is unreachable via ICMP"
+              }
+            ]
           },
           {
             "name": "Ping - High RTT",
@@ -88,15 +96,21 @@
             "enabled": true,
             "severity_tiers": [
               {
+                "severity": "healthy",
+                "expression": null,
+                "message_template": "Ping latency to {device_name} recovered to {value}ms"
+              },
+              {
                 "severity": "warning",
-                "expression": "last(rtt_ms) > rtt_ms_warn"
+                "expression": "rtt_ms > rtt_ms_warn",
+                "message_template": "High ping latency to {device_name}: {value}ms (> {rtt_ms_warn}ms)"
               },
               {
                 "severity": "critical",
-                "expression": "last(rtt_ms) > rtt_ms_crit"
+                "expression": "rtt_ms > rtt_ms_crit",
+                "message_template": "Critical ping latency to {device_name}: {value}ms (> {rtt_ms_crit}ms)"
               }
-            ],
-            "message_template": "Ping latency to {device_name}: {value}ms"
+            ]
           },
           {
             "name": "Ping - Packet Loss",
@@ -105,15 +119,21 @@
             "enabled": true,
             "severity_tiers": [
               {
+                "severity": "healthy",
+                "expression": null,
+                "message_template": "Packet loss to {device_name} recovered ({value}%)"
+              },
+              {
                 "severity": "warning",
-                "expression": "last(packet_loss_pct) > loss_pct_warn"
+                "expression": "packet_loss_pct > loss_pct_warn",
+                "message_template": "Packet loss to {device_name}: {value}%"
               },
               {
                 "severity": "critical",
-                "expression": "last(packet_loss_pct) > loss_pct_crit"
+                "expression": "packet_loss_pct > loss_pct_crit",
+                "message_template": "Critical packet loss to {device_name}: {value}%"
               }
-            ],
-            "message_template": "Packet loss to {device_name}: {value}%"
+            ]
           }
         ]
       },
@@ -155,9 +175,17 @@
             "window": "5m",
             "enabled": true,
             "severity_tiers": [
-              { "severity": "critical", "expression": "last(reachable) == 0" }
-            ],
-            "message_template": "TCP port unreachable on {device_name}"
+              {
+                "severity": "healthy",
+                "expression": null,
+                "message_template": "TCP port on {device_name} is reachable again"
+              },
+              {
+                "severity": "critical",
+                "expression": "reachable == 0",
+                "message_template": "TCP port unreachable on {device_name}"
+              }
+            ]
           },
           {
             "name": "Port - Slow Connect",
@@ -165,9 +193,17 @@
             "window": "5m",
             "enabled": true,
             "severity_tiers": [
-              { "severity": "warning", "expression": "avg(rtt_ms) > 1000" }
-            ],
-            "message_template": "Slow TCP connect to {device_name}: {value}ms"
+              {
+                "severity": "healthy",
+                "expression": null,
+                "message_template": "TCP connect time to {device_name} recovered ({value}ms)"
+              },
+              {
+                "severity": "warning",
+                "expression": "avg(rtt_ms) > 1000",
+                "message_template": "Slow TCP connect to {device_name}: {value}ms"
+              }
+            ]
           }
         ]
       },
@@ -220,9 +256,17 @@
             "window": "5m",
             "enabled": true,
             "severity_tiers": [
-              { "severity": "critical", "expression": "last(reachable) == 0" }
-            ],
-            "message_template": "HTTP endpoint unhealthy on {device_name}"
+              {
+                "severity": "healthy",
+                "expression": null,
+                "message_template": "HTTP endpoint on {device_name} is healthy again"
+              },
+              {
+                "severity": "critical",
+                "expression": "reachable == 0",
+                "message_template": "HTTP endpoint unhealthy on {device_name}"
+              }
+            ]
           },
           {
             "name": "HTTP - Slow Response",
@@ -230,9 +274,17 @@
             "window": "5m",
             "enabled": true,
             "severity_tiers": [
-              { "severity": "warning", "expression": "avg(rtt_ms) > 2000" }
-            ],
-            "message_template": "Slow HTTP response from {device_name}: {value}ms"
+              {
+                "severity": "healthy",
+                "expression": null,
+                "message_template": "HTTP response time from {device_name} recovered ({value}ms)"
+              },
+              {
+                "severity": "warning",
+                "expression": "avg(rtt_ms) > 2000",
+                "message_template": "Slow HTTP response from {device_name}: {value}ms"
+              }
+            ]
           }
         ]
       }

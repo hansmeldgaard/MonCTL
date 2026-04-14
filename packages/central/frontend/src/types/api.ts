@@ -532,8 +532,10 @@ export interface CredentialTemplate {
 // ── Alerts ────────────────────────────────────────────────
 
 export interface SeverityTier {
-  severity: "info" | "warning" | "critical" | "emergency";
-  expression: string;
+  severity: "info" | "warning" | "critical" | "emergency" | "healthy";
+  /** null for the healthy/recovery tier, required otherwise. */
+  expression: string | null;
+  message_template: string;
 }
 
 export interface AlertDefinition {
@@ -545,7 +547,6 @@ export interface AlertDefinition {
   severity_tiers: SeverityTier[];
   window: string;
   enabled: boolean;
-  message_template: string | null;
   pack_origin: string | null;
   created_at: string;
   updated_at: string;

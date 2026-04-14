@@ -265,7 +265,6 @@ def _export_app(
                 "window": ad.window,
                 "enabled": ad.enabled,
                 "description": ad.description,
-                "message_template": ad.message_template,
             }
             # Collect threshold_defaults from all tiers' expressions so a
             # re-import onto a clean install still resolves named thresholds.
@@ -601,9 +600,8 @@ async def preview_import(data: dict, db: AsyncSession) -> dict:
     ep_items = data.get("contents", {}).get("event_policies", [])
     if ep_items:
         logger.info(
-            "pack_preview_ignoring_event_policies",
-            pack_uid=pack_uid,
-            count=len(ep_items),
+            "pack_preview_ignoring_event_policies pack_uid=%s count=%d",
+            pack_uid, len(ep_items),
         )
         for ep in ep_items:
             entities.append({
@@ -699,8 +697,10 @@ async def import_pack(
                 if dc:
                     item["_resolved_device_category_id"] = str(dc.id)
                 else:
-                    logger.warning("device_type_skip_no_device_category",
-                                   rule=item_name, device_category_name=item["device_category_name"])
+                    logger.warning(
+                        "device_type_skip_no_device_category rule=%s device_category_name=%s",
+                        item_name, item["device_category_name"],
+                    )
                     stats["skipped"] += 1
                     continue
 
@@ -785,9 +785,8 @@ async def import_pack(
     legacy_ep = data.get("contents", {}).get("event_policies", [])
     if legacy_ep:
         logger.warning(
-            "pack_import_ignoring_event_policies",
-            pack_uid=pack_uid,
-            count=len(legacy_ep),
+            "pack_import_ignoring_event_policies pack_uid=%s count=%d",
+            pack_uid, len(legacy_ep),
         )
         stats["skipped"] += len(legacy_ep)
 
@@ -1038,8 +1037,10 @@ async def _sync_connector_bindings_for_app(
             select(Connector).where(Connector.name == connector_name)
         )).scalar_one_or_none()
         if connector is None:
-            logger.warning("connector_binding_skip_no_connector",
-                           app=app.name, alias=alias, connector_name=connector_name)
+            logger.warning(
+                "connector_binding_skip_no_connector app=%s alias=%s connector_name=%s",
+                app.name, alias, connector_name,
+            )
             continue
         db.add(AppConnectorBinding(
             app_id=app.id,
@@ -1218,26 +1219,17 @@ async def _sync_app_alert_definitions(
 
     for ad_data in alert_defs_data:
         name = ad_data["name"]
-        # Pack schema: alert defs now carry an ordered `severity_tiers`
-        # list — no more top-level `expression`/`severity`/`ladder_key`.
+        # Pack schema: each alert def carries an ordered `severity_tiers`
+        # list — entries have {severity, expression, message_template}.
+        # An optional leading `healthy` tier (expression=null) provides
+        # the one-time recovery/clear message.
         new_tiers = ad_data.get("severity_tiers") or []
-        if not new_tiers and ad_data.get("expression"):
-            # Backwards-compat for older hand-authored packs: synthesise
-            # a single-tier list from the legacy shape so the import
-            # still succeeds rather than silently writing an empty def.
-            new_tiers = [{
-                "severity": ad_data.get("severity", "warning"),
-                "expression": ad_data["expression"],
-            }]
 
         if name in existing_by_name:
             existing_def = existing_by_name[name]
-            # Re-sync on any pack-authored change: tier list, window,
-            # message template, description, enabled flag.
             if (
                 existing_def.severity_tiers != new_tiers
                 or existing_def.window != ad_data.get("window", "5m")
-                or existing_def.message_template != ad_data.get("message_template")
                 or existing_def.description != ad_data.get("description")
                 or existing_def.enabled != ad_data.get("enabled", True)
             ):
@@ -1245,7 +1237,6 @@ async def _sync_app_alert_definitions(
                 existing_def.window = ad_data.get("window", "5m")
                 existing_def.enabled = ad_data.get("enabled", True)
                 existing_def.description = ad_data.get("description")
-                existing_def.message_template = ad_data.get("message_template")
                 existing_def.pack_origin = pack_uid
         else:
             existing_def = AlertDefinition(
@@ -1255,7 +1246,6 @@ async def _sync_app_alert_definitions(
                 window=ad_data.get("window", "5m"),
                 enabled=ad_data.get("enabled", True),
                 description=ad_data.get("description"),
-                message_template=ad_data.get("message_template"),
                 pack_origin=pack_uid,
             )
             db.add(existing_def)

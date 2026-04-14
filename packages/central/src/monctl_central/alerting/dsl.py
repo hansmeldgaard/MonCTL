@@ -287,6 +287,19 @@ class _Parser:
             return InList(identifier=ident, values=values)
         if next_tok and next_tok[0] == "OP":
             op = self.consume()[1]
+            # Look ahead: if the right side is a NUMBER or a bare
+            # identifier (threshold-variable reference), promote the
+            # bare left identifier to `last(<ident>)` so operators can
+            # write `rtt_ms > 50` or `rtt_ms > rtt_ms_warn` without
+            # typing `last(...)` every time. STRING values keep the
+            # legacy bare-ident string-comparison semantics (config
+            # table only — semantic validator enforces).
+            peek_rhs = self.peek()
+            if peek_rhs and peek_rhs[0] in ("NUMBER", "IDENT"):
+                self._count_agg()
+                agg = AggCall(func="last", metric=ident)
+                right_ref = self._parse_threshold_ref(agg)
+                return Comparison(left=agg, op=op, right=right_ref)
             right = self._parse_value()
             return Comparison(left=ident, op=op, right=right)
         raise ParseError(f"Expected operator after '{ident}'")

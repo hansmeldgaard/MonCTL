@@ -121,11 +121,15 @@ class AlertEngine:
             logger.debug("eval_definition_no_tiers name=%s", defn.name)
             return []
 
-        # Parse and compile every tier's expression up front. If any
-        # tier fails to compile the whole definition is skipped for
-        # this cycle — partial evaluation could mis-classify severity.
+        # Parse and compile every NON-HEALTHY tier's expression up front.
+        # The healthy tier (if any) has no expression — it's a metadata
+        # carrier for the recovery message template. If any other tier
+        # fails to compile the whole definition is skipped for this
+        # cycle — partial evaluation could mis-classify severity.
         compiled_tiers: list[tuple[str, object]] = []
         for tier in tiers:
+            if tier.get("severity") == "healthy" or not tier.get("expression"):
+                continue
             try:
                 ast = parse_expression(tier["expression"])
                 compiled = compile_to_sql(ast, target_table, defn.window)
@@ -136,6 +140,9 @@ class AlertEngine:
                     defn.id, tier.get("severity"),
                 )
                 return []
+        if not compiled_tiers:
+            logger.debug("eval_definition_no_non_healthy_tiers name=%s", defn.name)
+            return []
 
         # Load enabled instances
         instances = (
@@ -280,10 +287,11 @@ class AlertEngine:
             "definition_name": defn.name,
             "entity_key": inst.entity_key or "",
             "action": action,
-            # Live severity from the instance (set by the tier-eval loop).
-            # For `clear` actions the instance's severity has already been
-            # reset to None — fall back to an empty string.
-            "severity": (inst.severity or ""),
+            # Clear rows carry severity='healthy' (the def's recovery
+            # tier); fire/escalate/downgrade rows carry the live
+            # entity severity (set by the tier-eval loop before the
+            # log record is built).
+            "severity": ("healthy" if action == "clear" else (inst.severity or "")),
             "current_value": float(inst.current_value) if inst.current_value is not None else 0.0,
             "threshold_value": 0.0,
             # `expression` column in alert_log carries the effective tier's
@@ -306,7 +314,13 @@ class AlertEngine:
     def _build_message(
         self, defn: AlertDefinition, inst: AlertEntity, action: str
     ) -> str:
-        """Build alert message from template or defaults."""
+        """Build alert message from the appropriate tier's template.
+
+        - For `fire`/`escalate`/`downgrade`: the tier whose severity
+          matches `inst.severity` (the live/just-entered severity).
+        - For `clear`: the `healthy` tier's template if the def has
+          one; else a generic "{name} on {device} recovered" fallback.
+        """
         labels = inst.entity_labels or {}
         metrics = inst.metric_values or {}
         thresholds = inst.threshold_values or {}
@@ -319,22 +333,25 @@ class AlertEngine:
             or ""
         )
 
-        if action == "clear":
-            if defn.message_template:
-                rendered = self._render_template(
-                    defn.message_template, defn, inst, labels, metrics, thresholds
-                )
-                if rendered:
-                    return f"Cleared: {rendered}"
-            return f"Cleared: {defn.name} on {device} {entity}".strip()
+        tiers = defn.severity_tiers or []
+        target_severity = "healthy" if action == "clear" else inst.severity
+        template: str | None = None
+        if target_severity:
+            for t in tiers:
+                if t.get("severity") == target_severity:
+                    template = t.get("message_template")
+                    break
 
-        if defn.message_template:
+        if template:
             rendered = self._render_template(
-                defn.message_template, defn, inst, labels, metrics, thresholds
+                template, defn, inst, labels, metrics, thresholds
             )
             if rendered:
                 return rendered
 
+        # Fallbacks — only when a template is missing or renders empty.
+        if action == "clear":
+            return f"{defn.name} on {device} recovered".strip()
         val_str = f" = {round(value, 2)}" if value is not None else ""
         return f"{defn.name}{val_str} on {device} {entity} [{inst.fire_count}x]".strip()
 
@@ -359,7 +376,10 @@ class AlertEngine:
         for k, v in metrics.items():
             context[k] = _fmt_number(v)
         for k, v in thresholds.items():
-            context[f"${k}"] = _fmt_number(v)
+            # Both plain `{rtt_ms_warn}` and legacy `{$rtt_ms_warn}` work.
+            formatted = _fmt_number(v)
+            context[k] = formatted
+            context[f"${k}"] = formatted
         try:
             return template.format_map(_SafeFormatDict(context))
         except (ValueError, TypeError):

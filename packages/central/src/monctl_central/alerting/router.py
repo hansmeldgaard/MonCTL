@@ -65,7 +65,6 @@ def _fmt_definition(d: AlertDefinition, instance_counts: dict | None = None) -> 
         "severity_tiers": d.severity_tiers or [],
         "window": d.window,
         "enabled": d.enabled,
-        "message_template": d.message_template,
         "pack_origin": d.pack_origin,
         "created_at": d.created_at.isoformat() if d.created_at else None,
         "updated_at": d.updated_at.isoformat() if d.updated_at else None,
@@ -124,15 +123,38 @@ def _fmt_override(o: ThresholdOverride) -> dict:
 
 class SeverityTier(BaseModel):
     severity: str = Field(min_length=1, max_length=20)
-    expression: str = Field(min_length=1, max_length=2000)
+    # Healthy tiers use expression=None; non-healthy tiers require a
+    # DSL expression. See _validate_tier_list.
+    expression: str | None = Field(default=None, max_length=2000)
+    message_template: str = Field(min_length=1, max_length=2000)
 
     @field_validator("severity")
     @classmethod
     def check_severity(cls, v: str) -> str:
-        allowed = ("info", "warning", "critical", "emergency")
+        allowed = ("info", "warning", "critical", "emergency", "healthy")
         if v not in allowed:
             raise ValueError(f"severity must be one of {allowed}")
         return v
+
+
+def _validate_tier_list(tiers: list[SeverityTier]) -> None:
+    """Cross-tier invariants: at most one healthy tier (null expression),
+    non-healthy tiers must have an expression, severities unique."""
+    seen: set[str] = set()
+    healthy_count = 0
+    for i, t in enumerate(tiers):
+        if t.severity in seen:
+            raise ValueError(f"duplicate severity '{t.severity}' at severity_tiers[{i}]")
+        seen.add(t.severity)
+        if t.severity == "healthy":
+            healthy_count += 1
+            if t.expression:
+                raise ValueError(f"healthy tier at severity_tiers[{i}] must not have an expression")
+        else:
+            if not t.expression:
+                raise ValueError(f"severity_tiers[{i}] requires an expression")
+    if healthy_count > 1:
+        raise ValueError("at most one healthy tier is allowed")
 
 
 class CreateAlertDefinitionRequest(BaseModel):
@@ -142,7 +164,6 @@ class CreateAlertDefinitionRequest(BaseModel):
     severity_tiers: list[SeverityTier] = Field(min_length=1)
     window: str = Field(default="5m", max_length=10)
     enabled: bool = True
-    message_template: str | None = Field(default=None, max_length=2000)
 
     @field_validator("app_id")
     @classmethod
@@ -155,6 +176,12 @@ class CreateAlertDefinitionRequest(BaseModel):
     def check_window(cls, v: str) -> str:
         return validate_alert_window(v)
 
+    @field_validator("severity_tiers")
+    @classmethod
+    def check_tiers(cls, v: list[SeverityTier]) -> list[SeverityTier]:
+        _validate_tier_list(v)
+        return v
+
 
 class UpdateAlertDefinitionRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
@@ -162,13 +189,19 @@ class UpdateAlertDefinitionRequest(BaseModel):
     severity_tiers: list[SeverityTier] | None = Field(default=None, min_length=1)
     window: str | None = Field(default=None, max_length=10)
     enabled: bool | None = None
-    message_template: str | None = Field(default=None, max_length=2000)
 
     @field_validator("window")
     @classmethod
     def check_window(cls, v: str | None) -> str | None:
         if v is not None:
             return validate_alert_window(v)
+        return v
+
+    @field_validator("severity_tiers")
+    @classmethod
+    def check_tiers(cls, v: list[SeverityTier] | None) -> list[SeverityTier] | None:
+        if v is not None:
+            _validate_tier_list(v)
         return v
 
 
@@ -283,7 +316,11 @@ async def create_alert_definition(
 
     tiers_payload = [t.model_dump() for t in request.severity_tiers]
     for i, tier in enumerate(tiers_payload):
-        validation = validate_expression(tier["expression"], app.target_table)
+        # Only non-healthy tiers carry an expression to validate.
+        expr = tier.get("expression")
+        if not expr:
+            continue
+        validation = validate_expression(expr, app.target_table)
         if not validation.valid:
             raise HTTPException(
                 status_code=400,
@@ -297,7 +334,6 @@ async def create_alert_definition(
         severity_tiers=tiers_payload,
         window=request.window,
         enabled=request.enabled,
-        message_template=request.message_template,
     )
     db.add(defn)
     await db.flush()
@@ -322,7 +358,10 @@ async def get_alert_definition(
     defn = await db.get(
         AlertDefinition,
         uuid.UUID(definition_id),
-        options=[selectinload(AlertDefinition.entities)],
+        options=[
+            selectinload(AlertDefinition.entities),
+            selectinload(AlertDefinition.app),
+        ],
     )
     if not defn:
         raise HTTPException(status_code=404, detail="Not found")
@@ -349,7 +388,10 @@ async def update_alert_definition(
         target_table = app.target_table if app else "availability_latency"
         tiers_payload = [t.model_dump() for t in request.severity_tiers]
         for i, tier in enumerate(tiers_payload):
-            validation = validate_expression(tier["expression"], target_table)
+            expr = tier.get("expression")
+            if not expr:
+                continue
+            validation = validate_expression(expr, target_table)
             if not validation.valid:
                 raise HTTPException(
                     status_code=400,
@@ -366,8 +408,6 @@ async def update_alert_definition(
         defn.window = request.window
     if request.enabled is not None:
         defn.enabled = request.enabled
-    if request.message_template is not None:
-        defn.message_template = request.message_template
 
     defn.updated_at = utc_now()
     return {"status": "success", "data": _fmt_definition(defn)}

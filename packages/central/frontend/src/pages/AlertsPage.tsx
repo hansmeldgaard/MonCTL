@@ -333,9 +333,12 @@ function ActiveAlertsTab({
                                 {sev}
                               </span>
                             )}
-                            <span>
+                            <Link
+                              to={`/alerts/definitions/${alert.definition_id}`}
+                              className="text-brand-400 hover:text-brand-300 hover:underline"
+                            >
                               {alert.definition_name ?? alert.definition_id}
-                            </span>
+                            </Link>
                           </div>
                         </TableCell>
                         <TableCell className="text-zinc-400">
@@ -525,36 +528,47 @@ function AlertLogTab({
                       <TableRow
                         key={`${entry.id ?? i}`}
                         className={
-                          entry.action === "fire"
-                            ? "bg-red-500/5"
-                            : entry.action === "escalate"
-                              ? "bg-orange-500/5"
-                              : entry.action === "downgrade"
-                                ? "bg-amber-500/5"
-                                : "bg-green-500/5"
+                          entry.severity === "critical"
+                            ? "bg-red-500/10"
+                            : entry.severity === "warning"
+                              ? "bg-orange-500/10"
+                              : entry.severity === "info"
+                                ? "bg-sky-500/10"
+                                : entry.severity === "healthy"
+                                  ? "bg-green-500/10"
+                                  : "bg-zinc-800/20"
                         }
                       >
                         <TableCell className="text-zinc-500 text-xs whitespace-nowrap">
                           {formatDate(entry.occurred_at, tz)}
                         </TableCell>
                         <TableCell>
-                          <Badge
-                            className={
-                              entry.action === "fire"
-                                ? "bg-red-600 text-white"
-                                : entry.action === "escalate"
-                                  ? "bg-orange-600 text-white"
-                                  : entry.action === "downgrade"
-                                    ? "bg-amber-500 text-black"
-                                    : "bg-green-600 text-white"
-                            }
-                          >
-                            {entry.action}
-                            {entry.severity ? ` ${entry.severity}` : ""}
-                          </Badge>
+                          <div className="flex items-center gap-1">
+                            <Badge
+                              className={
+                                entry.severity === "critical"
+                                  ? "bg-red-600 text-white"
+                                  : entry.severity === "warning"
+                                    ? "bg-orange-600 text-white"
+                                    : entry.severity === "info"
+                                      ? "bg-sky-600 text-white"
+                                      : entry.severity === "healthy"
+                                        ? "bg-green-600 text-white"
+                                        : "bg-zinc-600 text-white"
+                              }
+                            >
+                              {entry.severity || "—"}
+                            </Badge>
+                            <span className="text-[10px] uppercase text-zinc-500"></span>
+                          </div>
                         </TableCell>
                         <TableCell className="font-medium text-zinc-100">
-                          {entry.definition_name}
+                          <Link
+                            to={`/alerts/definitions/${entry.definition_id}`}
+                            className="text-brand-400 hover:text-brand-300 hover:underline"
+                          >
+                            {entry.definition_name}
+                          </Link>
                         </TableCell>
                         <TableCell className="text-zinc-300">
                           <div className="flex items-center gap-1">
@@ -711,7 +725,12 @@ function DefinitionsTab({
               definitions.map((defn) => (
                 <TableRow key={defn.id}>
                   <TableCell className="font-medium text-zinc-100">
-                    {defn.name}
+                    <Link
+                      to={`/alerts/definitions/${defn.id}`}
+                      className="text-brand-400 hover:text-brand-300 hover:underline"
+                    >
+                      {defn.name}
+                    </Link>
                   </TableCell>
                   <TableCell className="text-zinc-400">
                     {defn.app_name ? (

@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, Fragment } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 import { formatDate } from "@/lib/utils.ts";
@@ -2126,7 +2126,9 @@ function ThresholdsTab({ appId }: { appId: string }) {
         for (const d of definitions) {
           const tiers = d.severity_tiers ?? [];
           const re = new RegExp(`(?:>|<|>=|<=|==|!=)\\s*${v.name}\\b`);
-          if (tiers.some((t) => re.test(t.expression))) {
+          if (
+            tiers.some((t) => t.expression != null && re.test(t.expression))
+          ) {
             refs.push({ definition_id: d.id, definition_name: d.name });
           }
         }
@@ -2520,6 +2522,7 @@ function AlertsTab({
     versions: Array<{ id: string; version: string; is_latest: boolean }>;
   };
 }) {
+  const navigate = useNavigate();
   const { data: definitionsResp, isLoading } = useAlertDefinitions(appId);
   const definitions = definitionsResp?.data ?? [];
   const { data: metrics } = useAlertMetrics(appId);
@@ -2566,28 +2569,8 @@ function AlertsTab({
     setFormError(null);
   };
 
-  const openEdit = (defn: AppAlertDefinition) => {
-    setFormMode("edit");
-    setEditId(defn.id);
-    formNameField.reset(defn.name);
-    const tiers = defn.severity_tiers ?? [];
-    if (tiers.length === 1) {
-      setFormExpression(tiers[0].expression);
-      setFormSeverity((tiers[0].severity as typeof formSeverity) ?? "warning");
-      setFormMultiTier(false);
-    } else {
-      // Multi-tier — show read-only summary in the form and block save.
-      setFormExpression(
-        tiers.map((t) => `[${t.severity}] ${t.expression}`).join("\n"),
-      );
-      setFormSeverity("warning");
-      setFormMultiTier(true);
-    }
-    formWindowField.reset(defn.window);
-    setFormEnabled(defn.enabled);
-    setFormMessageTemplate(defn.message_template ?? "");
-    setFormError(null);
-  };
+  // Inline editing happens on the dedicated /alerts/definitions/:id page.
+  // The inline form here is used only for quick creation on this app.
 
   const closeForm = () => {
     setFormMode("closed");
@@ -2607,7 +2590,23 @@ function AlertsTab({
       return;
     }
     if (!validateAll(formNameField, formWindowField)) return;
-    const tiers = [{ severity: formSeverity, expression: formExpression }];
+    // Build a minimal two-tier def: healthy recovery + the one severity
+    // the inline form configures. Full multi-tier edits happen on the
+    // dedicated detail page.
+    const fallbackMsg =
+      formMessageTemplate || `${formNameField.value} on {device_name}`;
+    const tiers = [
+      {
+        severity: "healthy",
+        expression: null,
+        message_template: `${formNameField.value} on {device_name} recovered`,
+      },
+      {
+        severity: formSeverity,
+        expression: formExpression,
+        message_template: fallbackMsg,
+      },
+    ];
     try {
       if (formMode === "edit" && editId) {
         await updateDef.mutateAsync({
@@ -2616,7 +2615,6 @@ function AlertsTab({
           severity_tiers: tiers,
           window: formWindowField.value,
           enabled: formEnabled,
-          message_template: formMessageTemplate || undefined,
         });
       } else {
         await createDef.mutateAsync({
@@ -2625,7 +2623,6 @@ function AlertsTab({
           severity_tiers: tiers,
           window: formWindowField.value,
           enabled: formEnabled,
-          message_template: formMessageTemplate || undefined,
         });
       }
       closeForm();
@@ -3042,7 +3039,7 @@ function AlertsTab({
                 <TableRow
                   key={defn.id}
                   className={`cursor-pointer ${editId === defn.id ? "bg-zinc-800/50" : "hover:bg-zinc-800/30"}`}
-                  onClick={() => openEdit(defn)}
+                  onClick={() => navigate(`/alerts/definitions/${defn.id}`)}
                 >
                   <TableCell className="font-medium text-zinc-100">
                     {defn.name}
