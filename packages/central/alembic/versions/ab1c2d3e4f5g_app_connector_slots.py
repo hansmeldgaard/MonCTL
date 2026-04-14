@@ -27,8 +27,8 @@ Revises: zn4o5p6q7r8s
 from alembic import op
 import sqlalchemy as sa
 
-revision = "zo5p6q7r8s9t"
-down_revision = "zn4o5p6q7r8s"
+revision = "ab1c2d3e4f5g"
+down_revision = "zx4y5z6a7b8c"
 branch_labels = None
 depends_on = None
 
