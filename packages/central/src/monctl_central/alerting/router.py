@@ -139,8 +139,14 @@ class SeverityTier(BaseModel):
 
 
 def _validate_tier_list(tiers: list[SeverityTier]) -> None:
-    """Cross-tier invariants: at most one healthy tier (null expression),
-    non-healthy tiers must have an expression, severities unique."""
+    """Cross-tier invariants: at most one healthy tier, non-healthy tiers
+    must have an expression, severities unique.
+
+    The healthy tier may OPTIONALLY carry an expression — when set, it
+    acts as a POSITIVE CLEAR signal (engine only clears an active alert
+    when this expression matches). When omitted, the engine falls back
+    to the legacy auto-clear on any non-matching cycle.
+    """
     seen: set[str] = set()
     healthy_count = 0
     for i, t in enumerate(tiers):
@@ -149,8 +155,6 @@ def _validate_tier_list(tiers: list[SeverityTier]) -> None:
         seen.add(t.severity)
         if t.severity == "healthy":
             healthy_count += 1
-            if t.expression:
-                raise ValueError(f"healthy tier at severity_tiers[{i}] must not have an expression")
         else:
             if not t.expression:
                 raise ValueError(f"severity_tiers[{i}] requires an expression")
