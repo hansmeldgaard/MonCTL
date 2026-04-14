@@ -1445,11 +1445,10 @@ export function useUpdateAssignment() {
         collector_id?: string | null;
         credential_id?: string | null;
         connector_bindings?: {
-          alias: string;
+          connector_type: string;
           connector_id: string;
-          connector_version_id: string;
+          connector_version_id?: string | null;
           credential_id?: string | null;
-          use_latest?: boolean;
           settings?: Record<string, unknown>;
         }[];
       };
@@ -1531,11 +1530,10 @@ export function useCreateAssignment() {
       use_latest?: boolean;
       credential_id?: string | null;
       connector_bindings?: {
-        alias: string;
+        connector_type: string;
         connector_id: string;
         connector_version_id?: string | null;
         credential_id?: string | null;
-        use_latest?: boolean;
         settings?: Record<string, unknown>;
       }[];
     }) => apiPost<{ id: string }>("/apps/assignments", data),
@@ -2161,9 +2159,8 @@ export function useAddAppConnector() {
     }: {
       appId: string;
       data: {
-        alias: string;
+        connector_type: string;
         connector_id: string;
-        use_latest?: boolean;
         connector_version_id?: string | null;
         settings?: Record<string, unknown>;
       };
@@ -2177,8 +2174,8 @@ export function useAddAppConnector() {
 export function useDeleteAppConnector() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ appId, alias }: { appId: string; alias: string }) =>
-      apiDelete(`/apps/${appId}/connectors/${alias}`),
+    mutationFn: ({ appId, connectorType }: { appId: string; connectorType: string }) =>
+      apiDelete(`/apps/${appId}/connectors/${connectorType}`),
     onSuccess: (_res, { appId }) => {
       qc.invalidateQueries({ queryKey: ["app-detail", appId] });
     },
@@ -2197,18 +2194,17 @@ export function useAssignConnectorToSlot() {
   return useMutation({
     mutationFn: ({
       appId,
-      alias,
+      connectorType,
       data,
     }: {
       appId: string;
-      alias: string;
+      connectorType: string;
       data: {
         connector_id: string;
         connector_version_id?: string | null;
-        use_latest?: boolean;
         settings?: Record<string, unknown>;
       };
-    }) => apiPut(`/apps/${appId}/connectors/${alias}/assign`, data),
+    }) => apiPut(`/apps/${appId}/connectors/${connectorType}/assign`, data),
     onSuccess: (_res, { appId }) => {
       qc.invalidateQueries({ queryKey: ["app-detail", appId] });
       qc.invalidateQueries({ queryKey: ["apps"] });

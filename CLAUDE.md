@@ -123,12 +123,13 @@ packages/
 
 ### Credential Resolution Chain (precedence order)
 
-1. `AssignmentCredentialOverride` — per-assignment, per-connector-alias
+1. `AssignmentCredentialOverride` — per-assignment, per-connector-type
 2. `AppAssignment.credential_id` — assignment-level
-3. `Device.credentials` JSONB — per-type mapping (`{credential_type: credential_id}`)
+3. `Device.credentials` JSONB — per-type mapping (`{connector_type: credential_id}`)
 
 ### Connector System
 
+- **`required_connectors`** on each `Poller` is a list of connector types (e.g. `["snmp"]`, `["snmp", "ssh"]`). Central parses it at version upload, pre-creates one slot per type on the App, and the operator picks a concrete connector per slot. At most one binding per connector_type per app. `context.connectors[type]` is how the poller looks them up at runtime.
 - **SNMP Connector** accepts both `snmp_version` and `version` credential keys (backward compat). Credential API returns `version` from template key names.
 - **Connector lifecycle**: Polling engine manages connect→use→close. **Apps must NOT call `connector.connect()`** — the engine does it. Idempotent guard prevents leaks if called anyway.
 - **Venv site-packages** are permanently added to `sys.path` so lazy imports work at runtime.

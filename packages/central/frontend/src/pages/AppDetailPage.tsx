@@ -70,7 +70,6 @@ import {
   useDeleteAlertDefinition,
   useUpdateAlertDefinition,
   useInvertAlertDefinition,
-  useAddAppConnector,
   useDeleteAppConnector,
   useAssignConnectorToSlot,
   useConnectors,
@@ -180,10 +179,6 @@ export function AppDetailPage() {
   // operator only picks which concrete Connector fills each slot.
   const assignConnector = useAssignConnectorToSlot();
   const deleteConnector = useDeleteAppConnector();
-  // addConnector is kept only as a legacy path for apps that don't
-  // declare ``required_connectors``; new flow uses assignConnector.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const _legacyAddConnector = useAddAppConnector();
   const { data: connectorsResp } = useConnectors();
   const connectorsList = connectorsResp?.data ?? [];
   const [slotAssignError, setSlotAssignError] = useState<
@@ -534,11 +529,11 @@ export function AppDetailPage() {
                       const matching = connectorsList.filter(
                         (c) => c.connector_type === cb.connector_type,
                       );
-                      const err = slotAssignError[cb.alias];
+                      const err = slotAssignError[cb.connector_type];
                       if (cb.is_orphaned) {
                         return (
                           <div
-                            key={cb.alias}
+                            key={cb.connector_type}
                             className="flex items-center justify-between rounded-md border border-amber-900/50 bg-amber-950/20 px-4 py-3"
                           >
                             <div className="flex items-center gap-3">
@@ -546,7 +541,7 @@ export function AppDetailPage() {
                                 orphaned
                               </Badge>
                               <code className="text-xs text-zinc-300 bg-zinc-900 px-1.5 py-0.5 rounded">
-                                {cb.alias}
+                                {cb.connector_type}
                               </code>
                               <span className="text-xs text-zinc-500">
                                 No longer declared by the current app version.
@@ -560,7 +555,7 @@ export function AppDetailPage() {
                                 if (id)
                                   deleteConnector.mutate({
                                     appId: id,
-                                    alias: cb.alias,
+                                    connectorType: cb.connector_type,
                                   });
                               }}
                             >
@@ -571,13 +566,10 @@ export function AppDetailPage() {
                       }
                       return (
                         <div
-                          key={cb.alias}
+                          key={cb.connector_type}
                           className="rounded-md bg-zinc-800/50 px-4 py-3 space-y-2"
                         >
                           <div className="flex items-center gap-2">
-                            <code className="text-xs text-zinc-200 bg-zinc-900 px-1.5 py-0.5 rounded font-semibold">
-                              {cb.alias}
-                            </code>
                             <span className="text-xs text-zinc-500">
                               type:
                             </span>
@@ -610,23 +602,23 @@ export function AppDetailPage() {
                               if (!id || !connectorId) return;
                               setSlotAssignError((prev) => {
                                 const next = { ...prev };
-                                delete next[cb.alias];
+                                delete next[cb.connector_type];
                                 return next;
                               });
                               assignConnector.mutate(
                                 {
                                   appId: id,
-                                  alias: cb.alias,
+                                  connectorType: cb.connector_type,
                                   data: {
                                     connector_id: connectorId,
-                                    use_latest: true,
+                                    connector_version_id: null,
                                   },
                                 },
                                 {
                                   onError: (mutErr: unknown) =>
                                     setSlotAssignError((prev) => ({
                                       ...prev,
-                                      [cb.alias]:
+                                      [cb.connector_type]:
                                         mutErr instanceof Error
                                           ? mutErr.message
                                           : String(mutErr),
