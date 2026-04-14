@@ -16,6 +16,7 @@ from sqlalchemy.orm import selectinload
 from monctl_central.alerting.dsl import invert_expression, validate_expression
 from monctl_central.alerting.instance_sync import sync_instances_for_definition
 from monctl_central.alerting.threshold_sync import sync_threshold_variables
+from monctl_central.common.filters import ilike_filter
 from monctl_central.dependencies import get_clickhouse, get_db, require_permission
 from monctl_central.storage.models import (
     AlertEntity,
@@ -253,11 +254,15 @@ async def list_alert_definitions(
     if app_id:
         filters.append(AlertDefinition.app_id == uuid.UUID(app_id))
     if name:
-        filters.append(AlertDefinition.name.ilike(f"%{name}%"))
+        c = ilike_filter(AlertDefinition.name, name)
+        if c is not None:
+            filters.append(c)
     if expression:
         # severity_tiers is JSONB; cast to text for a substring search
         # across all tier expressions at once.
-        filters.append(sa.cast(AlertDefinition.severity_tiers, sa.Text).ilike(f"%{expression}%"))
+        c = ilike_filter(sa.cast(AlertDefinition.severity_tiers, sa.Text), expression)
+        if c is not None:
+            filters.append(c)
 
     # Count total
     count_stmt = select(sa.func.count()).select_from(AlertDefinition)
@@ -495,13 +500,17 @@ async def list_alert_instances(
     if definition_id:
         stmt = stmt.where(AlertEntity.definition_id == uuid.UUID(definition_id))
     if definition_name:
-        stmt = stmt.where(AlertDefinition.name.ilike(f"%{definition_name}%"))
+        if (c := ilike_filter(AlertDefinition.name, definition_name)) is not None:
+            stmt = stmt.where(c)
     if app_name:
-        stmt = stmt.where(App.name.ilike(f"%{app_name}%"))
+        if (c := ilike_filter(App.name, app_name)) is not None:
+            stmt = stmt.where(c)
     if device_name:
-        stmt = stmt.where(Device.name.ilike(f"%{device_name}%"))
+        if (c := ilike_filter(Device.name, device_name)) is not None:
+            stmt = stmt.where(c)
     if entity_key:
-        stmt = stmt.where(AlertEntity.entity_key.ilike(f"%{entity_key}%"))
+        if (c := ilike_filter(AlertEntity.entity_key, entity_key)) is not None:
+            stmt = stmt.where(c)
 
     # Count before pagination
     count_stmt = select(sa.func.count()).select_from(stmt.subquery())

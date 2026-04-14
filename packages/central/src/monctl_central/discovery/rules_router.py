@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from monctl_central.common.filters import ilike_filter
 from monctl_central.dependencies import get_db, require_permission
 from monctl_central.storage.models import Device, DeviceCategory, DeviceType
 
@@ -105,21 +106,25 @@ async def list_device_types(
     stmt = select(DeviceType).options(selectinload(DeviceType.device_category))
 
     if name:
-        stmt = stmt.where(DeviceType.name.ilike(f"%{name}%"))
+        if (c := ilike_filter(DeviceType.name, name)) is not None:
+            stmt = stmt.where(c)
     if search:
-        search_filter = f"%{search}%"
-        stmt = stmt.where(
-            sa.or_(
-                DeviceType.name.ilike(search_filter),
-                DeviceType.vendor.ilike(search_filter),
-                DeviceType.sys_object_id_pattern.ilike(search_filter),
-                DeviceType.model.ilike(search_filter),
+        negate = search.startswith("!")
+        s = search[1:] if negate else (search[1:] if search.startswith("\\!") else search)
+        if s:
+            pattern = f"%{s}%"
+            disj = sa.or_(
+                DeviceType.name.ilike(pattern),
+                DeviceType.vendor.ilike(pattern),
+                DeviceType.sys_object_id_pattern.ilike(pattern),
+                DeviceType.model.ilike(pattern),
             )
-        )
+            stmt = stmt.where(sa.not_(disj) if negate else disj)
     if device_category_id:
         stmt = stmt.where(DeviceType.device_category_id == uuid.UUID(device_category_id))
     if vendor:
-        stmt = stmt.where(DeviceType.vendor.ilike(f"%{vendor}%"))
+        if (c := ilike_filter(DeviceType.vendor, vendor)) is not None:
+            stmt = stmt.where(c)
 
     # Count
     count_stmt = select(sa.func.count()).select_from(stmt.subquery())

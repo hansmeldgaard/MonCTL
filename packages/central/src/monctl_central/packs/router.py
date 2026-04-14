@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from monctl_central.common.filters import ilike_filter
 from monctl_central.dependencies import get_db, require_permission
 from monctl_central.storage.models import (
     Pack, PackVersion, App, CredentialTemplate,
@@ -122,11 +123,14 @@ async def list_packs(
     base_stmt = select(Pack)
 
     if name:
-        base_stmt = base_stmt.where(Pack.name.ilike(f"%{name}%"))
+        if (c := ilike_filter(Pack.name, name)) is not None:
+            base_stmt = base_stmt.where(c)
     if pack_uid:
-        base_stmt = base_stmt.where(Pack.pack_uid.ilike(f"%{pack_uid}%"))
+        if (c := ilike_filter(Pack.pack_uid, pack_uid)) is not None:
+            base_stmt = base_stmt.where(c)
     if description:
-        base_stmt = base_stmt.where(Pack.description.ilike(f"%{description}%"))
+        if (c := ilike_filter(Pack.description, description)) is not None:
+            base_stmt = base_stmt.where(c)
 
     sort_col = SORT_MAP.get(sort_by, Pack.name)
     base_stmt = base_stmt.order_by(sort_col.desc() if sort_dir == "desc" else sort_col.asc())

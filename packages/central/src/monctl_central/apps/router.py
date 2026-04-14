@@ -14,6 +14,7 @@ import sqlalchemy as sa
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from monctl_central.common.filters import ilike_filter
 from monctl_central.dependencies import apply_tenant_filter, get_clickhouse, get_db, require_permission
 from monctl_common.validators import validate_semver, validate_uuid
 from monctl_central.storage.models import (
@@ -283,14 +284,14 @@ async def list_apps(
 
     stmt = select(App).options(selectinload(App.connector_bindings))
 
-    if name:
-        stmt = stmt.where(App.name.ilike(f"%{name}%"))
-    if app_type:
-        stmt = stmt.where(App.app_type.ilike(f"%{app_type}%"))
-    if target_table:
-        stmt = stmt.where(App.target_table.ilike(f"%{target_table}%"))
-    if description:
-        stmt = stmt.where(App.description.ilike(f"%{description}%"))
+    if (c := ilike_filter(App.name, name)) is not None:
+        stmt = stmt.where(c)
+    if (c := ilike_filter(App.app_type, app_type)) is not None:
+        stmt = stmt.where(c)
+    if (c := ilike_filter(App.target_table, target_table)) is not None:
+        stmt = stmt.where(c)
+    if (c := ilike_filter(App.description, description)) is not None:
+        stmt = stmt.where(c)
 
     APPS_SORT_MAP = {
         "name": App.name,
@@ -522,30 +523,33 @@ async def list_assignments(
         stmt = stmt.where(AppAssignment.app_id == uuid.UUID(app_id_filter))
     stmt = apply_tenant_filter(stmt, auth, DeviceModel.tenant_id)
 
-    if app_name:
-        stmt = stmt.where(App.name.ilike(f"%{app_name}%"))
-    if device_name:
-        stmt = stmt.where(DeviceModel.name.ilike(f"%{device_name}%"))
-    if device_address:
-        stmt = stmt.where(DeviceModel.address.ilike(f"%{device_address}%"))
-    if device_type:
-        stmt = stmt.where(DeviceModel.device_category.ilike(f"%{device_type}%"))
+    if (c := ilike_filter(App.name, app_name)) is not None:
+        stmt = stmt.where(c)
+    if (c := ilike_filter(DeviceModel.name, device_name)) is not None:
+        stmt = stmt.where(c)
+    if (c := ilike_filter(DeviceModel.address, device_address)) is not None:
+        stmt = stmt.where(c)
+    if (c := ilike_filter(DeviceModel.device_category, device_type)) is not None:
+        stmt = stmt.where(c)
     if device_type_name:
         stmt = stmt.outerjoin(DeviceType, DeviceModel.device_type_id == DeviceType.id)
-        stmt = stmt.where(DeviceType.name.ilike(f"%{device_type_name}%"))
+        if (c := ilike_filter(DeviceType.name, device_type_name)) is not None:
+            stmt = stmt.where(c)
         _joined_device_type = True
     if schedule_type:
         stmt = stmt.where(AppAssignment.schedule_type == schedule_type)
-    if schedule_value:
-        stmt = stmt.where(AppAssignment.schedule_value.ilike(f"%{schedule_value}%"))
+    if (c := ilike_filter(AppAssignment.schedule_value, schedule_value)) is not None:
+        stmt = stmt.where(c)
     _joined_collector_group = False
     if collector_group_name:
         stmt = stmt.outerjoin(CollectorGroup, DeviceModel.collector_group_id == CollectorGroup.id)
-        stmt = stmt.where(CollectorGroup.name.ilike(f"%{collector_group_name}%"))
+        if (c := ilike_filter(CollectorGroup.name, collector_group_name)) is not None:
+            stmt = stmt.where(c)
         _joined_collector_group = True
     if credential_name:
         stmt = stmt.outerjoin(Credential, AppAssignment.credential_id == Credential.id)
-        stmt = stmt.where(Credential.name.ilike(f"%{credential_name}%"))
+        if (c := ilike_filter(Credential.name, credential_name)) is not None:
+            stmt = stmt.where(c)
     if enabled is not None:
         stmt = stmt.where(AppAssignment.enabled == enabled)
 

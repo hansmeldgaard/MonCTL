@@ -24,15 +24,34 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from monctl_central.common.filters import ilike_filter
 from monctl_central.dependencies import get_db, require_permission
-from monctl_central.storage.models import Incident, IncidentRule
+from monctl_central.storage.models import AlertEntity, Incident, IncidentRule
 
 router = APIRouter()
 
 
-def _fmt_incident(i: Incident) -> dict:
+def _fmt_incident(
+    i: Incident,
+    live_by_key: dict[tuple[uuid.UUID, uuid.UUID, str], tuple[str | None, float | None]] | None = None,
+) -> dict:
     rule_name = i.rule.name if i.rule else None
     rule_source = i.rule.source if i.rule else None
+
+    # Live alert view: peak severity frozen on `i.severity` (watermark);
+    # the current alert tier may differ when the underlying value has
+    # moved back down. Exposed so the UI can show "peaked critical, now
+    # warning". Cleared incidents get null (nothing live to compare to).
+    live_severity: str | None = None
+    live_current_value: float | None = None
+    if live_by_key is not None and i.state == "open" and i.rule is not None:
+        # Incident.entity_key is `"{assignment_id}|{suffix}"`; strip prefix.
+        suffix = i.entity_key.split("|", 1)[1] if "|" in i.entity_key else ""
+        key = (i.rule.definition_id, i.assignment_id, suffix)
+        hit = live_by_key.get(key)
+        if hit is not None:
+            live_severity, live_current_value = hit
+
     return {
         "id": str(i.id),
         "rule_id": str(i.rule_id),
@@ -43,6 +62,8 @@ def _fmt_incident(i: Incident) -> dict:
         "device_id": str(i.device_id) if i.device_id else None,
         "state": i.state,
         "severity": i.severity,
+        "live_severity": live_severity,
+        "live_current_value": live_current_value,
         "message": i.message,
         "labels": i.labels or {},
         "fire_count": i.fire_count,
@@ -59,6 +80,40 @@ def _fmt_incident(i: Incident) -> dict:
         ),
         "created_at": i.created_at.isoformat() if i.created_at else None,
         "updated_at": i.updated_at.isoformat() if i.updated_at else None,
+    }
+
+
+async def _load_live_by_key(
+    db: AsyncSession, incidents: list[Incident]
+) -> dict[tuple[uuid.UUID, uuid.UUID, str], tuple[str | None, float | None]]:
+    """Batch-load live AlertEntity (severity, current_value) for open
+    incidents so the list endpoint can expose peak-vs-current in one
+    round-trip. Cleared incidents are skipped (no meaningful live view).
+    """
+    open_ones = [
+        i for i in incidents if i.state == "open" and i.rule is not None
+    ]
+    if not open_ones:
+        return {}
+    def_ids = {i.rule.definition_id for i in open_ones}
+    asg_ids = {i.assignment_id for i in open_ones}
+    rows = (
+        await db.execute(
+            select(
+                AlertEntity.definition_id,
+                AlertEntity.assignment_id,
+                AlertEntity.entity_key,
+                AlertEntity.severity,
+                AlertEntity.current_value,
+            ).where(
+                AlertEntity.definition_id.in_(def_ids),
+                AlertEntity.assignment_id.in_(asg_ids),
+            )
+        )
+    ).all()
+    return {
+        (def_id, asg_id, ekey or ""): (sev, cv)
+        for def_id, asg_id, ekey, sev, cv in rows
     }
 
 
@@ -105,7 +160,8 @@ async def list_incidents(
             raise HTTPException(status_code=400, detail="Invalid rule_id")
     if rule_name:
         stmt = stmt.join(IncidentRule, Incident.rule_id == IncidentRule.id)
-        stmt = stmt.where(IncidentRule.name.ilike(f"%{rule_name}%"))
+        if (c := ilike_filter(IncidentRule.name, rule_name)) is not None:
+            stmt = stmt.where(c)
     if device_id:
         try:
             stmt = stmt.where(Incident.device_id == uuid.UUID(device_id))
@@ -113,18 +169,24 @@ async def list_incidents(
             raise HTTPException(status_code=400, detail="Invalid device_id")
     if device_name:
         # labels is JSONB; filter by device_name text search.
-        stmt = stmt.where(
-            Incident.labels["device_name"].as_string().ilike(f"%{device_name}%")
-        )
+        if (
+            c := ilike_filter(
+                Incident.labels["device_name"].as_string(), device_name
+            )
+        ) is not None:
+            stmt = stmt.where(c)
     if search:
         stmt = stmt.outerjoin(IncidentRule, Incident.rule_id == IncidentRule.id)
-        stmt = stmt.where(
-            sa.or_(
-                IncidentRule.name.ilike(f"%{search}%"),
-                Incident.message.ilike(f"%{search}%"),
-                Incident.labels["device_name"].as_string().ilike(f"%{search}%"),
+        negate = search.startswith("!")
+        s = search[1:] if negate else (search[1:] if search.startswith("\\!") else search)
+        if s:
+            pattern = f"%{s}%"
+            disj = sa.or_(
+                IncidentRule.name.ilike(pattern),
+                Incident.message.ilike(pattern),
+                Incident.labels["device_name"].as_string().ilike(pattern),
             )
-        )
+            stmt = stmt.where(sa.not_(disj) if negate else disj)
 
     count_stmt = select(sa.func.count()).select_from(stmt.subquery())
     total = (await db.execute(count_stmt)).scalar() or 0
@@ -146,9 +208,10 @@ async def list_incidents(
 
     stmt = stmt.offset(offset).limit(limit)
     rows = (await db.execute(stmt)).scalars().unique().all()
+    live_by_key = await _load_live_by_key(db, rows)
     return {
         "status": "success",
-        "data": [_fmt_incident(i) for i in rows],
+        "data": [_fmt_incident(i, live_by_key) for i in rows],
         "meta": {
             "limit": limit,
             "offset": offset,
@@ -177,7 +240,8 @@ async def get_incident(
     ).scalar_one_or_none()
     if incident is None:
         raise HTTPException(status_code=404, detail="Not found")
-    return {"status": "success", "data": _fmt_incident(incident)}
+    live_by_key = await _load_live_by_key(db, [incident])
+    return {"status": "success", "data": _fmt_incident(incident, live_by_key)}
 
 
 class BulkClearRequest(BaseModel):

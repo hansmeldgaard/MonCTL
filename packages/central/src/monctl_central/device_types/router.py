@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from monctl_central.common.filters import ilike_filter
 from monctl_central.dependencies import get_db, require_permission
 from monctl_central.storage.models import DeviceCategory, DeviceType
 
@@ -63,16 +64,20 @@ async def list_device_categories(
     stmt = select(DeviceCategory)
 
     if name:
-        stmt = stmt.where(DeviceCategory.name.ilike(f"%{name}%"))
+        if (c := ilike_filter(DeviceCategory.name, name)) is not None:
+            stmt = stmt.where(c)
     if category:
         stmt = stmt.where(DeviceCategory.category == category)
     if search:
-        stmt = stmt.where(
-            sa.or_(
-                DeviceCategory.name.ilike(f"%{search}%"),
-                DeviceCategory.description.ilike(f"%{search}%"),
+        negate = search.startswith("!")
+        s = search[1:] if negate else (search[1:] if search.startswith("\\!") else search)
+        if s:
+            pattern = f"%{s}%"
+            disj = sa.or_(
+                DeviceCategory.name.ilike(pattern),
+                DeviceCategory.description.ilike(pattern),
             )
-        )
+            stmt = stmt.where(sa.not_(disj) if negate else disj)
 
     # Count
     count_stmt = select(sa.func.count()).select_from(stmt.subquery())
@@ -143,12 +148,15 @@ async def list_category_counts(
     """Get type counts per category, optionally filtered by search."""
     stmt = select(DeviceCategory)
     if search:
-        stmt = stmt.where(
-            sa.or_(
-                DeviceCategory.name.ilike(f"%{search}%"),
-                DeviceCategory.description.ilike(f"%{search}%"),
+        negate = search.startswith("!")
+        s = search[1:] if negate else (search[1:] if search.startswith("\\!") else search)
+        if s:
+            pattern = f"%{s}%"
+            disj = sa.or_(
+                DeviceCategory.name.ilike(pattern),
+                DeviceCategory.description.ilike(pattern),
             )
-        )
+            stmt = stmt.where(sa.not_(disj) if negate else disj)
     cat_stmt = (
         select(DeviceCategory.category, sa.func.count().label("cnt"))
         .where(DeviceCategory.id.in_(select(stmt.subquery().c.id)))
