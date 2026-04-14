@@ -16,6 +16,7 @@ from sqlalchemy.orm import selectinload
 
 from monctl_central.common.filters import ilike_filter
 from monctl_central.dependencies import apply_tenant_filter, check_tenant_access, get_clickhouse, get_db, require_permission
+from monctl_central.devices.dedup import find_address_duplicates, serialize_candidate
 from monctl_central.storage.clickhouse import ClickHouseClient
 from monctl_central.storage.models import Credential, CollectorGroup, Device, DeviceType, InterfaceMetadata, LabelKey, Tenant, Collector
 from monctl_common.utils import utc_now
@@ -67,6 +68,7 @@ class CreateDeviceRequest(BaseModel):
     credentials: dict[str, str] = Field(default_factory=dict, description="Per-protocol credential mapping: {credential_type: credential_id}")
     labels: dict[str, str] = Field(default_factory=dict, description="Key-value labels")
     metadata: dict = Field(default_factory=dict, description="Additional metadata")
+    force: bool = Field(default=False, description="Create even if duplicate candidates are found")
 
     @field_validator("address")
     @classmethod
@@ -294,12 +296,30 @@ async def create_device(
     auth: dict = Depends(require_permission("device", "create")),
 ):
     """Create a new device."""
+    tenant_uuid = uuid.UUID(request.tenant_id) if request.tenant_id else None
+    if not request.force:
+        dupes = await find_address_duplicates(
+            db, tenant_id=tenant_uuid, addresses=[request.address]
+        )
+        existing = dupes.get(request.address, [])
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "duplicate_candidate",
+                    "message": (
+                        f"A device with address '{request.address}' already exists "
+                        "in this tenant. Re-submit with force=true to add anyway."
+                    ),
+                    "candidates": [serialize_candidate(d) for d in existing],
+                },
+            )
     device = Device(
         name=request.name,
         address=request.address,
         device_category=request.device_category,
         collector_id=uuid.UUID(request.collector_id) if request.collector_id else None,
-        tenant_id=uuid.UUID(request.tenant_id) if request.tenant_id else None,
+        tenant_id=tenant_uuid,
         collector_group_id=uuid.UUID(request.collector_group_id) if request.collector_group_id else None,
         device_type_id=uuid.UUID(request.device_type_id) if request.device_type_id else None,
         credentials=request.credentials,
@@ -350,6 +370,7 @@ class BulkImportDevicesRequest(BaseModel):
     credentials: dict[str, str] = Field(default_factory=dict)
     labels: dict[str, str] = Field(default_factory=dict)
     device_category: str = Field(default="host", max_length=64)
+    force: bool = Field(default=False, description="Import even if duplicate addresses are found (creates only the non-duplicates)")
 
     @field_validator("addresses")
     @classmethod
@@ -459,6 +480,30 @@ async def bulk_import_devices(
     tenant_id_uuid = uuid.UUID(request.tenant_id) if request.tenant_id else None
     cgroup_id_uuid = uuid.UUID(request.collector_group_id) if request.collector_group_id else None
 
+    dupes = await find_address_duplicates(
+        db, tenant_id=tenant_id_uuid, addresses=request.addresses
+    )
+    duplicate_payload = [
+        {"address": addr, "candidates": [serialize_candidate(d) for d in matches]}
+        for addr, matches in dupes.items()
+    ]
+
+    if duplicate_payload and not request.force:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "duplicate_candidate",
+                "message": (
+                    f"{len(duplicate_payload)} of {len(request.addresses)} addresses "
+                    "already exist in this tenant. Re-submit with force=true to import "
+                    "the rest (duplicates will still be skipped)."
+                ),
+                "duplicates": duplicate_payload,
+            },
+        )
+
+    addresses_to_create = [a for a in request.addresses if a not in dupes]
+
     devices_to_create = [
         Device(
             name=addr,
@@ -470,7 +515,7 @@ async def bulk_import_devices(
             labels=request.labels,
             metadata_={},
         )
-        for addr in request.addresses
+        for addr in addresses_to_create
     ]
 
     db.add_all(devices_to_create)
@@ -506,6 +551,7 @@ async def bulk_import_devices(
             "created": len(created_devices),
             "discovery_queued": discovery_queued,
             "devices": [_format_device(d) for d in created_devices],
+            "skipped_duplicates": duplicate_payload,
         },
     }
 

@@ -19,6 +19,8 @@ config_data keys returned:
     sys_location    — sysLocation.0 (1.3.6.1.2.1.1.6.0)
     sys_contact     — sysContact.0 (1.3.6.1.2.1.1.4.0)
     sys_uptime      — sysUpTime.0 (1.3.6.1.2.1.1.3.0)
+    serial          — entPhysicalSerialNum first non-empty entry
+                      (1.3.6.1.2.1.47.1.1.1.1.11). Absent when ENTITY-MIB isn't exposed.
 """
 
 from __future__ import annotations
@@ -101,6 +103,20 @@ class Poller(BasePoller):
                     if key == "sys_object_id" and val_str.startswith("."):
                         val_str = val_str[1:]
                     config_data[key] = val_str
+
+            # Pull entPhysicalSerialNum — best stable hardware identifier for
+            # cross-device dedup. Walk the subtree and pick the first non-empty
+            # value (vendors put the chassis serial at different indices).
+            try:
+                serial_rows = await snmp.walk("1.3.6.1.2.1.47.1.1.1.1.11")
+                for _oid, value in serial_rows or []:
+                    val_str = _decode_snmp_value(value).strip()
+                    if val_str and val_str.lower() not in ("nosuchobject", "nosuchinstance"):
+                        config_data["serial"] = val_str
+                        break
+            except Exception:
+                # ENTITY-MIB not supported — leave serial absent
+                pass
 
             # Probe eligibility OIDs if passed via parameters
             eligibility_oid_list = context.parameters.get("_eligibility_oids", [])

@@ -206,6 +206,16 @@ export interface Device {
   updated_at?: string;
 }
 
+export interface DuplicateCandidate {
+  id: string;
+  name: string;
+  address: string;
+  tenant_id: string | null;
+  sys_name: string | null;
+  sys_object_id: string | null;
+  serial: string | null;
+}
+
 export interface DeviceBulkPatchRequest {
   device_ids: string[];
   is_enabled?: boolean;

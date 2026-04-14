@@ -34,6 +34,7 @@ import type {
   CredentialType,
   CredentialTemplateField,
   Device,
+  DuplicateCandidate,
   DeviceAssignment,
   DeviceListParams,
   DeviceThresholdRow,
@@ -1039,6 +1040,7 @@ export function useCreateDevice() {
       device_type_id?: string;
       credentials?: Record<string, string>;
       labels?: Record<string, string>;
+      force?: boolean;
     }) => apiPost<Device>("/devices", data),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["devices"] });
@@ -1056,11 +1058,17 @@ export function useBulkImportDevices() {
       credentials?: Record<string, string>;
       labels?: Record<string, string>;
       device_category?: string;
+      force?: boolean;
     }) =>
-      apiPost<{ created: number; discovery_queued: number; devices: Device[] }>(
-        "/devices/bulk-import",
-        data,
-      ),
+      apiPost<{
+        created: number;
+        discovery_queued: number;
+        devices: Device[];
+        skipped_duplicates: Array<{
+          address: string;
+          candidates: DuplicateCandidate[];
+        }>;
+      }>("/devices/bulk-import", data),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["devices"] });
     },
@@ -2174,8 +2182,13 @@ export function useAddAppConnector() {
 export function useDeleteAppConnector() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ appId, connectorType }: { appId: string; connectorType: string }) =>
-      apiDelete(`/apps/${appId}/connectors/${connectorType}`),
+    mutationFn: ({
+      appId,
+      connectorType,
+    }: {
+      appId: string;
+      connectorType: string;
+    }) => apiDelete(`/apps/${appId}/connectors/${connectorType}`),
     onSuccess: (_res, { appId }) => {
       qc.invalidateQueries({ queryKey: ["app-detail", appId] });
     },
