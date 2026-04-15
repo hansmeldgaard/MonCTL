@@ -1405,6 +1405,19 @@ export interface PackImportResult {
   skipped: number;
 }
 
+export interface PackReconcileDiffBucket {
+  created: number;
+  updated: number;
+  skipped_user_owned: number;
+  skipped_unchanged: number;
+}
+
+export type PackReconcileDiff = Record<string, PackReconcileDiffBucket>;
+
+export interface PackReconcileResult extends PackImportResult {
+  diff: PackReconcileDiff;
+}
+
 // ── Docker Infrastructure types ──────────────────────────────────────────────
 
 export interface DockerHostInfo {

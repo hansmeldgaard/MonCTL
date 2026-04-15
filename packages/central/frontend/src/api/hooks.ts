@@ -77,6 +77,7 @@ import type {
   PackDetail,
   PackImportPreview,
   PackImportResult,
+  PackReconcileResult,
   PerformanceAppSummary,
   PerformanceRecord,
   AvailableEntities,
@@ -3340,6 +3341,21 @@ export function useDeletePack() {
     mutationFn: (id: string) => apiDelete(`/packs/${id}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["packs"] });
+    },
+  });
+}
+
+export function useReconcilePack() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (pack_uid: string) =>
+      apiPost<PackReconcileResult>(`/packs/${pack_uid}/reconcile`, {}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["packs"] });
+      qc.invalidateQueries({ queryKey: ["apps"] });
+      qc.invalidateQueries({ queryKey: ["alert-definitions"] });
+      qc.invalidateQueries({ queryKey: ["threshold-variables"] });
+      qc.invalidateQueries({ queryKey: ["connectors"] });
     },
   });
 }

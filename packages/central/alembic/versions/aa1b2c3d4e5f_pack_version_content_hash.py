@@ -6,7 +6,7 @@ and trigger an automatic reconcile. See the pack-reconcile plan
 (``proud-tickling-acorn``) for motivation.
 
 Revision ID: aa1b2c3d4e5f
-Revises: ab1c2d3e4f5g
+Revises: aa0b1c2d3e4f
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from alembic import op
 
 
 revision = "aa1b2c3d4e5f"
-down_revision = "ab1c2d3e4f5g"
+down_revision = "aa0b1c2d3e4f"
 branch_labels = None
 depends_on = None
 
