@@ -3052,6 +3052,16 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
   const multiHistoryTier: DataTier =
     (multiHistoryResp?.tier as DataTier | undefined) ?? "raw";
 
+  // Device availability over the same window — drives the gray
+  // "device down" bands in the interface chart. Only fetched when the
+  // chart is visible.
+  const { data: deviceAvailability } = useAvailabilityHistory(
+    showMultiChart ? deviceId : undefined,
+    fromTs,
+    toTs,
+    5000,
+  );
+
   // Bulk metric toggle for selected interfaces
   const bulkToggleMetric = (metric: string, enable: boolean) => {
     const ids = [...selectedIds].filter((id) => filteredIds.has(id));
@@ -3379,6 +3389,7 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
               unit={trafficUnit}
               mode={chartMode}
               tier={multiHistoryTier}
+              deviceAvailability={deviceAvailability}
               timezone={tz}
               onZoom={handleChartZoom}
             />
