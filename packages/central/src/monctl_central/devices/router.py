@@ -254,6 +254,7 @@ async def list_devices(
         "address": Device.address,
         "device_category": Device.device_category,
         "created_at": Device.created_at,
+        "updated_at": Device.updated_at,
     }.get(sort_by)
 
     if sort_by == "tenant_name" and not tenant_name:

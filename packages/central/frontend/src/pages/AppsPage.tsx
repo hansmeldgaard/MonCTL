@@ -25,19 +25,34 @@ import { useApps, useCreateApp, useDeleteApp } from "@/api/hooks.ts";
 import { useListState } from "@/hooks/useListState.ts";
 import { usePermissions } from "@/hooks/usePermissions.ts";
 import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
+import { useTimezone } from "@/hooks/useTimezone.ts";
 import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
+import { timeAgo, formatDate } from "@/lib/utils.ts";
 import type { AppSummary } from "@/types/api.ts";
 
 export function AppsPage() {
   const { canCreate, canDelete } = usePermissions();
   const { pageSize, scrollMode } = useTablePreferences();
+  const tz = useTimezone();
   const listState = useListState({
     columns: [
       { key: "name", label: "Name" },
       { key: "app_type", label: "Type" },
       { key: "target_table", label: "Target Table" },
       { key: "description", label: "Description", sortable: false },
+      {
+        key: "created_at",
+        label: "Created",
+        sortable: true,
+        filterable: false,
+      },
+      {
+        key: "updated_at",
+        label: "Updated",
+        sortable: true,
+        filterable: false,
+      },
     ],
     defaultPageSize: pageSize,
     scrollMode,
@@ -214,6 +229,22 @@ export function AppsPage() {
                         listState.setFilter("description", v)
                       }
                     />
+                    <FilterableSortHead
+                      col="created_at"
+                      label="Created"
+                      sortBy={listState.sortBy}
+                      sortDir={listState.sortDir}
+                      onSort={listState.handleSort}
+                      filterable={false}
+                    />
+                    <FilterableSortHead
+                      col="updated_at"
+                      label="Updated"
+                      sortBy={listState.sortBy}
+                      sortDir={listState.sortDir}
+                      onSort={listState.handleSort}
+                      filterable={false}
+                    />
                     <TableHead className="w-12"></TableHead>
                   </TableRow>
                 </TableHeader>
@@ -274,6 +305,22 @@ export function AppsPage() {
                           {app.description ?? (
                             <span className="text-zinc-600 italic">—</span>
                           )}
+                        </TableCell>
+                        <TableCell
+                          className="text-zinc-500 text-xs whitespace-nowrap"
+                          title={
+                            app.created_at ? formatDate(app.created_at, tz) : ""
+                          }
+                        >
+                          {app.created_at ? timeAgo(app.created_at) : "—"}
+                        </TableCell>
+                        <TableCell
+                          className="text-zinc-500 text-xs whitespace-nowrap"
+                          title={
+                            app.updated_at ? formatDate(app.updated_at, tz) : ""
+                          }
+                        >
+                          {app.updated_at ? timeAgo(app.updated_at) : "—"}
                         </TableCell>
                         {canDelete("app") && (
                           <TableCell>

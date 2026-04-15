@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { usePermissions } from "@/hooks/usePermissions.ts";
+import { useTimezone } from "@/hooks/useTimezone.ts";
+import { timeAgo, formatDate } from "@/lib/utils.ts";
 import {
   ArrowDown,
   ArrowUp,
@@ -64,6 +66,7 @@ import { DeviceIcon, categoryIconUrl } from "@/components/DeviceIcon.tsx";
 
 export function DevicesPage() {
   const { canCreate, canEdit, canDelete } = usePermissions();
+  const tz = useTimezone();
   // ── URL query params (for deep linking from device types page) ──
   const [searchParams] = useSearchParams();
 
@@ -770,13 +773,33 @@ export function DevicesPage() {
                           </button>
                         </div>
                       </TableHead>
+
+                      {/* Created */}
+                      <TableHead>
+                        <div
+                          className="flex items-center gap-1 cursor-pointer select-none"
+                          onClick={() => handleSort("created_at")}
+                        >
+                          Created <SortIcon col="created_at" />
+                        </div>
+                      </TableHead>
+
+                      {/* Updated */}
+                      <TableHead>
+                        <div
+                          className="flex items-center gap-1 cursor-pointer select-none"
+                          onClick={() => handleSort("updated_at")}
+                        >
+                          Updated <SortIcon col="updated_at" />
+                        </div>
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {devices.length === 0 && hasActiveFilters ? (
                       <TableRow>
                         <TableCell
-                          colSpan={9}
+                          colSpan={11}
                           className="text-center py-8 text-zinc-500 text-sm"
                         >
                           No devices match your filters
@@ -983,6 +1006,34 @@ export function DevicesPage() {
                               ) : (
                                 <span className="text-zinc-600">&mdash;</span>
                               )}
+                            </TableCell>
+
+                            {/* Created */}
+                            <TableCell
+                              className="text-zinc-500 text-xs whitespace-nowrap"
+                              title={
+                                device.created_at
+                                  ? formatDate(device.created_at, tz)
+                                  : ""
+                              }
+                            >
+                              {device.created_at
+                                ? timeAgo(device.created_at)
+                                : "—"}
+                            </TableCell>
+
+                            {/* Updated */}
+                            <TableCell
+                              className="text-zinc-500 text-xs whitespace-nowrap"
+                              title={
+                                device.updated_at
+                                  ? formatDate(device.updated_at, tz)
+                                  : ""
+                              }
+                            >
+                              {device.updated_at
+                                ? timeAgo(device.updated_at)
+                                : "—"}
                             </TableCell>
                           </TableRow>
                         );
