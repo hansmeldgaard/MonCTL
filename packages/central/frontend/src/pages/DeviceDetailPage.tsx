@@ -167,8 +167,10 @@ import type {
 import { CredentialCell } from "@/components/CredentialCell.tsx";
 import { DeviceIcon, categoryIconUrl } from "@/components/DeviceIcon.tsx";
 import { RuleFormDialog } from "@/pages/DiscoveryRulesPage.tsx";
-import { timeAgo, formatDate, formatUptime } from "@/lib/utils.ts";
+import { timeAgo, formatDate, formatUptime, formatTime } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
+import { useTimeDisplayMode } from "@/hooks/useTimeDisplayMode.ts";
+import { TimeDisplayToggle } from "@/components/TimeDisplayToggle.tsx";
 
 // ── Default time range ────────────────────────────────────
 
@@ -5950,6 +5952,8 @@ function AlertsTab({ deviceId }: { deviceId: string }) {
 
 function DeviceActiveAlerts({ deviceId }: { deviceId: string }) {
   const { pageSize, scrollMode } = useTablePreferences();
+  const tz = useTimezone();
+  const { mode: timeMode } = useTimeDisplayMode();
   const listState = useListState({
     columns: [
       { key: "state", label: "State", filterable: false },
@@ -5958,7 +5962,8 @@ function DeviceActiveAlerts({ deviceId }: { deviceId: string }) {
       { key: "entity_key", label: "Entity" },
       { key: "current_value", label: "Value", filterable: false },
       { key: "fire_count", label: "Fires", filterable: false },
-      { key: "started_firing_at", label: "Since", filterable: false },
+      { key: "current_state_since", label: "Since", filterable: false },
+      { key: "last_triggered_at", label: "Last triggered", filterable: false },
     ],
     defaultSortBy: "state",
     defaultSortDir: "desc",
@@ -6016,6 +6021,7 @@ function DeviceActiveAlerts({ deviceId }: { deviceId: string }) {
             <Badge variant="destructive" className="ml-1.5 text-xs">
               {meta.total} firing
             </Badge>
+            <TimeDisplayToggle />
           </CardTitle>
         </div>
       </CardHeader>
@@ -6077,8 +6083,16 @@ function DeviceActiveAlerts({ deviceId }: { deviceId: string }) {
                 filterable={false}
               />
               <FilterableSortHead
-                col="started_firing_at"
+                col="current_state_since"
                 label="Since"
+                sortBy={listState.sortBy}
+                sortDir={listState.sortDir}
+                onSort={listState.handleSort}
+                filterable={false}
+              />
+              <FilterableSortHead
+                col="last_triggered_at"
+                label="Last triggered"
                 sortBy={listState.sortBy}
                 sortDir={listState.sortDir}
                 onSort={listState.handleSort}
@@ -6159,10 +6173,11 @@ function DeviceActiveAlerts({ deviceId }: { deviceId: string }) {
                   <TableCell className="font-mono text-xs">
                     {inst.fire_count ?? 0}
                   </TableCell>
-                  <TableCell className="text-xs text-zinc-400">
-                    {inst.started_firing_at
-                      ? timeAgo(inst.started_firing_at)
-                      : "\u2014"}
+                  <TableCell className="text-xs text-zinc-400 whitespace-nowrap">
+                    {formatTime(inst.current_state_since, timeMode, tz)}
+                  </TableCell>
+                  <TableCell className="text-xs text-zinc-400 whitespace-nowrap">
+                    {formatTime(inst.last_triggered_at, timeMode, tz)}
                   </TableCell>
                   <TableCell className="text-center">
                     <button
@@ -6201,10 +6216,9 @@ function DeviceActiveAlerts({ deviceId }: { deviceId: string }) {
 }
 
 function DeviceAlertHistory({ deviceId }: { deviceId: string }) {
-  const [actionFilter, setActionFilter] = useState<string | undefined>(
-    undefined,
-  );
   const { pageSize, scrollMode } = useTablePreferences();
+  const tz = useTimezone();
+  const { mode: timeMode } = useTimeDisplayMode();
   const listState = useListState({
     columns: [
       { key: "definition_name", label: "Alert" },
@@ -6221,7 +6235,7 @@ function DeviceAlertHistory({ deviceId }: { deviceId: string }) {
     data: response,
     isLoading,
     isFetching,
-  } = useDeviceAlertLog(deviceId, listState.params, { action: actionFilter });
+  } = useDeviceAlertLog(deviceId, listState.params, {});
   const logEntries = (response as any)?.data ?? [];
   const meta = (response as any)?.meta ?? {
     limit: 50,
@@ -6239,42 +6253,8 @@ function DeviceAlertHistory({ deviceId }: { deviceId: string }) {
             <Badge variant="default" className="ml-1.5 text-xs">
               {meta.total}
             </Badge>
+            <TimeDisplayToggle />
           </CardTitle>
-          <div className="flex items-center gap-1 text-xs">
-            {(
-              [
-                { val: undefined, label: "All", cls: "" },
-                {
-                  val: "fire",
-                  label: "Fire",
-                  cls: "bg-red-500/20 text-red-400",
-                },
-                {
-                  val: "escalate",
-                  label: "Escalate",
-                  cls: "bg-orange-500/20 text-orange-400",
-                },
-                {
-                  val: "downgrade",
-                  label: "Downgrade",
-                  cls: "bg-amber-500/20 text-amber-400",
-                },
-                {
-                  val: "clear",
-                  label: "Clear",
-                  cls: "bg-green-500/20 text-green-400",
-                },
-              ] as const
-            ).map(({ val, label, cls }) => (
-              <button
-                key={label}
-                onClick={() => setActionFilter(val)}
-                className={`px-2 py-0.5 rounded ${actionFilter === val ? cls || "bg-zinc-700 text-white" : "text-zinc-400 hover:text-zinc-200"}`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
         </div>
       </CardHeader>
       <CardContent>
@@ -6384,7 +6364,7 @@ function DeviceAlertHistory({ deviceId }: { deviceId: string }) {
                         {entry.message || "\u2014"}
                       </TableCell>
                       <TableCell className="text-xs text-zinc-400 whitespace-nowrap">
-                        {timeAgo(entry.occurred_at)}
+                        {formatTime(entry.occurred_at, timeMode, tz)}
                       </TableCell>
                     </TableRow>
                   );

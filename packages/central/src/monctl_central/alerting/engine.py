@@ -312,6 +312,7 @@ class AlertEngine:
                         inst.state = "resolved"
                         inst.severity = None
                         inst.last_cleared_at = now
+                        inst.current_state_since = None
                         inst.fire_count = 0
                         _refresh_from_healthy()
                         await send_notifications(defn, str(inst.assignment_id), "resolved")
@@ -351,11 +352,13 @@ class AlertEngine:
             inst.metric_values = fire_data.get("metric_values", {})
             inst.threshold_values = fire_data.get("threshold_values", {})
 
+            inst.last_triggered_at = now
             if prev_state != "firing":
                 # Fresh fire from ok/resolved.
                 inst.state = "firing"
                 inst.severity = effective_sev
                 inst.started_firing_at = now
+                inst.current_state_since = now
                 inst.fire_count = 1
                 await send_notifications(defn, str(inst.assignment_id), "firing")
                 log_records.append(self._build_log_record(defn, inst, "fire", now, tenant_by_device))
@@ -363,9 +366,10 @@ class AlertEngine:
                 # Already firing — evaluate severity transition.
                 cmp = _sev.compare(effective_sev, prev_sev)
                 if cmp != 0:
-                    # Tier change: reset counter so fire_count reflects
-                    # cycles seen at the new severity only.
+                    # Tier change: reset counter + state-since so both
+                    # reflect the new severity only.
                     inst.severity = effective_sev
+                    inst.current_state_since = now
                     inst.fire_count = 1
                     action = "escalate" if cmp > 0 else "downgrade"
                     log_records.append(self._build_log_record(defn, inst, action, now, tenant_by_device))
