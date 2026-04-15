@@ -546,6 +546,7 @@ CREATE TABLE IF NOT EXISTS alert_log ON CLUSTER '{cluster}'
     app_id             UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
     app_name           String        DEFAULT '',
     tenant_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    tenant_name        String        DEFAULT '',
     entity_labels      String        DEFAULT '{{}}',
     fire_count         UInt32        DEFAULT 0,
     message            String        DEFAULT '',
@@ -580,6 +581,7 @@ CREATE TABLE IF NOT EXISTS alert_log
     app_id             UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
     app_name           String        DEFAULT '',
     tenant_id          UUID          DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    tenant_name        String        DEFAULT '',
     entity_labels      String        DEFAULT '{}',
     fire_count         UInt32        DEFAULT 0,
     message            String        DEFAULT '',
@@ -599,7 +601,7 @@ _ALERT_LOG_INSERT_COLUMNS = [
     "action", "severity",
     "current_value", "threshold_value", "expression",
     "device_id", "device_name",
-    "assignment_id", "app_id", "app_name", "tenant_id",
+    "assignment_id", "app_id", "app_name", "tenant_id", "tenant_name",
     "entity_labels", "fire_count", "message",
     "metric_values", "threshold_values",
     "occurred_at",
@@ -1470,6 +1472,7 @@ class ClickHouseClient:
             # Add metric/threshold values to alert_log
             "ALTER TABLE alert_log ADD COLUMN IF NOT EXISTS metric_values String DEFAULT '{}' AFTER message",
             "ALTER TABLE alert_log ADD COLUMN IF NOT EXISTS threshold_values String DEFAULT '{}' AFTER metric_values",
+            "ALTER TABLE alert_log ADD COLUMN IF NOT EXISTS tenant_name String DEFAULT '' AFTER tenant_id",
             # Add counter_bits to interface tables
             "ALTER TABLE interface ADD COLUMN IF NOT EXISTS counter_bits UInt8 DEFAULT 64 AFTER poll_interval_sec",
             "ALTER TABLE interface_hourly ADD COLUMN IF NOT EXISTS counter_bits UInt8 DEFAULT 64",
