@@ -640,14 +640,102 @@ async def preview_import(data: dict, db: AsyncSession) -> dict:
 # ── Import ────────────────────────────────────────────────────────────────────
 
 
+# Entity-type keys tracked in the reconcile diff summary. Each bucket
+# holds integer counters keyed by action. See `_init_diff()`.
+_DIFF_SECTIONS: tuple[str, ...] = (
+    "apps",
+    "app_versions",
+    "alert_definitions",
+    "threshold_variables",
+    "connectors",
+    "connector_versions",
+    "credential_templates",
+    "snmp_oids",
+    "device_templates",
+    "device_categories",
+    "device_types",
+    "label_keys",
+    "template_bindings",
+    "grafana_dashboards",
+)
+
+
+def _init_diff() -> dict[str, dict[str, int]]:
+    """Empty per-entity-type counters for a reconcile run."""
+    return {
+        section: {
+            "created": 0,
+            "updated": 0,
+            "skipped_user_owned": 0,
+            "skipped_unchanged": 0,
+        }
+        for section in _DIFF_SECTIONS
+    }
+
+
+def _is_pack_owned(existing, pack_id: uuid.UUID, pack_uid: str, section: str) -> bool:
+    """Return True if `existing` is owned by the pack we're reconciling.
+
+    Apps, connectors, templates etc. are tracked via `pack_id`. Alert
+    definitions use `pack_origin` (the pack_uid string) because they
+    sit on an App that may itself belong to the pack but historically
+    wasn't linked by pack_id.
+    """
+    if section == "alert_definitions":
+        return getattr(existing, "pack_origin", None) == pack_uid
+    return getattr(existing, "pack_id", None) == pack_id
+
+
+def _entity_item_differs(existing, item: dict, section: str) -> bool:
+    """Cheap change detection so idempotent re-runs don't look like edits."""
+    if section == "apps":
+        return (
+            (existing.description or None) != (item.get("description") or None)
+            or (existing.app_type or None) != (item.get("app_type") or existing.app_type)
+            or (existing.target_table or None) != (item.get("target_table") or existing.target_table)
+            or (existing.vendor_oid_prefix or None) != (item.get("vendor_oid_prefix") or None)
+            or (existing.config_schema or None) != (item.get("config_schema") or None)
+        )
+    if section == "connectors":
+        return (
+            (existing.description or None) != (item.get("description") or None)
+            or existing.connector_type != item.get("connector_type", existing.connector_type)
+            or (existing.requirements or None) != (item.get("requirements") or None)
+        )
+    # For the rest: update unconditionally; user rarely notices and keeps
+    # behaviour aligned with the pack. Trade-off: `skipped_unchanged` is
+    # under-reported for these types but `updated` stays truthful.
+    return True
+
+
 async def import_pack(
     data: dict,
     resolutions: dict[str, str],
     db: AsyncSession,
+    *,
+    content_hash: str | None = None,
 ) -> dict:
-    """Import a pack, creating/updating entities per resolution decisions."""
+    """Import a pack, creating/updating entities per resolution decisions.
+
+    Resolutions are keyed ``"{section}:{name}"``. Supported values:
+
+    * ``"skip"`` — don't touch an existing row; create if missing.
+    * ``"overwrite"`` — rewrite the row (legacy full-overwrite mode).
+    * ``"rename"`` — duplicate the incoming entity under a new name.
+    * ``"reconcile"`` — update only rows owned by this pack (``pack_id``
+      or ``pack_origin`` match), preserving any operator-authored state.
+      Use ``{"*": "reconcile"}`` to apply reconcile to every entity.
+
+    When ``content_hash`` is provided it is recorded on the created
+    ``PackVersion`` row; otherwise the column is left NULL.
+    """
     pack_uid = data["pack_uid"]
     version = data["version"]
+    # A single "*" resolution applies to every entity — convenience for
+    # the reconcile endpoint which doesn't pre-enumerate entities.
+    wildcard_resolution = resolutions.get("*")
+    reconcile_mode = wildcard_resolution == "reconcile"
+    diff = _init_diff()
 
     # Find or create pack record
     pack = (await db.execute(
@@ -671,14 +759,30 @@ async def import_pack(
         pack.current_version = version
         pack.updated_at = _utc_now()
 
-    # Create version record
-    pack_version = PackVersion(
-        pack_id=pack.id,
-        version=version,
-        changelog=data.get("changelog"),
-        manifest=_build_manifest(data),
-    )
-    db.add(pack_version)
+    # Create version record (or reuse an existing one when reconciling
+    # in-place against an already-shipped version — the unique
+    # constraint on (pack_id, version) would otherwise fail).
+    existing_pv = (await db.execute(
+        select(PackVersion).where(
+            PackVersion.pack_id == pack.id,
+            PackVersion.version == version,
+        )
+    )).scalar_one_or_none()
+    if existing_pv is not None:
+        existing_pv.manifest = _build_manifest(data)
+        if data.get("changelog") is not None:
+            existing_pv.changelog = data.get("changelog")
+        if content_hash is not None:
+            existing_pv.content_hash = content_hash
+    else:
+        pack_version = PackVersion(
+            pack_id=pack.id,
+            version=version,
+            changelog=data.get("changelog"),
+            manifest=_build_manifest(data),
+            content_hash=content_hash,
+        )
+        db.add(pack_version)
 
     stats = {"created": 0, "updated": 0, "skipped": 0}
 
@@ -687,7 +791,9 @@ async def import_pack(
         for item in items:
             item_name = item.get(name_field, "")
             resolution_key = f"{section}:{item_name}"
-            resolution = resolutions.get(resolution_key, "skip")
+            resolution = resolutions.get(resolution_key)
+            if resolution is None:
+                resolution = wildcard_resolution or "skip"
 
             # Device types: resolve device_category_name → device_category_id before any create/update
             if section == "device_types" and "device_category_name" in item:
@@ -743,6 +849,30 @@ async def import_pack(
                 elif section == "connectors":
                     await _sync_connector_versions(db, existing, item.get("versions", []))
                 stats["updated"] += 1
+            elif existing and resolution == "reconcile":
+                if not _is_pack_owned(existing, pack.id, pack_uid, section):
+                    diff[section]["skipped_user_owned"] += 1
+                    stats["skipped"] += 1
+                    continue
+                changed = _entity_item_differs(existing, item, section)
+                if changed:
+                    _update_entity(existing, item, section, pack.id)
+                if section == "apps":
+                    await _reconcile_app(
+                        db, existing, item,
+                        pack_uid=pack_uid, pack_id=pack.id, diff=diff,
+                    )
+                elif section == "connectors":
+                    created_versions = await _sync_connector_versions_tracked(
+                        db, existing, item.get("versions", []),
+                    )
+                    diff["connector_versions"]["created"] += created_versions
+                if changed:
+                    diff[section]["updated"] += 1
+                    stats["updated"] += 1
+                else:
+                    diff[section]["skipped_unchanged"] += 1
+                continue
             elif existing and resolution == "rename":
                 new_name = f"{item_name}-imported"
                 item[name_field] = new_name
@@ -775,6 +905,7 @@ async def import_pack(
                 elif section == "connectors":
                     await _create_connector_versions(db, entity, item.get("versions", []))
                 stats["created"] += 1
+                diff[section]["created"] += 1
 
     await db.flush()
 
@@ -863,7 +994,274 @@ async def import_pack(
     result = {"pack_id": str(pack.id), "version": version, **stats}
     if grafana_results:
         result["grafana_dashboards"] = grafana_results
+    if reconcile_mode:
+        result["diff"] = diff
     return result
+
+
+async def _reconcile_app(
+    db: AsyncSession,
+    app: App,
+    item: dict,
+    *,
+    pack_uid: str,
+    pack_id: uuid.UUID,
+    diff: dict[str, dict[str, int]],
+) -> None:
+    """Reconcile the nested children of an app (versions, alerts, thresholds).
+
+    ``AppVersion`` rows are semver-immutable — we only add missing
+    versions, never rewrite source_code. ``ThresholdVariable`` and
+    ``AlertDefinition`` updates preserve operator overrides via the
+    ownership checks in their reconcile helpers.
+    """
+    created_versions = await _sync_app_versions_tracked(
+        db, app, item.get("versions", []),
+    )
+    diff["app_versions"]["created"] += created_versions
+
+    bindings_data = item.get("connector_bindings", []) or []
+    if bindings_data:
+        await _sync_connector_bindings_for_app(db, app, bindings_data)
+
+    tv_data = item.get("threshold_variables", []) or []
+    if tv_data:
+        created_tv, updated_tv, skipped_tv = await _reconcile_threshold_variables(
+            db, app, tv_data,
+        )
+        diff["threshold_variables"]["created"] += created_tv
+        diff["threshold_variables"]["updated"] += updated_tv
+        diff["threshold_variables"]["skipped_unchanged"] += skipped_tv
+
+    ad_data = item.get("alert_definitions", []) or []
+    if ad_data:
+        created_ad, updated_ad, skipped_user, skipped_unchanged = (
+            await _reconcile_app_alert_definitions(db, app, ad_data, pack_uid)
+        )
+        diff["alert_definitions"]["created"] += created_ad
+        diff["alert_definitions"]["updated"] += updated_ad
+        diff["alert_definitions"]["skipped_user_owned"] += skipped_user
+        diff["alert_definitions"]["skipped_unchanged"] += skipped_unchanged
+
+
+async def _sync_app_versions_tracked(
+    db: AsyncSession, app: App, versions_data: list[dict],
+) -> int:
+    """Add missing AppVersion rows; update is_latest flags. Return count created."""
+    existing = (await db.execute(
+        select(AppVersion).where(AppVersion.app_id == app.id)
+    )).scalars().all()
+    existing_by_ver = {v.version: v for v in existing}
+    created = 0
+    for vdata in versions_data:
+        ver_str = vdata["version"]
+        if ver_str in existing_by_ver:
+            continue  # immutable — never overwrite source
+        checksum = hashlib.sha256(
+            (vdata.get("source_code") or "").encode()
+        ).hexdigest()
+        db.add(AppVersion(
+            app_id=app.id,
+            version=ver_str,
+            source_code=vdata.get("source_code"),
+            requirements=vdata.get("requirements", []),
+            entry_class=vdata.get("entry_class"),
+            checksum_sha256=checksum,
+            is_latest=False,
+            display_template=vdata.get("display_template"),
+            eligibility_oids=vdata.get("eligibility_oids"),
+            volatile_keys=vdata.get("volatile_keys", []),
+        ))
+        created += 1
+    await db.flush()
+    all_v = (await db.execute(
+        select(AppVersion).where(AppVersion.app_id == app.id)
+    )).scalars().all()
+    for v in all_v:
+        matching = next(
+            (vd for vd in versions_data if vd["version"] == v.version), None,
+        )
+        if matching is not None:
+            v.is_latest = bool(matching.get("is_latest", False))
+    return created
+
+
+async def _sync_connector_versions_tracked(
+    db: AsyncSession, connector: Connector, versions_data: list[dict],
+) -> int:
+    """Add missing ConnectorVersion rows; update is_latest. Return count created."""
+    existing = (await db.execute(
+        select(ConnectorVersion).where(ConnectorVersion.connector_id == connector.id)
+    )).scalars().all()
+    existing_by_ver = {v.version: v for v in existing}
+    created = 0
+    for vdata in versions_data:
+        ver_str = vdata["version"]
+        if ver_str in existing_by_ver:
+            continue  # immutable
+        checksum = hashlib.sha256(
+            (vdata.get("source_code") or "").encode()
+        ).hexdigest()
+        db.add(ConnectorVersion(
+            connector_id=connector.id,
+            version=ver_str,
+            source_code=vdata.get("source_code", ""),
+            requirements=vdata.get("requirements"),
+            entry_class=vdata.get("entry_class", "Connector"),
+            checksum=checksum,
+            is_latest=False,
+        ))
+        created += 1
+    await db.flush()
+    all_v = (await db.execute(
+        select(ConnectorVersion).where(ConnectorVersion.connector_id == connector.id)
+    )).scalars().all()
+    for v in all_v:
+        matching = next(
+            (vd for vd in versions_data if vd["version"] == v.version), None,
+        )
+        if matching is not None:
+            v.is_latest = bool(matching.get("is_latest", False))
+    return created
+
+
+async def _reconcile_threshold_variables(
+    db: AsyncSession,
+    app: App,
+    tv_data_list: list[dict],
+) -> tuple[int, int, int]:
+    """Reconcile threshold variables for a pack-owned app.
+
+    Returns (created, updated, skipped_unchanged). ``app_value`` overrides
+    are never touched — that's the operator's tuned setpoint.
+    """
+    created = updated = skipped_unchanged = 0
+    for tv_data in tv_data_list:
+        existing = (await db.execute(
+            select(ThresholdVariable).where(
+                ThresholdVariable.app_id == app.id,
+                ThresholdVariable.name == tv_data["name"],
+            )
+        )).scalar_one_or_none()
+        if existing is None:
+            db.add(ThresholdVariable(
+                app_id=app.id,
+                name=tv_data["name"],
+                default_value=tv_data["default_value"],
+                display_name=tv_data.get("display_name"),
+                unit=tv_data.get("unit"),
+                description=tv_data.get("description"),
+            ))
+            created += 1
+            continue
+        changed = False
+        new_default = tv_data["default_value"]
+        if existing.default_value != new_default:
+            existing.default_value = new_default
+            changed = True
+        for attr in ("display_name", "unit", "description"):
+            new_val = tv_data.get(attr)
+            if new_val is not None and getattr(existing, attr) != new_val:
+                setattr(existing, attr, new_val)
+                changed = True
+        if changed:
+            updated += 1
+        else:
+            skipped_unchanged += 1
+    await db.flush()
+    return created, updated, skipped_unchanged
+
+
+async def _reconcile_app_alert_definitions(
+    db: AsyncSession,
+    app: App,
+    alert_defs_data: list[dict],
+    pack_uid: str,
+) -> tuple[int, int, int, int]:
+    """Reconcile alert definitions for a pack-owned app.
+
+    Only rewrites rows whose ``pack_origin`` already matches this pack
+    — a hand-authored def with the same name is left untouched. The
+    operator's ``enabled`` flag is preserved (unlike the legacy
+    `_sync_app_alert_definitions` path) so disabling a noisy alert
+    survives a reconcile.
+
+    Returns (created, updated, skipped_user_owned, skipped_unchanged).
+    """
+    from monctl_central.alerting.instance_sync import sync_instances_for_definition
+    from monctl_central.alerting.threshold_sync import sync_threshold_variables
+
+    existing_defs = (await db.execute(
+        select(AlertDefinition).where(AlertDefinition.app_id == app.id)
+    )).scalars().all()
+    existing_by_name = {d.name: d for d in existing_defs}
+
+    created = updated = skipped_user = skipped_unchanged = 0
+    touched_defs: list[AlertDefinition] = []
+
+    for ad_data in alert_defs_data:
+        name = ad_data["name"]
+        new_tiers = ad_data.get("severity_tiers") or []
+        new_window = ad_data.get("window", "5m")
+        new_desc = ad_data.get("description")
+
+        existing = existing_by_name.get(name)
+        if existing is None:
+            new_def = AlertDefinition(
+                app_id=app.id,
+                name=name,
+                severity_tiers=new_tiers,
+                window=new_window,
+                enabled=ad_data.get("enabled", True),
+                description=new_desc,
+                pack_origin=pack_uid,
+            )
+            db.add(new_def)
+            await db.flush()
+            existing_by_name[name] = new_def
+            touched_defs.append(new_def)
+            created += 1
+            continue
+
+        if existing.pack_origin != pack_uid:
+            # Hand-authored or owned by another pack — leave alone.
+            skipped_user += 1
+            continue
+
+        changed = (
+            existing.severity_tiers != new_tiers
+            or existing.window != new_window
+            or existing.description != new_desc
+        )
+        if changed:
+            existing.severity_tiers = new_tiers
+            existing.window = new_window
+            existing.description = new_desc
+            # NB: `enabled` is intentionally preserved — the operator's
+            # enable/disable choice is user state, not pack state.
+            touched_defs.append(existing)
+            updated += 1
+        else:
+            skipped_unchanged += 1
+
+    # Same post-sync housekeeping the legacy path does so entity state
+    # and threshold variables stay consistent.
+    for defn in existing_by_name.values():
+        if defn.pack_origin == pack_uid:
+            await sync_instances_for_definition(db, defn)
+
+    for ad_data in alert_defs_data:
+        defn = existing_by_name.get(ad_data["name"])
+        if defn is not None and defn.pack_origin == pack_uid:
+            await sync_threshold_variables(
+                db,
+                app_id=app.id,
+                definition=defn,
+                target_table=app.target_table,
+                pack_hints=ad_data.get("threshold_defaults"),
+            )
+
+    return created, updated, skipped_user, skipped_unchanged
 
 
 def _build_manifest(data: dict) -> dict:
