@@ -1245,6 +1245,7 @@ class PackVersion(Base):
     imported_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     pack: Mapped["Pack"] = relationship(back_populates="versions")
 
