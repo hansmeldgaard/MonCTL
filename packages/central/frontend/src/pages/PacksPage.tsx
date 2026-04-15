@@ -1,6 +1,14 @@
 import { useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { Boxes, Download, Loader2, Plus, Trash2, Upload } from "lucide-react";
+import {
+  Boxes,
+  Download,
+  Loader2,
+  Plus,
+  RefreshCw,
+  Trash2,
+  Upload,
+} from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
@@ -17,10 +25,15 @@ import {
   usePacks,
   useExportPack,
   useDeletePack,
+  useReconcilePack,
   usePreviewImport,
   useImportPack,
 } from "@/api/hooks.ts";
-import type { Pack, PackImportPreviewEntity } from "@/types/api.ts";
+import type {
+  Pack,
+  PackImportPreviewEntity,
+  PackReconcileDiff,
+} from "@/types/api.ts";
 import { CreatePackDialog } from "@/components/CreatePackDialog.tsx";
 import { usePermissions } from "@/hooks/usePermissions.ts";
 import { formatDate } from "@/lib/utils.ts";
@@ -32,16 +45,20 @@ import { PaginationBar } from "@/components/PaginationBar.tsx";
 
 const SECTION_LABELS: Record<string, string> = {
   apps: "Apps",
+  app_versions: "App Versions",
   alert_definitions: "Alert Definitions",
+  threshold_variables: "Threshold Variables",
   credential_templates: "Credential Templates",
   snmp_oids: "SNMP OIDs",
   device_templates: "Device Templates",
   device_categories: "Device Categories",
   label_keys: "Label Keys",
   connectors: "Connectors",
+  connector_versions: "Connector Versions",
   device_types: "Device Types",
   event_policies: "Event Policies",
   grafana_dashboards: "Grafana Dashboards",
+  template_bindings: "Template Bindings",
 };
 
 export function PacksPage() {
@@ -68,6 +85,7 @@ export function PacksPage() {
   };
   const exportPack = useExportPack();
   const deletePack = useDeletePack();
+  const reconcilePack = useReconcilePack();
   const previewImport = usePreviewImport();
   const importPack = useImportPack();
 
@@ -93,6 +111,12 @@ export function PacksPage() {
   } | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [reconcileTarget, setReconcileTarget] = useState<Pack | null>(null);
+  const [reconcileResult, setReconcileResult] = useState<{
+    pack: Pack;
+    diff: PackReconcileDiff;
+  } | null>(null);
+  const [reconcileError, setReconcileError] = useState<string | null>(null);
 
   function totalEntities(p: Pack): number {
     return Object.values(p.entity_counts).reduce((a, b) => a + b, 0);
@@ -112,6 +136,20 @@ export function PacksPage() {
       URL.revokeObjectURL(url);
     } catch {
       /* silent */
+    }
+  }
+
+  async function handleReconcile() {
+    if (!reconcileTarget) return;
+    setReconcileError(null);
+    try {
+      const res = await reconcilePack.mutateAsync(reconcileTarget.pack_uid);
+      setReconcileResult({ pack: reconcileTarget, diff: res.data.diff });
+      setReconcileTarget(null);
+    } catch (err) {
+      setReconcileError(
+        err instanceof Error ? err.message : "Reconcile failed",
+      );
     }
   }
 
@@ -325,6 +363,18 @@ export function PacksPage() {
                         >
                           <Download className="h-4 w-4" />
                         </button>
+                        {canCreate("app") && (
+                          <button
+                            onClick={() => {
+                              setReconcileError(null);
+                              setReconcileTarget(p);
+                            }}
+                            className="rounded p-1 text-zinc-600 hover:text-sky-400 hover:bg-sky-500/10 transition-colors cursor-pointer"
+                            title="Reconcile with on-disk pack content"
+                          >
+                            <RefreshCw className="h-4 w-4" />
+                          </button>
+                        )}
                         {canDelete("app") && (
                           <button
                             onClick={() => setDeleteTarget(p)}
@@ -385,6 +435,144 @@ export function PacksPage() {
             )}{" "}
             Delete
           </Button>
+        </DialogFooter>
+      </Dialog>
+
+      {/* Reconcile Confirm Dialog */}
+      <Dialog
+        open={!!reconcileTarget}
+        onClose={() => {
+          setReconcileTarget(null);
+          setReconcileError(null);
+        }}
+        title="Reconcile Pack"
+      >
+        <p className="text-sm text-zinc-400">
+          Re-apply the on-disk canonical content of pack{" "}
+          <span className="font-semibold text-zinc-200">
+            {reconcileTarget?.name}
+          </span>
+          ?
+        </p>
+        <p className="mt-1 text-xs text-zinc-500">
+          Only entities created by this pack are touched. Operator-authored
+          alert definitions, renamed apps, and threshold overrides are
+          preserved.
+        </p>
+        {reconcileError && (
+          <p className="mt-2 rounded bg-red-500/10 p-2 text-xs text-red-400">
+            {reconcileError}
+          </p>
+        )}
+        <DialogFooter>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setReconcileTarget(null);
+              setReconcileError(null);
+            }}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={handleReconcile}
+            disabled={reconcilePack.isPending}
+          >
+            {reconcilePack.isPending && (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            )}{" "}
+            Reconcile
+          </Button>
+        </DialogFooter>
+      </Dialog>
+
+      {/* Reconcile Result Dialog */}
+      <Dialog
+        open={!!reconcileResult}
+        onClose={() => setReconcileResult(null)}
+        title={
+          reconcileResult
+            ? `Reconcile: ${reconcileResult.pack.name}`
+            : "Reconcile Complete"
+        }
+      >
+        {reconcileResult && (
+          <div className="space-y-3">
+            <p className="text-sm text-zinc-400">
+              Pack reconciled. Per-entity diff:
+            </p>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Entity</TableHead>
+                  <TableHead className="text-right">Created</TableHead>
+                  <TableHead className="text-right">Updated</TableHead>
+                  <TableHead
+                    className="text-right"
+                    title="Skipped because owned by the operator (not this pack)"
+                  >
+                    Skipped (user)
+                  </TableHead>
+                  <TableHead
+                    className="text-right"
+                    title="Already matched the pack — no change needed"
+                  >
+                    Unchanged
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {Object.entries(reconcileResult.diff)
+                  .filter(
+                    ([, bucket]) =>
+                      bucket.created +
+                        bucket.updated +
+                        bucket.skipped_user_owned +
+                        bucket.skipped_unchanged >
+                      0,
+                  )
+                  .map(([section, bucket]) => (
+                    <TableRow key={section}>
+                      <TableCell className="font-medium text-zinc-200">
+                        {SECTION_LABELS[section] ?? section}
+                      </TableCell>
+                      <TableCell className="text-right text-emerald-400">
+                        {bucket.created || ""}
+                      </TableCell>
+                      <TableCell className="text-right text-sky-400">
+                        {bucket.updated || ""}
+                      </TableCell>
+                      <TableCell className="text-right text-zinc-500">
+                        {bucket.skipped_user_owned || ""}
+                      </TableCell>
+                      <TableCell className="text-right text-zinc-500">
+                        {bucket.skipped_unchanged || ""}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                {Object.values(reconcileResult.diff).every(
+                  (b) =>
+                    b.created +
+                      b.updated +
+                      b.skipped_user_owned +
+                      b.skipped_unchanged ===
+                    0,
+                ) && (
+                  <TableRow>
+                    <TableCell
+                      colSpan={5}
+                      className="text-center text-zinc-500"
+                    >
+                      No entities touched — already in sync.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+        <DialogFooter>
+          <Button onClick={() => setReconcileResult(null)}>Close</Button>
         </DialogFooter>
       </Dialog>
 

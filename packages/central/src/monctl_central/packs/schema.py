@@ -17,9 +17,9 @@ def _validate_severity_tiers(alert_def: dict, app_name: str) -> None:
 
     Shape: ordered list of tier dicts. Each tier carries its own
     `severity`, `expression`, and `message_template`. At most one
-    `healthy` tier is allowed; its expression must be null and only its
-    message_template is used (for the one-time clear/recovery log row).
-    Non-healthy tiers must have both an expression and a
+    `healthy` tier is allowed. A healthy tier MAY carry an expression
+    (acts as a positive-clear signal) or have it omitted (legacy
+    auto-clear). Non-healthy tiers must have both an expression and a
     message_template. Severity strings must be unique per def.
     """
     name = alert_def.get("name", "?")
@@ -58,11 +58,8 @@ def _validate_severity_tiers(alert_def: dict, app_name: str) -> None:
             )
         if sev == "healthy":
             healthy_count += 1
-            if tier.get("expression") not in (None, ""):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Alert '{name}' healthy tier must not have an expression",
-                )
+            # Healthy tier's expression is optional — positive-clear
+            # signal when set, legacy auto-clear when omitted.
         else:
             if sev not in _VALID_SEVERITIES:
                 raise HTTPException(
