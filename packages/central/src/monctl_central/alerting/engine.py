@@ -361,15 +361,17 @@ class AlertEngine:
                 log_records.append(self._build_log_record(defn, inst, "fire", now, tenant_by_device))
             else:
                 # Already firing — evaluate severity transition.
-                inst.fire_count += 1
                 cmp = _sev.compare(effective_sev, prev_sev)
-                if cmp > 0:
+                if cmp != 0:
+                    # Tier change: reset counter so fire_count reflects
+                    # cycles seen at the new severity only.
                     inst.severity = effective_sev
-                    log_records.append(self._build_log_record(defn, inst, "escalate", now, tenant_by_device))
-                elif cmp < 0:
-                    inst.severity = effective_sev
-                    log_records.append(self._build_log_record(defn, inst, "downgrade", now, tenant_by_device))
-                # same severity → fire_count updated, no log record
+                    inst.fire_count = 1
+                    action = "escalate" if cmp > 0 else "downgrade"
+                    log_records.append(self._build_log_record(defn, inst, action, now, tenant_by_device))
+                else:
+                    # Same severity — keep counting at this tier.
+                    inst.fire_count += 1
 
         return log_records
 
