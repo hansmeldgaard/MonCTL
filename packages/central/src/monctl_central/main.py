@@ -111,6 +111,10 @@ async def lifespan(app: FastAPI):
                 logger.info("label_keys_seeded", count=len(default_label_keys))
 
         # Auto-import built-in packs (creates apps if they don't exist yet)
+        # and auto-reconcile any pack whose on-disk content hash has
+        # drifted from what we last imported. Matches how collectors
+        # pick up app source changes — no operator step required.
+        import hashlib
         from pathlib import Path
         import json as _json
 
@@ -129,33 +133,88 @@ async def lifespan(app: FastAPI):
             if pack_path is None:
                 continue
             try:
-                pack_data = _json.loads(pack_path.read_text())
+                raw_bytes = pack_path.read_bytes()
+                on_disk_hash = hashlib.sha256(raw_bytes).hexdigest()
+                pack_data = _json.loads(raw_bytes)
                 pack_uid = pack_data["pack_uid"]
                 pack_version = pack_data["version"]
 
-                # Skip if this pack version was already imported
                 from monctl_central.storage.models import Pack, PackVersion
+                from monctl_central.packs.service import import_pack
+
                 async with factory() as pack_session:
-                    existing = (await pack_session.execute(
+                    existing_pv = (await pack_session.execute(
                         select(PackVersion)
                         .join(Pack, PackVersion.pack_id == Pack.id)
-                        .where(Pack.pack_uid == pack_uid, PackVersion.version == pack_version)
+                        .where(
+                            Pack.pack_uid == pack_uid,
+                            PackVersion.version == pack_version,
+                        )
                     )).scalar_one_or_none()
-                    if existing:
+
+                    if existing_pv is not None:
+                        stored_hash = existing_pv.content_hash
+                        if stored_hash == on_disk_hash:
+                            # Same version, same bytes — nothing to do.
+                            logger.debug("builtin_pack_unchanged pack=%s", pack_file)
+                            continue
+                        # Either first run after the column was added
+                        # (stored_hash is NULL) or a genuine in-place
+                        # edit. Either way: reconcile and backfill.
+                        logger.warning(
+                            "pack_content_drift_detected pack_uid=%s version=%s "
+                            "old_hash=%s new_hash=%s",
+                            pack_uid, pack_version,
+                            stored_hash, on_disk_hash,
+                        )
+                        stats = await import_pack(
+                            pack_data,
+                            {"*": "reconcile"},
+                            pack_session,
+                            content_hash=on_disk_hash,
+                        )
+                        await pack_session.commit()
+                        logger.info(
+                            "builtin_pack_reconciled pack=%s diff=%s",
+                            pack_file, stats.get("diff"),
+                        )
                         continue
 
-                from monctl_central.packs.service import import_pack
-                # "skip" resolution: create missing apps, don't overwrite existing
-                resolutions = {}
-                for app_item in pack_data.get("contents", {}).get("apps", []):
-                    resolutions[f"apps:{app_item['name']}"] = "skip"
-                async with factory() as pack_session:
-                    stats = await import_pack(pack_data, resolutions, pack_session)
+                    # Version not yet imported: fresh install with
+                    # "skip" resolution so we never overwrite anything
+                    # the operator renamed or edited. Then run reconcile
+                    # to align any older-version defs with the new
+                    # canonical content.
+                    resolutions: dict[str, str] = {}
+                    for app_item in pack_data.get("contents", {}).get("apps", []):
+                        resolutions[f"apps:{app_item['name']}"] = "skip"
+                    stats = await import_pack(
+                        pack_data,
+                        resolutions,
+                        pack_session,
+                        content_hash=on_disk_hash,
+                    )
                     await pack_session.commit()
-                if stats.get("created", 0) > 0:
-                    logger.info("builtin_pack_imported pack=%s stats=%s", pack_file, stats)
-                else:
-                    logger.debug("builtin_pack_skipped pack=%s", pack_file)
+                    if stats.get("created", 0) > 0:
+                        logger.info(
+                            "builtin_pack_imported pack=%s stats=%s",
+                            pack_file, stats,
+                        )
+
+                # After a fresh import of a NEW version, reconcile once
+                # so pack-owned entities from older versions get aligned.
+                async with factory() as reconcile_session:
+                    diff_stats = await import_pack(
+                        pack_data,
+                        {"*": "reconcile"},
+                        reconcile_session,
+                        content_hash=on_disk_hash,
+                    )
+                    await reconcile_session.commit()
+                    logger.debug(
+                        "builtin_pack_post_import_reconcile pack=%s diff=%s",
+                        pack_file, diff_stats.get("diff"),
+                    )
             except Exception as exc:
                 logger.warning("builtin_pack_import_failed", pack=pack_file, error=str(exc))
 

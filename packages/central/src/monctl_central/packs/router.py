@@ -5,6 +5,10 @@ from __future__ import annotations
 import re
 import uuid
 
+import hashlib
+import json as _json
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator
 from monctl_common.validators import validate_semver, validate_slug
@@ -306,6 +310,79 @@ async def create_pack(
     await db.flush()
 
     return {"status": "success", "data": {"id": str(pack.id), "pack_uid": pack.pack_uid}}
+
+
+# ── Reconcile pack ──────────────────────────────────────────
+
+# Mirrors `_BUILTIN_PACKS` in main.py — the same on-disk search order.
+# Non-bundled packs (user-uploaded) cannot be reconciled via this
+# endpoint; they must be re-imported through /packs/import.
+_BUILTIN_PACK_DIRS = [
+    Path("/app/packs"),
+    Path(__file__).resolve().parents[5] / "packs",
+]
+
+
+def _find_bundled_pack_file(pack_uid: str) -> Path | None:
+    """Locate the on-disk JSON for a bundled pack by uid.
+
+    Scans the bundled pack directories and returns the first file whose
+    `pack_uid` field matches. Missing directories are ignored.
+    """
+    for d in _BUILTIN_PACK_DIRS:
+        if not d.exists():
+            continue
+        for candidate in d.glob("*.json"):
+            try:
+                data = _json.loads(candidate.read_text())
+            except (OSError, ValueError):
+                continue
+            if data.get("pack_uid") == pack_uid:
+                return candidate
+    return None
+
+
+@router.post("/{pack_uid}/reconcile")
+async def reconcile_pack(
+    pack_uid: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_permission("app", "create")),
+):
+    """Re-apply the on-disk canonical pack content to an installed pack.
+
+    Uses the "reconcile" resolution mode: only rows owned by this pack
+    (pack_id / pack_origin match) are rewritten. Operator-authored
+    entities with the same name are left untouched.
+    """
+    pack = (await db.execute(
+        select(Pack).where(Pack.pack_uid == pack_uid)
+    )).scalar_one_or_none()
+    if pack is None:
+        raise HTTPException(status_code=404, detail="Pack not found")
+
+    pack_file = _find_bundled_pack_file(pack_uid)
+    if pack_file is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Reconcile is only supported for bundled packs shipped "
+                "with central. Re-import the pack JSON via /packs/import "
+                "to update a user-uploaded pack."
+            ),
+        )
+
+    raw_bytes = pack_file.read_bytes()
+    content_hash = hashlib.sha256(raw_bytes).hexdigest()
+    pack_data = _json.loads(raw_bytes)
+    validate_pack_schema(pack_data)
+
+    result = await import_pack(
+        pack_data,
+        {"*": "reconcile"},
+        db,
+        content_hash=content_hash,
+    )
+    return {"status": "success", "data": result}
 
 
 # ── Delete pack ─────────────────────────────────────────────
