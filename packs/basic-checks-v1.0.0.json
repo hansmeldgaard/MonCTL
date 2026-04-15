@@ -79,7 +79,7 @@
             "severity_tiers": [
               {
                 "severity": "healthy",
-                "expression": null,
+                "expression": "reachable == 1",
                 "message_template": "Device {device_name} is reachable again via ICMP"
               },
               {
@@ -120,7 +120,7 @@
             "severity_tiers": [
               {
                 "severity": "healthy",
-                "expression": null,
+                "expression": "packet_loss_pct < loss_pct_warn",
                 "message_template": "Packet loss to {device_name} recovered ({value}%)"
               },
               {
@@ -177,7 +177,7 @@
             "severity_tiers": [
               {
                 "severity": "healthy",
-                "expression": null,
+                "expression": "reachable == 1",
                 "message_template": "TCP port on {device_name} is reachable again"
               },
               {
@@ -195,7 +195,7 @@
             "severity_tiers": [
               {
                 "severity": "healthy",
-                "expression": null,
+                "expression": "avg(rtt_ms) < 1000",
                 "message_template": "TCP connect time to {device_name} recovered ({value}ms)"
               },
               {
@@ -258,7 +258,7 @@
             "severity_tiers": [
               {
                 "severity": "healthy",
-                "expression": null,
+                "expression": "reachable == 1",
                 "message_template": "HTTP endpoint on {device_name} is healthy again"
               },
               {
@@ -276,7 +276,7 @@
             "severity_tiers": [
               {
                 "severity": "healthy",
-                "expression": null,
+                "expression": "avg(rtt_ms) < 2000",
                 "message_template": "HTTP response time from {device_name} recovered ({value}ms)"
               },
               {
