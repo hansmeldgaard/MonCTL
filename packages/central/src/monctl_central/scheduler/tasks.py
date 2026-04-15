@@ -1242,7 +1242,7 @@ class SchedulerRunner:
             from monctl_central.upgrades.os_inventory import collect_all_inventory
 
             summary = await collect_all_inventory(self._session_factory)
-            logger.info("package_inventory_collected", nodes=len(summary))
+            logger.info("package_inventory_collected nodes=%d", len(summary))
         except Exception:
             logger.exception("package_inventory_collection_error")
 
