@@ -10,7 +10,7 @@ import {
   Legend,
   ReferenceArea,
 } from "recharts";
-import type { InterfaceRecord } from "@/types/api.ts";
+import type { InterfaceRecord, ResultRecord } from "@/types/api.ts";
 import { formatChartDateTime } from "@/lib/utils.ts";
 
 // ── Shared helpers ──────────────────────────────────────────
@@ -43,6 +43,47 @@ function rateSuffix(metric: ChartMetric): string {
   if (metric === "errors") return "err/s";
   if (metric === "discards") return "disc/s";
   return "";
+}
+
+// ── Down-span computation (device & interface status overlays) ─────────
+//
+// Group consecutive "down" samples into {from, to} time spans so the chart
+// can render them as ReferenceArea bands. A single isolated down sample
+// gets a MIN_SPAN_WIDTH_MS floor so it's visible at typical zoom levels.
+
+export type DownSpan = { from: number; to: number };
+const MIN_SPAN_WIDTH_MS = 60_000;
+
+export function computeDownSpans<T>(
+  data: T[],
+  getTs: (d: T) => number,
+  isDown: (d: T) => boolean,
+): DownSpan[] {
+  const sorted = [...data].sort((a, b) => getTs(a) - getTs(b));
+  const spans: DownSpan[] = [];
+  let start: number | null = null;
+  let last: number | null = null;
+  for (const d of sorted) {
+    const ts = getTs(d);
+    if (isDown(d)) {
+      if (start == null) start = ts;
+      last = ts;
+    } else if (start != null && last != null) {
+      spans.push({
+        from: start,
+        to: Math.max(last, start + MIN_SPAN_WIDTH_MS),
+      });
+      start = null;
+      last = null;
+    }
+  }
+  if (start != null && last != null) {
+    spans.push({
+      from: start,
+      to: Math.max(last, start + MIN_SPAN_WIDTH_MS),
+    });
+  }
+  return spans;
 }
 
 export function formatRateShort(v: number, suffix: string): string {
@@ -393,7 +434,70 @@ interface MultiProps {
   mode: ChartMode;
   timezone: string;
   tier?: DataTier;
+  /** Device availability history — used to render gray "device down" bands. */
+  deviceAvailability?: ResultRecord[];
   onZoom?: (fromMs: number, toMs: number) => void;
+}
+
+// Styling for status overlay bands.
+const DEVICE_DOWN_FILL = "#6b7280"; // gray
+const DEVICE_DOWN_OPACITY = 0.25;
+const IFACE_DOWN_FILL = "#ef4444"; // red
+const IFACE_DOWN_OPACITY = 0.15;
+
+function deviceDownSpans(avail: ResultRecord[] | undefined): DownSpan[] {
+  if (!avail?.length) return [];
+  return computeDownSpans(
+    avail,
+    (r) => new Date(r.executed_at).getTime(),
+    // A ping/availability row is "down" when not reachable.
+    (r) => !r.reachable,
+  );
+}
+
+function interfaceDownSpans(data: InterfaceRecord[]): DownSpan[] {
+  return computeDownSpans(
+    data,
+    (r) => new Date(r.executed_at).getTime(),
+    (r) =>
+      r.if_oper_status === "down" ||
+      r.if_oper_status === "notPresent" ||
+      r.if_oper_status === "lowerLayerDown",
+  );
+}
+
+function StatusBands({
+  deviceDown,
+  ifaceDown,
+}: {
+  deviceDown: DownSpan[];
+  ifaceDown?: DownSpan[];
+}) {
+  return (
+    <>
+      {/* Interface-down first so device-down (higher opacity) paints on top. */}
+      {ifaceDown?.map((s, i) => (
+        <ReferenceArea
+          key={`if-${i}`}
+          x1={s.from}
+          x2={s.to}
+          fill={IFACE_DOWN_FILL}
+          fillOpacity={IFACE_DOWN_OPACITY}
+          ifOverflow="hidden"
+        />
+      ))}
+      {deviceDown.map((s, i) => (
+        <ReferenceArea
+          key={`dev-${i}`}
+          x1={s.from}
+          x2={s.to}
+          fill={DEVICE_DOWN_FILL}
+          fillOpacity={DEVICE_DOWN_OPACITY}
+          ifOverflow="hidden"
+        />
+      ))}
+    </>
+  );
 }
 
 function getMetricFields(metric: ChartMetric): [string, string] {
@@ -509,8 +613,10 @@ export function MultiInterfaceChart({
   mode,
   timezone,
   tier = "raw",
+  deviceAvailability,
   onZoom,
 }: MultiProps) {
+  const deviceDown = deviceDownSpans(deviceAvailability);
   if (!historyPerInterface?.length) {
     return (
       <div className="flex items-center justify-center h-48 text-zinc-600 text-sm">
@@ -558,6 +664,7 @@ export function MultiInterfaceChart({
                 }));
 
           if (points.length === 0) return null;
+          const ifaceDown = interfaceDownSpans(rawData);
           return (
             <StackedInterfaceChart
               key={id}
@@ -568,6 +675,8 @@ export function MultiInterfaceChart({
               unit={unit}
               metric={metric}
               timezone={timezone}
+              deviceDown={deviceDown}
+              ifaceDown={ifaceDown}
               onZoom={onZoom}
             />
           );
@@ -587,6 +696,7 @@ export function MultiInterfaceChart({
       tier={tier}
       timezone={timezone}
       yFormatter={yFormatter}
+      deviceDown={deviceDown}
       onZoom={onZoom}
     />
   );
@@ -601,6 +711,8 @@ function StackedInterfaceChart({
   unit,
   metric,
   timezone,
+  deviceDown,
+  ifaceDown,
   onZoom,
 }: {
   points: { ts: number; in_val: number; out_val: number }[];
@@ -610,14 +722,24 @@ function StackedInterfaceChart({
   unit: TrafficUnit;
   metric: ChartMetric;
   timezone: string;
+  deviceDown: DownSpan[];
+  ifaceDown: DownSpan[];
   onZoom?: (fromMs: number, toMs: number) => void;
 }) {
   const zoom = useChartZoom(onZoom);
   const sPad = points.length <= 2 ? 60_000 : 0;
-  const fullDomain: [number, number] = [
-    points[0].ts - sPad,
+  // Extend the domain past the last data point to cover device-down spans —
+  // otherwise the gray band sits in the no-render region outside the axis.
+  const allSpans = [...deviceDown, ...ifaceDown];
+  const rightEdge = Math.max(
     points[points.length - 1].ts + sPad,
-  ];
+    ...allSpans.map((s) => s.to),
+  );
+  const leftEdge = Math.min(
+    points[0].ts - sPad,
+    ...allSpans.map((s) => s.from),
+  );
+  const fullDomain: [number, number] = [leftEdge, rightEdge];
   const domain = zoom.zoomDomain ?? fullDomain;
 
   return (
@@ -685,6 +807,7 @@ function StackedInterfaceChart({
               }}
               isAnimationActive={false}
             />
+            <StatusBands deviceDown={deviceDown} ifaceDown={ifaceDown} />
             {zoom.refAreaLeft != null && zoom.refAreaRight != null && (
               <ReferenceArea
                 x1={zoom.refAreaLeft}
@@ -730,6 +853,7 @@ function OverlaidInterfaceChart({
   tier,
   timezone,
   yFormatter,
+  deviceDown,
   onZoom,
 }: {
   interfaceIds: string[];
@@ -740,6 +864,7 @@ function OverlaidInterfaceChart({
   tier: DataTier;
   timezone: string;
   yFormatter: (v: number) => string;
+  deviceDown: DownSpan[];
   onZoom?: (fromMs: number, toMs: number) => void;
 }) {
   const zoom = useChartZoom(onZoom);
@@ -759,10 +884,15 @@ function OverlaidInterfaceChart({
   }
 
   const domainPad = merged.length <= 2 ? 60_000 : 0;
-  const fullDomain: [number, number] = [
-    merged[0].ts - domainPad,
+  const rightEdge = Math.max(
     merged[merged.length - 1].ts + domainPad,
-  ];
+    ...deviceDown.map((s) => s.to),
+  );
+  const leftEdge = Math.min(
+    merged[0].ts - domainPad,
+    ...deviceDown.map((s) => s.from),
+  );
+  const fullDomain: [number, number] = [leftEdge, rightEdge];
   const domain = zoom.zoomDomain ?? fullDomain;
 
   return (
@@ -815,6 +945,7 @@ function OverlaidInterfaceChart({
               isAnimationActive={false}
             />
             <Legend />
+            <StatusBands deviceDown={deviceDown} />
             {zoom.refAreaLeft != null && zoom.refAreaRight != null && (
               <ReferenceArea
                 x1={zoom.refAreaLeft}
