@@ -30,6 +30,10 @@ interface ChartPoint {
   up: number; // 1 = up, 0 = down
   noData?: boolean; // true = monitoring gap (no data at all) — strip gray + latency overlay
   availNoData?: boolean; // true = no availability check in this bucket — strip gray only, latency lines unaffected
+  /** Number of availability checks that fired inside this bucket. */
+  checksTotal?: number;
+  /** Number of those that were `reachable=false`. If > 0, the bucket paints red. */
+  checksDown?: number;
   [key: string]: number | string | boolean | undefined; // {appName}_ms values
 }
 
@@ -273,15 +277,33 @@ function buildChartData(
     const bucket = byBucket.get(bucketStart)!;
     const timeLabel = formatAxisLabel(bucketStart, spanMs, timezone);
 
-    // Availability strip: carry-forward the last known state from the
-    // availability-role check.
-    const availState = getAvailStateAt(bucketStart + bucketMs - 1);
+    // Availability strip: "any-down wins" semantics — if ANY availability
+    // check inside this bucket failed, paint the bucket red. This surfaces
+    // short outages (<< bucket size) that end-of-bucket carry-forward
+    // would otherwise hide. For buckets with no availability checks at all
+    // we still carry-forward the last known state.
+    const bucketEnd = bucketStart + bucketMs;
+    let checksTotal = 0;
+    let checksDown = 0;
+    for (const cp of availCheckpoints) {
+      if (cp.ts < bucketStart) continue;
+      if (cp.ts >= bucketEnd) break;
+      checksTotal += 1;
+      if (!cp.reachable) checksDown += 1;
+    }
+
     let up: 0 | 1 = 0;
     let noAvailData = false;
-    if (availState === null) {
-      noAvailData = true; // before the first availability check has fired
+    if (checksTotal > 0) {
+      up = checksDown > 0 ? 0 : 1;
     } else {
-      up = availState ? 1 : 0;
+      // No checkpoint in this bucket — fall back to carry-forward.
+      const availState = getAvailStateAt(bucketEnd - 1);
+      if (availState === null) {
+        noAvailData = true; // before the first availability check has fired
+      } else {
+        up = availState ? 1 : 0;
+      }
     }
 
     const point: ChartPoint = {
@@ -291,6 +313,7 @@ function buildChartData(
       // availNoData makes the strip segment gray but does NOT trigger latency
       // chart gray overlays — only a true monitoring gap (noData) does that.
       ...(noAvailData ? { availNoData: true } : {}),
+      ...(checksTotal > 0 ? { checksTotal, checksDown } : {}),
     };
 
     for (const [assignId, appName] of assignmentToApp) {
@@ -492,6 +515,15 @@ function StatusStrip({
           >
             {hoveredPt.noData ? "No data" : hoveredPt.up === 1 ? "UP" : "DOWN"}
           </div>
+          {typeof hoveredPt.checksTotal === "number" &&
+            typeof hoveredPt.checksDown === "number" &&
+            hoveredPt.checksTotal > 0 && (
+              <div className="mt-0.5 text-[10px] text-zinc-500">
+                {hoveredPt.checksDown > 0
+                  ? `${hoveredPt.checksDown} of ${hoveredPt.checksTotal} checks failed`
+                  : `${hoveredPt.checksTotal} check${hoveredPt.checksTotal === 1 ? "" : "s"} ok`}
+              </div>
+            )}
         </div>
       )}
     </div>
