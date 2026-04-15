@@ -8,6 +8,7 @@ export interface ApiResponse<T> {
     offset?: number;
     count?: number;
     total?: number;
+    tier?: string;
   };
 }
 

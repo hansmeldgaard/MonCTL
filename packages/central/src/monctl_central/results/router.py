@@ -258,10 +258,14 @@ def _format_interface_row(r: dict) -> dict:
         "if_oper_status": r.get("if_oper_status", ""),
         "in_octets": r.get("in_octets", 0),
         "out_octets": r.get("out_octets", 0),
-        "in_errors": r.get("in_errors", 0),
-        "out_errors": r.get("out_errors", 0),
-        "in_discards": r.get("in_discards", 0),
-        "out_discards": r.get("out_discards", 0),
+        # Rollup tiers store per-period deltas as *_total; map to the same
+        # field names so the frontend can treat them uniformly (raw tier
+        # values are cumulative counters, rollup tier values are per-period
+        # totals — the chart divides by the tier period to get err/s).
+        "in_errors": r.get("in_errors", r.get("in_errors_total", 0)),
+        "out_errors": r.get("out_errors", r.get("out_errors_total", 0)),
+        "in_discards": r.get("in_discards", r.get("in_discards_total", 0)),
+        "out_discards": r.get("out_discards", r.get("out_discards_total", 0)),
         "in_unicast_pkts": r.get("in_unicast_pkts", 0),
         "out_unicast_pkts": r.get("out_unicast_pkts", 0),
         "in_rate_bps": r.get("in_rate_bps", 0),
@@ -271,7 +275,11 @@ def _format_interface_row(r: dict) -> dict:
         "poll_interval_sec": r.get("poll_interval_sec", 0),
         "counter_bits": r.get("counter_bits", 64),
         "state": r.get("state", 0),
-        "executed_at": _ensure_utc_iso(r.get("executed_at")) or "",
+        # Rollup tables name the time column "hour" / "day" — fall back so
+        # clients can plot them uniformly on `executed_at`.
+        "executed_at": _ensure_utc_iso(
+            r.get("executed_at") or r.get("hour") or r.get("day")
+        ) or "",
         "received_at": _ensure_utc_iso(r.get("received_at")) or "",
         "tenant_id": str(r.get("tenant_id", "")),
         "collector_name": r.get("collector_name", "") or None,
