@@ -95,6 +95,7 @@ import {
   useDeviceHistory,
   useDeviceMonitoring,
   useDeviceResults,
+  useDeviceChecksSummary,
   useDeviceCategories,
   useInterfaceLatest,
   useMultiInterfaceHistory,
@@ -146,6 +147,7 @@ import type {
   ResolvedTemplateResult,
   InterfaceRule,
   InterfaceRecord,
+  CheckResult,
 } from "@/types/api.ts";
 import { useListState } from "@/hooks/useListState.ts";
 import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
@@ -5549,6 +5551,128 @@ function useSort(defaultField: string, defaultDir: SortDir = "desc") {
   return { sortBy, sortDir, toggle };
 }
 
+// ── Checks tab helpers ──────────────────────────────────────
+// Severity order used for default sort (worst → best). Matches the ClickHouse
+// numeric state values: 0=OK, 1=WARNING, 2=CRITICAL, 3=UNKNOWN — we want
+// CRITICAL first, then WARNING, UNKNOWN, OK.
+const STATE_SEVERITY: Record<string, number> = {
+  CRITICAL: 4,
+  WARNING: 3,
+  UNKNOWN: 2,
+  OK: 1,
+  "": 0,
+};
+
+// Freshness thresholds (ms). Without interval info on the CheckResult we use
+// generous fixed bands: <2min = fresh, <10min = stale, older = dead.
+const FRESH_MS = 120_000;
+const STALE_MS = 600_000;
+
+function freshnessInfo(
+  executedAt: string | null | undefined,
+  hasError: boolean,
+): { label: string; color: string; ageMs: number | null } {
+  if (!executedAt) {
+    return { label: "never", color: "text-zinc-500", ageMs: null };
+  }
+  const age = Date.now() - new Date(executedAt).getTime();
+  // An errored latest poll never counts as fresh — the timestamp advances
+  // on every attempt regardless of success, so we mark it amber/red based
+  // on how long since the last successful sample will be picked up by the
+  // LAST SUCCESS column. Here we color by raw age of the last attempt.
+  const hue =
+    age < FRESH_MS && !hasError
+      ? "text-green-400"
+      : age < STALE_MS
+        ? "text-amber-400"
+        : "text-red-400";
+  return { label: formatAgeShort(age), color: hue, ageMs: age };
+}
+
+function formatAgeShort(ms: number): string {
+  if (ms < 0) return "—";
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.round(m / 60);
+  if (h < 48) return `${h}h`;
+  return `${Math.round(h / 24)}d`;
+}
+
+function ErrorCategoryChip({ category }: { category: string | undefined }) {
+  if (!category) return <span className="text-zinc-600 text-xs">—</span>;
+  const palette: Record<string, string> = {
+    device: "bg-red-900/40 text-red-300 border-red-700/60",
+    config: "bg-amber-900/40 text-amber-300 border-amber-700/60",
+    app: "bg-purple-900/40 text-purple-300 border-purple-700/60",
+  };
+  const klass =
+    palette[category] || "bg-zinc-800 text-zinc-300 border-zinc-700";
+  return (
+    <span
+      className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase ${klass}`}
+    >
+      {category}
+    </span>
+  );
+}
+
+function stateBucketColor(worstState: number): string {
+  // 0 OK, 1 WARNING, 2 CRITICAL, 3 UNKNOWN
+  if (worstState === 0) return "#22c55e"; // green
+  if (worstState === 1) return "#f59e0b"; // amber
+  if (worstState === 2) return "#ef4444"; // red
+  return "#71717a"; // zinc-500 / unknown
+}
+
+/**
+ * 24-slot hourly sparkline. Missing hours render as zinc-800 gaps so the
+ * density of "no data" periods is visible. Green = all OK, amber = at least
+ * one WARNING, red = at least one CRITICAL, gray = UNKNOWN.
+ */
+function CheckStatusSparkline({
+  buckets,
+  hours = 24,
+}: {
+  buckets: { ts_ms: number; worst_state: number }[] | undefined;
+  hours?: number;
+}) {
+  const now = Date.now();
+  // Round DOWN to the current hour boundary so the rightmost slot always
+  // represents the in-progress hour.
+  const hourMs = 3_600_000;
+  const currentHour = Math.floor(now / hourMs) * hourMs;
+  const slots: { ts: number; color: string; label: string }[] = [];
+  const byTs = new Map<number, number>();
+  (buckets ?? []).forEach((b) => byTs.set(b.ts_ms, b.worst_state));
+  for (let i = hours - 1; i >= 0; i--) {
+    const ts = currentHour - i * hourMs;
+    const state = byTs.get(ts);
+    if (state == null) {
+      slots.push({ ts, color: "#27272a", label: "no data" });
+    } else {
+      slots.push({
+        ts,
+        color: stateBucketColor(state),
+        label: ["OK", "WARNING", "CRITICAL", "UNKNOWN"][state] ?? "UNKNOWN",
+      });
+    }
+  }
+  return (
+    <div className="flex h-4 gap-[1px]" title={`Last ${hours}h`}>
+      {slots.map((s) => (
+        <div
+          key={s.ts}
+          className="flex-1 rounded-[1px]"
+          style={{ backgroundColor: s.color, minWidth: 2 }}
+          title={`${new Date(s.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} — ${s.label}`}
+        />
+      ))}
+    </div>
+  );
+}
+
 // ── Tab: Checks (Live + History) ─────────────────────────
 
 function ChecksTab({ deviceId }: { deviceId: string }) {
@@ -5558,6 +5682,19 @@ function ChecksTab({ deviceId }: { deviceId: string }) {
   // Live mode data
   const { data: deviceResults, isLoading: liveLoading } =
     useDeviceResults(deviceId);
+  const { data: checksSummary } = useDeviceChecksSummary(deviceId, 24);
+
+  // Live-mode sort + filter (separate from history-mode state).
+  const [liveFilterApp, setLiveFilterApp] = useState("");
+  const [liveFilterStatus, setLiveFilterStatus] = useState("");
+  const [liveFilterCollector, setLiveFilterCollector] = useState("");
+  const [liveFilterError, setLiveFilterError] = useState(""); // "", "any", "none", "device", "config", "app"
+  const [liveStaleOnly, setLiveStaleOnly] = useState(false);
+  const {
+    sortBy: liveSortBy,
+    sortDir: liveSortDir,
+    toggle: liveOnSort,
+  } = useSort("severity");
 
   // History mode data + state
   const [range, setRange] = useState<TimeRangeValue>({
@@ -5737,78 +5874,34 @@ function ChecksTab({ deviceId }: { deviceId: string }) {
               No checks configured. Add apps on the Settings tab.
             </p>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>State</TableHead>
-                  <TableHead>App</TableHead>
-                  <TableHead>Output</TableHead>
-                  <TableHead>Latency</TableHead>
-                  <TableHead>Duration</TableHead>
-                  <TableHead>Collector</TableHead>
-                  <TableHead>Executed</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {deviceResults.checks.map((check) => (
-                  <TableRow key={check.assignment_id}>
-                    <TableCell>
-                      <StatusBadge state={check.state_name} />
-                    </TableCell>
-                    <TableCell className="font-medium text-zinc-200">
-                      {check.app_name}
-                    </TableCell>
-                    <TableCell
-                      className="max-w-[240px] truncate text-zinc-400 text-sm"
-                      title={check.output}
-                    >
-                      {check.output || "—"}
-                    </TableCell>
-                    <TableCell className="text-zinc-400 text-sm font-mono">
-                      {check.rtt_ms != null
-                        ? `${check.rtt_ms}ms`
-                        : check.response_time_ms != null
-                          ? `${check.response_time_ms}ms`
-                          : "—"}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-zinc-300">
-                      {check.execution_time_ms != null
-                        ? `${Math.round(check.execution_time_ms)}ms`
-                        : "—"}
-                    </TableCell>
-                    <TableCell className="text-zinc-400 text-sm">
-                      {check.collector_name ?? "—"}
-                    </TableCell>
-                    <TableCell className="text-sm">
-                      {(() => {
-                        const err = (check as any).error_category || "";
-                        const lastOk = (check as any).last_success_at;
-                        // When the latest poll errored, show the last
-                        // successful sample time in amber; "executed_at"
-                        // of an error poll is not evidence of fresh data.
-                        if (err) {
-                          return (
-                            <span
-                              className="text-amber-400"
-                              title={`${err} — last successful: ${lastOk ? formatDate(lastOk, tz) : "never"}`}
-                            >
-                              {lastOk
-                                ? `${timeAgo(lastOk)} (stale)`
-                                : `no data (${err})`}
-                            </span>
-                          );
-                        }
-                        return (
-                          <span className="text-zinc-500">
-                            {timeAgo(check.executed_at)}
-                          </span>
-                        );
-                      })()}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <>
+              <LiveChecksFilters
+                checks={deviceResults.checks}
+                filterApp={liveFilterApp}
+                setFilterApp={setLiveFilterApp}
+                filterStatus={liveFilterStatus}
+                setFilterStatus={setLiveFilterStatus}
+                filterCollector={liveFilterCollector}
+                setFilterCollector={setLiveFilterCollector}
+                filterError={liveFilterError}
+                setFilterError={setLiveFilterError}
+                staleOnly={liveStaleOnly}
+                setStaleOnly={setLiveStaleOnly}
+              />
+              <LiveChecksTable
+                checks={deviceResults.checks}
+                checksSummary={checksSummary}
+                tz={tz}
+                sortBy={liveSortBy}
+                sortDir={liveSortDir}
+                onSort={liveOnSort}
+                filterApp={liveFilterApp}
+                filterStatus={liveFilterStatus}
+                filterCollector={liveFilterCollector}
+                filterError={liveFilterError}
+                staleOnly={liveStaleOnly}
+              />
+            </>
           )
         ) : histLoading ? (
           <div className="flex justify-center py-12">
@@ -5837,7 +5930,6 @@ function ChecksTab({ deviceId }: { deviceId: string }) {
                   onSort={onSort}
                 />
                 <TableHead>Output</TableHead>
-                <TableHead>Latency</TableHead>
                 <SortableHead
                   label="Duration"
                   field="duration"
@@ -5877,12 +5969,6 @@ function ChecksTab({ deviceId }: { deviceId: string }) {
                   (startedAt
                     ? executedAt.getTime() - startedAt.getTime()
                     : null);
-                const latency =
-                  r.rtt_ms != null
-                    ? `${r.rtt_ms}ms`
-                    : r.response_time_ms != null
-                      ? `${r.response_time_ms}ms`
-                      : "—";
                 return (
                   <TableRow key={`${r.assignment_id}-${i}`}>
                     <TableCell>
@@ -5896,9 +5982,6 @@ function ChecksTab({ deviceId }: { deviceId: string }) {
                       title={r.output ?? ""}
                     >
                       {r.output || "—"}
-                    </TableCell>
-                    <TableCell className="text-zinc-400 text-sm font-mono">
-                      {latency}
                     </TableCell>
                     <TableCell className="font-mono text-xs text-zinc-300">
                       {durationMs != null ? `${Math.round(durationMs)}ms` : "—"}
@@ -5922,6 +6005,370 @@ function ChecksTab({ deviceId }: { deviceId: string }) {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+// ── Live checks: filter bar ─────────────────────────────────
+
+function LiveChecksFilters({
+  checks,
+  filterApp,
+  setFilterApp,
+  filterStatus,
+  setFilterStatus,
+  filterCollector,
+  setFilterCollector,
+  filterError,
+  setFilterError,
+  staleOnly,
+  setStaleOnly,
+}: {
+  checks: CheckResult[];
+  filterApp: string;
+  setFilterApp: (v: string) => void;
+  filterStatus: string;
+  setFilterStatus: (v: string) => void;
+  filterCollector: string;
+  setFilterCollector: (v: string) => void;
+  filterError: string;
+  setFilterError: (v: string) => void;
+  staleOnly: boolean;
+  setStaleOnly: (v: boolean) => void;
+}) {
+  const appNames = [
+    ...new Set(checks.map((c) => c.app_name).filter(Boolean)),
+  ].sort();
+  const statuses = [
+    ...new Set(checks.map((c) => c.state_name).filter(Boolean)),
+  ].sort();
+  const collectors = [
+    ...new Set(checks.map((c) => c.collector_name).filter(Boolean)),
+  ].sort() as string[];
+  const errorCats = [
+    ...new Set(
+      checks.map((c) => c.error_category || "").filter((c) => c && c !== ""),
+    ),
+  ].sort();
+  const active =
+    filterApp || filterStatus || filterCollector || filterError || staleOnly;
+  return (
+    <div className="flex items-center gap-2 pb-3 flex-wrap">
+      <Select
+        value={filterStatus}
+        onChange={(e) => setFilterStatus(e.target.value)}
+        className="w-32 text-xs"
+      >
+        <option value="">All States</option>
+        {statuses.map((s) => (
+          <option key={s} value={s!}>
+            {s}
+          </option>
+        ))}
+      </Select>
+      <Select
+        value={filterApp}
+        onChange={(e) => setFilterApp(e.target.value)}
+        className="w-40 text-xs"
+      >
+        <option value="">All Apps</option>
+        {appNames.map((n) => (
+          <option key={n} value={n!}>
+            {n}
+          </option>
+        ))}
+      </Select>
+      <Select
+        value={filterCollector}
+        onChange={(e) => setFilterCollector(e.target.value)}
+        className="w-40 text-xs"
+      >
+        <option value="">All Collectors</option>
+        {collectors.map((c) => (
+          <option key={c} value={c!}>
+            {c}
+          </option>
+        ))}
+      </Select>
+      <Select
+        value={filterError}
+        onChange={(e) => setFilterError(e.target.value)}
+        className="w-36 text-xs"
+      >
+        <option value="">All Errors</option>
+        <option value="any">Any error</option>
+        <option value="none">No error</option>
+        {errorCats.map((c) => (
+          <option key={c} value={c}>
+            {c}
+          </option>
+        ))}
+      </Select>
+      <label className="flex items-center gap-1.5 text-xs text-zinc-400 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={staleOnly}
+          onChange={(e) => setStaleOnly(e.target.checked)}
+          className="accent-brand-500"
+        />
+        Stale only
+      </label>
+      {active && (
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            setFilterApp("");
+            setFilterStatus("");
+            setFilterCollector("");
+            setFilterError("");
+            setStaleOnly(false);
+          }}
+        >
+          <X className="h-3 w-3" /> Clear
+        </Button>
+      )}
+    </div>
+  );
+}
+
+// ── Live checks: sortable/filterable table ──────────────────
+
+function LiveChecksTable({
+  checks,
+  checksSummary,
+  tz,
+  sortBy,
+  sortDir,
+  onSort,
+  filterApp,
+  filterStatus,
+  filterCollector,
+  filterError,
+  staleOnly,
+}: {
+  checks: CheckResult[];
+  checksSummary:
+    | Record<string, { ts_ms: number; worst_state: number; count: number }[]>
+    | undefined;
+  tz: string;
+  sortBy: string;
+  sortDir: "asc" | "desc";
+  onSort: (f: string) => void;
+  filterApp: string;
+  filterStatus: string;
+  filterCollector: string;
+  filterError: string;
+  staleOnly: boolean;
+}) {
+  const rows = useMemo(() => {
+    let data = checks;
+    if (filterApp) data = data.filter((c) => c.app_name === filterApp);
+    if (filterStatus) data = data.filter((c) => c.state_name === filterStatus);
+    if (filterCollector)
+      data = data.filter((c) => c.collector_name === filterCollector);
+    if (filterError) {
+      if (filterError === "any") data = data.filter((c) => !!c.error_category);
+      else if (filterError === "none")
+        data = data.filter((c) => !c.error_category);
+      else data = data.filter((c) => c.error_category === filterError);
+    }
+    if (staleOnly) {
+      data = data.filter((c) => {
+        const age = c.executed_at
+          ? Date.now() - new Date(c.executed_at).getTime()
+          : Infinity;
+        return !!c.error_category || age > STALE_MS;
+      });
+    }
+    return [...data].sort((a, b) => {
+      let cmp = 0;
+      switch (sortBy) {
+        case "severity":
+          cmp =
+            (STATE_SEVERITY[b.state_name] ?? 0) -
+            (STATE_SEVERITY[a.state_name] ?? 0);
+          break;
+        case "app":
+          cmp = (a.app_name ?? "").localeCompare(b.app_name ?? "");
+          break;
+        case "fresh": {
+          const ageA = a.executed_at
+            ? Date.now() - new Date(a.executed_at).getTime()
+            : Number.POSITIVE_INFINITY;
+          const ageB = b.executed_at
+            ? Date.now() - new Date(b.executed_at).getTime()
+            : Number.POSITIVE_INFINITY;
+          cmp = ageA - ageB;
+          break;
+        }
+        case "runtime":
+          cmp = (a.execution_time_ms ?? 0) - (b.execution_time_ms ?? 0);
+          break;
+        case "collector":
+          cmp = (a.collector_name ?? "").localeCompare(b.collector_name ?? "");
+          break;
+        case "error":
+          cmp = (a.error_category ?? "").localeCompare(b.error_category ?? "");
+          break;
+        case "last_success": {
+          const tA = a.last_success_at
+            ? new Date(a.last_success_at).getTime()
+            : 0;
+          const tB = b.last_success_at
+            ? new Date(b.last_success_at).getTime()
+            : 0;
+          cmp = tA - tB;
+          break;
+        }
+      }
+      // Default sort direction for "severity" is worst-first (handled above,
+      // no dir flip); for every other field sortDir asc/desc flips as usual.
+      if (sortBy === "severity") return sortDir === "desc" ? cmp : -cmp;
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+  }, [
+    checks,
+    filterApp,
+    filterStatus,
+    filterCollector,
+    filterError,
+    staleOnly,
+    sortBy,
+    sortDir,
+  ]);
+
+  if (rows.length === 0) {
+    return (
+      <p className="text-sm text-zinc-500 py-8 text-center">
+        No checks match the current filters.
+      </p>
+    );
+  }
+
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <SortableHead
+            label="State"
+            field="severity"
+            sortBy={sortBy}
+            sortDir={sortDir}
+            onSort={onSort}
+          />
+          <SortableHead
+            label="Freshness"
+            field="fresh"
+            sortBy={sortBy}
+            sortDir={sortDir}
+            onSort={onSort}
+          />
+          <SortableHead
+            label="App"
+            field="app"
+            sortBy={sortBy}
+            sortDir={sortDir}
+            onSort={onSort}
+          />
+          <TableHead>Output</TableHead>
+          <SortableHead
+            label="Error"
+            field="error"
+            sortBy={sortBy}
+            sortDir={sortDir}
+            onSort={onSort}
+          />
+          <SortableHead
+            label="Runtime"
+            field="runtime"
+            sortBy={sortBy}
+            sortDir={sortDir}
+            onSort={onSort}
+          />
+          <SortableHead
+            label="Last Success"
+            field="last_success"
+            sortBy={sortBy}
+            sortDir={sortDir}
+            onSort={onSort}
+          />
+          <TableHead>24h</TableHead>
+          <SortableHead
+            label="Collector"
+            field="collector"
+            sortBy={sortBy}
+            sortDir={sortDir}
+            onSort={onSort}
+          />
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.map((check) => {
+          const hasError = !!check.error_category;
+          const fresh = freshnessInfo(check.executed_at, hasError);
+          const buckets = checksSummary?.[check.assignment_id];
+          const rowBg = hasError
+            ? "bg-red-950/20"
+            : fresh.ageMs != null && fresh.ageMs > STALE_MS
+              ? "bg-amber-950/20"
+              : "";
+          return (
+            <TableRow key={check.assignment_id} className={rowBg}>
+              <TableCell>
+                <StatusBadge state={check.state_name} />
+              </TableCell>
+              <TableCell className="text-xs font-mono">
+                <span
+                  className={fresh.color}
+                  title={
+                    check.executed_at
+                      ? `Last attempt: ${formatDate(check.executed_at, tz)}`
+                      : "No attempt recorded"
+                  }
+                >
+                  {fresh.label}
+                </span>
+              </TableCell>
+              <TableCell className="font-medium text-zinc-200">
+                {check.app_name}
+              </TableCell>
+              <TableCell
+                className="max-w-[220px] truncate text-zinc-400 text-sm"
+                title={check.output || check.error_message || ""}
+              >
+                {check.output || check.error_message || "—"}
+              </TableCell>
+              <TableCell>
+                <ErrorCategoryChip category={check.error_category} />
+              </TableCell>
+              <TableCell className="font-mono text-xs text-zinc-400">
+                {check.execution_time_ms != null
+                  ? `${Math.round(check.execution_time_ms)}ms`
+                  : "—"}
+              </TableCell>
+              <TableCell className="text-xs text-zinc-500">
+                {check.last_success_at ? (
+                  <span
+                    title={formatDate(check.last_success_at, tz)}
+                    className={hasError ? "text-amber-500" : "text-zinc-400"}
+                  >
+                    {timeAgo(check.last_success_at)}
+                  </span>
+                ) : (
+                  <span className="text-red-400">never</span>
+                )}
+              </TableCell>
+              <TableCell className="w-36">
+                <CheckStatusSparkline buckets={buckets} hours={24} />
+              </TableCell>
+              <TableCell className="text-zinc-400 text-xs">
+                {check.collector_name ?? "—"}
+              </TableCell>
+            </TableRow>
+          );
+        })}
+      </TableBody>
+    </Table>
   );
 }
 

@@ -459,6 +459,79 @@ async def device_interfaces_latest(
     }
 
 
+@router.get("/checks-summary/{device_id}")
+async def device_checks_summary(
+    device_id: str,
+    hours: int = Query(default=24, ge=1, le=168),
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_permission("result", "view")),
+):
+    """Per-assignment hourly worst-state buckets for the Checks tab sparkline.
+
+    Returns the highest (worst) state value per assignment per hour for the
+    last `hours` hours. Covers availability_latency + performance tables —
+    these carry the state signal that reflects a check passing/failing.
+    Config-change rows are excluded (state there is informational).
+    """
+    device = await db.get(Device, uuid.UUID(device_id))
+    if device is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+    if not check_tenant_access(auth, device.tenant_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    ch = get_clickhouse()
+    sql = """
+    SELECT
+        toString(assignment_id) AS assignment_id,
+        toUnixTimestamp(toStartOfInterval(executed_at, INTERVAL 1 HOUR)) * 1000 AS ts_ms,
+        max(state) AS worst_state,
+        count() AS n
+    FROM (
+        SELECT assignment_id, executed_at, state
+        FROM availability_latency
+        WHERE device_id = {device_id:UUID}
+          AND executed_at > now() - toIntervalHour({hours:UInt32})
+        UNION ALL
+        SELECT assignment_id, executed_at, state
+        FROM performance
+        WHERE device_id = {device_id:UUID}
+          AND executed_at > now() - toIntervalHour({hours:UInt32})
+    )
+    GROUP BY assignment_id, ts_ms
+    ORDER BY assignment_id, ts_ms
+    """
+    try:
+        client = ch._get_client()
+        rows = list(
+            client.query(
+                sql,
+                parameters={"device_id": device_id, "hours": hours},
+            ).named_results()
+        )
+    except Exception as exc:
+        if ch._is_table_missing_error(exc):
+            rows = []
+        else:
+            raise
+
+    by_assignment: dict[str, list[dict]] = {}
+    for r in rows:
+        aid = r["assignment_id"]
+        by_assignment.setdefault(aid, []).append(
+            {
+                "ts_ms": int(r["ts_ms"]),
+                "worst_state": int(r["worst_state"]),
+                "count": int(r["n"]),
+            }
+        )
+
+    return {
+        "status": "success",
+        "data": by_assignment,
+        "meta": {"hours": hours, "assignments": len(by_assignment)},
+    }
+
+
 @router.get("/by-device/{device_id}")
 async def device_status(
     device_id: str,
