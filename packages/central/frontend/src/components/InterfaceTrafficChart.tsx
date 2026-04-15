@@ -29,6 +29,30 @@ const CHART_COLOR_PAIRS = [
 export type TrafficUnit = "auto" | "kbps" | "mbps" | "gbps" | "pct";
 export type ChartMetric = "traffic" | "errors" | "discards";
 export type ChartMode = "overlaid" | "stacked";
+export type DataTier = "raw" | "hourly" | "daily";
+
+// For rollup tiers, each row value is a per-period total (errors/discards
+// accumulated over the bucket). Dividing by the bucket length gives err/s.
+const TIER_PERIOD_SEC: Record<DataTier, number> = {
+  raw: 0, // raw uses pairwise delta / dt (see calculateDeltas)
+  hourly: 3600,
+  daily: 86400,
+};
+
+function rateSuffix(metric: ChartMetric): string {
+  if (metric === "errors") return "err/s";
+  if (metric === "discards") return "disc/s";
+  return "";
+}
+
+export function formatRateShort(v: number, suffix: string): string {
+  const abs = Math.abs(v);
+  if (abs === 0) return `0 ${suffix}`;
+  if (abs >= 1e3) return `${(v / 1e3).toFixed(1)}K ${suffix}`;
+  if (abs >= 10) return `${v.toFixed(1)} ${suffix}`;
+  if (abs >= 1) return `${v.toFixed(2)} ${suffix}`;
+  return `${v.toFixed(3)} ${suffix}`;
+}
 
 export function formatBpsShort(bps: number): string {
   if (bps >= 1e9) return `${(bps / 1e9).toFixed(1)} Gbps`;
@@ -368,6 +392,7 @@ interface MultiProps {
   unit: TrafficUnit;
   mode: ChartMode;
   timezone: string;
+  tier?: DataTier;
   onZoom?: (fromMs: number, toMs: number) => void;
 }
 
@@ -382,18 +407,39 @@ function getMetricFields(metric: ChartMetric): [string, string] {
   }
 }
 
-function calculateDeltas(
+function calculateRate(
   data: InterfaceRecord[],
   inField: string,
   outField: string,
+  tier: DataTier,
 ): { ts: number; in_val: number; out_val: number }[] {
   const sorted = [...data].sort((a, b) =>
     a.executed_at.localeCompare(b.executed_at),
   );
+
+  // Rollup tiers: each row value is already a per-period total (errors or
+  // discards accumulated over the hour/day bucket). Divide by the bucket
+  // length to get per-second rate. No pairwise subtraction needed.
+  if (tier !== "raw") {
+    const period = TIER_PERIOD_SEC[tier];
+    return sorted.map((r) => ({
+      ts: new Date(r.executed_at).getTime(),
+      in_val: ((r[inField as keyof InterfaceRecord] as number) || 0) / period,
+      out_val: ((r[outField as keyof InterfaceRecord] as number) || 0) / period,
+    }));
+  }
+
+  // Raw tier: values are cumulative SNMP counters. Compute per-second rate
+  // from pairwise delta / dt. Skip counter wraps (delta < 0) and zero-dt.
   const result: { ts: number; in_val: number; out_val: number }[] = [];
   for (let i = 1; i < sorted.length; i++) {
     const prev = sorted[i - 1];
     const curr = sorted[i];
+    const dtSec =
+      (new Date(curr.executed_at).getTime() -
+        new Date(prev.executed_at).getTime()) /
+      1000;
+    if (dtSec <= 0) continue;
     const inDelta =
       (curr[inField as keyof InterfaceRecord] as number) -
       (prev[inField as keyof InterfaceRecord] as number);
@@ -403,8 +449,8 @@ function calculateDeltas(
     if (inDelta < 0 || outDelta < 0) continue;
     result.push({
       ts: new Date(curr.executed_at).getTime(),
-      in_val: inDelta,
-      out_val: outDelta,
+      in_val: inDelta / dtSec,
+      out_val: outDelta / dtSec,
     });
   }
   return result;
@@ -415,6 +461,7 @@ function mergeTimeSeries(
   historyPerInterface: InterfaceRecord[][],
   metric: ChartMetric,
   unit: TrafficUnit,
+  tier: DataTier,
 ): Record<string, number>[] {
   const tsMap = new Map<number, Record<string, number>>();
   const [inField, outField] = getMetricFields(metric);
@@ -429,7 +476,7 @@ function mergeTimeSeries(
             out_val: r[outField as keyof InterfaceRecord] as number,
             speed: r.if_speed_mbps,
           }))
-        : calculateDeltas(data, inField, outField).map((p) => ({
+        : calculateRate(data, inField, outField, tier).map((p) => ({
             ...p,
             speed: 0,
           }));
@@ -461,6 +508,7 @@ export function MultiInterfaceChart({
   unit,
   mode,
   timezone,
+  tier = "raw",
   onZoom,
 }: MultiProps) {
   if (!historyPerInterface?.length) {
@@ -471,8 +519,11 @@ export function MultiInterfaceChart({
     );
   }
 
+  const rateUnit = rateSuffix(metric);
   const yFormatter = (v: number) =>
-    metric === "traffic" ? formatUnitShort(v, unit) : String(Math.round(v));
+    metric === "traffic"
+      ? formatUnitShort(v, unit)
+      : formatRateShort(v, rateUnit);
 
   if (mode === "stacked") {
     const [inField, outField] = getMetricFields(metric);
@@ -502,7 +553,7 @@ export function MultiInterfaceChart({
                       r.if_speed_mbps,
                     ),
                   }))
-              : calculateDeltas(rawData, inField, outField).map((p) => ({
+              : calculateRate(rawData, inField, outField, tier).map((p) => ({
                   ...p,
                 }));
 
@@ -515,6 +566,7 @@ export function MultiInterfaceChart({
               name={interfaceNames[idx]}
               yFormatter={yFormatter}
               unit={unit}
+              metric={metric}
               timezone={timezone}
               onZoom={onZoom}
             />
@@ -532,6 +584,7 @@ export function MultiInterfaceChart({
       historyPerInterface={historyPerInterface}
       metric={metric}
       unit={unit}
+      tier={tier}
       timezone={timezone}
       yFormatter={yFormatter}
       onZoom={onZoom}
@@ -546,6 +599,7 @@ function StackedInterfaceChart({
   name,
   yFormatter,
   unit,
+  metric,
   timezone,
   onZoom,
 }: {
@@ -554,6 +608,7 @@ function StackedInterfaceChart({
   name: string;
   yFormatter: (v: number) => string;
   unit: TrafficUnit;
+  metric: ChartMetric;
   timezone: string;
   onZoom?: (fromMs: number, toMs: number) => void;
 }) {
@@ -619,12 +674,15 @@ function StackedInterfaceChart({
                 fontSize: "0.7rem",
               }}
               labelFormatter={(ts) => formatChartDateTime(Number(ts), timezone)}
-              formatter={(value) => [
-                formatTooltipValue(
-                  typeof value === "number" ? value : Number(value) || 0,
-                  unit,
-                ),
-              ]}
+              formatter={(value) => {
+                const v =
+                  typeof value === "number" ? value : Number(value) || 0;
+                return [
+                  metric === "traffic"
+                    ? formatTooltipValue(v, unit)
+                    : formatRateShort(v, rateSuffix(metric)),
+                ];
+              }}
               isAnimationActive={false}
             />
             {zoom.refAreaLeft != null && zoom.refAreaRight != null && (
@@ -669,6 +727,7 @@ function OverlaidInterfaceChart({
   historyPerInterface,
   metric,
   unit,
+  tier,
   timezone,
   yFormatter,
   onZoom,
@@ -678,6 +737,7 @@ function OverlaidInterfaceChart({
   historyPerInterface: InterfaceRecord[][];
   metric: ChartMetric;
   unit: TrafficUnit;
+  tier: DataTier;
   timezone: string;
   yFormatter: (v: number) => string;
   onZoom?: (fromMs: number, toMs: number) => void;
@@ -688,6 +748,7 @@ function OverlaidInterfaceChart({
     historyPerInterface,
     metric,
     unit,
+    tier,
   );
   if (merged.length === 0) {
     return (
@@ -742,12 +803,15 @@ function OverlaidInterfaceChart({
                 fontSize: "0.75rem",
               }}
               labelFormatter={(ts) => formatChartDateTime(Number(ts), timezone)}
-              formatter={(value) => [
-                formatTooltipValue(
-                  typeof value === "number" ? value : Number(value) || 0,
-                  unit,
-                ),
-              ]}
+              formatter={(value) => {
+                const v =
+                  typeof value === "number" ? value : Number(value) || 0;
+                return [
+                  metric === "traffic"
+                    ? formatTooltipValue(v, unit)
+                    : formatRateShort(v, rateSuffix(metric)),
+                ];
+              }}
               isAnimationActive={false}
             />
             <Legend />

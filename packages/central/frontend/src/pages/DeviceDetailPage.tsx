@@ -158,6 +158,7 @@ import { PerformanceChart } from "@/components/PerformanceChart.tsx";
 import {
   MultiInterfaceChart,
   formatTraffic,
+  type DataTier,
 } from "@/components/InterfaceTrafficChart.tsx";
 import type {
   TrafficUnit,
@@ -3041,12 +3042,15 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
   const showMultiChart = chartInterfaceIds.length > 0;
   const tooManySelected = activeSelectedCount > MAX_CHART_INTERFACES;
 
-  const { data: multiHistory } = useMultiInterfaceHistory(
+  const { data: multiHistoryResp } = useMultiInterfaceHistory(
     deviceId,
     fromTs,
     toTs,
     showMultiChart ? chartInterfaceIds : [],
   );
+  const multiHistory = multiHistoryResp?.perInterface;
+  const multiHistoryTier: DataTier =
+    (multiHistoryResp?.tier as DataTier | undefined) ?? "raw";
 
   // Bulk metric toggle for selected interfaces
   const bulkToggleMetric = (metric: string, enable: boolean) => {
@@ -3374,6 +3378,7 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
               metric={chartMetric}
               unit={trafficUnit}
               mode={chartMode}
+              tier={multiHistoryTier}
               timezone={tz}
               onZoom={handleChartZoom}
             />
@@ -3419,8 +3424,8 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
                 <SortHead col="speed">Speed</SortHead>
                 <SortHead col="in_traffic">In Traffic</SortHead>
                 <SortHead col="out_traffic">Out Traffic</SortHead>
-                <SortHead col="in_errors">In Err</SortHead>
-                <SortHead col="out_errors">Out Err</SortHead>
+                <SortHead col="in_errors">In Err (total)</SortHead>
+                <SortHead col="out_errors">Out Err (total)</SortHead>
                 <SortHead col="last_polled">Last Polled</SortHead>
                 <InterfaceToggleBulkHead
                   activeSelectedCount={activeSelectedCount}
@@ -3587,6 +3592,7 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
                             ? "text-amber-400"
                             : "text-zinc-600"
                         }
+                        title="Cumulative error counter since device boot — see Errors chart for rate (err/s)"
                       >
                         {iface.in_errors.toLocaleString()}
                       </span>
@@ -3598,6 +3604,7 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
                             ? "text-amber-400"
                             : "text-zinc-600"
                         }
+                        title="Cumulative error counter since device boot — see Errors chart for rate (err/s)"
                       >
                         {iface.out_errors.toLocaleString()}
                       </span>

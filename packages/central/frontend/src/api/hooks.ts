@@ -1416,7 +1416,9 @@ export function useMultiInterfaceHistory(
           );
         }),
       );
-      return results.map((r) => r.data);
+      const perInterface = results.map((r) => r.data);
+      const tier = results[0]?.meta?.tier ?? "raw";
+      return { perInterface, tier };
     },
     enabled: !!deviceId && interfaceIds.length > 0,
     refetchInterval: POLL_DETAIL,
