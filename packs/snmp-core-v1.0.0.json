@@ -66,7 +66,7 @@
             "severity_tiers": [
               {
                 "severity": "healthy",
-                "expression": null,
+                "expression": "reachable == 1",
                 "message_template": "SNMP is reachable again on {device_name}"
               },
               {
@@ -84,7 +84,7 @@
             "severity_tiers": [
               {
                 "severity": "healthy",
-                "expression": null,
+                "expression": "rtt_ms < snmp_rtt_warn_ms",
                 "message_template": "SNMP latency on {device_name} recovered to {value}ms"
               },
               {
@@ -181,7 +181,7 @@
             "severity_tiers": [
               {
                 "severity": "healthy",
-                "expression": null,
+                "expression": "uptime_seconds > reboot_threshold",
                 "message_template": "Device {device_name} uptime back above threshold ({value}s)"
               },
               {
