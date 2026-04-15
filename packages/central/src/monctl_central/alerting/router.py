@@ -99,6 +99,8 @@ def _fmt_entity(i: AlertEntity) -> dict:
         "fire_history": i.fire_history,
         "last_evaluated_at": i.last_evaluated_at.isoformat() if i.last_evaluated_at else None,
         "started_firing_at": i.started_firing_at.isoformat() if i.started_firing_at else None,
+        "current_state_since": i.current_state_since.isoformat() if i.current_state_since else None,
+        "last_triggered_at": i.last_triggered_at.isoformat() if i.last_triggered_at else None,
         "last_cleared_at": i.last_cleared_at.isoformat() if i.last_cleared_at else None,
         "entity_key": i.entity_key,
         "entity_labels": i.entity_labels,
@@ -530,6 +532,8 @@ async def list_alert_instances(
         "current_value": AlertEntity.current_value,
         "fire_count": AlertEntity.fire_count,
         "started_firing_at": AlertEntity.started_firing_at,
+        "current_state_since": AlertEntity.current_state_since,
+        "last_triggered_at": AlertEntity.last_triggered_at,
     }
     sort_col = _SORT_MAP.get(sort_by, AlertEntity.state)
     stmt = stmt.order_by(sort_col.desc() if sort_dir == "desc" else sort_col.asc())

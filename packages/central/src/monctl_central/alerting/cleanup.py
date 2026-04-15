@@ -32,6 +32,8 @@ async def cleanup_resolved_instances(session: AsyncSession) -> int:
             state="ok",
             last_cleared_at=None,
             started_firing_at=None,
+            current_state_since=None,
+            last_triggered_at=None,
             current_value=None,
             fire_count=0,
             fire_history=[],

@@ -508,6 +508,11 @@ class AlertEntity(Base):
     fire_history: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
     last_evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     started_firing_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # When the entity entered its current severity tier (resets on
+    # escalate/downgrade). NULL when ok.
+    current_state_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Last evaluation cycle where a fire tier matched.
+    last_triggered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_cleared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     entity_key: Mapped[str] = mapped_column(String(500), nullable=False, server_default="")
     entity_labels: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")

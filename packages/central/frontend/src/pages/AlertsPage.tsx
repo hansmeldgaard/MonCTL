@@ -18,8 +18,10 @@ import {
   TableRow,
 } from "@/components/ui/table.tsx";
 import { useAlertInstances, useAlertLog, useAlertRules } from "@/api/hooks.ts";
-import { timeAgo, formatDate } from "@/lib/utils.ts";
+import { formatTime } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
+import { useTimeDisplayMode } from "@/hooks/useTimeDisplayMode.ts";
+import { TimeDisplayToggle } from "@/components/TimeDisplayToggle.tsx";
 import { useListState } from "@/hooks/useListState.ts";
 import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
 import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
@@ -45,9 +47,10 @@ export function AlertsPage() {
       { key: "entity_key", label: "Entity" },
       { key: "current_value", label: "Value", filterable: false },
       { key: "fire_count", label: "Fires", filterable: false },
-      { key: "started_firing_at", label: "Since", filterable: false },
+      { key: "current_state_since", label: "Since", filterable: false },
+      { key: "last_triggered_at", label: "Last triggered", filterable: false },
     ],
-    defaultSortBy: "started_firing_at",
+    defaultSortBy: "current_state_since",
     defaultSortDir: "desc",
     defaultPageSize: pageSize,
     scrollMode,
@@ -87,7 +90,6 @@ export function AlertsPage() {
   };
 
   // Alert log state
-  const [logAction, setLogAction] = useState<string>("");
   const logListState = useListState({
     columns: [
       { key: "occurred_at", label: "Time", filterable: false },
@@ -108,7 +110,6 @@ export function AlertsPage() {
     isFetching: logFetching,
   } = useAlertLog({
     ...logListState.params,
-    action: logAction || undefined,
   });
   const logEntries = logResponse?.data ?? [];
   const logMeta = (logResponse as any)?.meta ?? {
@@ -173,11 +174,6 @@ export function AlertsPage() {
           meta={logMeta}
           listState={logListState}
           isFetching={logFetching}
-          action={logAction}
-          onActionChange={(v) => {
-            setLogAction(v);
-            logListState.setPage(0);
-          }}
         />
       ) : (
         <DefinitionsTab
@@ -202,6 +198,8 @@ function ActiveAlertsTab({
   meta: { limit: number; offset: number; count: number; total: number };
   isFetching: boolean;
 }) {
+  const tz = useTimezone();
+  const { mode } = useTimeDisplayMode();
   return (
     <Card>
       <CardHeader>
@@ -214,6 +212,7 @@ function ActiveAlertsTab({
           >
             {meta.total} firing
           </Badge>
+          <TimeDisplayToggle />
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -284,8 +283,16 @@ function ActiveAlertsTab({
                     filterable={false}
                   />
                   <FilterableSortHead
-                    col="started_firing_at"
+                    col="current_state_since"
                     label="Since"
+                    sortBy={listState.sortBy}
+                    sortDir={listState.sortDir}
+                    onSort={listState.handleSort}
+                    filterable={false}
+                  />
+                  <FilterableSortHead
+                    col="last_triggered_at"
+                    label="Last triggered"
                     sortBy={listState.sortBy}
                     sortDir={listState.sortDir}
                     onSort={listState.handleSort}
@@ -297,7 +304,7 @@ function ActiveAlertsTab({
                 {alerts.length === 0 ? (
                   <TableRow>
                     <TableCell
-                      colSpan={7}
+                      colSpan={8}
                       className="text-center text-sm text-zinc-500 py-8"
                     >
                       No matches for current filters
@@ -370,10 +377,11 @@ function ActiveAlertsTab({
                         <TableCell className="text-zinc-400">
                           {alert.fire_count}
                         </TableCell>
-                        <TableCell className="text-zinc-500">
-                          {alert.started_firing_at
-                            ? timeAgo(alert.started_firing_at)
-                            : "—"}
+                        <TableCell className="text-zinc-500 whitespace-nowrap">
+                          {formatTime(alert.current_state_since, mode, tz)}
+                        </TableCell>
+                        <TableCell className="text-zinc-500 whitespace-nowrap">
+                          {formatTime(alert.last_triggered_at, mode, tz)}
                         </TableCell>
                       </TableRow>
                     );
@@ -404,17 +412,14 @@ function AlertLogTab({
   meta,
   listState,
   isFetching,
-  action,
-  onActionChange,
 }: {
   entries: AlertLogEntry[];
   meta: { limit: number; offset: number; count: number; total: number };
   listState: ReturnType<typeof useListState>;
   isFetching: boolean;
-  action: string;
-  onActionChange: (v: string) => void;
 }) {
   const tz = useTimezone();
+  const { mode } = useTimeDisplayMode();
 
   return (
     <Card>
@@ -422,18 +427,7 @@ function AlertLogTab({
         <CardTitle className="flex items-center gap-2">
           <FileText className="h-4 w-4" />
           Alert Log ({meta.total})
-          <div className="ml-auto flex items-center gap-1">
-            {["", "fire", "escalate", "downgrade", "clear"].map((v) => (
-              <Button
-                key={v}
-                variant={action === v ? "secondary" : "ghost"}
-                size="sm"
-                onClick={() => onActionChange(v)}
-              >
-                {v === "" ? "All" : v.charAt(0).toUpperCase() + v.slice(1)}
-              </Button>
-            ))}
-          </div>
+          <TimeDisplayToggle />
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -540,7 +534,7 @@ function AlertLogTab({
                         }
                       >
                         <TableCell className="text-zinc-500 text-xs whitespace-nowrap">
-                          {formatDate(entry.occurred_at, tz)}
+                          {formatTime(entry.occurred_at, mode, tz)}
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-1">

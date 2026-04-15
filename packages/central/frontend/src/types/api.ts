@@ -590,6 +590,8 @@ export interface AlertEntity {
   fire_history: boolean[];
   last_evaluated_at: string | null;
   started_firing_at: string | null;
+  current_state_since: string | null;
+  last_triggered_at: string | null;
   last_cleared_at: string | null;
   entity_key: string;
   entity_labels: Record<string, string>;

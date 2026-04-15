@@ -88,6 +88,20 @@ export function formatChartDateTime(ts: number, timezone = "UTC"): string {
   );
 }
 
+export type TimeDisplayMode = "relative" | "absolute";
+
+/** Format a timestamp either as relative ("3m ago") or absolute in the
+ *  user's timezone ("2026-04-15 13:58:17"). */
+export function formatTime(
+  ts: string | null | undefined,
+  mode: TimeDisplayMode,
+  timezone = "UTC",
+): string {
+  if (!ts) return "—";
+  if (mode === "relative") return timeAgo(ts);
+  return formatLogTimestamp(ts, timezone);
+}
+
 export function formatLogTimestamp(ts: string, timezone = "UTC"): string {
   const d = new Date(ts);
   if (isNaN(d.getTime())) return ts.replace("T", " ").slice(0, 19);
