@@ -23,6 +23,8 @@ from monctl_central.storage.clickhouse import ClickHouseClient
 from monctl_central.storage.models import (
     AlertEntity,
     AlertDefinition,
+    Device,
+    Tenant,
     ThresholdOverride,
     ThresholdVariable,
 )
@@ -130,34 +132,31 @@ class AlertEngine:
         # the whole definition is skipped for this cycle — partial
         # evaluation could mis-classify severity.
         compiled_tiers: list[tuple[str, object]] = []
+        # The healthy tier MAY carry an expression that describes when
+        # the entity is recovered (e.g. `rtt_ms < rtt_ms_warn`). When
+        # present it acts as a POSITIVE CLEAR and is also the source of
+        # truth for `current_value` / `metric_values` / `threshold_values`
+        # on the clear log row — otherwise that row would carry the
+        # stale last-firing snapshot.
         healthy_compiled: object | None = None
+        healthy_expr: str = ""
         for tier in tiers:
-            if tier.get("severity") == "healthy":
-                expr = tier.get("expression") or ""
-                if not expr:
-                    continue
-                try:
-                    ast = parse_expression(expr)
-                    healthy_compiled = compile_to_sql(ast, target_table, defn.window)
-                except Exception:
-                    logger.exception(
-                        "dsl_compile_error_healthy definition_id=%s",
-                        defn.id,
-                    )
-                    return []
-                continue
             if not tier.get("expression"):
                 continue
             try:
                 ast = parse_expression(tier["expression"])
                 compiled = compile_to_sql(ast, target_table, defn.window)
-                compiled_tiers.append((tier["severity"], compiled))
             except Exception:
                 logger.exception(
                     "dsl_compile_error definition_id=%s tier=%s",
                     defn.id, tier.get("severity"),
                 )
                 return []
+            if tier.get("severity") == "healthy":
+                healthy_compiled = compiled
+                healthy_expr = tier["expression"]
+            else:
+                compiled_tiers.append((tier["severity"], compiled))
         if not compiled_tiers:
             logger.debug("eval_definition_no_non_healthy_tiers name=%s", defn.name)
             return []
@@ -176,6 +175,20 @@ class AlertEngine:
         if not instances:
             logger.debug("eval_definition_no_instances name=%s", defn.name)
             return []
+
+        # Build device_id → (tenant_id, tenant_name) map so log records
+        # can carry tenant context without extra round-trips per entity.
+        device_ids = [i.device_id for i in instances if i.device_id]
+        tenant_by_device: dict[uuid.UUID, tuple[uuid.UUID | None, str]] = {}
+        if device_ids:
+            rows = (
+                await session.execute(
+                    select(Device.id, Device.tenant_id, Tenant.name)
+                    .join(Tenant, Device.tenant_id == Tenant.id, isouter=True)
+                    .where(Device.id.in_(device_ids))
+                )
+            ).all()
+            tenant_by_device = {r[0]: (r[1], r[2] or "") for r in rows}
 
         # Freshness check runs once — target_table and config-changed
         # flag are uniform across tiers for a single definition (they
@@ -221,22 +234,31 @@ class AlertEngine:
                 )
             tier_results.append((severity, fk))
 
-        # Evaluate the healthy tier too, if it has an expression. Matching
-        # keys here represent entities for which a POSITIVE clear signal
-        # is present this cycle.
-        healthy_keys: set[tuple[str, str]] = set()
+        # Evaluate the healthy tier if it has an expression. Matching
+        # keys drive POSITIVE CLEAR; the per-key fire_data is consumed
+        # when building the clear log record so it reflects the current
+        # aggregate rather than the stale last-firing snapshot.
+        healthy_fk: dict[tuple[str, str], dict] = {}
         if healthy_compiled is not None:
-            if is_cc:
-                healthy_fk = await self._evaluate_config_changed(
-                    defn,
-                    instances,
-                    getattr(healthy_compiled, "config_changed_key", "") or "",
+            try:
+                if is_cc:
+                    healthy_fk = await self._evaluate_config_changed(
+                        defn,
+                        instances,
+                        getattr(healthy_compiled, "config_changed_key", "") or "",
+                    )
+                else:
+                    healthy_fk = await self._execute_compiled_query(
+                        healthy_compiled, instances, overrides_by_device, var_by_name
+                    )
+            except Exception:
+                # A failure here must not block the eval cycle — worst
+                # case a clear row carries null values.
+                logger.exception(
+                    "healthy_tier_eval_error definition_id=%s", defn.id
                 )
-            else:
-                healthy_fk = await self._execute_compiled_query(
-                    healthy_compiled, instances, overrides_by_device, var_by_name
-                )
-            healthy_keys = set(healthy_fk.keys())
+                healthy_fk = {}
+        healthy_keys: set[tuple[str, str]] = set(healthy_fk.keys())
 
         total_firing = sum(len(fk) for _, fk in tier_results)
         logger.info(
@@ -272,6 +294,18 @@ class AlertEngine:
                 #   * healthy defined + no match → ambiguous middle,
                 #     no state change, no log, no fire_history update
                 #   * healthy not defined → legacy auto-clear (back-compat)
+                def _refresh_from_healthy() -> None:
+                    """Replace stale last-firing snapshot with current aggregate."""
+                    hd = healthy_fk.get(key)
+                    if hd is not None:
+                        inst.current_value = hd.get("value")
+                        inst.metric_values = hd.get("metric_values", {}) or {}
+                        inst.threshold_values = hd.get("threshold_values", {}) or {}
+                    else:
+                        inst.current_value = None
+                        inst.metric_values = {}
+                        inst.threshold_values = {}
+
                 if healthy_compiled is not None:
                     if key in healthy_keys and prev_state == "firing":
                         inst.fire_history = (inst.fire_history or [])[-19:] + [False]
@@ -279,8 +313,14 @@ class AlertEngine:
                         inst.severity = None
                         inst.last_cleared_at = now
                         inst.fire_count = 0
+                        _refresh_from_healthy()
                         await send_notifications(defn, str(inst.assignment_id), "resolved")
-                        log_records.append(self._build_log_record(defn, inst, "clear", now))
+                        log_records.append(
+                            self._build_log_record(
+                                defn, inst, "clear", now, tenant_by_device,
+                                clear_expression=healthy_expr,
+                            )
+                        )
                     # else: ambiguous middle — skip entirely (no history append)
                     continue
                 # Legacy: clear on any non-matching cycle.
@@ -290,8 +330,14 @@ class AlertEngine:
                     inst.severity = None
                     inst.last_cleared_at = now
                     inst.fire_count = 0
+                    _refresh_from_healthy()
                     await send_notifications(defn, str(inst.assignment_id), "resolved")
-                    log_records.append(self._build_log_record(defn, inst, "clear", now))
+                    log_records.append(
+                        self._build_log_record(
+                            defn, inst, "clear", now, tenant_by_device,
+                            clear_expression=healthy_expr,
+                        )
+                    )
                 continue
 
             # A fire tier matched — record it in history before continuing.
@@ -312,17 +358,17 @@ class AlertEngine:
                 inst.started_firing_at = now
                 inst.fire_count = 1
                 await send_notifications(defn, str(inst.assignment_id), "firing")
-                log_records.append(self._build_log_record(defn, inst, "fire", now))
+                log_records.append(self._build_log_record(defn, inst, "fire", now, tenant_by_device))
             else:
                 # Already firing — evaluate severity transition.
                 inst.fire_count += 1
                 cmp = _sev.compare(effective_sev, prev_sev)
                 if cmp > 0:
                     inst.severity = effective_sev
-                    log_records.append(self._build_log_record(defn, inst, "escalate", now))
+                    log_records.append(self._build_log_record(defn, inst, "escalate", now, tenant_by_device))
                 elif cmp < 0:
                     inst.severity = effective_sev
-                    log_records.append(self._build_log_record(defn, inst, "downgrade", now))
+                    log_records.append(self._build_log_record(defn, inst, "downgrade", now, tenant_by_device))
                 # same severity → fire_count updated, no log record
 
         return log_records
@@ -333,10 +379,25 @@ class AlertEngine:
         inst: AlertEntity,
         action: str,
         now: datetime,
+        tenant_by_device: dict[uuid.UUID, tuple[uuid.UUID | None, str]] | None = None,
+        clear_expression: str = "",
     ) -> dict:
         """Build an alert_log record for ClickHouse."""
         labels = inst.entity_labels or {}
         _zero = "00000000-0000-0000-0000-000000000000"
+        tid, tname = (None, "")
+        if tenant_by_device and inst.device_id:
+            tid, tname = tenant_by_device.get(inst.device_id, (None, ""))
+        # Representative scalar threshold for the legacy single-value column.
+        # The full per-variable map lives in `threshold_values` (JSON) below.
+        tv_map = inst.threshold_values or {}
+        threshold_scalar = 0.0
+        for _v in tv_map.values():
+            try:
+                threshold_scalar = float(_v)
+            except (TypeError, ValueError):
+                threshold_scalar = 0.0
+            break
         return {
             "definition_id": str(defn.id),
             "definition_name": defn.name,
@@ -348,16 +409,22 @@ class AlertEngine:
             # log record is built).
             "severity": ("healthy" if action == "clear" else (inst.severity or "")),
             "current_value": float(inst.current_value) if inst.current_value is not None else 0.0,
-            "threshold_value": 0.0,
+            "threshold_value": threshold_scalar,
             # `expression` column in alert_log carries the effective tier's
-            # expression — the one whose match drove the action (if any).
-            "expression": _expression_for_severity(defn, inst.severity),
+            # expression — the one whose match drove the action. On clear
+            # rows that's the healthy-tier expression (the condition that
+            # now holds); on fire/escalate/downgrade it's the winning tier.
+            "expression": (
+                clear_expression if action == "clear"
+                else _expression_for_severity(defn, inst.severity)
+            ),
             "device_id": str(inst.device_id) if inst.device_id else _zero,
             "device_name": labels.get("device_name", ""),
             "assignment_id": str(inst.assignment_id),
             "app_id": str(defn.app_id),
-            "app_name": labels.get("app_name", ""),
-            "tenant_id": labels.get("tenant_id", _zero),
+            "app_name": (defn.app.name if defn.app else ""),
+            "tenant_id": str(tid) if tid else _zero,
+            "tenant_name": tname,
             "entity_labels": json.dumps(labels),
             "fire_count": inst.fire_count,
             "message": self._build_message(defn, inst, action),
