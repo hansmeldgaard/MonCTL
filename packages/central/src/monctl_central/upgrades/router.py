@@ -445,21 +445,13 @@ async def get_upgrade_badge(
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
-    """Return pending update counts for sidebar badge."""
-    from monctl_central.cache import _redis
-    count = 0
-    if _redis:
-        raw = await _redis.get("monctl:os_updates:count")
-        if raw:
-            count = int(raw)
-    else:
-        result = await db.execute(
-            select(func.count()).select_from(OsAvailableUpdate).where(
-                OsAvailableUpdate.is_installed == False  # noqa: E712
-            )
-        )
-        count = result.scalar() or 0
-    return {"status": "success", "data": {"os_update_count": count}}
+    """Return pending update counts for sidebar badge.
+
+    Uses the same pending-packages definition as the Upgrades page
+    (`/package-inventory`) so the badge and the page always agree.
+    """
+    pending, _ = await _compute_pending_updates(db)
+    return {"status": "success", "data": {"os_update_count": len(pending)}}
 
 
 @router.post("/check-os")
@@ -527,17 +519,6 @@ async def check_os_updates_sidecar(
         all_updates[node.node_hostname] = node_updates
 
     await db.flush()
-
-    # Update Redis badge count
-    from monctl_central.cache import _redis
-    if _redis:
-        count_result = await db.execute(
-            select(func.count()).select_from(OsAvailableUpdate).where(
-                OsAvailableUpdate.is_installed == False  # noqa: E712
-            )
-        )
-        count = count_result.scalar() or 0
-        await _redis.set("monctl:os_updates:count", str(count))
 
     return {"status": "success", "data": all_updates}
 
@@ -608,17 +589,6 @@ async def install_os_on_node(
         )
 
     await db.flush()
-
-    # Update badge count
-    from monctl_central.cache import _redis
-    if _redis:
-        count_result = await db.execute(
-            select(func.count()).select_from(OsAvailableUpdate).where(
-                OsAvailableUpdate.is_installed == False  # noqa: E712
-            )
-        )
-        count = count_result.scalar() or 0
-        await _redis.set("monctl:os_updates:count", str(count))
 
     return {"status": "success", "data": install_result}
 
@@ -893,13 +863,14 @@ async def restart_nodes(
 # Package Inventory (package-centric view)
 # ---------------------------------------------------------------------------
 
-@router.get("/package-inventory")
-async def get_package_inventory(
-    db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_admin),
-):
-    """Package-centric view: all known updates with download + rollout status."""
-    # Get all known updates (from scanning central nodes)
+async def _compute_pending_updates(db: AsyncSession) -> tuple[list[dict], int]:
+    """Compute pending/completed package updates by cross-referencing
+    OsAvailableUpdate with NodePackage inventory.
+
+    Returns (pending, completed_count). A package is "pending" if at least
+    one node reports an installed version that doesn't match the target
+    new_version.
+    """
     updates_result = await db.execute(
         select(
             OsAvailableUpdate.package_name,
@@ -912,15 +883,13 @@ async def get_package_inventory(
     )
     known_updates = {row[0]: {"version": row[1], "severity": row[2]} for row in updates_result}
 
-    # Merge: all unique packages (from updates detected on nodes)
     all_pkg_names = sorted(known_updates.keys())
     if not all_pkg_names:
-        return {"status": "success", "data": []}
+        return [], 0
 
     nodes_result = await db.execute(select(SystemVersion).order_by(SystemVersion.node_hostname))
     all_nodes = list(nodes_result.scalars().all())
 
-    # Get node inventory for these packages
     inv_result = await db.execute(
         select(NodePackage).where(NodePackage.package_name.in_(all_pkg_names))
     )
@@ -931,10 +900,8 @@ async def get_package_inventory(
     data = []
     for pkg_name in all_pkg_names:
         update_info = known_updates.get(pkg_name)
-
         new_version = update_info["version"] if update_info else ""
         severity = update_info["severity"] if update_info else "normal"
-        # With apt-proxy, packages are always available through central's nginx cache
         downloaded = True
         requires_reboot = pkg_name.startswith("linux-")
 
@@ -967,11 +934,19 @@ async def get_package_inventory(
             "nodes": nodes_status,
         })
 
-    # Split into pending (has nodes to update) and completed (all nodes current)
     pending = [p for p in data if p["installed_count"] < p["total_nodes"]]
     completed = [p for p in data if p["installed_count"] >= p["total_nodes"]]
+    return pending, len(completed)
 
-    return {"status": "success", "data": pending, "meta": {"completed_count": len(completed)}}
+
+@router.get("/package-inventory")
+async def get_package_inventory(
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_admin),
+):
+    """Package-centric view: all known updates with download + rollout status."""
+    pending, completed_count = await _compute_pending_updates(db)
+    return {"status": "success", "data": pending, "meta": {"completed_count": completed_count}}
 
 
 @router.post("/collect-inventory")
