@@ -1167,6 +1167,32 @@ export function useDeviceHistory(
   });
 }
 
+export interface ChecksSummaryBucket {
+  ts_ms: number;
+  worst_state: number;
+  count: number;
+}
+
+/**
+ * Per-assignment hourly worst-state buckets for the Checks tab sparkline.
+ * Returns map of assignment_id → list of hourly buckets over the last N hours.
+ */
+export function useDeviceChecksSummary(
+  deviceId: string | undefined,
+  hours = 24,
+) {
+  return useQuery({
+    queryKey: ["checks-summary", deviceId, hours],
+    queryFn: () =>
+      apiGet<Record<string, ChecksSummaryBucket[]>>(
+        `/results/checks-summary/${deviceId}?hours=${hours}`,
+      ),
+    select: (res) => res.data,
+    enabled: !!deviceId,
+    refetchInterval: POLL_DETAIL,
+  });
+}
+
 /**
  * Fetch history from the availability_latency table ONLY.
  * Used by the Overview tab's AvailabilityChart.
