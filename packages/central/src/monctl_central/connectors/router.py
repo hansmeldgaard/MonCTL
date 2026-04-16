@@ -124,6 +124,7 @@ SORT_MAP = {
     "name": Connector.name,
     "connector_type": Connector.connector_type,
     "created_at": Connector.created_at,
+    "updated_at": Connector.updated_at,
 }
 
 

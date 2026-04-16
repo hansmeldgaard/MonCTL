@@ -51,7 +51,7 @@ import {
 } from "@/api/hooks.ts";
 import { apiGet } from "@/api/client.ts";
 import type { ConnectorVersionDetail } from "@/types/api.ts";
-import { formatDate } from "@/lib/utils.ts";
+import { formatDate, timeAgo } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 
 export function ConnectorDetailPage() {
@@ -400,6 +400,7 @@ export function ConnectorDetailPage() {
                       <TableHead>Version</TableHead>
                       <TableHead>ID</TableHead>
                       <TableHead>Status</TableHead>
+                      <TableHead>Created</TableHead>
                       <TableHead className="w-36"></TableHead>
                     </TableRow>
                   </TableHeader>
@@ -418,6 +419,14 @@ export function ConnectorDetailPage() {
                               <Star className="h-3 w-3" /> Latest
                             </Badge>
                           )}
+                        </TableCell>
+                        <TableCell
+                          className="text-zinc-500 text-xs whitespace-nowrap"
+                          title={
+                            v.created_at ? formatDate(v.created_at, tz) : ""
+                          }
+                        >
+                          {v.created_at ? timeAgo(v.created_at) : "—"}
                         </TableCell>
                         <TableCell>
                           <VersionActions

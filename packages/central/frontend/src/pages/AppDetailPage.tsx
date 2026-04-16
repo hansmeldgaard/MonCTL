@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo, Fragment } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
-import { formatDate } from "@/lib/utils.ts";
+import { formatDate, timeAgo } from "@/lib/utils.ts";
 import {
   validateName,
   validateSemver,
@@ -108,6 +108,7 @@ interface VersionDetail {
 
 export function AppDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const tz = useTimezone();
   const { data: app, isLoading } = useAppDetail(id);
   const updateApp = useUpdateApp();
   const createVersion = useCreateAppVersion();
@@ -521,8 +522,8 @@ export function AppDetailPage() {
               {app.connector_bindings && app.connector_bindings.length > 0 ? (
                 <>
                   <p className="text-xs text-zinc-500 mb-3">
-                    Slots declared by the app's Poller code
-                    (<code className="text-zinc-400">required_connectors</code>).
+                    Slots declared by the app's Poller code (
+                    <code className="text-zinc-400">required_connectors</code>).
                     Pick which concrete connector fills each slot.
                   </p>
                   <div className="space-y-2">
@@ -571,9 +572,7 @@ export function AppDetailPage() {
                           className="rounded-md bg-zinc-800/50 px-4 py-3 space-y-2"
                         >
                           <div className="flex items-center gap-2">
-                            <span className="text-xs text-zinc-500">
-                              type:
-                            </span>
+                            <span className="text-xs text-zinc-500">type:</span>
                             <Badge variant="default" className="text-xs">
                               {cb.connector_type}
                             </Badge>
@@ -673,9 +672,7 @@ export function AppDetailPage() {
                               }}
                             />
                           )}
-                          {err && (
-                            <p className="text-xs text-red-400">{err}</p>
-                          )}
+                          {err && <p className="text-xs text-red-400">{err}</p>}
                         </div>
                       );
                     })}
@@ -683,10 +680,10 @@ export function AppDetailPage() {
                 </>
               ) : (
                 <p className="text-sm text-zinc-500">
-                  This app declares no connector requirements. Upload a
-                  version whose Poller class sets{" "}
-                  <code className="text-zinc-400">required_connectors</code>
-                  {" "}to add slots.
+                  This app declares no connector requirements. Upload a version
+                  whose Poller class sets{" "}
+                  <code className="text-zinc-400">required_connectors</code> to
+                  add slots.
                 </p>
               )}
             </CardContent>
@@ -730,6 +727,7 @@ export function AppDetailPage() {
                       <TableHead>Version</TableHead>
                       <TableHead>ID</TableHead>
                       <TableHead>Status</TableHead>
+                      <TableHead>Published</TableHead>
                       <TableHead className="w-36"></TableHead>
                     </TableRow>
                   </TableHeader>
@@ -748,6 +746,14 @@ export function AppDetailPage() {
                               <Star className="h-3 w-3" /> Latest
                             </Badge>
                           )}
+                        </TableCell>
+                        <TableCell
+                          className="text-zinc-500 text-xs whitespace-nowrap"
+                          title={
+                            v.published_at ? formatDate(v.published_at, tz) : ""
+                          }
+                        >
+                          {v.published_at ? timeAgo(v.published_at) : "—"}
                         </TableCell>
                         <TableCell>
                           <VersionActions
@@ -1214,9 +1220,7 @@ function SlotVersionPicker({
         onChange(v === "" ? null : v);
       }}
     >
-      <option value="">
-        Latest{latest ? ` (${latest.version})` : ""}
-      </option>
+      <option value="">Latest{latest ? ` (${latest.version})` : ""}</option>
       {versions.map((v) => (
         <option key={v.id} value={v.id}>
           {v.version}

@@ -463,6 +463,8 @@ export interface AppSummary {
   app_type: string;
   target_table: string;
   vendor_oid_prefix?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
   connector_bindings?: {
     connector_type: string;
     connector_id: string | null;
@@ -475,6 +477,7 @@ export interface AppVersion {
   id: string;
   version: string;
   is_latest: boolean;
+  published_at?: string | null;
   eligibility_oids?: EligibilityOidCheck[];
 }
 
@@ -1332,7 +1335,12 @@ export interface ConnectorDetail {
   description: string | null;
   connector_type: string;
   is_builtin: boolean;
-  versions: { id: string; version: string; is_latest: boolean }[];
+  versions: {
+    id: string;
+    version: string;
+    is_latest: boolean;
+    created_at?: string | null;
+  }[];
   created_at: string;
   updated_at: string;
 }

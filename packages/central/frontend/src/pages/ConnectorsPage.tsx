@@ -28,18 +28,33 @@ import {
 import { usePermissions } from "@/hooks/usePermissions.ts";
 import { useListState } from "@/hooks/useListState.ts";
 import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
+import { useTimezone } from "@/hooks/useTimezone.ts";
 import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
+import { timeAgo, formatDate } from "@/lib/utils.ts";
 import type { ConnectorSummary } from "@/types/api.ts";
 
 export function ConnectorsPage() {
   const { canCreate, canDelete } = usePermissions();
   const { pageSize, scrollMode } = useTablePreferences();
+  const tz = useTimezone();
   const listState = useListState({
     columns: [
       { key: "name", label: "Name" },
       { key: "connector_type", label: "Type" },
       { key: "description", label: "Description", sortable: false },
+      {
+        key: "created_at",
+        label: "Created",
+        sortable: true,
+        filterable: false,
+      },
+      {
+        key: "updated_at",
+        label: "Updated",
+        sortable: true,
+        filterable: false,
+      },
     ],
     defaultPageSize: pageSize,
     scrollMode,
@@ -204,6 +219,22 @@ export function ConnectorsPage() {
                     <TableHead>Versions</TableHead>
                     <TableHead>Latest Version</TableHead>
                     <TableHead>Built-in</TableHead>
+                    <FilterableSortHead
+                      col="created_at"
+                      label="Created"
+                      sortBy={listState.sortBy}
+                      sortDir={listState.sortDir}
+                      onSort={listState.handleSort}
+                      filterable={false}
+                    />
+                    <FilterableSortHead
+                      col="updated_at"
+                      label="Updated"
+                      sortBy={listState.sortBy}
+                      sortDir={listState.sortDir}
+                      onSort={listState.handleSort}
+                      filterable={false}
+                    />
                     <TableHead className="w-12"></TableHead>
                   </TableRow>
                 </TableHeader>
@@ -257,6 +288,22 @@ export function ConnectorsPage() {
                           {c.is_builtin && (
                             <Badge variant="success">built-in</Badge>
                           )}
+                        </TableCell>
+                        <TableCell
+                          className="text-zinc-500 text-xs whitespace-nowrap"
+                          title={
+                            c.created_at ? formatDate(c.created_at, tz) : ""
+                          }
+                        >
+                          {c.created_at ? timeAgo(c.created_at) : "—"}
+                        </TableCell>
+                        <TableCell
+                          className="text-zinc-500 text-xs whitespace-nowrap"
+                          title={
+                            c.updated_at ? formatDate(c.updated_at, tz) : ""
+                          }
+                        >
+                          {c.updated_at ? timeAgo(c.updated_at) : "—"}
                         </TableCell>
                         {canDelete("connector") && (
                           <TableCell>

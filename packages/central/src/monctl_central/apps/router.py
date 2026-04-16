@@ -301,6 +301,7 @@ async def list_apps(
         "app_type": App.app_type,
         "target_table": App.target_table,
         "created_at": App.created_at,
+        "updated_at": App.updated_at,
     }
     sort_col = APPS_SORT_MAP.get(sort_by, App.name)
     stmt = stmt.order_by(sort_col.desc() if sort_dir == "desc" else sort_col.asc())
@@ -333,6 +334,8 @@ async def list_apps(
             "app_type": a.app_type,
             "target_table": a.target_table,
             "vendor_oid_prefix": a.vendor_oid_prefix,
+            "created_at": a.created_at.isoformat() if a.created_at else None,
+            "updated_at": a.updated_at.isoformat() if a.updated_at else None,
             "connector_bindings": [
                 {
                     "connector_type": b.connector_type,
@@ -1001,8 +1004,17 @@ async def get_app(
             "target_table": app.target_table,
             "vendor_oid_prefix": app.vendor_oid_prefix,
             "config_schema": app.config_schema,
+            "created_at": app.created_at.isoformat() if app.created_at else None,
+            "updated_at": app.updated_at.isoformat() if app.updated_at else None,
             "versions": [
-                {"id": str(v.id), "version": v.version, "is_latest": v.is_latest, "volatile_keys": v.volatile_keys or [], "eligibility_oids": v.eligibility_oids or []}
+                {
+                    "id": str(v.id),
+                    "version": v.version,
+                    "is_latest": v.is_latest,
+                    "volatile_keys": v.volatile_keys or [],
+                    "eligibility_oids": v.eligibility_oids or [],
+                    "published_at": v.published_at.isoformat() if v.published_at else None,
+                }
                 for v in sorted(app.versions, key=lambda v: v.published_at, reverse=True)
             ],
             "connector_bindings": [
