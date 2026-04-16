@@ -281,15 +281,15 @@ SSH user: `monctl` for all servers.
 
 ### Central Compose Projects
 
-| Project           | Path                             | Central1                                            | Central2                                 | Central3             | Central4             |
-| ----------------- | -------------------------------- | --------------------------------------------------- | ---------------------------------------- | -------------------- | -------------------- |
-| central-ha        | `/opt/monctl/central-ha/`        | app + Patroni + Redis primary + sentinel + Metabase | app + Patroni + Redis replica + sentinel | app + Redis sentinel | —                    |
-| central           | `/opt/monctl/central/`           | —                                                   | —                                        | —                    | app + Grafana        |
-| clickhouse        | `/opt/monctl/clickhouse/`        | —                                                   | —                                        | ClickHouse node      | ClickHouse node      |
-| clickhouse-keeper | `/opt/monctl/clickhouse-keeper/` | Keeper-only (quorum voter)                          | —                                        | —                    | —                    |
-| haproxy           | `/opt/monctl/haproxy/`           | HAProxy + keepalived                                | HAProxy + keepalived                     | HAProxy + keepalived | HAProxy + keepalived |
-| etcd              | `/opt/monctl/etcd/`              | etcd                                                | etcd                                     | etcd                 | —                    |
-| docker-stats      | `/opt/monctl/docker-stats/`      | stats agent                                         | stats agent                              | stats agent          | stats agent          |
+| Project           | Path                             | Central1                                 | Central2                                 | Central3             | Central4             |
+| ----------------- | -------------------------------- | ---------------------------------------- | ---------------------------------------- | -------------------- | -------------------- |
+| central-ha        | `/opt/monctl/central-ha/`        | app + Patroni + Redis primary + sentinel | app + Patroni + Redis replica + sentinel | app + Redis sentinel | —                    |
+| central           | `/opt/monctl/central/`           | —                                        | —                                        | —                    | app                  |
+| clickhouse        | `/opt/monctl/clickhouse/`        | —                                        | —                                        | ClickHouse node      | ClickHouse node      |
+| clickhouse-keeper | `/opt/monctl/clickhouse-keeper/` | Keeper-only (quorum voter)               | —                                        | —                    | —                    |
+| haproxy           | `/opt/monctl/haproxy/`           | HAProxy + keepalived                     | HAProxy + keepalived                     | HAProxy + keepalived | HAProxy + keepalived |
+| etcd              | `/opt/monctl/etcd/`              | etcd                                     | etcd                                     | etcd                 | —                    |
+| docker-stats      | `/opt/monctl/docker-stats/`      | stats agent                              | stats agent                              | stats agent          | stats agent          |
 
 **Important**: Central1-3 use `central-ha` (:8443). Central4 uses `central` (:8443). Never start both on same node.
 

@@ -110,7 +110,7 @@ def _validate_threshold_defaults(alert_def: dict) -> None:
 VALID_SECTIONS = {
     "apps", "credential_templates", "snmp_oids",
     "device_templates", "device_categories", "label_keys", "connectors",
-    "device_types", "grafana_dashboards", "event_policies",
+    "device_types", "event_policies",
 }
 
 _VALID_EVENT_SEVERITIES = {"info", "warning", "critical", "emergency"}
@@ -233,19 +233,6 @@ def validate_pack_schema(data: dict) -> None:
     for lk in contents.get("label_keys", []):
         if not lk.get("key"):
             raise HTTPException(status_code=400, detail="Label keys require key field")
-
-    for i, gd in enumerate(contents.get("grafana_dashboards", [])):
-        if not isinstance(gd, dict):
-            raise HTTPException(status_code=400, detail=f"grafana_dashboards[{i}] must be an object")
-        if not gd.get("name"):
-            raise HTTPException(status_code=400, detail=f"grafana_dashboards[{i}].name is required")
-        if not gd.get("uid"):
-            raise HTTPException(status_code=400, detail=f"grafana_dashboards[{i}].uid is required")
-        if not isinstance(gd.get("dashboard_json"), dict):
-            raise HTTPException(
-                status_code=400,
-                detail=f"grafana_dashboards[{i}].dashboard_json must be an object",
-            )
 
     for i, ep in enumerate(contents.get("event_policies", [])):
         if not isinstance(ep, dict):

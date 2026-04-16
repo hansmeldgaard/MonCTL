@@ -33,7 +33,6 @@ const SECTION_LABELS: Record<string, string> = {
   label_keys: "Label Keys",
   connectors: "Connectors",
   device_types: "Device Types",
-  grafana_dashboards: "Grafana Dashboards",
 };
 
 const SECTIONS = [
@@ -46,7 +45,6 @@ const SECTIONS = [
   "label_keys",
   "connectors",
   "device_types",
-  "grafana_dashboards",
 ];
 
 export function PackDetailPage() {

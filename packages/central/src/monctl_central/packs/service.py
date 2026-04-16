@@ -27,7 +27,6 @@ from monctl_central.storage.models import (
     Pack,
     PackVersion,
     SnmpOid,
-    SystemSetting,
     Template,
     ThresholdVariable,
 )
@@ -202,16 +201,6 @@ async def export_pack(pack_id: uuid.UUID, db: AsyncSession) -> dict:
             for b in type_bindings
         ]
 
-    # Grafana dashboards (optional — only if Grafana URL is configured)
-    grafana_url = await _get_system_setting(db, "grafana_url")
-    if grafana_url:
-        try:
-            grafana_dashboards = await _export_grafana_dashboards(grafana_url, pack)
-            if grafana_dashboards:
-                result["contents"]["grafana_dashboards"] = grafana_dashboards
-        except Exception:
-            logger.warning("Failed to export Grafana dashboards for pack %s", pack.pack_uid)
-
     return result
 
 
@@ -373,98 +362,6 @@ def _export_connector(c: Connector) -> dict:
     return d
 
 
-# ── Grafana helpers ───────────────────────────────────────────────────────────
-
-async def _get_system_setting(db: AsyncSession, key: str) -> str | None:
-    row = await db.get(SystemSetting, key)
-    return row.value if row else None
-
-
-async def _export_grafana_dashboards(grafana_url: str, pack: Pack) -> list[dict]:
-    """Fetch dashboards from Grafana that are tagged with the pack UID.
-
-    Convention: dashboards belonging to a pack are tagged with `pack:{pack_uid}`.
-    """
-    import httpx
-
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            f"{grafana_url}/api/search",
-            params={"tag": f"pack:{pack.pack_uid}", "type": "dash-db"},
-            timeout=10.0,
-        )
-        resp.raise_for_status()
-        search_results = resp.json()
-
-        dashboards = []
-        for item in search_results:
-            detail_resp = await client.get(
-                f"{grafana_url}/api/dashboards/uid/{item['uid']}",
-                timeout=10.0,
-            )
-            detail_resp.raise_for_status()
-            detail = detail_resp.json()
-
-            dashboards.append({
-                "name": item.get("title", ""),
-                "uid": item.get("uid", ""),
-                "description": detail.get("dashboard", {}).get("description", ""),
-                "dashboard_json": detail.get("dashboard", {}),
-            })
-
-        return dashboards
-
-
-async def _import_grafana_dashboards(
-    grafana_url: str,
-    dashboards: list[dict],
-    pack_uid: str,
-    resolutions: dict[str, str],
-) -> list[dict]:
-    """Import Grafana dashboards via Grafana HTTP API."""
-    import httpx
-
-    results = []
-    async with httpx.AsyncClient() as client:
-        for db_entry in dashboards:
-            resolution_key = f"grafana_dashboards:{db_entry['uid']}"
-            resolution = resolutions.get(resolution_key, "create")
-
-            if resolution == "skip":
-                results.append({"name": db_entry["name"], "action": "skipped"})
-                continue
-
-            dashboard_json = db_entry["dashboard_json"]
-            dashboard_json.setdefault("tags", [])
-            if f"pack:{pack_uid}" not in dashboard_json["tags"]:
-                dashboard_json["tags"].append(f"pack:{pack_uid}")
-
-            # Remove id to allow creation/overwrite
-            dashboard_json.pop("id", None)
-
-            payload = {
-                "dashboard": dashboard_json,
-                "folderId": 0,
-                "overwrite": resolution == "overwrite",
-            }
-
-            try:
-                resp = await client.post(
-                    f"{grafana_url}/api/dashboards/db",
-                    json=payload,
-                    timeout=10.0,
-                )
-                resp.raise_for_status()
-                results.append({"name": db_entry["name"], "action": "created"})
-            except httpx.HTTPStatusError as exc:
-                if exc.response.status_code == 412:
-                    results.append({"name": db_entry["name"], "action": "conflict"})
-                else:
-                    results.append({"name": db_entry["name"], "action": "failed", "error": str(exc)})
-
-    return results
-
-
 # ── Preview ───────────────────────────────────────────────────────────────────
 
 
@@ -612,15 +509,6 @@ async def preview_import(data: dict, db: AsyncSession) -> dict:
                 "has_changes": None,
             })
 
-    # Grafana dashboards (informational — not stored in DB)
-    for gd in data.get("contents", {}).get("grafana_dashboards", []):
-        entities.append({
-            "section": "grafana_dashboards",
-            "name": gd.get("name", gd.get("uid", "?")),
-            "status": "info",
-            "existing_pack": None,
-        })
-
     result: dict = {
         "pack_uid": pack_uid,
         "name": data["name"],
@@ -656,7 +544,6 @@ _DIFF_SECTIONS: tuple[str, ...] = (
     "device_types",
     "label_keys",
     "template_bindings",
-    "grafana_dashboards",
 )
 
 
@@ -978,22 +865,7 @@ async def import_pack(
 
     await db.flush()
 
-    # Import Grafana dashboards (if present and Grafana is configured)
-    grafana_results = []
-    grafana_dashboards = data.get("contents", {}).get("grafana_dashboards", [])
-    if grafana_dashboards:
-        grafana_url = await _get_system_setting(db, "grafana_url")
-        if grafana_url:
-            try:
-                grafana_results = await _import_grafana_dashboards(
-                    grafana_url, grafana_dashboards, pack_uid, resolutions,
-                )
-            except Exception:
-                logger.warning("Failed to import Grafana dashboards for pack %s", pack_uid)
-
     result = {"pack_id": str(pack.id), "version": version, **stats}
-    if grafana_results:
-        result["grafana_dashboards"] = grafana_results
     if reconcile_mode:
         result["diff"] = diff
     return result

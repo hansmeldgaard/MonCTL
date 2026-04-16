@@ -779,7 +779,7 @@ function ApiKeysTab() {
               <div className="space-y-1.5">
                 <Label>Name</Label>
                 <Input
-                  placeholder="e.g. Grafana integration"
+                  placeholder="e.g. External integration"
                   value={apiKeyNameField.value}
                   onChange={apiKeyNameField.onChange}
                   onBlur={apiKeyNameField.onBlur}
