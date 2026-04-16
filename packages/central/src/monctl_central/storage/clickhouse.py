@@ -1558,16 +1558,64 @@ class ClickHouseClient:
             # for every config- or interface-target app (entity_mib_inventory,
             # cisco_ntp_status, snmp_interface_poller, …). The column is
             # Float32 seconds to match the availability/performance schema.
+            # Source tables take ALTER ADD COLUMN fine. The matching MVs
+            # (config_latest, interface_latest) below can't be altered —
+            # they get DROP+CREATE in a guarded one-shot further down
+            # because CH 24.3 rejects `ALTER ... ADD COLUMN` on storage
+            # MaterializedView with NOT_IMPLEMENTED.
             "ALTER TABLE config ADD COLUMN IF NOT EXISTS execution_time Float32 DEFAULT 0 AFTER reachable",
-            "ALTER TABLE config_latest ADD COLUMN IF NOT EXISTS execution_time Float32 DEFAULT 0 AFTER reachable",
             "ALTER TABLE interface ADD COLUMN IF NOT EXISTS execution_time Float32 DEFAULT 0 AFTER state",
-            "ALTER TABLE interface_latest ADD COLUMN IF NOT EXISTS execution_time Float32 DEFAULT 0 AFTER state",
         ]
         for alter_sql in _TENANT_NAME_ALTERS:
             try:
                 client.command(alter_sql)
             except Exception:
                 pass
+
+        # One-shot: recreate config_latest / interface_latest when they
+        # lack the execution_time column. CH 24.3 rejects ALTER ADD
+        # COLUMN on MVs so this is the only safe path. ReplacingMergeTree
+        # MVs rebuild quickly — within one poll cycle of each assignment
+        # the new MV is repopulated with the latest row per key.
+        for mv_name, source_ddl_cluster, source_ddl_local in (
+            ("config_latest", _CONFIG_LATEST_DDL, _CONFIG_LATEST_DDL_LOCAL),
+            ("interface_latest", _INTERFACE_LATEST_DDL, _INTERFACE_LATEST_DDL_LOCAL),
+        ):
+            try:
+                check = client.query(
+                    "SELECT position(create_table_query, 'execution_time') "
+                    "FROM system.tables "
+                    "WHERE database = currentDatabase() AND name = {name:String}",
+                    parameters={"name": mv_name},
+                )
+                has_col = (
+                    check.first_row[0] > 0
+                    if check.result_rows
+                    else False
+                )
+                if not has_col:
+                    logger.info(
+                        "%s_execution_time_migration_running", mv_name,
+                    )
+                    drop_sql = f"DROP TABLE IF EXISTS {mv_name}"
+                    if has_cluster:
+                        drop_sql += f" ON CLUSTER '{self._cluster_name}' SYNC"
+                    client.command(drop_sql)
+                    create_sql = (
+                        source_ddl_cluster.format(cluster=self._cluster_name)
+                        if has_cluster
+                        else source_ddl_local
+                    )
+                    client.command(create_sql)
+                    logger.info(
+                        "%s_execution_time_migration_done", mv_name,
+                    )
+            except Exception:
+                logger.warning(
+                    "%s_execution_time_migration_failed",
+                    mv_name,
+                    exc_info=True,
+                )
 
         # One-shot: recreate performance_latest with assignment_id in
         # ORDER BY. Error rows from multiple performance-target apps
