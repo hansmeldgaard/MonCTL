@@ -1503,6 +1503,7 @@ class SchedulerRunner:
 
         try:
             async with self._session_factory() as session:
+                from sqlalchemy import select
                 from monctl_central.storage.models import Device, SystemSetting
 
                 enabled = (await session.execute(
