@@ -776,6 +776,7 @@ class InterfaceMetadata(Base):
     alerting_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     poll_metrics: Mapped[str] = mapped_column(String(50), nullable=False, server_default="all")
     rules_managed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    labels: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default="now()"
     )

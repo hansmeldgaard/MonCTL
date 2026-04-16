@@ -1045,6 +1045,7 @@ export interface InterfaceMetadataRecord {
   alerting_enabled: boolean;
   poll_metrics: string;
   rules_managed: boolean;
+  labels: Record<string, string>;
   updated_at: string | null;
 }
 
