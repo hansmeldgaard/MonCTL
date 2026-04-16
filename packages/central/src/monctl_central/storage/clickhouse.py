@@ -190,6 +190,7 @@ CREATE TABLE IF NOT EXISTS interface ON CLUSTER '{cluster}'
     counter_bits       UInt8         DEFAULT 64,
 
     state              UInt8         DEFAULT 0,
+    execution_time     Float32       DEFAULT 0,
 
     executed_at        DateTime64(3, 'UTC'),
     received_at        DateTime64(3, 'UTC') DEFAULT now64(3),
@@ -239,6 +240,7 @@ CREATE TABLE IF NOT EXISTS config ON CLUSTER '{cluster}'
     error_message      String        DEFAULT '',
     error_category     LowCardinality(String) DEFAULT '',
     reachable          UInt8         DEFAULT 1,
+    execution_time     Float32       DEFAULT 0,
 
     executed_at        DateTime64(3, 'UTC'),
     received_at        DateTime64(3, 'UTC') DEFAULT now64(3),
@@ -394,6 +396,7 @@ CREATE TABLE IF NOT EXISTS interface
     poll_interval_sec  UInt16        DEFAULT 0,
 
     state              UInt8         DEFAULT 0,
+    execution_time     Float32       DEFAULT 0,
 
     executed_at        DateTime64(3, 'UTC'),
     received_at        DateTime64(3, 'UTC') DEFAULT now64(3),
@@ -438,6 +441,7 @@ CREATE TABLE IF NOT EXISTS config
     error_message      String        DEFAULT '',
     error_category     LowCardinality(String) DEFAULT '',
     reachable          UInt8         DEFAULT 1,
+    execution_time     Float32       DEFAULT 0,
 
     executed_at        DateTime64(3, 'UTC'),
     received_at        DateTime64(3, 'UTC') DEFAULT now64(3),
@@ -677,7 +681,7 @@ _IFACE_INSERT_COLUMNS = [
     "in_octets", "out_octets", "in_errors", "out_errors",
     "in_discards", "out_discards", "in_unicast_pkts", "out_unicast_pkts",
     "in_rate_bps", "out_rate_bps", "in_utilization_pct", "out_utilization_pct",
-    "poll_interval_sec", "counter_bits", "state",
+    "poll_interval_sec", "counter_bits", "state", "execution_time",
     "executed_at",
     "collector_name", "device_name", "app_name", "tenant_id", "tenant_name",
 ]
@@ -687,6 +691,7 @@ _CONFIG_INSERT_COLUMNS = [
     "component", "component_type",
     "config_key", "config_value", "config_hash",
     "state", "output", "error_message", "error_category", "reachable",
+    "execution_time",
     "executed_at",
     "collector_name", "device_name", "app_name", "tenant_id", "tenant_name",
 ]
@@ -1546,6 +1551,17 @@ class ClickHouseClient:
             "ALTER TABLE config_latest ADD COLUMN IF NOT EXISTS error_message String DEFAULT '' AFTER output",
             "ALTER TABLE config_latest ADD COLUMN IF NOT EXISTS error_category LowCardinality(String) DEFAULT '' AFTER error_message",
             "ALTER TABLE config_latest ADD COLUMN IF NOT EXISTS reachable UInt8 DEFAULT 1 AFTER error_category",
+            # Add execution_time (seconds) to config + interface + their
+            # _latest MVs. Availability and performance tables already
+            # carry this field; config/interface historically dropped it
+            # on ingestion so the Checks-tab Runtime column rendered `—`
+            # for every config- or interface-target app (entity_mib_inventory,
+            # cisco_ntp_status, snmp_interface_poller, …). The column is
+            # Float32 seconds to match the availability/performance schema.
+            "ALTER TABLE config ADD COLUMN IF NOT EXISTS execution_time Float32 DEFAULT 0 AFTER reachable",
+            "ALTER TABLE config_latest ADD COLUMN IF NOT EXISTS execution_time Float32 DEFAULT 0 AFTER reachable",
+            "ALTER TABLE interface ADD COLUMN IF NOT EXISTS execution_time Float32 DEFAULT 0 AFTER state",
+            "ALTER TABLE interface_latest ADD COLUMN IF NOT EXISTS execution_time Float32 DEFAULT 0 AFTER state",
         ]
         for alter_sql in _TENANT_NAME_ALTERS:
             try:
