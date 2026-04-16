@@ -203,6 +203,7 @@ the same entity (as defined by `match_on`).
 - Per-rule field: `incident_rules.depends_on` (JSONB, nullable, already allocated).
 - Child incidents carry the link via `incidents.parent_incident_id` (already allocated).
 - Format:
+
   ```json
   {
     "rule_ids": ["<parent-rule-uuid>", "..."],
@@ -212,6 +213,7 @@ the same entity (as defined by `match_on`).
 
   - `rule_ids`: required, non-empty list of parent rule UUIDs as strings.
   - `match_on`: optional label-key list. Empty/missing = any open parent matches (too broad for most cases — prefer explicit keys).
+
 - Validation in `incidents/engine.py::_validate_depends_on`:
   - Top-level dict, `rule_ids` a non-empty list of UUID strings, `match_on` a list of strings.
   - Self-references in `rule_ids` are allowed in JSON but filtered out at runtime (a rule cannot suppress its own incidents).
