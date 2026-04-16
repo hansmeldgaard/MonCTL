@@ -570,9 +570,11 @@ async def device_status(
         client = ch._get_client()
         for t in ("availability_latency", "performance", "interface", "config"):
             try:
-                # config table has no error_category column — all rows there
-                # are successful diffs by construction.
-                err_filter = "" if t == "config" else "  AND error_category = '' "
+                # Interface table has no error_category column. All other
+                # tables (including config, as of the config-error-columns
+                # addition) filter by error_category='' to find real
+                # successes.
+                err_filter = "" if t == "interface" else "  AND error_category = '' "
                 res = client.query(
                     f"SELECT toString(assignment_id) AS aid, "
                     f"       max(executed_at) AS last_ok "
