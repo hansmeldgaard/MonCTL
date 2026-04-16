@@ -11,11 +11,45 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 from datetime import datetime, timezone
 from typing import Any
 
 import clickhouse_connect
 from clickhouse_connect.driver.client import Client
+
+
+class _LockedClient:
+    """Proxy around clickhouse_connect.Client that serializes every call.
+
+    clickhouse_connect's Client is not safe for concurrent use — two
+    coroutines / threads hitting the same instance trip an internal guard
+    and raise "Attempt to execute concurrent queries within the same
+    session." Rather than plumb a per-request client pool through every
+    ingestion and dashboard path, we wrap the singleton and acquire a
+    reentrant lock around every method call. CH ops are typically fast,
+    so the serialisation is cheap; the important property is correctness.
+    """
+
+    __slots__ = ("_c", "_lock")
+
+    def __init__(self, client: Client, lock: threading.RLock):
+        # Use object.__setattr__ to avoid triggering __getattr__ below,
+        # which would look up "_c" and recurse forever.
+        object.__setattr__(self, "_c", client)
+        object.__setattr__(self, "_lock", lock)
+
+    def __getattr__(self, name: str):
+        attr = getattr(self._c, name)
+        if not callable(attr):
+            return attr
+        lock = self._lock
+
+        def wrapped(*args, **kwargs):
+            with lock:
+                return attr(*args, **kwargs)
+
+        return wrapped
 
 logger = logging.getLogger(__name__)
 
@@ -1207,35 +1241,43 @@ class ClickHouseClient:
         self._async_insert = async_insert
         self._username = username
         self._password = password
-        self._client: Client | None = None
+        # Raw underlying client — never handed directly to callers.
+        self._raw_client: Client | None = None
+        # Reentrant lock: serialises access to the underlying client so
+        # concurrent FastAPI coroutines don't trip clickhouse_connect's
+        # "concurrent queries within the same session" guard.
+        self._lock = threading.RLock()
 
     def _get_client(self) -> Client:
-        if self._client is None:
-            settings: dict[str, Any] = {}
-            if self._async_insert:
-                settings["async_insert"] = 1
-                settings["wait_for_async_insert"] = 1
-            self._client = clickhouse_connect.get_client(
-                host=self._hosts[0],
-                port=self._port,
-                username=self._username,
-                password=self._password,
-                database=self._database,
-                settings=settings,
-                connect_timeout=10,
-                send_receive_timeout=60,
-            )
-        return self._client
+        if self._raw_client is None:
+            with self._lock:
+                if self._raw_client is None:  # double-checked init
+                    settings: dict[str, Any] = {}
+                    if self._async_insert:
+                        settings["async_insert"] = 1
+                        settings["wait_for_async_insert"] = 1
+                    self._raw_client = clickhouse_connect.get_client(
+                        host=self._hosts[0],
+                        port=self._port,
+                        username=self._username,
+                        password=self._password,
+                        database=self._database,
+                        settings=settings,
+                        connect_timeout=10,
+                        send_receive_timeout=60,
+                    )
+        return _LockedClient(self._raw_client, self._lock)
 
     def _reconnect(self) -> Client:
         """Drop cached client and create a fresh connection."""
         logger.warning("ClickHouse reconnecting to %s", self._hosts[0])
-        if self._client is not None:
-            try:
-                self._client.close()
-            except Exception:
-                pass
-            self._client = None
+        with self._lock:
+            if self._raw_client is not None:
+                try:
+                    self._raw_client.close()
+                except Exception:
+                    pass
+                self._raw_client = None
         return self._get_client()
 
     def _is_connection_error(self, exc: Exception) -> bool:
@@ -1250,9 +1292,10 @@ class ClickHouseClient:
         return False
 
     def close(self) -> None:
-        if self._client is not None:
-            self._client.close()
-            self._client = None
+        with self._lock:
+            if self._raw_client is not None:
+                self._raw_client.close()
+                self._raw_client = None
 
     def _drop_old_tables(self, has_cluster: bool) -> None:
         """Drop legacy check_results / events tables (only test data)."""
