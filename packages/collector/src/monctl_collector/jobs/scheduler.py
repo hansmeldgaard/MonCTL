@@ -100,7 +100,11 @@ class JobScheduler:
             self._immediate_triggers.add(job_id)
             logger.info("trigger_immediate_queued", job_id=job_id)
             return True
-        logger.warning("trigger_immediate_unknown_job", job_id=job_id)
+        # Poll Now is a fleet-wide Redis pub/sub broadcast — every cache-node
+        # hears every trigger, so non-owners will always see jobs they don't
+        # have. Log at debug; only the owning node's `trigger_immediate_queued`
+        # is interesting.
+        logger.debug("trigger_immediate_unknown_job", job_id=job_id)
         return False
 
     def pop_immediate_triggers(self, job_ids: set[str]) -> list[str]:
