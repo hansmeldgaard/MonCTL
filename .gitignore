@@ -46,10 +46,17 @@ docker/redis-data/
 
 # Playwright local dev artifacts (auth state, screenshots, snapshots)
 .playwright/
+# Ad-hoc verification screenshots + snapshots dumped at repo root during
+# Playwright/MCP sessions. Root-scoped so nothing inside subdirs is hidden.
+/*.png
+/*.yml
 
 # Claude Code
 .claude/audit/
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
+# Stray .claude/ dirs that get created when Claude is invoked from a subdir
+packages/**/.claude/
 .mcp.json
 .playwright-mcp/
 

@@ -214,13 +214,13 @@ export function AlertDefinitionDetailPage() {
         </CardHeader>
         <CardContent>
           <p className="mb-3 text-xs text-zinc-500">
-            Each tier is evaluated independently per cycle. The engine picks
-            the highest-severity tier whose expression matches as the live
-            severity. The <span className="font-semibold">healthy</span> tier
-            never fires an alert — it only <em>clears</em> an already-active
-            one. With an expression set it acts as a positive-clear signal;
-            leave it blank to fall back to the legacy behavior (any
-            non-matching sample clears the alert).
+            Each tier is evaluated independently per cycle. The engine picks the
+            highest-severity tier whose expression matches as the live severity.
+            The <span className="font-semibold">healthy</span> tier never fires
+            an alert — it only <em>clears</em> an already-active one. With an
+            expression set it acts as a positive-clear signal; leave it blank to
+            fall back to the legacy behavior (any non-matching sample clears the
+            alert).
           </p>
           <div className="space-y-3">
             {sortedTiers.map((t, idx) => (
@@ -261,8 +261,8 @@ export function AlertDefinitionDetailPage() {
                   />
                   {t.severity === "healthy" && (
                     <p className="mt-1 text-xs text-zinc-500">
-                      When this matches, an active alert clears. Blank =
-                      legacy auto-clear on any non-matching cycle.
+                      When this matches, an active alert clears. Blank = legacy
+                      auto-clear on any non-matching cycle.
                     </p>
                   )}
                 </div>
