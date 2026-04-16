@@ -57,7 +57,6 @@ const SECTION_LABELS: Record<string, string> = {
   connector_versions: "Connector Versions",
   device_types: "Device Types",
   event_policies: "Event Policies",
-  grafana_dashboards: "Grafana Dashboards",
   template_bindings: "Template Bindings",
 };
 
@@ -474,10 +473,7 @@ export function PacksPage() {
           >
             Cancel
           </Button>
-          <Button
-            onClick={handleReconcile}
-            disabled={reconcilePack.isPending}
-          >
+          <Button onClick={handleReconcile} disabled={reconcilePack.isPending}>
             {reconcilePack.isPending && (
               <Loader2 className="h-4 w-4 animate-spin" />
             )}{" "}

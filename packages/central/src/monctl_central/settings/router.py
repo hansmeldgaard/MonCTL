@@ -32,8 +32,6 @@ _DEFAULTS = {
     "pypi_proxy_url": "",
     "session_idle_timeout_minutes": "60",
     "collector_central_url": "",
-    "grafana_url": "",
-    "metabase_url": "",
     "log_retention_days": "7",
     "template_auto_apply_enabled": "false",
     "template_auto_apply_interval_hours": "24",

@@ -606,8 +606,6 @@ def make_observability_slide(prs, idx, total):
             "log_level_filter per Collector row controls minimum shipped level — operator-tunable.",
             "System Health page: per-subsystem status (Postgres/CH/Redis/scheduler/collectors/etc.) excluding alert state.",
             "Top-bar health indicator dot hits a cached /system/health/status (admin-only).",
-            "Metabase on central1 (exposed via HAProxy /metabase) — ad-hoc SQL over ClickHouse result tables.",
-            "Grafana on central4 — operator dashboards over the same data.",
             "Built-in Analytics UI: SQL Explorer + custom dashboards with react-grid-layout + cross-widget variables.",
         ],
         size=15,
@@ -625,7 +623,7 @@ def make_deployment_slide(prs, idx, total):
     _add_bullets(
         slide, Inches(0.7), Inches(1.9), Inches(12), Inches(5),
         [
-            "Central: central1-3 run \"central-ha\" compose (app + Patroni + Redis + sentinel + Metabase on c1). central4 runs \"central\" + Grafana.",
+            "Central: central1-3 run \"central-ha\" compose (app + Patroni + Redis + sentinel). central4 runs \"central\".",
             "ClickHouse on central3+4 · Keeper quorum voter on central1 · etcd on central1-3.",
             "Workers: single compose project per collector node (/opt/monctl/collector/).",
             "./deploy.sh central builds once, saves the image, scp's + docker load on all 4 nodes in parallel (~20s).",

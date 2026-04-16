@@ -47,7 +47,7 @@ Collectors (worker1-4) → poll jobs fra central → eksekver checks → forward
 
 SSH bruger: `monctl` på alle servere. Compose files: `/opt/monctl/{central,collector}/docker-compose.yml`.
 
-**Central1-3**: Bruger `central-ha` compose projekt i `/opt/monctl/central-ha/` (inkl. Patroni + Redis). Central1 kører også Metabase (port 3000, tilgængelig via HAProxy `/metabase`). **Central4**: Bruger `/opt/monctl/central/` (app + Grafana). Grafana tilgængelig via HAProxy `/grafana` sub-path.
+**Central1-3**: Bruger `central-ha` compose projekt i `/opt/monctl/central-ha/` (inkl. Patroni + Redis). **Central4**: Bruger `/opt/monctl/central/` (app).
 
 ---
 
@@ -99,7 +99,7 @@ packages/
 │   │   │   └── threshold_sync.py  # Auto-sync threshold variables from expressions
 │   │   ├── events/                 # Event policies + engine + acknowledge/clear
 │   │   ├── dashboard/              # Aggregated dashboard summary endpoint (GET /dashboard/summary)
-│   │   ├── packs/                  # Monitoring pack import/export (+ grafana_dashboards sektion)
+│   │   ├── packs/                  # Monitoring pack import/export
 │   │   ├── python_modules/         # Package registry + PyPI import + wheel distribution
 │   │   ├── docker_infra/           # Docker host monitoring (stats, logs, events, images)
 │   │   ├── roles/                  # Custom RBAC roles + permissions
@@ -361,12 +361,6 @@ Query: `GET /v1/logs` (filter, paginate, sort), `GET /v1/logs/filters` (distinct
 
 **Operational Dashboard** (`dashboard/router.py`): `GET /v1/dashboard/summary` aggregerer alert_summary, device_health, collector_status, performance_top_n i ét kald. Frontend bruger `useDashboardSummary()` med 15s auto-refresh. Stat cards, worst devices tabel, performance top-N med progress bars.
 
-**Metabase** (`docker/metabase/`): Metabase v0.54 kører på central1 som Docker Compose service. Native ClickHouse driver. Bruger eksisterende PostgreSQL (`metabase` database). Tilgængelig via HAProxy på `https://VIP/metabase` (path-strip rewrite). Setup: `docker/metabase/setup.py`. 4 pre-built dashboards: Device Performance, Interface Traffic, Availability Overview, Alert History. Admin: `admin@monctl.local`.
-
-**Grafana**: Grafana OSS 11.4 kører på central4. Tilgængelig via HAProxy på `https://VIP/grafana`.
-
-**Analytics Page** (`pages/AnalyticsPage.tsx`): Links til Metabase dashboards + SQL query builder. Læser `metabase_url` fra system settings. Sidebar: "Analytics" mellem Events og Upgrades.
-
 **Custom Dashboards** (`analytics/dashboards.py`): Bruger-oprettede dashboards med SQL-baserede widgets. `AnalyticsDashboard` model (PostgreSQL) med `variables` JSONB kolonne for cross-widget kontekst-variabler. `AnalyticsWidget` gemmer SQL, chart config og layout per widget.
 
 **Dashboard Editor** (`pages/DashboardEditorPage.tsx`): Bruger `react-grid-layout` v2.2.3 (hook-baseret API: `useContainerWidth`, `ResponsiveGridLayout`) for drag-and-drop + resize. 24-kolonne grid, `rowHeight: 40`, `.drag-handle` på GripVertical ikon.
@@ -381,7 +375,7 @@ Query: `GET /v1/logs` (filter, paginate, sort), `GET /v1/logs/filters` (distinct
 
 ### Packs System
 
-Import/export af monitoring packs (apps + connectors + alert definitions + credential templates + grafana dashboards). Preview + conflict detection. Version tracking. `grafana_dashboards` sektion eksporterer/importerer dashboards via Grafana API (tagging konvention: `pack:{uid}`).
+Import/export af monitoring packs (apps + connectors + alert definitions + credential templates). Preview + conflict detection. Version tracking.
 
 ---
 
@@ -483,7 +477,6 @@ stmt = apply_tenant_filter(stmt, auth, Device.tenant_id)
 | PackDetailPage      | /packs/:id             | Pack versions, entities, export                                                                                                                                                                              |
 | AlertsPage          | /alerts                | Tabs: Active Alerts, Alert Log (ClickHouse), Alert Definitions                                                                                                                                               |
 | EventsPage          | /events                | Active/cleared events med acknowledge/clear                                                                                                                                                                  |
-| AnalyticsPage       | /analytics             | Grafana dashboard links, reads grafana_url fra system settings                                                                                                                                               |
 | UpgradesPage        | /upgrades              | OS upgrades, package management, rolling upgrade orchestration                                                                                                                                               |
 | SettingsPage        | /settings/:tab         | Tabs: Profile, System, Device Types, Collectors, Credentials, SNMP OIDs, Labels, Roles, Users, Tenants                                                                                                       |
 | CollectorsPage      | (settings tab)         | Pending/Active collectors, Groups, Registration Tokens                                                                                                                                                       |
