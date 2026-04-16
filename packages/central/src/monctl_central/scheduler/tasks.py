@@ -1586,6 +1586,7 @@ class SchedulerRunner:
         scan_hour, scan_minute = 2, 0
         try:
             async with self._session_factory() as session:
+                from sqlalchemy import select
                 from monctl_central.storage.models import SystemSetting
                 setting = (await session.execute(
                     select(SystemSetting).where(SystemSetting.key == "eligibility_scan_time")
@@ -1609,6 +1610,7 @@ class SchedulerRunner:
 
         try:
             async with self._session_factory() as session:
+                from sqlalchemy import select
                 from monctl_central.storage.models import (
                     App, AppAssignment, AppVersion, Device, DeviceType, Pack,
                 )
