@@ -119,7 +119,7 @@ ENGINE = ReplicatedReplacingMergeTree(
     '/clickhouse/tables/{{shard}}/performance_latest', '{{replica}}',
     executed_at
 )
-ORDER BY (device_id, component_type, component)
+ORDER BY (device_id, assignment_id, component_type, component)
 AS SELECT * FROM performance
 """
 
@@ -324,7 +324,7 @@ SETTINGS index_granularity = 8192
 _PERFORMANCE_LATEST_DDL_LOCAL = """
 CREATE MATERIALIZED VIEW IF NOT EXISTS performance_latest
 ENGINE = ReplacingMergeTree(executed_at)
-ORDER BY (device_id, component_type, component)
+ORDER BY (device_id, assignment_id, component_type, component)
 AS SELECT * FROM performance
 """
 
@@ -1509,6 +1509,43 @@ class ClickHouseClient:
                 client.command(alter_sql)
             except Exception:
                 pass
+
+        # One-shot: recreate performance_latest with assignment_id in
+        # ORDER BY. Error rows from multiple performance-target apps
+        # (cisco_cpu_memory, snmp_uptime, …) all have
+        # component_type="" / component="" and otherwise collide in the
+        # same slot, overwriting each other. Guard with a sorting_key
+        # check so a container restart doesn't wipe the MV every time.
+        try:
+            check = client.query(
+                "SELECT sorting_key FROM system.tables "
+                "WHERE database = currentDatabase() AND name = 'performance_latest'"
+            )
+            current_sort_key = (
+                check.first_row[0]
+                if check.result_rows
+                else ""
+            )
+            if "assignment_id" not in (current_sort_key or ""):
+                logger.info(
+                    "perf_latest_order_by_migration_running current_sort_key=%s",
+                    current_sort_key,
+                )
+                drop_sql = "DROP TABLE IF EXISTS performance_latest"
+                if has_cluster:
+                    drop_sql += f" ON CLUSTER '{self._cluster_name}' SYNC"
+                client.command(drop_sql)
+                create_sql = (
+                    _PERFORMANCE_LATEST_DDL.format(cluster=self._cluster_name)
+                    if has_cluster
+                    else _PERFORMANCE_LATEST_DDL_LOCAL
+                )
+                client.command(create_sql)
+                logger.info("perf_latest_order_by_migration_done")
+        except Exception:
+            logger.warning(
+                "perf_latest_order_by_migration_failed", exc_info=True
+            )
 
         # Add bloom filter indexes via ALTER TABLE (ClickHouse 24.x compat)
         _INDEXES = [

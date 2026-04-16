@@ -2294,6 +2294,21 @@ export function useSetLatestVersion() {
   });
 }
 
+export function useBumpAssignmentsToVersion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ appId, versionId }: { appId: string; versionId: string }) =>
+      apiPost<{ bumped: number; target_version: string }>(
+        `/apps/${appId}/versions/${versionId}/bump-assignments`,
+        {},
+      ),
+    onSuccess: (_res, { appId }) => {
+      qc.invalidateQueries({ queryKey: ["app-detail", appId] });
+      qc.invalidateQueries({ queryKey: ["assignments"] });
+    },
+  });
+}
+
 export function useUpdateAppVersion() {
   const qc = useQueryClient();
   return useMutation({
