@@ -1604,6 +1604,14 @@ async def submit_results(
                 "component": "",
                 "component_type": enrichment.get("app_name", ""),
                 "state": state,
+                # Surface error/output on every per-key row — the /by-device
+                # "latest" lookup keys on (device, component_type, component,
+                # config_key), so any row can be what the UI sees. Repeating
+                # the assignment-level error fields keeps the signal intact.
+                "output": output,
+                "error_message": r.error_message or "",
+                "error_category": r.error_category,
+                "reachable": 1 if r.reachable else 0,
                 "executed_at": executed_at,
                 "collector_name": request.collector_node,
                 "device_name": enrichment.get("device_name", ""),
@@ -1678,10 +1686,15 @@ async def submit_results(
                 row["component"] = ""
                 row["component_type"] = ""
             elif target_table == "config":
+                # Error case for a config-target app: single sentinel row.
+                # output / error_message / error_category / reachable are
+                # already set on `row` above — no need to hijack config_value
+                # as the error carrier anymore (now that config has proper
+                # error columns).
                 row["component"] = ""
-                row["component_type"] = ""
+                row["component_type"] = enrichment.get("app_name", "")
                 row["config_key"] = ""
-                row["config_value"] = r.error_message or ""
+                row["config_value"] = ""
                 row["config_hash"] = ""
             ch_rows.append(row)
 

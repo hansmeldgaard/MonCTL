@@ -869,6 +869,7 @@ def _fmt_iface_meta(m: InterfaceMetadata) -> dict:
         "alerting_enabled": m.alerting_enabled,
         "poll_metrics": m.poll_metrics,
         "rules_managed": m.rules_managed,
+        "labels": m.labels or {},
         "updated_at": m.updated_at.isoformat() if m.updated_at else None,
     }
 
@@ -905,6 +906,14 @@ class UpdateInterfaceSettingsRequest(BaseModel):
     polling_enabled: Optional[bool] = None
     alerting_enabled: Optional[bool] = None
     poll_metrics: Optional[str] = Field(default=None, max_length=100)
+    labels: Optional[dict[str, str]] = None
+
+    @field_validator("labels")
+    @classmethod
+    def check_labels(cls, v):
+        if v is None:
+            return v
+        return validate_labels(v)
 
 
 @router.patch("/{device_id}/interface-metadata/{interface_id}")
@@ -934,8 +943,18 @@ async def update_interface_settings(
         if not _validate_poll_metrics(req.poll_metrics):
             raise HTTPException(status_code=400, detail=f"Invalid poll_metrics: must be 'all' or comma-separated list of {_VALID_POLL_METRICS_PARTS - {'all'}}")
         meta.poll_metrics = req.poll_metrics
-    # Manual change → opt out of automatic rule management
-    meta.rules_managed = False
+    if req.labels is not None:
+        meta.labels = req.labels
+        await _auto_register_label_keys(req.labels, db)
+    # Manual change → opt out of automatic rule management (only when the
+    # change affects polling behavior — labels are metadata and don't
+    # change what's polled).
+    if (
+        req.polling_enabled is not None
+        or req.alerting_enabled is not None
+        or req.poll_metrics is not None
+    ):
+        meta.rules_managed = False
     meta.updated_at = utc_now()
     await db.flush()
 

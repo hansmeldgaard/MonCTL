@@ -201,6 +201,10 @@ CREATE TABLE IF NOT EXISTS config ON CLUSTER '{cluster}'
     config_hash        String        DEFAULT '',
 
     state              UInt8         DEFAULT 0,
+    output             String        DEFAULT '',
+    error_message      String        DEFAULT '',
+    error_category     LowCardinality(String) DEFAULT '',
+    reachable          UInt8         DEFAULT 1,
 
     executed_at        DateTime64(3, 'UTC'),
     received_at        DateTime64(3, 'UTC') DEFAULT now64(3),
@@ -396,6 +400,10 @@ CREATE TABLE IF NOT EXISTS config
     config_hash        String        DEFAULT '',
 
     state              UInt8         DEFAULT 0,
+    output             String        DEFAULT '',
+    error_message      String        DEFAULT '',
+    error_category     LowCardinality(String) DEFAULT '',
+    reachable          UInt8         DEFAULT 1,
 
     executed_at        DateTime64(3, 'UTC'),
     received_at        DateTime64(3, 'UTC') DEFAULT now64(3),
@@ -644,7 +652,8 @@ _CONFIG_INSERT_COLUMNS = [
     "assignment_id", "collector_id", "app_id", "device_id",
     "component", "component_type",
     "config_key", "config_value", "config_hash",
-    "state", "executed_at",
+    "state", "output", "error_message", "error_category", "reachable",
+    "executed_at",
     "collector_name", "device_name", "app_name", "tenant_id", "tenant_name",
 ]
 
@@ -1482,6 +1491,18 @@ class ClickHouseClient:
             "ALTER TABLE performance ADD COLUMN IF NOT EXISTS error_category LowCardinality(String) DEFAULT '' AFTER error_message",
             # Add packet_loss_pct to availability_latency (from ping_check metric)
             "ALTER TABLE availability_latency ADD COLUMN IF NOT EXISTS packet_loss_pct Float32 DEFAULT 0 AFTER reachable",
+            # Add output / error fields to config so config-target apps
+            # (entity_mib_inventory, snmp_discovery, etc.) can surface
+            # DEVICE / CONFIG / APP chips and error messages in the UI.
+            "ALTER TABLE config ADD COLUMN IF NOT EXISTS output String DEFAULT '' AFTER state",
+            "ALTER TABLE config ADD COLUMN IF NOT EXISTS error_message String DEFAULT '' AFTER output",
+            "ALTER TABLE config ADD COLUMN IF NOT EXISTS error_category LowCardinality(String) DEFAULT '' AFTER error_message",
+            "ALTER TABLE config ADD COLUMN IF NOT EXISTS reachable UInt8 DEFAULT 1 AFTER error_category",
+            # Matching MV columns (MV from SELECT * was frozen at creation).
+            "ALTER TABLE config_latest ADD COLUMN IF NOT EXISTS output String DEFAULT '' AFTER state",
+            "ALTER TABLE config_latest ADD COLUMN IF NOT EXISTS error_message String DEFAULT '' AFTER output",
+            "ALTER TABLE config_latest ADD COLUMN IF NOT EXISTS error_category LowCardinality(String) DEFAULT '' AFTER error_message",
+            "ALTER TABLE config_latest ADD COLUMN IF NOT EXISTS reachable UInt8 DEFAULT 1 AFTER error_category",
         ]
         for alter_sql in _TENANT_NAME_ALTERS:
             try:
@@ -1668,7 +1689,15 @@ class ClickHouseClient:
         return "unknown table" in msg or "table" in msg and "doesn't exist" in msg
 
     def query_by_device(self, device_id: str, table: str | None = None) -> list[dict]:
-        """Query latest results for a specific device across all tables."""
+        """Query latest results for a specific device across all tables.
+
+        Performance and config apps can emit many rows per poll (one per
+        component, e.g. one per interface for snmp_interface_poller, one
+        per CPU/memory pool for cisco_cpu_memory). The Checks Live view
+        wants ONE row per assignment — we collapse by assignment_id and
+        keep the worst-state row as the assignment's summary; tie-break
+        by most recent executed_at.
+        """
         if table:
             return self.query_latest(table=table, device_id=device_id)
         # Query all domain tables and merge results
@@ -1687,7 +1716,31 @@ class ClickHouseClient:
                     raise
         if not all_rows:
             logger.warning("query_by_device(%s): all tables returned 0 rows", device_id)
-        return all_rows
+            return all_rows
+
+        by_assignment: dict[str, dict] = {}
+        for row in all_rows:
+            aid = str(row.get("assignment_id") or "")
+            if not aid:
+                continue
+            prev = by_assignment.get(aid)
+            if prev is None:
+                by_assignment[aid] = row
+                continue
+            # Worst state wins (CRITICAL=2, UNKNOWN=3, WARNING=1, OK=0 —
+            # use simple numeric max which will put UNKNOWN above CRITICAL;
+            # acceptable since UNKNOWN usually means "no data" which is a
+            # legitimate worst case for a summary row).
+            prev_state = int(prev.get("state", 0) or 0)
+            row_state = int(row.get("state", 0) or 0)
+            if row_state > prev_state:
+                by_assignment[aid] = row
+            elif row_state == prev_state:
+                prev_ts = prev.get("executed_at") or ""
+                row_ts = row.get("executed_at") or ""
+                if str(row_ts) > str(prev_ts):
+                    by_assignment[aid] = row
+        return list(by_assignment.values())
 
     def query_history(
         self,

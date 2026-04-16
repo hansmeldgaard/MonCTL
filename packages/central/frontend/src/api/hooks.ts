@@ -1289,6 +1289,7 @@ export function useUpdateInterfaceSettings() {
         polling_enabled?: boolean;
         alerting_enabled?: boolean;
         poll_metrics?: string;
+        labels?: Record<string, string>;
       };
     }) =>
       apiPatch(`/devices/${deviceId}/interface-metadata/${interfaceId}`, data),

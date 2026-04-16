@@ -147,6 +147,7 @@ import type {
   ResolvedTemplateResult,
   InterfaceRule,
   InterfaceRecord,
+  InterfaceMetadataRecord,
   CheckResult,
 } from "@/types/api.ts";
 import { useListState } from "@/hooks/useListState.ts";
@@ -2763,6 +2764,8 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
 
   const updateIfacePrefs = useUpdateInterfacePreferences();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [labelEditIface, setLabelEditIface] =
+    useState<InterfaceMetadataRecord | null>(null);
   const [timeRange, setTimeRange] = useState<TimeRangeValue>(() => {
     const pref = user?.iface_time_range;
     if (pref && ["1h", "6h", "24h", "7d", "30d"].includes(pref)) {
@@ -2818,23 +2821,15 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
     [timeRange],
   );
 
-  // Build metadata lookup
+  // Build metadata lookup — full record so per-row cells can access
+  // labels, if_alias, etc. without a second lookup.
   const metaMap = useMemo(() => {
-    const m = new Map<
-      string,
-      {
-        polling_enabled: boolean;
-        alerting_enabled: boolean;
-        poll_metrics: string;
-        rules_managed: boolean;
-      }
-    >();
+    const m = new Map<string, InterfaceMetadataRecord>();
     for (const meta of metadata ?? []) {
       m.set(meta.id, {
-        polling_enabled: meta.polling_enabled,
-        alerting_enabled: meta.alerting_enabled,
+        ...meta,
         poll_metrics: meta.poll_metrics ?? "all",
-        rules_managed: meta.rules_managed,
+        labels: meta.labels ?? {},
       });
     }
     return m;
@@ -3440,6 +3435,7 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
                 <SortHead col="in_errors">In Err (total)</SortHead>
                 <SortHead col="out_errors">Out Err (total)</SortHead>
                 <SortHead col="last_polled">Last Polled</SortHead>
+                <TableHead>Labels</TableHead>
                 <InterfaceToggleBulkHead
                   activeSelectedCount={activeSelectedCount}
                   state={{
@@ -3516,6 +3512,7 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
                 <TableCell />
                 <TableCell />
                 <TableCell />
+                <TableCell /> {/* Labels — no filter */}
                 <TableCell /> {/* Toggles — no filter */}
               </TableRow>
             </TableHeader>
@@ -3625,6 +3622,13 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
                     <TableCell className="text-zinc-500 text-xs">
                       {iface.executed_at ? timeAgo(iface.executed_at) : "—"}
                     </TableCell>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <InterfaceLabelsCell
+                        labels={meta?.labels ?? {}}
+                        onClick={() => meta && setLabelEditIface(meta)}
+                        disabled={!meta}
+                      />
+                    </TableCell>
                     <TableCell
                       className="text-center"
                       onClick={(e) => e.stopPropagation()}
@@ -3671,7 +3675,7 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
               {sorted.length === 0 && (
                 <TableRow>
                   <TableCell
-                    colSpan={12}
+                    colSpan={13}
                     className="text-center py-8 text-zinc-500 text-sm"
                   >
                     {statusFilter === "monitored"
@@ -3688,7 +3692,103 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
           </Table>
         </CardContent>
       </Card>
+
+      {labelEditIface && (
+        <InterfaceLabelsDialog
+          deviceId={deviceId}
+          iface={labelEditIface}
+          onClose={() => setLabelEditIface(null)}
+        />
+      )}
     </div>
+  );
+}
+
+// ── Interface Labels — compact cell + edit dialog ─────────
+
+function InterfaceLabelsCell({
+  labels,
+  onClick,
+  disabled,
+}: {
+  labels: Record<string, string>;
+  onClick: () => void;
+  disabled: boolean;
+}) {
+  const entries = Object.entries(labels);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs transition-colors ${
+        disabled
+          ? "text-zinc-700 cursor-not-allowed"
+          : entries.length > 0
+            ? "text-zinc-300 hover:bg-zinc-800"
+            : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
+      }`}
+      title={
+        entries.length > 0
+          ? entries.map(([k, v]) => `${k}=${v}`).join("\n")
+          : disabled
+            ? "Refresh interface metadata to enable labels"
+            : "Add labels"
+      }
+    >
+      <Tag className="h-3 w-3" />
+      {entries.length > 0 ? (
+        <span className="text-[10px] font-medium">{entries.length}</span>
+      ) : (
+        <span className="text-[10px]">—</span>
+      )}
+    </button>
+  );
+}
+
+function InterfaceLabelsDialog({
+  deviceId,
+  iface,
+  onClose,
+}: {
+  deviceId: string;
+  iface: InterfaceMetadataRecord;
+  onClose: () => void;
+}) {
+  const [labels, setLabels] = useState<Record<string, string>>(iface.labels);
+  const update = useUpdateInterfaceSettings();
+
+  async function handleSave() {
+    await update.mutateAsync({
+      deviceId,
+      interfaceId: iface.id,
+      data: { labels },
+    });
+    onClose();
+  }
+
+  return (
+    <Dialog open onClose={onClose} title={`Labels — ${iface.if_name}`}>
+      <div className="space-y-3">
+        <div className="text-xs text-zinc-500">
+          Tag this interface with key/value labels. Same format as device labels
+          — keys auto-register for reuse.
+        </div>
+        <LabelEditor
+          labels={labels}
+          onChange={setLabels}
+          disabled={update.isPending}
+        />
+      </div>
+      <DialogFooter>
+        <Button variant="ghost" onClick={onClose} disabled={update.isPending}>
+          Cancel
+        </Button>
+        <Button onClick={handleSave} disabled={update.isPending}>
+          {update.isPending ? "Saving…" : "Save"}
+        </Button>
+      </DialogFooter>
+    </Dialog>
   );
 }
 
