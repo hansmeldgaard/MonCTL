@@ -258,38 +258,38 @@ export function AssignmentsPage() {
               </div>
 
               {bulkOpen && (
-                <div className="absolute top-9 right-0 z-20 w-64 rounded-md border border-zinc-700 bg-zinc-900 p-3 space-y-3 shadow-lg">
-                  {/* Schedule */}
+                <div className="absolute top-9 right-0 z-20 w-96 rounded-md border border-zinc-700 bg-zinc-900 p-3 space-y-3 shadow-lg">
+                  {/* Schedule — type on top, value below so the
+                      IntervalInput (number + unit dropdown) and the
+                      cron expression both have the full popover width. */}
                   <div>
                     <label className="text-xs text-zinc-500 block mb-1">
                       Schedule
                     </label>
-                    <div className="flex gap-1.5">
-                      <Select
-                        value={bulkScheduleType}
-                        onChange={(e) => setBulkScheduleType(e.target.value)}
-                        className="flex-1 text-xs h-7"
-                      >
-                        <option value="">— No change —</option>
-                        <option value="interval">Interval</option>
-                        <option value="cron">Cron</option>
-                      </Select>
-                      {bulkScheduleType === "interval" && (
-                        <IntervalInput
-                          value={bulkScheduleValue || "60"}
-                          onChange={setBulkScheduleValue}
-                          className="flex-1"
-                        />
-                      )}
-                      {bulkScheduleType === "cron" && (
-                        <Input
-                          value={bulkScheduleValue}
-                          onChange={(e) => setBulkScheduleValue(e.target.value)}
-                          placeholder="*/5 * * * *"
-                          className="flex-1 text-xs h-7"
-                        />
-                      )}
-                    </div>
+                    <Select
+                      value={bulkScheduleType}
+                      onChange={(e) => setBulkScheduleType(e.target.value)}
+                      className="w-full text-xs h-7"
+                    >
+                      <option value="">— No change —</option>
+                      <option value="interval">Interval</option>
+                      <option value="cron">Cron</option>
+                    </Select>
+                    {bulkScheduleType === "interval" && (
+                      <IntervalInput
+                        value={bulkScheduleValue || "60"}
+                        onChange={setBulkScheduleValue}
+                        className="mt-1.5"
+                      />
+                    )}
+                    {bulkScheduleType === "cron" && (
+                      <Input
+                        value={bulkScheduleValue}
+                        onChange={(e) => setBulkScheduleValue(e.target.value)}
+                        placeholder="*/5 * * * *"
+                        className="mt-1.5 w-full text-xs h-7"
+                      />
+                    )}
                   </div>
 
                   {/* Credential */}

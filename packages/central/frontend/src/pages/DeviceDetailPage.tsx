@@ -5605,18 +5605,21 @@ function SortableHead({
   sortBy,
   sortDir,
   onSort,
+  title,
 }: {
   label: string;
   field: string;
   sortBy: string;
   sortDir: SortDir;
   onSort: (field: string) => void;
+  title?: string;
 }) {
   const active = sortBy === field;
   return (
     <TableHead
       className="cursor-pointer select-none hover:text-zinc-200"
       onClick={() => onSort(field)}
+      title={title}
     >
       <span className="inline-flex items-center gap-1">
         {label}
@@ -5663,17 +5666,36 @@ const STATE_SEVERITY: Record<string, number> = {
   "": 0,
 };
 
-// Freshness thresholds (ms). Without interval info on the CheckResult we use
-// generous fixed bands: <2min = fresh, <10min = stale, older = dead.
-const FRESH_MS = 120_000;
-const STALE_MS = 600_000;
+// Freshness thresholds derived from the assignment's polling interval.
+// When the interval is known we give the app a full cycle + 50% slack
+// before calling it stale, and two full cycles before calling it dead.
+// So a 5-min check is fresh <7.5min/stale <15min, a 6-hour NTP check is
+// fresh <9h/stale <18h. The old fixed 2min/10min bands flagged every
+// slow-cadence app as stale even when it was polling exactly on time.
+// Fallback bands (used when we don't have interval info) keep the prior
+// 2min/10min behaviour.
+const FALLBACK_FRESH_MS = 120_000;
+const FALLBACK_STALE_MS = 600_000;
+
+function freshnessThresholds(intervalSeconds: number | undefined): {
+  freshMs: number;
+  staleMs: number;
+} {
+  if (!intervalSeconds || intervalSeconds <= 0) {
+    return { freshMs: FALLBACK_FRESH_MS, staleMs: FALLBACK_STALE_MS };
+  }
+  const ms = intervalSeconds * 1000;
+  return { freshMs: ms * 1.5, staleMs: ms * 3 };
+}
 
 function freshnessInfo(
   executedAt: string | null | undefined,
   hasError: boolean,
-): { label: string; color: string; ageMs: number | null } {
+  intervalSeconds?: number,
+): { label: string; color: string; ageMs: number | null; staleMs: number } {
+  const { freshMs, staleMs } = freshnessThresholds(intervalSeconds);
   if (!executedAt) {
-    return { label: "never", color: "text-zinc-500", ageMs: null };
+    return { label: "never", color: "text-zinc-500", ageMs: null, staleMs };
   }
   const age = Date.now() - new Date(executedAt).getTime();
   // An errored latest poll never counts as fresh — the timestamp advances
@@ -5681,12 +5703,12 @@ function freshnessInfo(
   // on how long since the last successful sample will be picked up by the
   // LAST SUCCESS column. Here we color by raw age of the last attempt.
   const hue =
-    age < FRESH_MS && !hasError
+    age < freshMs && !hasError
       ? "text-green-400"
-      : age < STALE_MS
+      : age < staleMs
         ? "text-amber-400"
         : "text-red-400";
-  return { label: formatAgeShort(age), color: hue, ageMs: age };
+  return { label: formatAgeShort(age), color: hue, ageMs: age, staleMs };
 }
 
 function formatAgeShort(ms: number): string {
@@ -5761,14 +5783,24 @@ function CheckStatusSparkline({
   }
   return (
     <div className="flex h-4 gap-[1px]" title={`Last ${hours}h`}>
-      {slots.map((s) => (
-        <div
-          key={s.ts}
-          className="flex-1 rounded-[1px]"
-          style={{ backgroundColor: s.color, minWidth: 2 }}
-          title={`${new Date(s.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} — ${s.label}`}
-        />
-      ))}
+      {slots.map((s) => {
+        const start = new Date(s.ts);
+        const end = new Date(s.ts + hourMs);
+        const fmt = (d: Date) =>
+          d.toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+          });
+        return (
+          <div
+            key={s.ts}
+            className="flex-1 rounded-[1px]"
+            style={{ backgroundColor: s.color, minWidth: 2 }}
+            title={`${fmt(start)}–${fmt(end)} — ${s.label}`}
+          />
+        );
+      })}
     </div>
   );
 }
@@ -5783,6 +5815,19 @@ function ChecksTab({ deviceId }: { deviceId: string }) {
   const { data: deviceResults, isLoading: liveLoading } =
     useDeviceResults(deviceId);
   const { data: checksSummary } = useDeviceChecksSummary(deviceId, 24);
+  // Assignments give us per-check polling interval for interval-aware
+  // freshness — a 6h NTP probe shouldn't look stale after 10 minutes.
+  const { data: assignments } = useDeviceAssignments(deviceId);
+  const intervalByAssignment = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const a of assignments ?? []) {
+      if (a.schedule_type === "interval") {
+        const n = Number(a.schedule_value);
+        if (Number.isFinite(n) && n > 0) m.set(a.id, n);
+      }
+    }
+    return m;
+  }, [assignments]);
 
   // Live-mode sort + filter (separate from history-mode state).
   const [liveFilterApp, setLiveFilterApp] = useState("");
@@ -5991,6 +6036,7 @@ function ChecksTab({ deviceId }: { deviceId: string }) {
               <LiveChecksTable
                 checks={deviceResults.checks}
                 checksSummary={checksSummary}
+                intervalByAssignment={intervalByAssignment}
                 tz={tz}
                 sortBy={liveSortBy}
                 sortDir={liveSortDir}
@@ -6236,6 +6282,7 @@ function LiveChecksFilters({
 function LiveChecksTable({
   checks,
   checksSummary,
+  intervalByAssignment,
   tz,
   sortBy,
   sortDir,
@@ -6250,6 +6297,7 @@ function LiveChecksTable({
   checksSummary:
     | Record<string, { ts_ms: number; worst_state: number; count: number }[]>
     | undefined;
+  intervalByAssignment: Map<string, number>;
   tz: string;
   sortBy: string;
   sortDir: "asc" | "desc";
@@ -6277,7 +6325,10 @@ function LiveChecksTable({
         const age = c.executed_at
           ? Date.now() - new Date(c.executed_at).getTime()
           : Infinity;
-        return !!c.error_category || age > STALE_MS;
+        const { staleMs } = freshnessThresholds(
+          intervalByAssignment.get(c.assignment_id),
+        );
+        return !!c.error_category || age > staleMs;
       });
     }
     return [...data].sort((a, b) => {
@@ -6399,17 +6450,19 @@ function LiveChecksTable({
             sortBy={sortBy}
             sortDir={sortDir}
             onSort={onSort}
+            title="Collector that executed the most recent poll. Unpinned assignments dispatch via consistent hashing within the group so this can change between polls."
           />
         </TableRow>
       </TableHeader>
       <TableBody>
         {rows.map((check) => {
           const hasError = !!check.error_category;
-          const fresh = freshnessInfo(check.executed_at, hasError);
+          const interval = intervalByAssignment.get(check.assignment_id);
+          const fresh = freshnessInfo(check.executed_at, hasError, interval);
           const buckets = checksSummary?.[check.assignment_id];
           const rowBg = hasError
             ? "bg-red-950/20"
-            : fresh.ageMs != null && fresh.ageMs > STALE_MS
+            : fresh.ageMs != null && fresh.ageMs > fresh.staleMs
               ? "bg-amber-950/20"
               : "";
           return (

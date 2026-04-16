@@ -1807,18 +1807,29 @@ class ClickHouseClient:
             if prev is None:
                 by_assignment[aid] = row
                 continue
-            # Worst state wins (CRITICAL=2, UNKNOWN=3, WARNING=1, OK=0 —
-            # use simple numeric max which will put UNKNOWN above CRITICAL;
-            # acceptable since UNKNOWN usually means "no data" which is a
-            # legitimate worst case for a summary row).
-            prev_state = int(prev.get("state", 0) or 0)
-            row_state = int(row.get("state", 0) or 0)
-            if row_state > prev_state:
+            # Freshness-first, worst-state on tie:
+            #
+            # 1. Newer executed_at wins. Otherwise a single stale row from
+            #    a long-ago failure (e.g. an engine-level timeout that
+            #    wrote config_key='' and never got replaced because later
+            #    success rows used different config_keys) permanently
+            #    dominates the assignment summary.
+            # 2. Within a single poll cycle (same executed_at), the worst
+            #    state row wins so a single CRITICAL component surfaces
+            #    at the assignment level.
+            #
+            # State ordering for the tie-break uses numeric max which puts
+            # UNKNOWN(3) above CRITICAL(2); acceptable since UNKNOWN in a
+            # fresh poll means "no data returned" which is a legitimate
+            # worst case.
+            prev_ts = str(prev.get("executed_at") or "")
+            row_ts = str(row.get("executed_at") or "")
+            if row_ts > prev_ts:
                 by_assignment[aid] = row
-            elif row_state == prev_state:
-                prev_ts = prev.get("executed_at") or ""
-                row_ts = row.get("executed_at") or ""
-                if str(row_ts) > str(prev_ts):
+            elif row_ts == prev_ts:
+                prev_state = int(prev.get("state", 0) or 0)
+                row_state = int(row.get("state", 0) or 0)
+                if row_state > prev_state:
                     by_assignment[aid] = row
         return list(by_assignment.values())
 

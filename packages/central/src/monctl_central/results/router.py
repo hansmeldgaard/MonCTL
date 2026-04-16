@@ -469,9 +469,12 @@ async def device_checks_summary(
     """Per-assignment hourly worst-state buckets for the Checks tab sparkline.
 
     Returns the highest (worst) state value per assignment per hour for the
-    last `hours` hours. Covers availability_latency + performance tables —
-    these carry the state signal that reflects a check passing/failing.
-    Config-change rows are excluded (state there is informational).
+    last `hours` hours. Covers all four result tables — under the current
+    app model, `state` on every row reflects whether the poll itself
+    succeeded (state=0) or failed (state=2 for timeout/unreachable/etc.),
+    so every assignment regardless of target_table belongs in the summary.
+    Apps targeting `config` or `interface` were previously missing their
+    24h sparkline for this reason.
     """
     device = await db.get(Device, uuid.UUID(device_id))
     if device is None:
@@ -494,6 +497,16 @@ async def device_checks_summary(
         UNION ALL
         SELECT assignment_id, executed_at, state
         FROM performance
+        WHERE device_id = {device_id:UUID}
+          AND executed_at > now() - toIntervalHour({hours:UInt32})
+        UNION ALL
+        SELECT assignment_id, executed_at, state
+        FROM config
+        WHERE device_id = {device_id:UUID}
+          AND executed_at > now() - toIntervalHour({hours:UInt32})
+        UNION ALL
+        SELECT assignment_id, executed_at, state
+        FROM interface
         WHERE device_id = {device_id:UUID}
           AND executed_at > now() - toIntervalHour({hours:UInt32})
     )
@@ -606,6 +619,7 @@ async def device_status(
         checks.append({
             "assignment_id": aid,
             "collector_id": formatted["collector_id"],
+            "collector_name": formatted["collector_name"],
             "app_name": formatted["app_name"],
             "role": formatted["role"],
             "state": formatted["state"],
