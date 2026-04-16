@@ -3010,13 +3010,21 @@ export function usePatroniSwitchover() {
   });
 }
 
+export interface UnhealthySubsystem {
+  name: string;
+  status: "degraded" | "critical";
+  reason: string | null;
+}
+
 export function useSystemHealthStatus() {
   return useQuery({
     queryKey: ["system-health-status"],
     queryFn: () =>
-      apiGet<{ overall_status: string; checked_at: string | null }>(
-        "/system/health/status",
-      ),
+      apiGet<{
+        overall_status: string;
+        checked_at: string | null;
+        unhealthy_subsystems?: UnhealthySubsystem[];
+      }>("/system/health/status"),
     select: (res) => res.data,
     refetchInterval: 30_000,
     retry: false,
