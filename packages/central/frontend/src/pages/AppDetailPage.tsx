@@ -61,6 +61,7 @@ import {
   useUpdateApp,
   useCreateAppVersion,
   useSetLatestVersion,
+  useBumpAssignmentsToVersion,
   useUpdateAppVersion,
   useDeleteAppVersion,
   useCloneAppVersion,
@@ -87,6 +88,7 @@ import {
 import { apiGet } from "@/api/client.ts";
 import type {
   AppAlertDefinition,
+  AppVersion,
   DisplayTemplate,
   EligibilityOidCheck,
 } from "@/types/api.ts";
@@ -113,6 +115,7 @@ export function AppDetailPage() {
   const updateApp = useUpdateApp();
   const createVersion = useCreateAppVersion();
   const setLatest = useSetLatestVersion();
+  const bumpAssignments = useBumpAssignmentsToVersion();
   const updateVersion = useUpdateAppVersion();
   const deleteVersion = useDeleteAppVersion();
   const cloneVersion = useCloneAppVersion();
@@ -695,23 +698,32 @@ export function AppDetailPage() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Code2 className="h-4 w-4" /> Versions
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  className="ml-auto gap-1.5"
-                  onClick={() => {
-                    versionField.reset();
-                    setVersionCode("# New version\n");
-                    setVersionReqs("");
-                    setVersionEntry("");
-                    setVersionError(null);
-                    setNewVersionTab("code");
-                    setNewVersionTemplate(null);
-                    setVersionOpen(true);
-                  }}
-                >
-                  <Plus className="h-4 w-4" /> New Version
-                </Button>
+                <div className="ml-auto flex items-center gap-2">
+                  {app.versions.some((v) => v.is_latest) && (
+                    <BumpAssignmentsButton
+                      appId={id!}
+                      latestVersion={app.versions.find((v) => v.is_latest)!}
+                      bumpAssignments={bumpAssignments}
+                    />
+                  )}
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="gap-1.5"
+                    onClick={() => {
+                      versionField.reset();
+                      setVersionCode("# New version\n");
+                      setVersionReqs("");
+                      setVersionEntry("");
+                      setVersionError(null);
+                      setNewVersionTab("code");
+                      setNewVersionTemplate(null);
+                      setVersionOpen(true);
+                    }}
+                  >
+                    <Plus className="h-4 w-4" /> New Version
+                  </Button>
+                </div>
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -1143,6 +1155,112 @@ export function AppDetailPage() {
         </DialogFooter>
       </Dialog>
     </div>
+  );
+}
+
+// ── Bump-all-assignments-to-latest button + confirmation ──────
+
+function BumpAssignmentsButton({
+  appId,
+  latestVersion,
+  bumpAssignments,
+}: {
+  appId: string;
+  latestVersion: AppVersion;
+  bumpAssignments: ReturnType<typeof useBumpAssignmentsToVersion>;
+}) {
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [result, setResult] = useState<{
+    bumped: number;
+    version: string;
+  } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleConfirm() {
+    setError(null);
+    try {
+      const res = await bumpAssignments.mutateAsync({
+        appId,
+        versionId: latestVersion.id,
+      });
+      setResult({
+        bumped: res.data.bumped,
+        version: res.data.target_version,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to bump");
+    }
+  }
+
+  function closeAll() {
+    setConfirmOpen(false);
+    setResult(null);
+    setError(null);
+  }
+
+  return (
+    <>
+      <Button
+        size="sm"
+        variant="secondary"
+        className="gap-1.5"
+        onClick={() => setConfirmOpen(true)}
+        title="Update every pinned assignment for this app to the latest version"
+      >
+        <Star className="h-4 w-4" /> Bump all to latest
+      </Button>
+      <Dialog
+        open={confirmOpen}
+        onClose={closeAll}
+        title="Bump assignments to latest"
+      >
+        <div className="space-y-3">
+          {result ? (
+            <div className="text-sm text-zinc-300">
+              Bumped <strong>{result.bumped}</strong> assignment
+              {result.bumped === 1 ? "" : "s"} to{" "}
+              <span className="font-mono">{result.version}</span>.
+              {result.bumped === 0 && (
+                <p className="mt-2 text-xs text-zinc-500">
+                  Nothing to do — all pinned assignments were already on this
+                  version, or every assignment uses <em>latest</em> (they follow
+                  the version automatically).
+                </p>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className="text-sm text-zinc-300">
+                Update every pinned assignment of this app to version{" "}
+                <span className="font-mono">{latestVersion.version}</span>.
+              </div>
+              <div className="text-xs text-zinc-500">
+                Assignments with <em>use latest</em> enabled are already
+                following the latest version and are not affected.
+              </div>
+              {error && <div className="text-sm text-red-400">{error}</div>}
+            </>
+          )}
+        </div>
+        <DialogFooter>
+          <Button
+            variant="ghost"
+            onClick={closeAll}
+            disabled={bumpAssignments.isPending}
+          >
+            {result ? "Close" : "Cancel"}
+          </Button>
+          {!result && (
+            <Button
+              onClick={handleConfirm}
+              disabled={bumpAssignments.isPending}
+            >
+              {bumpAssignments.isPending ? "Bumping…" : "Bump assignments"}
+            </Button>
+          )}
+        </DialogFooter>
+      </Dialog>
+    </>
   );
 }
 

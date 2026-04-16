@@ -1696,6 +1696,75 @@ async def set_latest_version(
     }
 
 
+@router.post("/{app_id}/versions/{version_id}/bump-assignments")
+async def bump_assignments_to_version(
+    app_id: str,
+    version_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_permission("assignment", "edit")),
+):
+    """Bulk-bump all assignments of this app to the given version_id.
+
+    Updates every AppAssignment with app_id=app_id and
+    app_version_id != version_id to point at the target version.
+    `use_latest=True` assignments are left alone — they already follow
+    whichever version has is_latest=True. Bumps `updated_at` on each
+    row so the collector's /jobs delta-sync picks them up, and bumps
+    config_version on every affected collector.
+    """
+    from sqlalchemy import update
+    from monctl_central.storage.models import Collector
+    from monctl_common.utils import utc_now
+
+    # Verify the version belongs to this app.
+    version = await db.get(AppVersion, uuid.UUID(version_id))
+    if version is None or str(version.app_id) != app_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Version not found for this app",
+        )
+
+    # Find assignments pinned to a different version (not use_latest).
+    stale_stmt = select(AppAssignment).where(
+        AppAssignment.app_id == uuid.UUID(app_id),
+        AppAssignment.app_version_id != uuid.UUID(version_id),
+        AppAssignment.use_latest == False,  # noqa: E712
+    )
+    stale = (await db.execute(stale_stmt)).scalars().all()
+    if not stale:
+        return {
+            "status": "success",
+            "data": {"bumped": 0, "target_version": version.version},
+        }
+
+    now = utc_now()
+    coll_ids: set[uuid.UUID] = set()
+    for a in stale:
+        a.app_version_id = uuid.UUID(version_id)
+        a.updated_at = now
+        if a.collector_id is not None:
+            coll_ids.add(a.collector_id)
+
+    if coll_ids:
+        await db.execute(
+            update(Collector)
+            .where(Collector.id.in_(coll_ids))
+            .values(
+                config_version=Collector.config_version + 1,
+                updated_at=now,
+            )
+        )
+
+    await db.flush()
+    return {
+        "status": "success",
+        "data": {
+            "bumped": len(stale),
+            "target_version": version.version,
+        },
+    }
+
+
 @router.get("/{app_id}/versions/{version_id}")
 async def get_app_version(
     app_id: str,
