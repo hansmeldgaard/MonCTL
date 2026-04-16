@@ -1387,6 +1387,30 @@ async def _check_collectors(db: AsyncSession) -> dict:
     else:
         status = "healthy"
 
+    # Promote subsystem status based on per-collector capacity pressure.
+    # capacity_status is already computed per row from CPU/mem/deadline-miss.
+    # Without this rollup the subsystem stayed "healthy" whenever every
+    # collector was ACTIVE, even with one pinned at 100% CPU.
+    warn_caps = [c for c in collector_list if c["capacity_status"] == "warning"]
+    crit_caps = [c for c in collector_list if c["capacity_status"] == "critical"]
+    _PRI = {"critical": 2, "degraded": 1, "healthy": 0, "unknown": -1}
+    if crit_caps and _PRI["critical"] > _PRI.get(status, -1):
+        status = "critical"
+    elif warn_caps and _PRI["degraded"] > _PRI.get(status, -1):
+        status = "degraded"
+
+    # Short reason string naming up to 3 worst offenders, for the top-bar
+    # tooltip and anywhere else that wants a single line.
+    offenders = crit_caps + warn_caps
+    reason_parts: list[str] = []
+    for c in offenders[:3]:
+        warns = c.get("capacity_warnings") or []
+        tag = ", ".join(warns) if warns else c["capacity_status"]
+        reason_parts.append(f"{c['name']}: {tag}")
+    if len(offenders) > 3:
+        reason_parts.append(f"(+{len(offenders) - 3} more)")
+    capacity_reason = "; ".join(reason_parts) if reason_parts else None
+
     return {
         "status": status,
         "latency_ms": None,
@@ -1396,6 +1420,11 @@ async def _check_collectors(db: AsyncSession) -> dict:
             "avg_load": avg_load,
             "avg_deadline_miss_rate": avg_miss_rate,
             "collectors": collector_list,
+            "capacity_alerts": {
+                "warning": len(warn_caps),
+                "critical": len(crit_caps),
+            },
+            "capacity_reason": capacity_reason,
         },
     }
 
@@ -1797,9 +1826,15 @@ async def system_health(
     central_details = subsystems.get("central", {}).get("details", {})
     node_hostname = central_details.get("hostname", settings.instance_id)
 
+    unhealthy = _collect_unhealthy(subsystems, _INFRA_SUBSYSTEMS, priority)
+
     # Cache for lightweight status endpoint
     global _last_health_status
-    _last_health_status = {"overall_status": worst, "checked_at": checked_at}
+    _last_health_status = {
+        "overall_status": worst,
+        "checked_at": checked_at,
+        "unhealthy_subsystems": unhealthy,
+    }
 
     return {
         "status": "success",
@@ -1810,12 +1845,55 @@ async def system_health(
             "version": "0.1.0",
             "checked_at": checked_at,
             "subsystems": subsystems,
+            "unhealthy_subsystems": unhealthy,
         },
     }
 
 
 _last_health_status: dict = {"overall_status": "unknown", "checked_at": None}
 _HEALTH_CACHE_TTL = 90  # seconds — re-evaluate if older
+
+
+def _subsystem_reason(name: str, data: dict) -> str | None:
+    """Best-effort one-line reason why a subsystem is degraded/critical.
+
+    Used for the top-bar health tooltip so operators don't have to click
+    through to the full health page to see what's wrong.
+    """
+    details = data.get("details") or {}
+    if name == "collectors":
+        # Prefer capacity pressure (CPU/mem/deadline misses) over simple
+        # availability because ACTIVE-but-pinned is the common silent case.
+        cap = details.get("capacity_reason")
+        if cap:
+            return cap
+        by_st = details.get("by_status") or {}
+        down = by_st.get("DOWN", 0)
+        if down:
+            return f"{down} DOWN"
+        pending = by_st.get("PENDING", 0)
+        if pending:
+            return f"{pending} PENDING"
+    msg = details.get("message")
+    if isinstance(msg, str) and msg:
+        return msg
+    return None
+
+
+def _collect_unhealthy(subsystems: dict, infra: set[str], priority: dict) -> list[dict]:
+    """Return list of {name, status, reason} for non-healthy infra subsystems,
+    worst first."""
+    out: list[dict] = []
+    for name, data in subsystems.items():
+        if name not in infra:
+            continue
+        st = data.get("status", "unknown")
+        if st in ("degraded", "critical"):
+            out.append(
+                {"name": name, "status": st, "reason": _subsystem_reason(name, data)}
+            )
+    out.sort(key=lambda u: priority.get(u["status"], -1), reverse=True)
+    return out
 
 
 async def _compute_overall_status() -> dict:
@@ -1868,7 +1946,12 @@ async def _compute_overall_status() -> dict:
         default="unknown",
     )
 
-    return {"overall_status": worst, "checked_at": utc_now().isoformat()}
+    unhealthy = _collect_unhealthy(subsystems, _INFRA_SUBSYSTEMS, priority)
+    return {
+        "overall_status": worst,
+        "checked_at": utc_now().isoformat(),
+        "unhealthy_subsystems": unhealthy,
+    }
 
 
 @router.get("/health/status")

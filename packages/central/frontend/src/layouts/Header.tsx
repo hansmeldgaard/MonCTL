@@ -70,6 +70,16 @@ export function Header() {
         : healthStatus.overall_status === "degraded"
           ? "bg-amber-400"
           : "bg-red-400";
+  // Build a multi-line tooltip so operators don't have to click through
+  // to System Health just to learn which subsystem is unhappy.
+  const healthTitle = (() => {
+    if (!healthStatus?.overall_status) return "System: unknown";
+    const header = `System: ${healthStatus.overall_status}`;
+    const lines = (healthStatus.unhealthy_subsystems ?? [])
+      .map((s) => `${s.name}: ${s.reason ?? s.status}`)
+      .slice(0, 6);
+    return lines.length ? `${header}\n${lines.join("\n")}` : header;
+  })();
 
   return (
     <>
@@ -119,7 +129,7 @@ export function Header() {
             <Link
               to="/system-health"
               className="group flex items-center gap-1.5"
-              title={`System: ${healthStatus.overall_status}`}
+              title={healthTitle}
             >
               <span
                 className={`inline-block h-2.5 w-2.5 rounded-full ${healthColor} group-hover:ring-2 group-hover:ring-offset-1 group-hover:ring-offset-zinc-900 group-hover:ring-current transition-shadow`}
