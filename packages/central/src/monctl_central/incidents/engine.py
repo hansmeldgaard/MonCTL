@@ -762,13 +762,25 @@ class IncidentEngine:
     def _render_message(
         rule: IncidentRule, defn: AlertDefinition, inst: AlertEntity
     ) -> str:
-        """Same template priority as EventEngine: rule.message_template → defn.message_template → fallback."""
+        """Template priority: rule.message_template → severity-tier message_template → fallback.
+
+        The tiered-severity rework (PR #38) removed the def-level
+        `message_template` field; per-tier templates live inside
+        `defn.severity_tiers[i].message_template`. Pick the one matching
+        the entity's current severity.
+        """
         labels = inst.entity_labels or {}
         metrics = getattr(inst, "metric_values", None) or {}
         thresholds = getattr(inst, "threshold_values", None) or {}
         value = inst.current_value
 
-        for template in [rule.message_template, defn.message_template]:
+        defn_template: str | None = None
+        for tier in defn.severity_tiers or []:
+            if tier.get("severity") == inst.severity:
+                defn_template = tier.get("message_template")
+                break
+
+        for template in [rule.message_template, defn_template]:
             if not template:
                 continue
             context: dict[str, str] = {}
