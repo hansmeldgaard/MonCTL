@@ -43,6 +43,13 @@ def _detect_level(message: str) -> str:
 
 def _infer_host_role(label: str) -> str:
     """Classify a host_label into central / worker / other for filtering."""
+    """Classify a host_label into central / worker / other for filtering.
+
+    Labels follow the hostname convention (central1-4, worker1-4) — we
+    stay lenient here so a future rename doesn't silently drop everything
+    into 'other'.
+    """
+    """Classify a host_label into central / worker / other."""
     lower = label.lower()
     if "central" in lower:
         return "central"
@@ -103,6 +110,42 @@ def _host_metrics_row(label: str, payload: "DockerStatsPush") -> dict:
         "containers_running": _as_int(containers.get("running")),
         "containers_total": _as_int(containers.get("total")),
     }
+def _container_metric_rows(label: str, payload: "DockerStatsPush") -> list[dict]:
+    """Flatten payload.stats.containers[] into container_metrics_history rows.
+
+    Only rows for running containers with valid mem_usage are emitted —
+    the sidecar leaves cpu_pct/mem_usage None for stopped containers and
+    we don't want to persist NULL noise.
+    """
+    stats = payload.stats or {}
+    containers = stats.get("containers") or []
+    role = _infer_host_role(label)
+    ts = datetime.fromtimestamp(payload.timestamp, tz=timezone.utc).replace(
+        microsecond=0, tzinfo=None,
+    )
+    rows: list[dict] = []
+    for c in containers:
+        if c.get("mem_usage_bytes") is None:
+            continue
+        rows.append({
+            "timestamp": ts,
+            "host_label": label,
+            "host_role": role,
+            "container_name": str(c.get("name") or ""),
+            "image": str(c.get("image") or ""),
+            "status": str(c.get("status") or ""),
+            "cpu_pct": _as_float(c.get("cpu_pct")),
+            "mem_usage_bytes": _as_int(c.get("mem_usage_bytes")),
+            "mem_limit_bytes": _as_int(c.get("mem_limit_bytes")),
+            "mem_pct": _as_float(c.get("mem_pct")),
+            "net_rx_bytes": _as_int(c.get("net_rx_bytes")),
+            "net_tx_bytes": _as_int(c.get("net_tx_bytes")),
+            "block_read_bytes": _as_int(c.get("block_read_bytes")),
+            "block_write_bytes": _as_int(c.get("block_write_bytes")),
+            "pids": _as_int(c.get("pids")),
+            "restart_count": _as_int(c.get("restart_count")),
+        })
+    return rows
 
 
 class DockerStatsPush(BaseModel):
@@ -132,6 +175,16 @@ async def push_docker_stats(
 
     if payload.stats:
         await store_docker_push(label, "stats", payload.stats)
+        # Persist per-container metrics so we can trace leaks / load
+        # after-the-fact (e.g. forwarder RSS over 24h). One row per
+        # running container per push.
+        try:
+            rows = _container_metric_rows(label, payload)
+            if rows:
+                ch = get_clickhouse()
+                ch.insert_container_metrics(rows)
+        except Exception:
+            logger.debug("docker_push_container_metrics_ch_failed", label=label)
 
     if payload.system:
         await store_docker_push(label, "system", payload.system)

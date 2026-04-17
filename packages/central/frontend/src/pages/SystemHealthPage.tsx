@@ -30,6 +30,8 @@ import {
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { ClearableInput } from "@/components/ui/clearable-input.tsx";
+import { ContainerMetricsChart } from "@/components/ContainerMetricsChart.tsx";
+import { DbSizeHistoryChart } from "@/components/DbSizeHistoryChart.tsx";
 import { HostMetricsChart } from "@/components/HostMetricsChart.tsx";
 import { Select } from "@/components/ui/select.tsx";
 import {
@@ -3170,6 +3172,20 @@ export function SystemHealthPage() {
   const chDetails = (subs.clickhouse?.details ?? {}) as Record<string, unknown>;
   const chNodes = (chDetails.nodes ?? {}) as Record<string, CHNodeData>;
 
+  // Known docker host labels — used to populate the ContainerMetricsChart
+  // host selector so operators can pick worker-2, forwarder's host, etc.
+  const dockerDetails = (subs.docker?.details ?? {}) as Record<string, unknown>;
+  const dockerHostList = (dockerDetails.hosts ?? []) as Array<{
+    label?: string;
+  }>;
+  const knownHosts = Array.from(
+    new Set(
+      dockerHostList
+        .map((h) => h.label)
+        .filter((s): s is string => typeof s === "string" && s.length > 0),
+    ),
+  ).sort();
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -3264,87 +3280,91 @@ export function SystemHealthPage() {
 
       {/* Tab content */}
       {activeTab === "overview" && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <OverviewMiniCard
-            icon={Database}
-            title="PostgreSQL"
-            status={(subs.postgresql?.status as SubsystemStatus) ?? "unknown"}
-            lines={[
-              `${(subs.postgresql?.details as Record<string, unknown>)?.db_size_bytes ? formatBytes(Number((subs.postgresql?.details as Record<string, unknown>).db_size_bytes)) : "—"}`,
-              `${((subs.postgresql?.details as Record<string, unknown>)?.connections as { active?: number } | undefined)?.active ?? "?"} connections`,
-            ]}
-            onClick={() => setTab("postgresql")}
-          />
-          <OverviewMiniCard
-            icon={HardDrive}
-            title="ClickHouse"
-            status={(subs.clickhouse?.status as SubsystemStatus) ?? "unknown"}
-            lines={[
-              `${formatBytes(Number(chDetails.total_bytes ?? 0))} \u00b7 ${formatNumber(Number(chDetails.total_rows ?? 0))} rows`,
-              `${Object.values(chNodes).filter((n) => n.reachable).length}/${Object.keys(chNodes).length || "?"} nodes`,
-            ]}
-            onClick={() => setTab("clickhouse")}
-          />
-          <OverviewMiniCard
-            icon={Zap}
-            title="Redis"
-            status={(subs.redis?.status as SubsystemStatus) ?? "unknown"}
-            lines={[
-              `${(subs.redis?.details as Record<string, unknown>)?.db_size ?? "?"} keys`,
-              `${(subs.redis?.details as Record<string, unknown>)?.connected_clients ?? "?"} clients`,
-            ]}
-            onClick={() => setTab("redis")}
-          />
-          <OverviewMiniCard
-            icon={ArrowDownToLine}
-            title="Ingestion"
-            status={(subs.ingestion?.status as SubsystemStatus) ?? "unknown"}
-            lines={[
-              `${(subs.ingestion?.details as Record<string, unknown>)?.total_rows_per_sec ?? 0} rows/s`,
-            ]}
-            onClick={() => setTab("overview")}
-          />
-          <OverviewMiniCard
-            icon={Radio}
-            title="Collectors"
-            status={(subs.collectors?.status as SubsystemStatus) ?? "unknown"}
-            lines={[
-              `${((subs.collectors?.details as Record<string, unknown>)?.by_status as Record<string, number> | undefined)?.ACTIVE ?? 0} active`,
-              `${(subs.collectors?.details as Record<string, unknown>)?.total_jobs ?? 0} jobs`,
-            ]}
-            onClick={() => setTab("collectors")}
-          />
-          <OverviewMiniCard
-            icon={Server}
-            title="Docker"
-            status={(subs.docker?.status as SubsystemStatus) ?? "unknown"}
-            lines={(() => {
-              const dd = subs.docker?.details as
-                | Record<string, unknown>
-                | undefined;
-              const dhosts = (dd?.hosts ?? []) as {
-                data?: { containers?: { health?: string }[] };
-              }[];
-              const uc = dhosts.reduce(
-                (s, dh) =>
-                  s +
-                  (Array.isArray(dh.data?.containers)
-                    ? dh.data!.containers.filter(
-                        (c) => c.health === "unhealthy",
-                      ).length
-                    : 0),
-                0,
-              );
-              return [
-                `${dhosts.length} hosts`,
-                uc > 0 ? `${uc} unhealthy` : "All healthy",
-              ];
-            })()}
-            onClick={() => setTab("docker")}
-          />
-        </div>
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <OverviewMiniCard
+              icon={Database}
+              title="PostgreSQL"
+              status={(subs.postgresql?.status as SubsystemStatus) ?? "unknown"}
+              lines={[
+                `${(subs.postgresql?.details as Record<string, unknown>)?.db_size_bytes ? formatBytes(Number((subs.postgresql?.details as Record<string, unknown>).db_size_bytes)) : "—"}`,
+                `${((subs.postgresql?.details as Record<string, unknown>)?.connections as { active?: number } | undefined)?.active ?? "?"} connections`,
+              ]}
+              onClick={() => setTab("postgresql")}
+            />
+            <OverviewMiniCard
+              icon={HardDrive}
+              title="ClickHouse"
+              status={(subs.clickhouse?.status as SubsystemStatus) ?? "unknown"}
+              lines={[
+                `${formatBytes(Number(chDetails.total_bytes ?? 0))} \u00b7 ${formatNumber(Number(chDetails.total_rows ?? 0))} rows`,
+                `${Object.values(chNodes).filter((n) => n.reachable).length}/${Object.keys(chNodes).length || "?"} nodes`,
+              ]}
+              onClick={() => setTab("clickhouse")}
+            />
+            <OverviewMiniCard
+              icon={Zap}
+              title="Redis"
+              status={(subs.redis?.status as SubsystemStatus) ?? "unknown"}
+              lines={[
+                `${(subs.redis?.details as Record<string, unknown>)?.db_size ?? "?"} keys`,
+                `${(subs.redis?.details as Record<string, unknown>)?.connected_clients ?? "?"} clients`,
+              ]}
+              onClick={() => setTab("redis")}
+            />
+            <OverviewMiniCard
+              icon={ArrowDownToLine}
+              title="Ingestion"
+              status={(subs.ingestion?.status as SubsystemStatus) ?? "unknown"}
+              lines={[
+                `${(subs.ingestion?.details as Record<string, unknown>)?.total_rows_per_sec ?? 0} rows/s`,
+              ]}
+              onClick={() => setTab("overview")}
+            />
+            <OverviewMiniCard
+              icon={Radio}
+              title="Collectors"
+              status={(subs.collectors?.status as SubsystemStatus) ?? "unknown"}
+              lines={[
+                `${((subs.collectors?.details as Record<string, unknown>)?.by_status as Record<string, number> | undefined)?.ACTIVE ?? 0} active`,
+                `${(subs.collectors?.details as Record<string, unknown>)?.total_jobs ?? 0} jobs`,
+              ]}
+              onClick={() => setTab("collectors")}
+            />
+            <OverviewMiniCard
+              icon={Server}
+              title="Docker"
+              status={(subs.docker?.status as SubsystemStatus) ?? "unknown"}
+              lines={(() => {
+                const dd = subs.docker?.details as
+                  | Record<string, unknown>
+                  | undefined;
+                const dhosts = (dd?.hosts ?? []) as {
+                  data?: { containers?: { health?: string }[] };
+                }[];
+                const uc = dhosts.reduce(
+                  (s, dh) =>
+                    s +
+                    (Array.isArray(dh.data?.containers)
+                      ? dh.data!.containers.filter(
+                          (c) => c.health === "unhealthy",
+                        ).length
+                      : 0),
+                  0,
+                );
+                return [
+                  `${dhosts.length} hosts`,
+                  uc > 0 ? `${uc} unhealthy` : "All healthy",
+                ];
+              })()}
+              onClick={() => setTab("docker")}
+            />
+          </div>
+          <DbSizeHistoryChart />
+        </>
       )}
       {activeTab === "overview" && <HostMetricsChart />}
+      {activeTab === "overview" && <ContainerMetricsChart hosts={knownHosts} />}
 
       {activeTab === "postgresql" && subs.postgresql && (
         <PostgreSQLCard

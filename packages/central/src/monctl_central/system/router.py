@@ -2100,6 +2100,69 @@ async def get_host_metrics_history(
     return {"status": "success", "data": rows, "meta": {"count": len(rows)}}
 
 
+@router.get("/container-metrics-history")
+async def get_container_metrics_history(
+    host_label: str | None = None,
+    host_role: str | None = None,
+    container_name: str | None = None,
+    from_ts: str | None = None,
+    to_ts: str | None = None,
+    limit: int = 50000,
+    ch=Depends(get_clickhouse),
+    auth: dict = Depends(require_admin),
+):
+    """Per-container CPU/memory samples from container_metrics_history.
+
+    Filters: host_label, host_role (central|worker|other), container_name,
+    from_ts / to_ts (ISO-8601). One row per container per docker-stats
+    sidecar push.
+    """
+    from datetime import datetime
+
+    def _parse(ts: str | None):
+        if not ts:
+            return None
+        try:
+            return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    try:
+        rows = await asyncio.to_thread(
+            ch.query_container_metrics_history,
+            host_label=host_label,
+            host_role=host_role,
+            container_name=container_name,
+            from_ts=_parse(from_ts),
+            to_ts=_parse(to_ts),
+            limit=min(max(int(limit), 1), 200000),
+        )
+    except Exception:
+        logger.exception("container_metrics_history_query_failed")
+        rows = []
+
+    int_cols = (
+        "mem_usage_bytes", "mem_limit_bytes",
+        "net_rx_bytes", "net_tx_bytes",
+        "block_read_bytes", "block_write_bytes",
+        "pids", "restart_count",
+    )
+    float_cols = ("cpu_pct", "mem_pct")
+
+    for r in rows:
+        ts = r.get("timestamp")
+        if ts is not None:
+            r["timestamp"] = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+        for col in int_cols:
+            if col in r and r[col] is not None:
+                r[col] = int(r[col])
+        for col in float_cols:
+            if col in r and r[col] is not None:
+                r[col] = float(r[col])
+
+    return {"status": "success", "data": rows, "meta": {"count": len(rows)}}
+
+
 @router.get("/collector-errors/{collector_name}")
 async def get_collector_errors(
     collector_name: str,
