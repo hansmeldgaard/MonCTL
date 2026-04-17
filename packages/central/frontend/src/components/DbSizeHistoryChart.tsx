@@ -146,7 +146,9 @@ export function DbSizeHistoryChart() {
                   fontSize: 12,
                 }}
                 labelFormatter={(ts) => new Date(Number(ts)).toLocaleString()}
-                formatter={(val: number | string) => formatBytes(Number(val))}
+                formatter={(val) =>
+                  formatBytes(Number(Array.isArray(val) ? val[0] : val))
+                }
               />
               <Legend wrapperStyle={{ fontSize: 12 }} />
               <Line
