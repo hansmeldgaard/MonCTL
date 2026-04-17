@@ -133,6 +133,15 @@ class UpdateInterfacePreferencesRequest(BaseModel):
     iface_time_range: str | None = Field(default=None)
 
 
+class UpdateUiPreferencesRequest(BaseModel):
+    """Replace the user's ui_preferences blob wholesale.
+
+    Shape is opaque on the backend — the frontend validates the schema
+    version and per-column-config invariants before POSTing.
+    """
+    ui_preferences: dict
+
+
 class UpdateIdleTimeoutRequest(BaseModel):
     idle_timeout_minutes: int | None = Field(
         default=None,
@@ -264,6 +273,51 @@ async def update_my_interface_preferences(
             "iface_chart_metric": user.iface_chart_metric,
             "iface_time_range": user.iface_time_range,
         },
+    }
+
+
+# Cap the stored blob so a single user can't balloon their row. 32 KB is
+# ample for dozens of tables × dozens of columns each.
+_UI_PREFERENCES_MAX_BYTES = 32 * 1024
+
+
+@router.put("/me/ui-preferences")
+async def update_my_ui_preferences(
+    request: UpdateUiPreferencesRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
+):
+    """Replace the current user's ui_preferences blob.
+
+    Schema is opaque on the backend — we only enforce a size cap and that
+    the top-level value is a dict. The frontend is responsible for its
+    own versioning and migration under `ui_preferences.tables[id].v1`.
+    """
+    import json
+
+    user = await db.get(User, uuid.UUID(auth["user_id"]))
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    payload = request.ui_preferences
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="ui_preferences must be a JSON object",
+        )
+
+    encoded = json.dumps(payload, separators=(",", ":"))
+    if len(encoded.encode("utf-8")) > _UI_PREFERENCES_MAX_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"ui_preferences exceeds {_UI_PREFERENCES_MAX_BYTES} bytes",
+        )
+
+    user.ui_preferences = payload
+    user.updated_at = utc_now()
+    return {
+        "status": "success",
+        "data": {"ui_preferences": user.ui_preferences},
     }
 
 

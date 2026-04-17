@@ -134,6 +134,7 @@ async def login(
             "iface_chart_metric": user.iface_chart_metric,
             "iface_time_range": user.iface_time_range,
             "default_page": user.default_page,
+            "ui_preferences": user.ui_preferences or {},
         },
     }
 
@@ -253,6 +254,7 @@ async def refresh(
             "iface_chart_metric": user.iface_chart_metric,
             "iface_time_range": user.iface_time_range,
             "default_page": user.default_page,
+            "ui_preferences": user.ui_preferences or {},
         },
     }
 
@@ -324,5 +326,6 @@ async def get_me(request: Request, db: AsyncSession = Depends(get_db)):
             "iface_chart_metric": user.iface_chart_metric if user else "traffic",
             "iface_time_range": user.iface_time_range if user else "24h",
             "default_page": user.default_page if user else "/",
+            "ui_preferences": (user.ui_preferences if user else {}) or {},
         },
     }

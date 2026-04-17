@@ -643,6 +643,14 @@ class User(Base):
         String(255), nullable=False, server_default="/", default="/",
         comment="Default landing page route for this user",
     )
+    ui_preferences: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default="{}", default=dict,
+        comment=(
+            "Versioned per-table UI state: hidden / width / order per "
+            "column. Shape: {tables: {<tableId>: {v1: {<colKey>: "
+            "{width?, hidden?, order?}}}}}"
+        ),
+    )
     # Legacy single-tenant FK (kept for backward compat, not used for access control)
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True

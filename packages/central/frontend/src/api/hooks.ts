@@ -1712,6 +1712,20 @@ export function useUpdateTablePreferences() {
   });
 }
 
+export function useUpdateUiPreferences() {
+  const { refresh } = useAuth();
+  return useMutation({
+    mutationFn: (ui_preferences: import("@/types/api.ts").UiPreferences) =>
+      apiPut<{ ui_preferences: import("@/types/api.ts").UiPreferences }>(
+        "/users/me/ui-preferences",
+        { ui_preferences },
+      ),
+    onSuccess: async () => {
+      await refresh();
+    },
+  });
+}
+
 export function useDeleteUser() {
   const qc = useQueryClient();
   return useMutation({

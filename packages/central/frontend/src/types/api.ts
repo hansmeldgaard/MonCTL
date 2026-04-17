@@ -70,6 +70,18 @@ export interface AuthUser {
   all_tenants?: boolean;
   tenant_ids?: string[] | null; // null = unrestricted, [] = see nothing, [ids] = specific
   permissions?: string[] | null; // null = admin (full access), ["resource:action", ...]
+  ui_preferences?: UiPreferences;
+}
+
+/** Opaque user-scoped UI state blob. Server stores it verbatim — schema
+ *  versioning lives on the frontend under ui_preferences.tables[id].v1. */
+export interface UiPreferences {
+  tables?: Record<
+    string,
+    {
+      v1?: Record<string, { width?: number; hidden?: boolean; order?: number }>;
+    }
+  >;
 }
 
 export interface LoginPayload {
