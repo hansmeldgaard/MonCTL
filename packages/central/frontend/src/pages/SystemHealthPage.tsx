@@ -31,6 +31,7 @@ import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { ClearableInput } from "@/components/ui/clearable-input.tsx";
 import { HostMetricsChart } from "@/components/HostMetricsChart.tsx";
+import { ContainerMetricsChart } from "@/components/ContainerMetricsChart.tsx";
 import { Select } from "@/components/ui/select.tsx";
 import {
   Table,
@@ -3170,6 +3171,20 @@ export function SystemHealthPage() {
   const chDetails = (subs.clickhouse?.details ?? {}) as Record<string, unknown>;
   const chNodes = (chDetails.nodes ?? {}) as Record<string, CHNodeData>;
 
+  // Known docker host labels — used to populate the ContainerMetricsChart
+  // host selector so operators can pick worker-2, forwarder's host, etc.
+  const dockerDetails = (subs.docker?.details ?? {}) as Record<string, unknown>;
+  const dockerHostList = (dockerDetails.hosts ?? []) as Array<{
+    label?: string;
+  }>;
+  const knownHosts = Array.from(
+    new Set(
+      dockerHostList
+        .map((h) => h.label)
+        .filter((s): s is string => typeof s === "string" && s.length > 0),
+    ),
+  ).sort();
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -3345,6 +3360,7 @@ export function SystemHealthPage() {
         </div>
       )}
       {activeTab === "overview" && <HostMetricsChart />}
+      {activeTab === "overview" && <ContainerMetricsChart hosts={knownHosts} />}
 
       {activeTab === "postgresql" && subs.postgresql && (
         <PostgreSQLCard

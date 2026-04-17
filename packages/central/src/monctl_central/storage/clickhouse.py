@@ -1101,6 +1101,35 @@ TTL timestamp + INTERVAL 30 DAY
 SETTINGS index_granularity = 8192
 """
 
+_CONTAINER_METRICS_HISTORY_DDL = """
+CREATE TABLE IF NOT EXISTS container_metrics_history ON CLUSTER '{cluster}'
+(
+    timestamp          DateTime,
+    host_label         LowCardinality(String),
+    host_role          LowCardinality(String) DEFAULT 'other',
+    container_name     LowCardinality(String),
+    image              String        DEFAULT '',
+    status             LowCardinality(String) DEFAULT '',
+    cpu_pct            Float32,
+    mem_usage_bytes    UInt64,
+    mem_limit_bytes    UInt64,
+    mem_pct            Float32,
+    net_rx_bytes       UInt64,
+    net_tx_bytes       UInt64,
+    block_read_bytes   UInt64,
+    block_write_bytes  UInt64,
+    pids               UInt32,
+    restart_count      UInt32
+)
+ENGINE = ReplicatedMergeTree(
+    '/clickhouse/tables/{{shard}}/container_metrics_history', '{{replica}}'
+)
+PARTITION BY toYYYYMM(timestamp)
+ORDER BY (host_label, container_name, timestamp)
+TTL timestamp + INTERVAL 30 DAY
+SETTINGS index_granularity = 8192
+"""
+
 _HOST_METRICS_HISTORY_DDL_LOCAL = """
 CREATE TABLE IF NOT EXISTS host_metrics_history
 (
@@ -1130,6 +1159,33 @@ TTL timestamp + INTERVAL 30 DAY
 SETTINGS index_granularity = 8192
 """
 
+_CONTAINER_METRICS_HISTORY_DDL_LOCAL = """
+CREATE TABLE IF NOT EXISTS container_metrics_history
+(
+    timestamp          DateTime,
+    host_label         LowCardinality(String),
+    host_role          LowCardinality(String) DEFAULT 'other',
+    container_name     LowCardinality(String),
+    image              String        DEFAULT '',
+    status             LowCardinality(String) DEFAULT '',
+    cpu_pct            Float32,
+    mem_usage_bytes    UInt64,
+    mem_limit_bytes    UInt64,
+    mem_pct            Float32,
+    net_rx_bytes       UInt64,
+    net_tx_bytes       UInt64,
+    block_read_bytes   UInt64,
+    block_write_bytes  UInt64,
+    pids               UInt32,
+    restart_count      UInt32
+)
+ENGINE = MergeTree()
+PARTITION BY toYYYYMM(timestamp)
+ORDER BY (host_label, container_name, timestamp)
+TTL timestamp + INTERVAL 30 DAY
+SETTINGS index_granularity = 8192
+"""
+
 _HOST_METRICS_HISTORY_INSERT_COLUMNS = [
     "timestamp", "host_label", "host_role",
     "cpu_count", "load_1m", "load_5m", "load_15m",
@@ -1137,6 +1193,15 @@ _HOST_METRICS_HISTORY_INSERT_COLUMNS = [
     "swap_total_bytes", "swap_used_bytes",
     "disk_total_bytes", "disk_used_bytes", "disk_free_bytes",
     "uptime_seconds", "containers_running", "containers_total",
+]
+
+_CONTAINER_METRICS_HISTORY_INSERT_COLUMNS = [
+    "timestamp", "host_label", "host_role",
+    "container_name", "image", "status",
+    "cpu_pct", "mem_usage_bytes", "mem_limit_bytes", "mem_pct",
+    "net_rx_bytes", "net_tx_bytes",
+    "block_read_bytes", "block_write_bytes",
+    "pids", "restart_count",
 ]
 
 
@@ -1548,6 +1613,7 @@ class ClickHouseClient:
                 _ELIGIBILITY_RESULTS_DDL,
                 _AUDIT_MUTATIONS_DDL,
                 _HOST_METRICS_HISTORY_DDL,
+                _CONTAINER_METRICS_HISTORY_DDL,
             ]:
                 client.command(ddl.format(cluster=self._cluster_name))
             for mv_ddl in [
@@ -1578,6 +1644,7 @@ class ClickHouseClient:
                 _ELIGIBILITY_RESULTS_DDL_LOCAL,
                 _AUDIT_MUTATIONS_DDL_LOCAL,
                 _HOST_METRICS_HISTORY_DDL_LOCAL,
+                _CONTAINER_METRICS_HISTORY_DDL_LOCAL,
             ]:
                 client.command(ddl)
             for mv_ddl in [
@@ -2597,6 +2664,24 @@ class ClickHouseClient:
             column_names=_HOST_METRICS_HISTORY_INSERT_COLUMNS,
         )
 
+    # ------------------------------------------------------------------
+    # Container metrics history (per-container docker-stats samples)
+    # ------------------------------------------------------------------
+
+    def insert_container_metrics(self, rows: list[dict]) -> None:
+        """Insert per-container metric rows (typically many per sidecar push)."""
+        if not rows:
+            return
+        client = self._get_client()
+        data = [
+            [r.get(col) for col in _CONTAINER_METRICS_HISTORY_INSERT_COLUMNS]
+            for r in rows
+        ]
+        client.insert(
+            "container_metrics_history", data,
+            column_names=_CONTAINER_METRICS_HISTORY_INSERT_COLUMNS,
+        )
+
     def query_host_metrics_history(
         self,
         *,
@@ -2627,6 +2712,46 @@ class ClickHouseClient:
             f"SELECT {col_list} "
             f"FROM host_metrics_history {where_sql} "
             "ORDER BY host_label, timestamp ASC "
+            f"LIMIT {int(limit)}"
+        )
+        client = self._get_client()
+        result = client.query(sql, parameters=params)
+        return list(result.named_results())
+
+    def query_container_metrics_history(
+        self,
+        *,
+        host_label: str | None = None,
+        host_role: str | None = None,
+        container_name: str | None = None,
+        from_ts: datetime | None = None,
+        to_ts: datetime | None = None,
+        limit: int = 50000,
+    ) -> list[dict]:
+        """Return per-container metric samples with optional filters."""
+        wheres: list[str] = []
+        params: dict[str, Any] = {}
+        if host_label:
+            wheres.append("host_label = {host_label:String}")
+            params["host_label"] = host_label
+        if host_role:
+            wheres.append("host_role = {host_role:String}")
+            params["host_role"] = host_role
+        if container_name:
+            wheres.append("container_name = {container_name:String}")
+            params["container_name"] = container_name
+        if from_ts:
+            wheres.append("timestamp >= {from_ts:DateTime}")
+            params["from_ts"] = from_ts.strftime("%Y-%m-%d %H:%M:%S")
+        if to_ts:
+            wheres.append("timestamp <= {to_ts:DateTime}")
+            params["to_ts"] = to_ts.strftime("%Y-%m-%d %H:%M:%S")
+        where_sql = ("WHERE " + " AND ".join(wheres)) if wheres else ""
+        col_list = ", ".join(_CONTAINER_METRICS_HISTORY_INSERT_COLUMNS)
+        sql = (
+            f"SELECT {col_list} "
+            f"FROM container_metrics_history {where_sql} "
+            "ORDER BY host_label, container_name, timestamp ASC "
             f"LIMIT {int(limit)}"
         )
         client = self._get_client()
