@@ -1986,6 +1986,56 @@ async def system_health_status(
     return {"status": "success", "data": _last_health_status}
 
 
+@router.get("/ingestion-rate-history")
+async def get_ingestion_rate_history(
+    table: str | None = None,
+    from_ts: str | None = None,
+    to_ts: str | None = None,
+    limit: int = 10000,
+    ch=Depends(get_clickhouse),
+    auth: dict = Depends(require_admin),
+):
+    """Return ingestion-rate samples from ingestion_rate_history.
+
+    Filters: table (one of the core ingestion tables), from_ts/to_ts
+    (ISO-8601). Returns rows in ascending timestamp order.
+    """
+    from datetime import datetime
+
+    def _parse(ts: str | None):
+        if not ts:
+            return None
+        try:
+            return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    try:
+        rows = await asyncio.to_thread(
+            ch.query_ingestion_rate_history,
+            table=table,
+            from_ts=_parse(from_ts),
+            to_ts=_parse(to_ts),
+            limit=min(max(int(limit), 1), 50000),
+        )
+    except Exception:
+        logger.exception("ingestion_rate_history_query_failed")
+        rows = []
+
+    for r in rows:
+        ts = r.get("timestamp")
+        if ts is not None:
+            r["timestamp"] = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+        if r.get("row_count") is not None:
+            r["row_count"] = int(r["row_count"])
+        if r.get("rows_per_second") is not None:
+            r["rows_per_second"] = float(r["rows_per_second"])
+        if r.get("window_seconds") is not None:
+            r["window_seconds"] = int(r["window_seconds"])
+
+    return {"status": "success", "data": rows, "meta": {"count": len(rows)}}
+
+
 @router.get("/collector-errors/{collector_name}")
 async def get_collector_errors(
     collector_name: str,

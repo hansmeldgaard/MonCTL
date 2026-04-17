@@ -1070,6 +1070,45 @@ _AUDIT_MUTATIONS_INSERT_COLUMNS = [
 ]
 
 
+_INGESTION_RATE_HISTORY_DDL = """
+CREATE TABLE IF NOT EXISTS ingestion_rate_history ON CLUSTER '{cluster}'
+(
+    timestamp       DateTime,
+    table_name      LowCardinality(String),
+    row_count       UInt64,
+    rows_per_second Float32,
+    window_seconds  UInt32        DEFAULT 300
+)
+ENGINE = ReplicatedMergeTree(
+    '/clickhouse/tables/{{shard}}/ingestion_rate_history', '{{replica}}'
+)
+PARTITION BY toYYYYMM(timestamp)
+ORDER BY (table_name, timestamp)
+TTL timestamp + INTERVAL 90 DAY
+SETTINGS index_granularity = 8192
+"""
+
+_INGESTION_RATE_HISTORY_DDL_LOCAL = """
+CREATE TABLE IF NOT EXISTS ingestion_rate_history
+(
+    timestamp       DateTime,
+    table_name      LowCardinality(String),
+    row_count       UInt64,
+    rows_per_second Float32,
+    window_seconds  UInt32        DEFAULT 300
+)
+ENGINE = MergeTree()
+PARTITION BY toYYYYMM(timestamp)
+ORDER BY (table_name, timestamp)
+TTL timestamp + INTERVAL 90 DAY
+SETTINGS index_granularity = 8192
+"""
+
+_INGESTION_RATE_HISTORY_INSERT_COLUMNS = [
+    "timestamp", "table_name", "row_count", "rows_per_second", "window_seconds",
+]
+
+
 _RBA_RUNS_DDL = """
 CREATE TABLE IF NOT EXISTS rba_runs ON CLUSTER '{cluster}'
 (
@@ -1477,6 +1516,7 @@ class ClickHouseClient:
                 _ELIGIBILITY_RUNS_DDL,
                 _ELIGIBILITY_RESULTS_DDL,
                 _AUDIT_MUTATIONS_DDL,
+                _INGESTION_RATE_HISTORY_DDL,
             ]:
                 client.command(ddl.format(cluster=self._cluster_name))
             for mv_ddl in [
@@ -1506,6 +1546,7 @@ class ClickHouseClient:
                 _ELIGIBILITY_RUNS_DDL_LOCAL,
                 _ELIGIBILITY_RESULTS_DDL_LOCAL,
                 _AUDIT_MUTATIONS_DDL_LOCAL,
+                _INGESTION_RATE_HISTORY_DDL_LOCAL,
             ]:
                 client.command(ddl)
             for mv_ddl in [
@@ -2506,6 +2547,80 @@ class ClickHouseClient:
         client = self._get_client()
         data = [[r.get(col) for col in _AUDIT_MUTATIONS_INSERT_COLUMNS] for r in rows]
         client.insert("audit_mutations", data, column_names=_AUDIT_MUTATIONS_INSERT_COLUMNS)
+
+    # ------------------------------------------------------------------
+    # Ingestion rate history
+    # ------------------------------------------------------------------
+
+    def insert_ingestion_rate_rows(self, rows: list[dict]) -> None:
+        """Batch insert ingestion rate samples (one row per result table)."""
+        if not rows:
+            return
+        client = self._get_client()
+        data = [
+            [r.get(col) for col in _INGESTION_RATE_HISTORY_INSERT_COLUMNS]
+            for r in rows
+        ]
+        client.insert(
+            "ingestion_rate_history", data,
+            column_names=_INGESTION_RATE_HISTORY_INSERT_COLUMNS,
+        )
+
+    def count_rows_since(self, table: str, since_seconds: int) -> int:
+        """Count rows inserted into `table` within the last N seconds.
+
+        Uses `received_at` where present (all primary result tables); falls
+        back to `timestamp` for audit_mutations / logs etc. Silently
+        returns 0 if the table doesn't exist yet.
+        """
+        ts_col = "received_at"
+        if table in ("audit_mutations", "logs"):
+            ts_col = "timestamp"
+        client = self._get_client()
+        try:
+            res = client.query(
+                f"SELECT count() AS c FROM {table} "
+                f"WHERE {ts_col} > now() - toIntervalSecond({{secs:UInt32}})",
+                parameters={"secs": since_seconds},
+            )
+            row = res.first_row
+            return int(row[0]) if row else 0
+        except Exception as exc:
+            if self._is_table_missing_error(exc):
+                return 0
+            raise
+
+    def query_ingestion_rate_history(
+        self,
+        *,
+        table: str | None = None,
+        from_ts: datetime | None = None,
+        to_ts: datetime | None = None,
+        limit: int = 10000,
+    ) -> list[dict]:
+        """Return ingestion-rate samples with optional table/time filters."""
+        wheres: list[str] = []
+        params: dict[str, Any] = {}
+        if table:
+            wheres.append("table_name = {table:String}")
+            params["table"] = table
+        if from_ts:
+            wheres.append("timestamp >= {from_ts:DateTime}")
+            params["from_ts"] = from_ts.strftime("%Y-%m-%d %H:%M:%S")
+        if to_ts:
+            wheres.append("timestamp <= {to_ts:DateTime}")
+            params["to_ts"] = to_ts.strftime("%Y-%m-%d %H:%M:%S")
+        where_sql = ("WHERE " + " AND ".join(wheres)) if wheres else ""
+        sql = (
+            "SELECT timestamp, table_name, row_count, rows_per_second, "
+            "       window_seconds "
+            f"FROM ingestion_rate_history {where_sql} "
+            "ORDER BY timestamp ASC, table_name "
+            f"LIMIT {int(limit)}"
+        )
+        client = self._get_client()
+        result = client.query(sql, parameters=params)
+        return list(result.named_results())
 
     def query_audit_mutations(
         self,
