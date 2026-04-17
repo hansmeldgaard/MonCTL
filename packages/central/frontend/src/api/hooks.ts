@@ -2986,6 +2986,53 @@ export function useSystemHealth() {
   });
 }
 
+export interface HostMetricsSample {
+  timestamp: string;
+  host_label: string;
+  host_role: string;
+  cpu_count: number;
+  load_1m: number;
+  load_5m: number;
+  load_15m: number;
+  mem_total_bytes: number;
+  mem_used_bytes: number;
+  mem_available_bytes: number;
+  swap_total_bytes: number;
+  swap_used_bytes: number;
+  disk_total_bytes: number;
+  disk_used_bytes: number;
+  disk_free_bytes: number;
+  uptime_seconds: number;
+  containers_running: number;
+  containers_total: number;
+}
+
+export function useHostMetricsHistory(params: {
+  host_label?: string;
+  host_role?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+}) {
+  const q = new URLSearchParams();
+  if (params.host_label) q.set("host_label", params.host_label);
+  if (params.host_role) q.set("host_role", params.host_role);
+  if (params.from) q.set("from_ts", params.from);
+  if (params.to) q.set("to_ts", params.to);
+  if (params.limit != null) q.set("limit", String(params.limit));
+  const qs = q.toString();
+  return useQuery({
+    queryKey: ["host-metrics-history", qs],
+    queryFn: () =>
+      apiGet<HostMetricsSample[]>(
+        `/system/host-metrics-history${qs ? `?${qs}` : ""}`,
+      ),
+    select: (res) => res.data,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+}
+
 export function useCollectorErrors(collectorName: string | null, hours = 1) {
   return useQuery({
     queryKey: ["collector-errors", collectorName, hours],
