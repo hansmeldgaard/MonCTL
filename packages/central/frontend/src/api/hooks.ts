@@ -3010,6 +3010,22 @@ export interface HostMetricsSample {
 export function useHostMetricsHistory(params: {
   host_label?: string;
   host_role?: string;
+export interface DbSizeSample {
+  timestamp: string;
+  source: string;
+  scope: string;
+  database_name: string;
+  table_name: string;
+  bytes: number;
+  rows: number;
+  parts: number;
+}
+
+export function useDbSizeHistory(params: {
+  source?: "postgres" | "clickhouse";
+  scope?: "database" | "table";
+  database_name?: string;
+  table_name?: string;
   from?: string;
   to?: string;
   limit?: number;
@@ -3017,6 +3033,10 @@ export function useHostMetricsHistory(params: {
   const q = new URLSearchParams();
   if (params.host_label) q.set("host_label", params.host_label);
   if (params.host_role) q.set("host_role", params.host_role);
+  if (params.source) q.set("source", params.source);
+  if (params.scope) q.set("scope", params.scope);
+  if (params.database_name) q.set("database_name", params.database_name);
+  if (params.table_name) q.set("table_name", params.table_name);
   if (params.from) q.set("from_ts", params.from);
   if (params.to) q.set("to_ts", params.to);
   if (params.limit != null) q.set("limit", String(params.limit));
@@ -3030,6 +3050,12 @@ export function useHostMetricsHistory(params: {
     select: (res) => res.data,
     staleTime: 30_000,
     refetchInterval: 60_000,
+    queryKey: ["db-size-history", qs],
+    queryFn: () =>
+      apiGet<DbSizeSample[]>(`/system/db-size-history${qs ? `?${qs}` : ""}`),
+    select: (res) => res.data,
+    staleTime: 60_000,
+    refetchInterval: 5 * 60_000,
   });
 }
 
