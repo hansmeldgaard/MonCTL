@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useAuth } from "@/hooks/useAuth.tsx";
 import { useUpdateUiPreferences } from "@/api/hooks.ts";
+import {
+  mutateUiPreferences,
+  readUiPreferences,
+  subscribeUiPreferences,
+} from "@/hooks/uiPreferencesStore.ts";
 import type { FlexColumnDef } from "@/components/FlexTable/types.ts";
 import type {
   ColumnConfig,
@@ -95,45 +99,49 @@ export function useColumnConfig<TRow>(
   tableId: string,
   columns: FlexColumnDef<TRow>[],
 ): UseColumnConfigReturn<TRow> {
-  const { user } = useAuth();
   const update = useUpdateUiPreferences();
 
-  // Initial read: server first (so other devices win), fall back to
-  // localStorage, then to defaults. Subsequent updates to the server
-  // blob overwrite local state through the effect below.
+  // Subscribe to the shared ui_preferences store so sibling hooks'
+  // writes (e.g. useDisplayPreferences toggling compact) trigger a
+  // re-render here without clobbering our config, and vice versa.
+  const [, forceRender] = useState(0);
+  useEffect(() => subscribeUiPreferences(() => forceRender((n) => n + 1)), []);
+
+  // Initial read: shared store first (hydrated from auth refresh), fall
+  // back to localStorage.
   const [configMap, setConfigMap] = useState<ColumnConfigMap>(() => {
-    const fromServer = readServer(user?.ui_preferences, tableId);
-    if (Object.keys(fromServer).length > 0) return fromServer;
+    const fromStore = readServer(readUiPreferences(), tableId);
+    if (Object.keys(fromStore).length > 0) return fromStore;
     return readLocal(tableId);
   });
 
-  // Sync config from server → local state when the auth user refreshes.
-  // Uses a ref to avoid clobbering an in-flight optimistic write.
-  const lastServerSnapshot = useRef<string>("");
+  // Keep local state in sync with the shared store on any external
+  // change (auth refresh hydrates it; another tab / device push could too).
+  const lastSnapshot = useRef<string>("");
   useEffect(() => {
-    const fromServer = readServer(user?.ui_preferences, tableId);
-    const snapshot = JSON.stringify(fromServer);
-    if (snapshot !== lastServerSnapshot.current) {
-      lastServerSnapshot.current = snapshot;
-      setConfigMap(fromServer);
-      writeLocal(tableId, fromServer);
+    const fromStore = readServer(readUiPreferences(), tableId);
+    const snapshot = JSON.stringify(fromStore);
+    if (snapshot !== lastSnapshot.current) {
+      lastSnapshot.current = snapshot;
+      setConfigMap(fromStore);
+      writeLocal(tableId, fromStore);
     }
-  }, [user?.ui_preferences, tableId]);
+  });
 
   const persist = useCallback(
     (next: ColumnConfigMap) => {
       const compacted = compact(next);
       setConfigMap(compacted);
       writeLocal(tableId, compacted);
-      lastServerSnapshot.current = JSON.stringify(compacted);
-      const merged = mergeServerIntoPrefs(
-        user?.ui_preferences ?? {},
-        tableId,
-        compacted,
+      lastSnapshot.current = JSON.stringify(compacted);
+      // Atomically merge into the shared store so concurrent writers
+      // always base their diff on the latest state.
+      const merged = mutateUiPreferences((prev) =>
+        mergeServerIntoPrefs(prev, tableId, compacted),
       );
       update.mutate(merged);
     },
-    [tableId, update, user?.ui_preferences],
+    [tableId, update],
   );
 
   const setHidden = useCallback(
