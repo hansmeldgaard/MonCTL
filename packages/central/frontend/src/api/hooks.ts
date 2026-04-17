@@ -3121,6 +3121,38 @@ export function useContainerMetricsHistory(params: {
   });
 }
 
+export interface IngestionRateSample {
+  timestamp: string;
+  table_name: string;
+  row_count: number;
+  rows_per_second: number;
+  window_seconds: number;
+}
+
+export function useIngestionRateHistory(params: {
+  table?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+}) {
+  const q = new URLSearchParams();
+  if (params.table) q.set("table", params.table);
+  if (params.from) q.set("from_ts", params.from);
+  if (params.to) q.set("to_ts", params.to);
+  if (params.limit != null) q.set("limit", String(params.limit));
+  const qs = q.toString();
+  return useQuery({
+    queryKey: ["ingestion-rate-history", qs],
+    queryFn: () =>
+      apiGet<IngestionRateSample[]>(
+        `/system/ingestion-rate-history${qs ? `?${qs}` : ""}`,
+      ),
+    select: (res) => res.data,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+}
+
 export function useCollectorErrors(collectorName: string | null, hours = 1) {
   return useQuery({
     queryKey: ["collector-errors", collectorName, hours],

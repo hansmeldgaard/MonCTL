@@ -33,6 +33,7 @@ import { ClearableInput } from "@/components/ui/clearable-input.tsx";
 import { ContainerMetricsChart } from "@/components/ContainerMetricsChart.tsx";
 import { DbSizeHistoryChart } from "@/components/DbSizeHistoryChart.tsx";
 import { HostMetricsChart } from "@/components/HostMetricsChart.tsx";
+import { IngestionRateChart } from "@/components/IngestionRateChart.tsx";
 import { Select } from "@/components/ui/select.tsx";
 import {
   Table,
@@ -3363,6 +3364,7 @@ export function SystemHealthPage() {
           <DbSizeHistoryChart />
         </>
       )}
+      {activeTab === "overview" && <IngestionRateChart />}
       {activeTab === "overview" && <HostMetricsChart />}
       {activeTab === "overview" && <ContainerMetricsChart hosts={knownHosts} />}
 
