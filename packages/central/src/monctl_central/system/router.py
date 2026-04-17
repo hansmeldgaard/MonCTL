@@ -1986,6 +1986,60 @@ async def system_health_status(
     return {"status": "success", "data": _last_health_status}
 
 
+@router.get("/db-size-history")
+async def get_db_size_history(
+    source: str | None = None,
+    scope: str | None = None,
+    database_name: str | None = None,
+    table_name: str | None = None,
+    from_ts: str | None = None,
+    to_ts: str | None = None,
+    limit: int = 10000,
+    ch=Depends(get_clickhouse),
+    auth: dict = Depends(require_admin),
+):
+    """Return DB size samples from db_size_history.
+
+    Filters: source (postgres|clickhouse), scope (database|table),
+    database_name, table_name, from_ts/to_ts (ISO-8601).
+    """
+    from datetime import datetime
+
+    def _parse(ts: str | None):
+        if not ts:
+            return None
+        try:
+            return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    try:
+        rows = await asyncio.to_thread(
+            ch.query_db_size_history,
+            source=source,
+            scope=scope,
+            database_name=database_name,
+            table_name=table_name,
+            from_ts=_parse(from_ts),
+            to_ts=_parse(to_ts),
+            limit=min(max(int(limit), 1), 50000),
+        )
+    except Exception:
+        logger.exception("db_size_history_query_failed")
+        rows = []
+
+    # Coerce timestamps to ISO strings for JSON serialisation
+    for r in rows:
+        ts = r.get("timestamp")
+        if ts is not None:
+            r["timestamp"] = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+        for col in ("bytes", "rows", "parts"):
+            if col in r and r[col] is not None:
+                r[col] = int(r[col])
+
+    return {"status": "success", "data": rows, "meta": {"count": len(rows)}}
+
+
 @router.get("/collector-errors/{collector_name}")
 async def get_collector_errors(
     collector_name: str,
