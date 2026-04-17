@@ -5690,7 +5690,7 @@ function freshnessThresholds(intervalSeconds: number | undefined): {
 
 function freshnessInfo(
   executedAt: string | null | undefined,
-  hasError: boolean,
+  _hasError: boolean,
   intervalSeconds?: number,
 ): { label: string; color: string; ageMs: number | null; staleMs: number } {
   const { freshMs, staleMs } = freshnessThresholds(intervalSeconds);
@@ -5698,12 +5698,12 @@ function freshnessInfo(
     return { label: "never", color: "text-zinc-500", ageMs: null, staleMs };
   }
   const age = Date.now() - new Date(executedAt).getTime();
-  // An errored latest poll never counts as fresh — the timestamp advances
-  // on every attempt regardless of success, so we mark it amber/red based
-  // on how long since the last successful sample will be picked up by the
-  // LAST SUCCESS column. Here we color by raw age of the last attempt.
+  // Freshness is "how recently did we attempt a poll" — independent of
+  // whether that attempt succeeded or errored. A 1h-old errored poll on
+  // a 6h-interval app is still fresh in the "we just checked" sense; the
+  // LAST SUCCESS + ERROR columns carry the success signal.
   const hue =
-    age < freshMs && !hasError
+    age < freshMs
       ? "text-green-400"
       : age < staleMs
         ? "text-amber-400"
@@ -6328,7 +6328,14 @@ function LiveChecksTable({
         const { staleMs } = freshnessThresholds(
           intervalByAssignment.get(c.assignment_id),
         );
-        return !!c.error_category || age > staleMs;
+        // Match the row-bg definition: overdue attempt OR sustained
+        // failure. A fresh errored poll on a slow-cadence app isn't
+        // "stale" — the LAST SUCCESS column flags the real problem.
+        const successAge = c.last_success_at
+          ? Date.now() - new Date(c.last_success_at).getTime()
+          : Number.POSITIVE_INFINITY;
+        const sustainedFailure = !!c.error_category && successAge > staleMs;
+        return age > staleMs || sustainedFailure;
       });
     }
     return [...data].sort((a, b) => {
@@ -6460,9 +6467,19 @@ function LiveChecksTable({
           const interval = intervalByAssignment.get(check.assignment_id);
           const fresh = freshnessInfo(check.executed_at, hasError, interval);
           const buckets = checksSummary?.[check.assignment_id];
-          const rowBg = hasError
+          // Red row = sustained failure (no success within ~3× interval,
+          // or never succeeded). A single errored poll on a slow-cadence
+          // app shouldn't scream red for 5 hours until the next attempt;
+          // it stays amber until the failure outlives the polling window.
+          const successAgeMs = check.last_success_at
+            ? Date.now() - new Date(check.last_success_at).getTime()
+            : Number.POSITIVE_INFINITY;
+          const sustainedFailure = hasError && successAgeMs > fresh.staleMs;
+          const overdue = fresh.ageMs != null && fresh.ageMs > fresh.staleMs;
+          const transientError = hasError && !sustainedFailure;
+          const rowBg = sustainedFailure
             ? "bg-red-950/20"
-            : fresh.ageMs != null && fresh.ageMs > fresh.staleMs
+            : overdue || transientError
               ? "bg-amber-950/20"
               : "";
           return (
