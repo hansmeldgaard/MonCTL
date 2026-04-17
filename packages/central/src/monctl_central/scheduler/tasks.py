@@ -90,6 +90,9 @@ class SchedulerRunner:
                 # DB size history sampler — every 15 min (every 30th cycle)
                 if cycle % 30 == 6:
                     await self._sample_db_sizes()
+                # Ingestion-rate sampler — every 5 min (every 10th cycle, offset)
+                if cycle % 10 == 3:
+                    await self._sample_ingestion_rates()
                 # OS update check (daily) — fire-and-forget to avoid blocking alerts
                 asyncio.create_task(self._check_os_updates())
                 # Package inventory collection (every 6h) — fire-and-forget
@@ -1248,6 +1251,60 @@ class SchedulerRunner:
             logger.info("package_inventory_collected nodes=%d", len(summary))
         except Exception:
             logger.exception("package_inventory_collection_error")
+
+    # Core ingestion tables — everything a collector writes into, plus
+    # alert_log since it's a high-cardinality central-written table.
+    _INGESTION_TABLES = (
+        "availability_latency", "performance", "interface", "config",
+        "logs", "events", "alert_log",
+    )
+
+    async def _sample_ingestion_rates(self) -> None:
+        """Sample rows-per-second per result table and append to history.
+
+        Counts rows inserted in the last 5 min (via received_at / timestamp)
+        for each core ingestion table, divides by the window, and writes one
+        row per table into `ingestion_rate_history`. Runs on the leader only.
+        """
+        from datetime import datetime, timezone
+
+        if self._ch is None:
+            return
+
+        window_seconds = 300
+        ts = datetime.now(timezone.utc).replace(microsecond=0).replace(tzinfo=None)
+
+        def _count_all() -> list[dict]:
+            out: list[dict] = []
+            for tbl in self._INGESTION_TABLES:
+                try:
+                    count = self._ch.count_rows_since(tbl, window_seconds)
+                except Exception:
+                    logger.exception("ingestion_rate_count_error table=%s", tbl)
+                    continue
+                out.append({
+                    "timestamp": ts,
+                    "table_name": tbl,
+                    "row_count": count,
+                    "rows_per_second": count / window_seconds,
+                    "window_seconds": window_seconds,
+                })
+            return out
+
+        try:
+            rows = await asyncio.to_thread(_count_all)
+        except Exception:
+            logger.exception("ingestion_rate_sampler_error")
+            return
+
+        if not rows:
+            return
+
+        try:
+            await asyncio.to_thread(self._ch.insert_ingestion_rate_rows, rows)
+            logger.info("ingestion_rate_sampled tables=%d", len(rows))
+        except Exception:
+            logger.exception("ingestion_rate_sampler_insert_error")
 
     async def _sample_db_sizes(self) -> None:
         """Sample PG + CH sizes and append to db_size_history.
