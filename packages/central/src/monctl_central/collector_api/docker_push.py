@@ -41,6 +41,70 @@ def _detect_level(message: str) -> str:
     return "INFO"
 
 
+def _infer_host_role(label: str) -> str:
+    """Classify a host_label into central / worker / other for filtering."""
+    lower = label.lower()
+    if "central" in lower:
+        return "central"
+    if "worker" in lower or "collector" in lower:
+        return "worker"
+    return "other"
+
+
+def _as_int(val) -> int:
+    try:
+        return max(int(val), 0) if val is not None else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def _as_float(val) -> float:
+    try:
+        return float(val) if val is not None else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _host_metrics_row(label: str, payload: "DockerStatsPush") -> dict:
+    """Flatten the sidecar system payload into host_metrics_history columns."""
+    sys = payload.system or {}
+    host = sys.get("host") or {}
+    containers = sys.get("containers") or {}
+    load = host.get("load_avg") or {}
+
+    mem_total = _as_int(host.get("mem_total_bytes"))
+    mem_available = _as_int(host.get("mem_available_bytes"))
+    mem_used = max(mem_total - mem_available, 0) if mem_total else 0
+    swap_total = _as_int(host.get("swap_total_bytes"))
+    swap_free = _as_int(host.get("swap_free_bytes"))
+    swap_used = max(swap_total - swap_free, 0) if swap_total else 0
+
+    ts = datetime.fromtimestamp(payload.timestamp, tz=timezone.utc).replace(
+        microsecond=0, tzinfo=None,
+    )
+
+    return {
+        "timestamp": ts,
+        "host_label": label,
+        "host_role": _infer_host_role(label),
+        "cpu_count": _as_int(host.get("cpu_count")),
+        "load_1m": _as_float(load.get("1m")),
+        "load_5m": _as_float(load.get("5m")),
+        "load_15m": _as_float(load.get("15m")),
+        "mem_total_bytes": mem_total,
+        "mem_used_bytes": mem_used,
+        "mem_available_bytes": mem_available,
+        "swap_total_bytes": swap_total,
+        "swap_used_bytes": swap_used,
+        "disk_total_bytes": _as_int(host.get("disk_total_bytes")),
+        "disk_used_bytes": _as_int(host.get("disk_used_bytes")),
+        "disk_free_bytes": _as_int(host.get("disk_free_bytes")),
+        "uptime_seconds": _as_int(host.get("uptime_seconds")),
+        "containers_running": _as_int(containers.get("running")),
+        "containers_total": _as_int(containers.get("total")),
+    }
+
+
 class DockerStatsPush(BaseModel):
     host_label: str
     timestamp: float
@@ -71,6 +135,13 @@ async def push_docker_stats(
 
     if payload.system:
         await store_docker_push(label, "system", payload.system)
+        # Persist a historical sample for capacity planning / post-hoc
+        # "was this node saturated at T?" queries. One row per push.
+        try:
+            ch = get_clickhouse()
+            ch.insert_host_metrics([_host_metrics_row(label, payload)])
+        except Exception:
+            logger.debug("docker_push_host_metrics_ch_failed", label=label)
 
     if payload.logs:
         await append_docker_push_logs(label, payload.logs)

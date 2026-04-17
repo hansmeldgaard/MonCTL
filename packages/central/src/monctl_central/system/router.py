@@ -2040,6 +2040,66 @@ async def get_db_size_history(
     return {"status": "success", "data": rows, "meta": {"count": len(rows)}}
 
 
+@router.get("/host-metrics-history")
+async def get_host_metrics_history(
+    host_label: str | None = None,
+    host_role: str | None = None,
+    from_ts: str | None = None,
+    to_ts: str | None = None,
+    limit: int = 20000,
+    ch=Depends(get_clickhouse),
+    auth: dict = Depends(require_admin),
+):
+    """Return per-host CPU/memory/disk samples from host_metrics_history.
+
+    Data is persisted from every docker-stats sidecar push (one row per
+    push per host), so time resolution matches the sidecar push interval.
+    """
+    from datetime import datetime
+
+    def _parse(ts: str | None):
+        if not ts:
+            return None
+        try:
+            return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    try:
+        rows = await asyncio.to_thread(
+            ch.query_host_metrics_history,
+            host_label=host_label,
+            host_role=host_role,
+            from_ts=_parse(from_ts),
+            to_ts=_parse(to_ts),
+            limit=min(max(int(limit), 1), 100000),
+        )
+    except Exception:
+        logger.exception("host_metrics_history_query_failed")
+        rows = []
+
+    int_cols = (
+        "cpu_count", "mem_total_bytes", "mem_used_bytes", "mem_available_bytes",
+        "swap_total_bytes", "swap_used_bytes",
+        "disk_total_bytes", "disk_used_bytes", "disk_free_bytes",
+        "uptime_seconds", "containers_running", "containers_total",
+    )
+    float_cols = ("load_1m", "load_5m", "load_15m")
+
+    for r in rows:
+        ts = r.get("timestamp")
+        if ts is not None:
+            r["timestamp"] = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+        for col in int_cols:
+            if col in r and r[col] is not None:
+                r[col] = int(r[col])
+        for col in float_cols:
+            if col in r and r[col] is not None:
+                r[col] = float(r[col])
+
+    return {"status": "success", "data": rows, "meta": {"count": len(rows)}}
+
+
 @router.get("/collector-errors/{collector_name}")
 async def get_collector_errors(
     collector_name: str,

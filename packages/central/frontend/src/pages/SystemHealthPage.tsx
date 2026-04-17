@@ -30,6 +30,7 @@ import {
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { ClearableInput } from "@/components/ui/clearable-input.tsx";
+import { HostMetricsChart } from "@/components/HostMetricsChart.tsx";
 import { Select } from "@/components/ui/select.tsx";
 import {
   Table,
@@ -3343,6 +3344,7 @@ export function SystemHealthPage() {
           />
         </div>
       )}
+      {activeTab === "overview" && <HostMetricsChart />}
 
       {activeTab === "postgresql" && subs.postgresql && (
         <PostgreSQLCard
