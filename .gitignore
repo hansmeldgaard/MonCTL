@@ -62,3 +62,6 @@ packages/**/.claude/
 
 # TLS certificates
 docker/certs/
+
+# e2e smoke baseline snapshots (scripts/e2e_smoke.py)
+.monctl-smoke/
