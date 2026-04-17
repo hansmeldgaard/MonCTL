@@ -87,6 +87,9 @@ class SchedulerRunner:
                 # Cost-aware job rebalancing every 5 min (every 10th cycle)
                 if cycle % 10 == 5:
                     await self._rebalance_collector_groups()
+                # DB size history sampler — every 15 min (every 30th cycle)
+                if cycle % 30 == 6:
+                    await self._sample_db_sizes()
                 # OS update check (daily) — fire-and-forget to avoid blocking alerts
                 asyncio.create_task(self._check_os_updates())
                 # Package inventory collection (every 6h) — fire-and-forget
@@ -1245,6 +1248,114 @@ class SchedulerRunner:
             logger.info("package_inventory_collected nodes=%d", len(summary))
         except Exception:
             logger.exception("package_inventory_collection_error")
+
+    async def _sample_db_sizes(self) -> None:
+        """Sample PG + CH sizes and append to db_size_history.
+
+        One row per sampled scope: PG database total, each PG user table,
+        each CH table. Writes to the `db_size_history` ClickHouse table.
+        Runs every 15 min on the leader only. Failures are logged but
+        do not block the scheduler.
+        """
+        from datetime import datetime, timezone
+
+        from sqlalchemy import text as sa_text
+
+        if self._ch is None:
+            return
+
+        ts = datetime.now(timezone.utc).replace(microsecond=0).replace(tzinfo=None)
+        rows: list[dict] = []
+
+        # ── PostgreSQL ────────────────────────────────────────────────
+        try:
+            async with self._session_factory() as session:
+                db_name_row = await session.execute(
+                    sa_text("SELECT current_database()"),
+                )
+                db_name = db_name_row.scalar() or ""
+
+                total_row = await session.execute(
+                    sa_text("SELECT pg_database_size(current_database())"),
+                )
+                total_bytes = int(total_row.scalar() or 0)
+                rows.append({
+                    "timestamp": ts,
+                    "source": "postgres",
+                    "scope": "database",
+                    "database_name": db_name,
+                    "table_name": "",
+                    "bytes": total_bytes,
+                    "rows": 0,
+                    "parts": 0,
+                })
+
+                # Per-user-table bytes + approximate live row count (reltuples).
+                # Excludes system/toast schemas.
+                pg_tables = await session.execute(sa_text("""
+                    SELECT c.relname AS table_name,
+                           pg_total_relation_size(c.oid) AS bytes,
+                           COALESCE(c.reltuples, 0)::bigint AS approx_rows
+                    FROM pg_class c
+                    JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE c.relkind = 'r'
+                      AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+                      AND n.nspname NOT LIKE 'pg_toast%'
+                """))
+                for r in pg_tables.mappings():
+                    rows.append({
+                        "timestamp": ts,
+                        "source": "postgres",
+                        "scope": "table",
+                        "database_name": db_name,
+                        "table_name": r["table_name"],
+                        "bytes": int(r["bytes"] or 0),
+                        "rows": int(r["approx_rows"] or 0),
+                        "parts": 0,
+                    })
+        except Exception:
+            logger.exception("db_size_sampler_pg_error")
+
+        # ── ClickHouse ────────────────────────────────────────────────
+        def _ch_sample() -> list[dict]:
+            client = self._ch._get_client()
+            res = client.query(
+                "SELECT database AS database_name, table AS table_name, "
+                "       sum(bytes_on_disk) AS bytes, "
+                "       sum(rows) AS rows, "
+                "       count() AS parts "
+                "FROM system.parts "
+                "WHERE active AND database = currentDatabase() "
+                "GROUP BY database, table "
+                "SETTINGS max_memory_usage = 500000000"
+            )
+            out: list[dict] = []
+            for r in res.named_results():
+                out.append({
+                    "timestamp": ts,
+                    "source": "clickhouse",
+                    "scope": "table",
+                    "database_name": r["database_name"],
+                    "table_name": r["table_name"],
+                    "bytes": int(r["bytes"] or 0),
+                    "rows": int(r["rows"] or 0),
+                    "parts": int(r["parts"] or 0),
+                })
+            return out
+
+        try:
+            rows.extend(await asyncio.to_thread(_ch_sample))
+        except Exception:
+            logger.exception("db_size_sampler_ch_error")
+
+        if not rows:
+            return
+
+        try:
+            await asyncio.to_thread(self._ch.insert_db_size_rows, rows)
+            logger.info("db_size_sampled rows=%d", len(rows))
+        except Exception:
+            logger.exception("db_size_sampler_insert_error")
 
     async def _rebalance_collector_groups(self) -> None:
         """Periodically rebalance job weights across collector groups.

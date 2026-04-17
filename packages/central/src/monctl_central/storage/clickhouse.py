@@ -1070,6 +1070,52 @@ _AUDIT_MUTATIONS_INSERT_COLUMNS = [
 ]
 
 
+_DB_SIZE_HISTORY_DDL = """
+CREATE TABLE IF NOT EXISTS db_size_history ON CLUSTER '{cluster}'
+(
+    timestamp      DateTime,
+    source         LowCardinality(String),
+    scope          LowCardinality(String),
+    database_name  LowCardinality(String),
+    table_name     String        DEFAULT '',
+    bytes          UInt64,
+    rows           UInt64        DEFAULT 0,
+    parts          UInt32        DEFAULT 0
+)
+ENGINE = ReplicatedMergeTree(
+    '/clickhouse/tables/{{shard}}/db_size_history', '{{replica}}'
+)
+PARTITION BY toYYYYMM(timestamp)
+ORDER BY (source, scope, database_name, table_name, timestamp)
+TTL timestamp + INTERVAL 180 DAY
+SETTINGS index_granularity = 8192
+"""
+
+_DB_SIZE_HISTORY_DDL_LOCAL = """
+CREATE TABLE IF NOT EXISTS db_size_history
+(
+    timestamp      DateTime,
+    source         LowCardinality(String),
+    scope          LowCardinality(String),
+    database_name  LowCardinality(String),
+    table_name     String        DEFAULT '',
+    bytes          UInt64,
+    rows           UInt64        DEFAULT 0,
+    parts          UInt32        DEFAULT 0
+)
+ENGINE = MergeTree()
+PARTITION BY toYYYYMM(timestamp)
+ORDER BY (source, scope, database_name, table_name, timestamp)
+TTL timestamp + INTERVAL 180 DAY
+SETTINGS index_granularity = 8192
+"""
+
+_DB_SIZE_HISTORY_INSERT_COLUMNS = [
+    "timestamp", "source", "scope", "database_name", "table_name",
+    "bytes", "rows", "parts",
+]
+
+
 _RBA_RUNS_DDL = """
 CREATE TABLE IF NOT EXISTS rba_runs ON CLUSTER '{cluster}'
 (
@@ -1477,6 +1523,7 @@ class ClickHouseClient:
                 _ELIGIBILITY_RUNS_DDL,
                 _ELIGIBILITY_RESULTS_DDL,
                 _AUDIT_MUTATIONS_DDL,
+                _DB_SIZE_HISTORY_DDL,
             ]:
                 client.command(ddl.format(cluster=self._cluster_name))
             for mv_ddl in [
@@ -1506,6 +1553,7 @@ class ClickHouseClient:
                 _ELIGIBILITY_RUNS_DDL_LOCAL,
                 _ELIGIBILITY_RESULTS_DDL_LOCAL,
                 _AUDIT_MUTATIONS_DDL_LOCAL,
+                _DB_SIZE_HISTORY_DDL_LOCAL,
             ]:
                 client.command(ddl)
             for mv_ddl in [
@@ -2506,6 +2554,64 @@ class ClickHouseClient:
         client = self._get_client()
         data = [[r.get(col) for col in _AUDIT_MUTATIONS_INSERT_COLUMNS] for r in rows]
         client.insert("audit_mutations", data, column_names=_AUDIT_MUTATIONS_INSERT_COLUMNS)
+
+    # ------------------------------------------------------------------
+    # DB size history
+    # ------------------------------------------------------------------
+
+    def insert_db_size_rows(self, rows: list[dict]) -> None:
+        """Batch insert DB size sample rows."""
+        if not rows:
+            return
+        client = self._get_client()
+        data = [[r.get(col) for col in _DB_SIZE_HISTORY_INSERT_COLUMNS] for r in rows]
+        client.insert(
+            "db_size_history", data, column_names=_DB_SIZE_HISTORY_INSERT_COLUMNS,
+        )
+
+    def query_db_size_history(
+        self,
+        *,
+        source: str | None = None,
+        scope: str | None = None,
+        database_name: str | None = None,
+        table_name: str | None = None,
+        from_ts: datetime | None = None,
+        to_ts: datetime | None = None,
+        limit: int = 10000,
+    ) -> list[dict]:
+        """Return DB size samples filtered by optional source/scope/table/time."""
+        wheres: list[str] = []
+        params: dict[str, Any] = {}
+        if source:
+            wheres.append("source = {source:String}")
+            params["source"] = source
+        if scope:
+            wheres.append("scope = {scope:String}")
+            params["scope"] = scope
+        if database_name:
+            wheres.append("database_name = {database_name:String}")
+            params["database_name"] = database_name
+        if table_name:
+            wheres.append("table_name = {table_name:String}")
+            params["table_name"] = table_name
+        if from_ts:
+            wheres.append("timestamp >= {from_ts:DateTime}")
+            params["from_ts"] = from_ts.strftime("%Y-%m-%d %H:%M:%S")
+        if to_ts:
+            wheres.append("timestamp <= {to_ts:DateTime}")
+            params["to_ts"] = to_ts.strftime("%Y-%m-%d %H:%M:%S")
+        where_sql = ("WHERE " + " AND ".join(wheres)) if wheres else ""
+        sql = (
+            "SELECT timestamp, source, scope, database_name, table_name, "
+            "       bytes, rows, parts "
+            f"FROM db_size_history {where_sql} "
+            "ORDER BY timestamp ASC, source, database_name, table_name "
+            f"LIMIT {int(limit)}"
+        )
+        client = self._get_client()
+        result = client.query(sql, parameters=params)
+        return list(result.named_results())
 
     def query_audit_mutations(
         self,
