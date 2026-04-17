@@ -2986,6 +2986,45 @@ export function useSystemHealth() {
   });
 }
 
+export interface DbSizeSample {
+  timestamp: string;
+  source: string;
+  scope: string;
+  database_name: string;
+  table_name: string;
+  bytes: number;
+  rows: number;
+  parts: number;
+}
+
+export function useDbSizeHistory(params: {
+  source?: "postgres" | "clickhouse";
+  scope?: "database" | "table";
+  database_name?: string;
+  table_name?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+}) {
+  const q = new URLSearchParams();
+  if (params.source) q.set("source", params.source);
+  if (params.scope) q.set("scope", params.scope);
+  if (params.database_name) q.set("database_name", params.database_name);
+  if (params.table_name) q.set("table_name", params.table_name);
+  if (params.from) q.set("from_ts", params.from);
+  if (params.to) q.set("to_ts", params.to);
+  if (params.limit != null) q.set("limit", String(params.limit));
+  const qs = q.toString();
+  return useQuery({
+    queryKey: ["db-size-history", qs],
+    queryFn: () =>
+      apiGet<DbSizeSample[]>(`/system/db-size-history${qs ? `?${qs}` : ""}`),
+    select: (res) => res.data,
+    staleTime: 60_000,
+    refetchInterval: 5 * 60_000,
+  });
+}
+
 export function useCollectorErrors(collectorName: string | null, hours = 1) {
   return useQuery({
     queryKey: ["collector-errors", collectorName, hours],

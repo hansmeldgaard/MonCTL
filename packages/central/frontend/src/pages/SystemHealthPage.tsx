@@ -30,6 +30,7 @@ import {
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { ClearableInput } from "@/components/ui/clearable-input.tsx";
+import { DbSizeHistoryChart } from "@/components/DbSizeHistoryChart.tsx";
 import { Select } from "@/components/ui/select.tsx";
 import {
   Table,
@@ -3263,85 +3264,88 @@ export function SystemHealthPage() {
 
       {/* Tab content */}
       {activeTab === "overview" && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <OverviewMiniCard
-            icon={Database}
-            title="PostgreSQL"
-            status={(subs.postgresql?.status as SubsystemStatus) ?? "unknown"}
-            lines={[
-              `${(subs.postgresql?.details as Record<string, unknown>)?.db_size_bytes ? formatBytes(Number((subs.postgresql?.details as Record<string, unknown>).db_size_bytes)) : "—"}`,
-              `${((subs.postgresql?.details as Record<string, unknown>)?.connections as { active?: number } | undefined)?.active ?? "?"} connections`,
-            ]}
-            onClick={() => setTab("postgresql")}
-          />
-          <OverviewMiniCard
-            icon={HardDrive}
-            title="ClickHouse"
-            status={(subs.clickhouse?.status as SubsystemStatus) ?? "unknown"}
-            lines={[
-              `${formatBytes(Number(chDetails.total_bytes ?? 0))} \u00b7 ${formatNumber(Number(chDetails.total_rows ?? 0))} rows`,
-              `${Object.values(chNodes).filter((n) => n.reachable).length}/${Object.keys(chNodes).length || "?"} nodes`,
-            ]}
-            onClick={() => setTab("clickhouse")}
-          />
-          <OverviewMiniCard
-            icon={Zap}
-            title="Redis"
-            status={(subs.redis?.status as SubsystemStatus) ?? "unknown"}
-            lines={[
-              `${(subs.redis?.details as Record<string, unknown>)?.db_size ?? "?"} keys`,
-              `${(subs.redis?.details as Record<string, unknown>)?.connected_clients ?? "?"} clients`,
-            ]}
-            onClick={() => setTab("redis")}
-          />
-          <OverviewMiniCard
-            icon={ArrowDownToLine}
-            title="Ingestion"
-            status={(subs.ingestion?.status as SubsystemStatus) ?? "unknown"}
-            lines={[
-              `${(subs.ingestion?.details as Record<string, unknown>)?.total_rows_per_sec ?? 0} rows/s`,
-            ]}
-            onClick={() => setTab("overview")}
-          />
-          <OverviewMiniCard
-            icon={Radio}
-            title="Collectors"
-            status={(subs.collectors?.status as SubsystemStatus) ?? "unknown"}
-            lines={[
-              `${((subs.collectors?.details as Record<string, unknown>)?.by_status as Record<string, number> | undefined)?.ACTIVE ?? 0} active`,
-              `${(subs.collectors?.details as Record<string, unknown>)?.total_jobs ?? 0} jobs`,
-            ]}
-            onClick={() => setTab("collectors")}
-          />
-          <OverviewMiniCard
-            icon={Server}
-            title="Docker"
-            status={(subs.docker?.status as SubsystemStatus) ?? "unknown"}
-            lines={(() => {
-              const dd = subs.docker?.details as
-                | Record<string, unknown>
-                | undefined;
-              const dhosts = (dd?.hosts ?? []) as {
-                data?: { containers?: { health?: string }[] };
-              }[];
-              const uc = dhosts.reduce(
-                (s, dh) =>
-                  s +
-                  (Array.isArray(dh.data?.containers)
-                    ? dh.data!.containers.filter(
-                        (c) => c.health === "unhealthy",
-                      ).length
-                    : 0),
-                0,
-              );
-              return [
-                `${dhosts.length} hosts`,
-                uc > 0 ? `${uc} unhealthy` : "All healthy",
-              ];
-            })()}
-            onClick={() => setTab("docker")}
-          />
-        </div>
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <OverviewMiniCard
+              icon={Database}
+              title="PostgreSQL"
+              status={(subs.postgresql?.status as SubsystemStatus) ?? "unknown"}
+              lines={[
+                `${(subs.postgresql?.details as Record<string, unknown>)?.db_size_bytes ? formatBytes(Number((subs.postgresql?.details as Record<string, unknown>).db_size_bytes)) : "—"}`,
+                `${((subs.postgresql?.details as Record<string, unknown>)?.connections as { active?: number } | undefined)?.active ?? "?"} connections`,
+              ]}
+              onClick={() => setTab("postgresql")}
+            />
+            <OverviewMiniCard
+              icon={HardDrive}
+              title="ClickHouse"
+              status={(subs.clickhouse?.status as SubsystemStatus) ?? "unknown"}
+              lines={[
+                `${formatBytes(Number(chDetails.total_bytes ?? 0))} \u00b7 ${formatNumber(Number(chDetails.total_rows ?? 0))} rows`,
+                `${Object.values(chNodes).filter((n) => n.reachable).length}/${Object.keys(chNodes).length || "?"} nodes`,
+              ]}
+              onClick={() => setTab("clickhouse")}
+            />
+            <OverviewMiniCard
+              icon={Zap}
+              title="Redis"
+              status={(subs.redis?.status as SubsystemStatus) ?? "unknown"}
+              lines={[
+                `${(subs.redis?.details as Record<string, unknown>)?.db_size ?? "?"} keys`,
+                `${(subs.redis?.details as Record<string, unknown>)?.connected_clients ?? "?"} clients`,
+              ]}
+              onClick={() => setTab("redis")}
+            />
+            <OverviewMiniCard
+              icon={ArrowDownToLine}
+              title="Ingestion"
+              status={(subs.ingestion?.status as SubsystemStatus) ?? "unknown"}
+              lines={[
+                `${(subs.ingestion?.details as Record<string, unknown>)?.total_rows_per_sec ?? 0} rows/s`,
+              ]}
+              onClick={() => setTab("overview")}
+            />
+            <OverviewMiniCard
+              icon={Radio}
+              title="Collectors"
+              status={(subs.collectors?.status as SubsystemStatus) ?? "unknown"}
+              lines={[
+                `${((subs.collectors?.details as Record<string, unknown>)?.by_status as Record<string, number> | undefined)?.ACTIVE ?? 0} active`,
+                `${(subs.collectors?.details as Record<string, unknown>)?.total_jobs ?? 0} jobs`,
+              ]}
+              onClick={() => setTab("collectors")}
+            />
+            <OverviewMiniCard
+              icon={Server}
+              title="Docker"
+              status={(subs.docker?.status as SubsystemStatus) ?? "unknown"}
+              lines={(() => {
+                const dd = subs.docker?.details as
+                  | Record<string, unknown>
+                  | undefined;
+                const dhosts = (dd?.hosts ?? []) as {
+                  data?: { containers?: { health?: string }[] };
+                }[];
+                const uc = dhosts.reduce(
+                  (s, dh) =>
+                    s +
+                    (Array.isArray(dh.data?.containers)
+                      ? dh.data!.containers.filter(
+                          (c) => c.health === "unhealthy",
+                        ).length
+                      : 0),
+                  0,
+                );
+                return [
+                  `${dhosts.length} hosts`,
+                  uc > 0 ? `${uc} unhealthy` : "All healthy",
+                ];
+              })()}
+              onClick={() => setTab("docker")}
+            />
+          </div>
+          <DbSizeHistoryChart />
+        </>
       )}
 
       {activeTab === "postgresql" && subs.postgresql && (
