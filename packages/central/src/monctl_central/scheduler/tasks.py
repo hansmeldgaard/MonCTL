@@ -1285,17 +1285,19 @@ class SchedulerRunner:
                     "scope": "database",
                     "database_name": db_name,
                     "table_name": "",
-                    "bytes": total_bytes,
+                    "bytes": max(total_bytes, 0),
                     "rows": 0,
                     "parts": 0,
                 })
 
                 # Per-user-table bytes + approximate live row count (reltuples).
                 # Excludes system/toast schemas.
+                # reltuples is -1 for never-analyzed tables; clamp to 0 so
+                # the UInt64 column in ClickHouse doesn't blow up on insert.
                 pg_tables = await session.execute(sa_text("""
                     SELECT c.relname AS table_name,
                            pg_total_relation_size(c.oid) AS bytes,
-                           COALESCE(c.reltuples, 0)::bigint AS approx_rows
+                           GREATEST(COALESCE(c.reltuples, 0)::bigint, 0) AS approx_rows
                     FROM pg_class c
                     JOIN pg_namespace n ON n.oid = c.relnamespace
                     WHERE c.relkind = 'r'
@@ -1309,8 +1311,8 @@ class SchedulerRunner:
                         "scope": "table",
                         "database_name": db_name,
                         "table_name": r["table_name"],
-                        "bytes": int(r["bytes"] or 0),
-                        "rows": int(r["approx_rows"] or 0),
+                        "bytes": max(int(r["bytes"] or 0), 0),
+                        "rows": max(int(r["approx_rows"] or 0), 0),
                         "parts": 0,
                     })
         except Exception:
@@ -1337,9 +1339,9 @@ class SchedulerRunner:
                     "scope": "table",
                     "database_name": r["database_name"],
                     "table_name": r["table_name"],
-                    "bytes": int(r["bytes"] or 0),
-                    "rows": int(r["rows"] or 0),
-                    "parts": int(r["parts"] or 0),
+                    "bytes": max(int(r["bytes"] or 0), 0),
+                    "rows": max(int(r["rows"] or 0), 0),
+                    "parts": max(int(r["parts"] or 0), 0),
                 })
             return out
 
