@@ -1,7 +1,12 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
 import { validateLabelKey, validateHexColor } from "@/lib/validation.ts";
 import { Loader2, Plus, Pencil, Trash2, Tag, X } from "lucide-react";
+import { useDisplayPreferences } from "@/hooks/useDisplayPreferences.ts";
+import { useColumnConfig } from "@/hooks/useColumnConfig.ts";
+import { FlexTable } from "@/components/FlexTable/FlexTable.tsx";
+import { DisplayMenu } from "@/components/FlexTable/DisplayMenu.tsx";
+import type { FlexColumnDef } from "@/components/FlexTable/types.ts";
 import { usePermissions } from "@/hooks/usePermissions.ts";
 import {
   Card,
@@ -222,6 +227,134 @@ export function LabelKeysPage() {
     setDeleteTarget(null);
   }
 
+  const { compact } = useDisplayPreferences();
+
+  const columns = useMemo<FlexColumnDef<LabelKey>[]>(
+    () => [
+      {
+        key: "key",
+        label: "Key",
+        defaultWidth: 180,
+        cellClassName: "text-xs",
+        cell: (lk) => (
+          <Badge
+            variant="default"
+            className="text-xs font-mono"
+            style={
+              lk.color
+                ? {
+                    backgroundColor: `${lk.color}20`,
+                    color: lk.color,
+                    borderColor: `${lk.color}40`,
+                  }
+                : undefined
+            }
+          >
+            {lk.key}
+          </Badge>
+        ),
+      },
+      {
+        key: "description",
+        label: "Display Name",
+        defaultWidth: 260,
+        cellClassName: "text-xs",
+        cell: (lk) =>
+          lk.show_description && lk.description ? (
+            <span>{lk.description}</span>
+          ) : (
+            <span className="text-zinc-600">—</span>
+          ),
+      },
+      {
+        key: "__predefined_values",
+        label: "Predefined Values",
+        pickerLabel: "Predefined Values",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 260,
+        cell: (lk) => (
+          <div className="flex flex-wrap gap-1">
+            {(lk.predefined_values ?? []).slice(0, 5).map((v) => (
+              <Badge key={v} variant="default" className="text-[10px]">
+                {v}
+              </Badge>
+            ))}
+            {(lk.predefined_values ?? []).length > 5 && (
+              <span className="text-[10px] text-zinc-500">
+                +{lk.predefined_values.length - 5}
+              </span>
+            )}
+            {(lk.predefined_values ?? []).length === 0 && (
+              <span className="text-zinc-600 text-xs">—</span>
+            )}
+          </div>
+        ),
+      },
+      {
+        key: "__actions",
+        label: "",
+        pickerLabel: "Actions",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 100,
+        cell: (lk) => (
+          <div className="flex items-center justify-end gap-1">
+            {canEdit("device") && (
+              <Button size="sm" variant="ghost" onClick={() => openEdit(lk)}>
+                <Pencil className="h-3.5 w-3.5" />
+              </Button>
+            )}
+            {canDelete("device") && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setDeleteTarget(lk)}
+              >
+                <Trash2 className="h-3.5 w-3.5 text-red-400" />
+              </Button>
+            )}
+          </div>
+        ),
+      },
+    ],
+    [canEdit, canDelete],
+  );
+
+  const {
+    orderedVisibleColumns,
+    configMap,
+    setHidden,
+    setWidth,
+    setOrder,
+    reset: resetColumns,
+  } = useColumnConfig<LabelKey>("label-keys", columns);
+
+  const [sortBy, setSortBy] = useState("key");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const handleSort = (col: string) => {
+    if (col === sortBy) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortBy(col);
+      setSortDir("asc");
+    }
+  };
+  const sortedKeys = useMemo(() => {
+    if (!labelKeys) return [];
+    const copy = [...labelKeys];
+    const getter: Record<string, (lk: LabelKey) => any> = {
+      key: (lk) => lk.key,
+      description: (lk) => lk.description ?? "",
+    };
+    const g = getter[sortBy];
+    if (!g) return copy;
+    return copy.sort((a, b) =>
+      sortDir === "asc"
+        ? String(g(a)).localeCompare(String(g(b)))
+        : String(g(b)).localeCompare(String(g(a))),
+    );
+  }, [labelKeys, sortBy, sortDir]);
+
   if (isLoading) {
     return (
       <div className="flex justify-center py-12">
@@ -237,12 +370,16 @@ export function LabelKeysPage() {
           <CardTitle className="flex items-center gap-2">
             <Tag className="h-4 w-4" />
             Label Keys
+            <div className="ml-auto flex items-center gap-2">
+              <DisplayMenu
+                columns={columns}
+                configMap={configMap}
+                onToggleHidden={setHidden}
+                onReset={resetColumns}
+              />
+            </div>
             {canCreate("device") && (
-              <Button
-                size="sm"
-                className="ml-auto gap-1.5"
-                onClick={openCreate}
-              >
+              <Button size="sm" className="gap-1.5" onClick={openCreate}>
                 <Plus className="h-3.5 w-3.5" />
                 Add Label Key
               </Button>
@@ -256,90 +393,27 @@ export function LabelKeysPage() {
               <p className="text-sm">No label keys defined yet.</p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-zinc-800 text-left text-xs text-zinc-500">
-                    <th className="pb-2 pr-4 font-medium">Key</th>
-                    <th className="pb-2 pr-4 font-medium">Display Name</th>
-                    <th className="pb-2 pr-4 font-medium">Predefined Values</th>
-                    <th className="pb-2 font-medium text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-800/50">
-                  {labelKeys.map((lk) => (
-                    <tr key={lk.id} className="text-zinc-300">
-                      <td className="py-2.5 pr-4 text-xs">
-                        <Badge
-                          variant="default"
-                          className="text-xs font-mono"
-                          style={
-                            lk.color
-                              ? {
-                                  backgroundColor: `${lk.color}20`,
-                                  color: lk.color,
-                                  borderColor: `${lk.color}40`,
-                                }
-                              : undefined
-                          }
-                        >
-                          {lk.key}
-                        </Badge>
-                      </td>
-                      <td className="py-2.5 pr-4 text-xs">
-                        {lk.show_description && lk.description ? (
-                          <span>{lk.description}</span>
-                        ) : (
-                          <span className="text-zinc-600">—</span>
-                        )}
-                      </td>
-                      <td className="py-2.5 pr-4">
-                        <div className="flex flex-wrap gap-1">
-                          {(lk.predefined_values ?? []).slice(0, 5).map((v) => (
-                            <Badge
-                              key={v}
-                              variant="default"
-                              className="text-[10px]"
-                            >
-                              {v}
-                            </Badge>
-                          ))}
-                          {(lk.predefined_values ?? []).length > 5 && (
-                            <span className="text-[10px] text-zinc-500">
-                              +{lk.predefined_values.length - 5}
-                            </span>
-                          )}
-                          {(lk.predefined_values ?? []).length === 0 && (
-                            <span className="text-zinc-600 text-xs">—</span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="py-2.5 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          {canEdit("device") && (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => openEdit(lk)}
-                            >
-                              <Pencil className="h-3.5 w-3.5" />
-                            </Button>
-                          )}
-                          {canDelete("device") && (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => setDeleteTarget(lk)}
-                            >
-                              <Trash2 className="h-3.5 w-3.5 text-red-400" />
-                            </Button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div
+              className={
+                compact
+                  ? "[&_td]:py-1 [&_td]:text-xs [&_th]:py-1 [&_th]:text-xs"
+                  : ""
+              }
+            >
+              <FlexTable<LabelKey>
+                orderedVisibleColumns={orderedVisibleColumns}
+                configMap={configMap}
+                onOrderChange={setOrder}
+                onWidthChange={setWidth}
+                rows={sortedKeys}
+                rowKey={(lk) => lk.id}
+                sortBy={sortBy}
+                sortDir={sortDir}
+                onSort={handleSort}
+                filters={{}}
+                onFilterChange={() => {}}
+                emptyState="No label keys"
+              />
             </div>
           )}
         </CardContent>
