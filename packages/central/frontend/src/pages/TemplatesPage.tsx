@@ -1,20 +1,17 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
 import { validateName } from "@/lib/validation.ts";
 import { FileText, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card.tsx";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table.tsx";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import {
   useTemplates,
@@ -23,18 +20,25 @@ import {
   useDeleteTemplate,
 } from "@/api/hooks.ts";
 import type { Template, TemplateConfig } from "@/types/api.ts";
-import { formatDate } from "@/lib/utils.ts";
+import { formatTime } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
+import { useTimeDisplayMode } from "@/hooks/useTimeDisplayMode.ts";
+import { useDisplayPreferences } from "@/hooks/useDisplayPreferences.ts";
 import { useListState } from "@/hooks/useListState.ts";
 import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
-import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
+import { useColumnConfig } from "@/hooks/useColumnConfig.ts";
+import { FlexTable } from "@/components/FlexTable/FlexTable.tsx";
+import { DisplayMenu } from "@/components/FlexTable/DisplayMenu.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
 import { TemplateConfigEditor } from "@/components/TemplateConfigEditor.tsx";
 import { usePermissions } from "@/hooks/usePermissions.ts";
+import type { FlexColumnDef } from "@/components/FlexTable/types.ts";
 
 export function TemplatesPage() {
   const { canCreate, canEdit, canDelete } = usePermissions();
   const tz = useTimezone();
+  const { mode } = useTimeDisplayMode();
+  const { compact } = useDisplayPreferences();
   const { pageSize, scrollMode } = useTablePreferences();
   const listState = useListState({
     columns: [
@@ -146,6 +150,87 @@ export function TemplatesPage() {
     return count;
   }
 
+  const columns = useMemo<FlexColumnDef<Template>[]>(() => {
+    const cols: FlexColumnDef<Template>[] = [
+      {
+        key: "name",
+        label: "Name",
+        defaultWidth: 220,
+        cellClassName: "font-medium text-zinc-100",
+        cell: (t) => t.name,
+      },
+      {
+        key: "description",
+        label: "Description",
+        sortable: false,
+        defaultWidth: 320,
+        cellClassName: "text-zinc-400 max-w-[300px] truncate",
+        cell: (t) => t.description ?? "\u2014",
+      },
+      {
+        key: "__items",
+        label: "Items",
+        pickerLabel: "Items",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 100,
+        cell: (t) => (
+          <Badge variant="default">{countItems(t.config || {})} items</Badge>
+        ),
+      },
+      {
+        key: "created_at",
+        label: "Created",
+        filterable: false,
+        defaultWidth: 140,
+        cellClassName: "text-zinc-500 text-xs whitespace-nowrap",
+        cell: (t) => formatTime(t.created_at, mode, tz),
+      },
+    ];
+    if (canEdit("template") || canDelete("template")) {
+      cols.push({
+        key: "__actions",
+        label: "",
+        pickerLabel: "Actions",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 90,
+        cell: (t) => (
+          <div className="flex items-center gap-1">
+            {canEdit("template") && (
+              <button
+                onClick={() => openEdit(t)}
+                className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer"
+                title="Edit"
+              >
+                <Pencil className="h-4 w-4" />
+              </button>
+            )}
+            {canDelete("template") && (
+              <button
+                onClick={() => setDeleteTarget(t)}
+                className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                title="Delete"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        ),
+      });
+    }
+    return cols;
+  }, [canEdit, canDelete, mode, tz]);
+
+  const {
+    orderedVisibleColumns,
+    configMap,
+    setHidden,
+    setWidth,
+    setOrder,
+    reset: resetColumns,
+  } = useColumnConfig<Template>("templates", columns);
+
   if (isLoading) {
     return (
       <div className="flex h-64 items-center justify-center">
@@ -181,103 +266,52 @@ export function TemplatesPage() {
       </div>
 
       <Card>
-        <CardContent className="pt-6">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <FileText className="h-4 w-4" />
+            Templates
+            <Badge variant="default" className="ml-2">
+              {meta.total}
+            </Badge>
+            <div className="ml-auto">
+              <DisplayMenu
+                columns={columns}
+                configMap={configMap}
+                onToggleHidden={setHidden}
+                onReset={resetColumns}
+              />
+            </div>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
           {templates.length === 0 && !listState.hasActiveFilters ? (
             <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
               <FileText className="mb-2 h-8 w-8 text-zinc-600" />
               <p className="text-sm">No templates defined</p>
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <FilterableSortHead
-                    col="name"
-                    label="Name"
-                    sortBy={listState.sortBy}
-                    sortDir={listState.sortDir}
-                    onSort={listState.handleSort}
-                    filterValue={listState.filters.name}
-                    onFilterChange={(v) => listState.setFilter("name", v)}
-                  />
-                  <FilterableSortHead
-                    col="description"
-                    label="Description"
-                    sortBy={listState.sortBy}
-                    sortDir={listState.sortDir}
-                    onSort={listState.handleSort}
-                    sortable={false}
-                    filterValue={listState.filters.description}
-                    onFilterChange={(v) =>
-                      listState.setFilter("description", v)
-                    }
-                  />
-                  <TableHead>Items</TableHead>
-                  <FilterableSortHead
-                    col="created_at"
-                    label="Created"
-                    sortBy={listState.sortBy}
-                    sortDir={listState.sortDir}
-                    onSort={listState.handleSort}
-                    filterable={false}
-                  />
-                  <TableHead className="w-20"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {templates.length === 0 ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={5}
-                      className="text-center text-zinc-500 py-8"
-                    >
-                      No templates match your filters
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  templates.map((t) => (
-                    <TableRow key={t.id}>
-                      <TableCell className="font-medium text-zinc-100">
-                        {t.name}
-                      </TableCell>
-                      <TableCell className="text-zinc-400 max-w-[300px] truncate">
-                        {t.description ?? "\u2014"}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="default">
-                          {countItems(t.config || {})} items
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-zinc-500">
-                        {formatDate(t.created_at, tz)}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1">
-                          {canEdit("template") && (
-                            <button
-                              onClick={() => openEdit(t)}
-                              className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer"
-                              title="Edit"
-                            >
-                              <Pencil className="h-4 w-4" />
-                            </button>
-                          )}
-                          {canDelete("template") && (
-                            <button
-                              onClick={() => setDeleteTarget(t)}
-                              className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                              title="Delete"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          )}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
+            <div
+              className={
+                compact
+                  ? "[&_td]:py-1 [&_td]:text-xs [&_th]:py-1 [&_th]:text-xs"
+                  : ""
+              }
+            >
+              <FlexTable<Template>
+                orderedVisibleColumns={orderedVisibleColumns}
+                configMap={configMap}
+                onOrderChange={setOrder}
+                onWidthChange={setWidth}
+                rows={templates}
+                rowKey={(t) => t.id}
+                sortBy={listState.sortBy}
+                sortDir={listState.sortDir}
+                onSort={listState.handleSort}
+                filters={listState.filters}
+                onFilterChange={(col, v) => listState.setFilter(col, v)}
+                emptyState="No templates match your filters"
+              />
+            </div>
           )}
           <PaginationBar
             page={listState.page}
