@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Bell, FileText, Filter, Loader2, ShieldCheck } from "lucide-react";
 import {
@@ -9,23 +9,18 @@ import {
 } from "@/components/ui/card.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table.tsx";
 import { useAlertInstances, useAlertLog, useAlertRules } from "@/api/hooks.ts";
 import { formatTime } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 import { useTimeDisplayMode } from "@/hooks/useTimeDisplayMode.ts";
-import { TimeDisplayToggle } from "@/components/TimeDisplayToggle.tsx";
 import { useListState } from "@/hooks/useListState.ts";
 import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
-import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
+import { useDisplayPreferences } from "@/hooks/useDisplayPreferences.ts";
+import { useColumnConfig } from "@/hooks/useColumnConfig.ts";
+import { FlexTable } from "@/components/FlexTable/FlexTable.tsx";
+import { DisplayMenu } from "@/components/FlexTable/DisplayMenu.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
+import type { FlexColumnDef } from "@/components/FlexTable/types.ts";
 import type {
   AlertEntity,
   AlertDefinition,
@@ -38,7 +33,6 @@ export function AlertsPage() {
   const [tab, setTab] = useState<Tab>("active");
   const { pageSize, scrollMode } = useTablePreferences();
 
-  // Active alerts (global, firing-only)
   const activeListState = useListState({
     columns: [
       { key: "definition_name", label: "Alert" },
@@ -71,7 +65,9 @@ export function AlertsPage() {
   const defsListState = useListState({
     columns: [
       { key: "name", label: "Name" },
+      { key: "app_name", label: "App", sortable: false },
       { key: "expression", label: "Expression", sortable: false },
+      { key: "enabled", label: "Enabled", filterable: false },
     ],
     defaultPageSize: pageSize,
     scrollMode,
@@ -89,7 +85,6 @@ export function AlertsPage() {
     total: 0,
   };
 
-  // Alert log state
   const logListState = useListState({
     columns: [
       { key: "occurred_at", label: "Time", filterable: false },
@@ -187,6 +182,36 @@ export function AlertsPage() {
   );
 }
 
+function severityPillClass(sev: string | null | undefined): string {
+  switch (sev) {
+    case "critical":
+      return "bg-red-600 text-white";
+    case "warning":
+      return "bg-orange-600 text-white";
+    case "info":
+      return "bg-sky-600 text-white";
+    case "healthy":
+      return "bg-green-600 text-white";
+    default:
+      return "bg-zinc-600 text-white";
+  }
+}
+
+function severityRowClass(sev: string | null | undefined): string {
+  switch (sev) {
+    case "critical":
+      return "bg-red-500/10";
+    case "warning":
+      return "bg-orange-500/10";
+    case "info":
+      return "bg-sky-500/10";
+    case "healthy":
+      return "bg-green-500/10";
+    default:
+      return "bg-red-500/5";
+  }
+}
+
 function ActiveAlertsTab({
   alerts,
   listState,
@@ -200,6 +225,112 @@ function ActiveAlertsTab({
 }) {
   const tz = useTimezone();
   const { mode } = useTimeDisplayMode();
+  const { compact } = useDisplayPreferences();
+
+  const columns = useMemo<FlexColumnDef<AlertEntity>[]>(
+    () => [
+      {
+        key: "definition_name",
+        label: "Alert",
+        defaultWidth: 260,
+        cell: (a) => (
+          <div className="flex items-center gap-2">
+            {a.severity && (
+              <span
+                className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs font-semibold uppercase ${severityPillClass(a.severity)}`}
+              >
+                {a.severity}
+              </span>
+            )}
+            <Link
+              to={`/alerts/definitions/${a.definition_id}`}
+              className="text-brand-400 hover:text-brand-300 hover:underline"
+            >
+              {a.definition_name ?? a.definition_id}
+            </Link>
+          </div>
+        ),
+      },
+      {
+        key: "app_name",
+        label: "App",
+        defaultWidth: 160,
+        cellClassName: "text-zinc-400",
+        cell: (a) => a.app_name ?? "",
+      },
+      {
+        key: "device_name",
+        label: "Device",
+        defaultWidth: 180,
+        cell: (a) =>
+          a.device_id ? (
+            <Link
+              to={`/devices/${a.device_id}`}
+              className="text-brand-400 hover:text-brand-300 hover:underline"
+            >
+              {a.device_name ?? a.device_id}
+            </Link>
+          ) : (
+            (a.device_name ?? "—")
+          ),
+      },
+      {
+        key: "entity_key",
+        label: "Entity",
+        defaultWidth: 160,
+        cellClassName: "text-zinc-400 text-xs font-mono",
+        cell: (a) =>
+          a.entity_labels?.if_name ||
+          a.entity_labels?.component ||
+          a.entity_key ||
+          "—",
+      },
+      {
+        key: "current_value",
+        label: "Value",
+        filterable: false,
+        defaultWidth: 100,
+        cellClassName: "text-zinc-300",
+        cell: (a) =>
+          a.current_value != null ? Number(a.current_value).toFixed(1) : "—",
+      },
+      {
+        key: "fire_count",
+        label: "Fires",
+        filterable: false,
+        defaultWidth: 80,
+        cellClassName: "text-zinc-400",
+        cell: (a) => a.fire_count,
+      },
+      {
+        key: "current_state_since",
+        label: "Since",
+        filterable: false,
+        defaultWidth: 140,
+        cellClassName: "text-zinc-500 whitespace-nowrap",
+        cell: (a) => formatTime(a.current_state_since, mode, tz),
+      },
+      {
+        key: "last_triggered_at",
+        label: "Last triggered",
+        filterable: false,
+        defaultWidth: 140,
+        cellClassName: "text-zinc-500 whitespace-nowrap",
+        cell: (a) => formatTime(a.last_triggered_at, mode, tz),
+      },
+    ],
+    [mode, tz],
+  );
+
+  const {
+    orderedVisibleColumns,
+    configMap,
+    setHidden,
+    setWidth,
+    setOrder,
+    reset,
+  } = useColumnConfig<AlertEntity>("alerts-active", columns);
+
   return (
     <Card>
       <CardHeader>
@@ -212,7 +343,14 @@ function ActiveAlertsTab({
           >
             {meta.total} firing
           </Badge>
-          <TimeDisplayToggle />
+          <div className="ml-auto">
+            <DisplayMenu
+              columns={columns}
+              configMap={configMap}
+              onToggleHidden={setHidden}
+              onReset={reset}
+            />
+          </div>
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -223,172 +361,29 @@ function ActiveAlertsTab({
           </div>
         ) : (
           <>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <FilterableSortHead
-                    col="definition_name"
-                    label="Alert"
-                    sortBy={listState.sortBy}
-                    sortDir={listState.sortDir}
-                    onSort={listState.handleSort}
-                    filterValue={listState.filters.definition_name}
-                    onFilterChange={(v) =>
-                      listState.setFilter("definition_name", v)
-                    }
-                  />
-                  <FilterableSortHead
-                    col="app_name"
-                    label="App"
-                    sortBy={listState.sortBy}
-                    sortDir={listState.sortDir}
-                    onSort={listState.handleSort}
-                    filterValue={listState.filters.app_name}
-                    onFilterChange={(v) => listState.setFilter("app_name", v)}
-                  />
-                  <FilterableSortHead
-                    col="device_name"
-                    label="Device"
-                    sortBy={listState.sortBy}
-                    sortDir={listState.sortDir}
-                    onSort={listState.handleSort}
-                    filterValue={listState.filters.device_name}
-                    onFilterChange={(v) =>
-                      listState.setFilter("device_name", v)
-                    }
-                  />
-                  <FilterableSortHead
-                    col="entity_key"
-                    label="Entity"
-                    sortBy={listState.sortBy}
-                    sortDir={listState.sortDir}
-                    onSort={listState.handleSort}
-                    filterValue={listState.filters.entity_key}
-                    onFilterChange={(v) => listState.setFilter("entity_key", v)}
-                  />
-                  <FilterableSortHead
-                    col="current_value"
-                    label="Value"
-                    sortBy={listState.sortBy}
-                    sortDir={listState.sortDir}
-                    onSort={listState.handleSort}
-                    filterable={false}
-                  />
-                  <FilterableSortHead
-                    col="fire_count"
-                    label="Fires"
-                    sortBy={listState.sortBy}
-                    sortDir={listState.sortDir}
-                    onSort={listState.handleSort}
-                    filterable={false}
-                  />
-                  <FilterableSortHead
-                    col="current_state_since"
-                    label="Since"
-                    sortBy={listState.sortBy}
-                    sortDir={listState.sortDir}
-                    onSort={listState.handleSort}
-                    filterable={false}
-                  />
-                  <FilterableSortHead
-                    col="last_triggered_at"
-                    label="Last triggered"
-                    sortBy={listState.sortBy}
-                    sortDir={listState.sortDir}
-                    onSort={listState.handleSort}
-                    filterable={false}
-                  />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {alerts.length === 0 ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={8}
-                      className="text-center text-sm text-zinc-500 py-8"
-                    >
-                      No matches for current filters
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  alerts.map((alert) => {
-                    const sev = alert.severity ?? "";
-                    const rowClass =
-                      sev === "critical"
-                        ? "bg-red-500/10"
-                        : sev === "warning"
-                          ? "bg-orange-500/10"
-                          : sev === "info"
-                            ? "bg-sky-500/10"
-                            : "bg-red-500/5";
-                    const pillClass =
-                      sev === "critical"
-                        ? "bg-red-600 text-white"
-                        : sev === "warning"
-                          ? "bg-orange-600 text-white"
-                          : sev === "info"
-                            ? "bg-sky-600 text-white"
-                            : "bg-zinc-600 text-white";
-                    return (
-                      <TableRow key={alert.id} className={rowClass}>
-                        <TableCell className="font-medium text-zinc-100">
-                          <div className="flex items-center gap-2">
-                            {sev && (
-                              <span
-                                className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs font-semibold uppercase ${pillClass}`}
-                              >
-                                {sev}
-                              </span>
-                            )}
-                            <Link
-                              to={`/alerts/definitions/${alert.definition_id}`}
-                              className="text-brand-400 hover:text-brand-300 hover:underline"
-                            >
-                              {alert.definition_name ?? alert.definition_id}
-                            </Link>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-zinc-400">
-                          {alert.app_name ?? ""}
-                        </TableCell>
-                        <TableCell className="text-zinc-300">
-                          {alert.device_id ? (
-                            <Link
-                              to={`/devices/${alert.device_id}`}
-                              className="text-brand-400 hover:text-brand-300 hover:underline"
-                            >
-                              {alert.device_name ?? alert.device_id}
-                            </Link>
-                          ) : (
-                            (alert.device_name ?? "—")
-                          )}
-                        </TableCell>
-                        <TableCell className="text-zinc-400 text-xs font-mono">
-                          {alert.entity_labels?.if_name ||
-                            alert.entity_labels?.component ||
-                            alert.entity_key ||
-                            "—"}
-                        </TableCell>
-                        <TableCell className="text-zinc-300">
-                          {alert.current_value != null
-                            ? Number(alert.current_value).toFixed(1)
-                            : "—"}
-                        </TableCell>
-                        <TableCell className="text-zinc-400">
-                          {alert.fire_count}
-                        </TableCell>
-                        <TableCell className="text-zinc-500 whitespace-nowrap">
-                          {formatTime(alert.current_state_since, mode, tz)}
-                        </TableCell>
-                        <TableCell className="text-zinc-500 whitespace-nowrap">
-                          {formatTime(alert.last_triggered_at, mode, tz)}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })
-                )}
-              </TableBody>
-            </Table>
+            <div
+              className={
+                compact
+                  ? "[&_td]:py-1 [&_td]:text-xs [&_th]:py-1 [&_th]:text-xs"
+                  : ""
+              }
+            >
+              <FlexTable<AlertEntity>
+                orderedVisibleColumns={orderedVisibleColumns}
+                configMap={configMap}
+                onOrderChange={setOrder}
+                onWidthChange={setWidth}
+                rows={alerts}
+                rowKey={(a) => a.id}
+                sortBy={listState.sortBy}
+                sortDir={listState.sortDir}
+                onSort={listState.handleSort}
+                filters={listState.filters}
+                onFilterChange={(col, v) => listState.setFilter(col, v)}
+                rowClassName={(a) => severityRowClass(a.severity)}
+                emptyState="No matches for current filters"
+              />
+            </div>
             <PaginationBar
               page={listState.page}
               pageSize={listState.pageSize}
@@ -420,6 +415,128 @@ function AlertLogTab({
 }) {
   const tz = useTimezone();
   const { mode } = useTimeDisplayMode();
+  const { compact } = useDisplayPreferences();
+
+  const columns = useMemo<FlexColumnDef<AlertLogEntry>[]>(
+    () => [
+      {
+        key: "occurred_at",
+        label: "Time",
+        filterable: false,
+        defaultWidth: 140,
+        cellClassName: "text-zinc-500 text-xs whitespace-nowrap",
+        cell: (e) => formatTime(e.occurred_at, mode, tz),
+      },
+      {
+        key: "__action",
+        label: "Action",
+        pickerLabel: "Action",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 90,
+        cell: (e) => (
+          <Badge className={severityPillClass(e.severity)}>
+            {e.severity || "—"}
+          </Badge>
+        ),
+      },
+      {
+        key: "definition_name",
+        label: "Alert",
+        defaultWidth: 220,
+        cell: (e) => (
+          <Link
+            to={`/alerts/definitions/${e.definition_id}`}
+            className="font-medium text-brand-400 hover:text-brand-300 hover:underline"
+          >
+            {e.definition_name}
+          </Link>
+        ),
+      },
+      {
+        key: "device_name",
+        label: "Device",
+        defaultWidth: 180,
+        cell: (e) => (
+          <div className="flex items-center gap-1">
+            {e.device_id ? (
+              <Link
+                to={`/devices/${e.device_id}`}
+                className="text-brand-400 hover:text-brand-300 hover:underline"
+              >
+                {e.device_name || e.device_id}
+              </Link>
+            ) : (
+              <span>{e.device_name || "—"}</span>
+            )}
+            {e.device_name && (
+              <button
+                type="button"
+                className="rounded p-0.5 text-zinc-600 hover:text-brand-400 hover:bg-brand-500/10 transition-colors cursor-pointer"
+                title="Filter by this device"
+                onClick={() =>
+                  listState.setFilter("device_name", e.device_name)
+                }
+              >
+                <Filter className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+        ),
+      },
+      {
+        key: "entity_key",
+        label: "Entity",
+        defaultWidth: 160,
+        cellClassName: "text-zinc-400 text-xs font-mono",
+        cell: (e) => {
+          const labels =
+            typeof e.entity_labels === "string"
+              ? JSON.parse(e.entity_labels)
+              : e.entity_labels || {};
+          return labels.if_name || labels.component || e.entity_key || "—";
+        },
+      },
+      {
+        key: "current_value",
+        label: "Value",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 100,
+        cellClassName: "text-zinc-300",
+        cell: (e) =>
+          e.action === "fire" && e.current_value != null
+            ? Number(e.current_value).toFixed(1)
+            : "—",
+      },
+      {
+        key: "fire_count",
+        label: "Fires",
+        filterable: false,
+        defaultWidth: 80,
+        cellClassName: "text-zinc-400",
+        cell: (e) => e.fire_count,
+      },
+      {
+        key: "message",
+        label: "Message",
+        sortable: false,
+        defaultWidth: 280,
+        cellClassName: "text-zinc-400 text-xs max-w-xs truncate",
+        cell: (e) => <span title={e.message}>{e.message}</span>,
+      },
+    ],
+    [mode, tz, listState],
+  );
+
+  const {
+    orderedVisibleColumns,
+    configMap,
+    setHidden,
+    setWidth,
+    setOrder,
+    reset,
+  } = useColumnConfig<AlertLogEntry>("alerts-log", columns);
 
   return (
     <Card>
@@ -427,7 +544,14 @@ function AlertLogTab({
         <CardTitle className="flex items-center gap-2">
           <FileText className="h-4 w-4" />
           Alert Log ({meta.total})
-          <TimeDisplayToggle />
+          <div className="ml-auto">
+            <DisplayMenu
+              columns={columns}
+              configMap={configMap}
+              onToggleHidden={setHidden}
+              onReset={reset}
+            />
+          </div>
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -438,188 +562,31 @@ function AlertLogTab({
           </div>
         ) : (
           <>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <FilterableSortHead
-                    col="occurred_at"
-                    label="Time"
-                    sortBy={listState.sortBy}
-                    sortDir={listState.sortDir}
-                    onSort={listState.handleSort}
-                    filterable={false}
-                  />
-                  <TableHead className="w-16">Action</TableHead>
-                  <FilterableSortHead
-                    col="definition_name"
-                    label="Alert"
-                    sortBy={listState.sortBy}
-                    sortDir={listState.sortDir}
-                    onSort={listState.handleSort}
-                    filterValue={listState.filters.definition_name}
-                    onFilterChange={(v) =>
-                      listState.setFilter("definition_name", v)
-                    }
-                  />
-                  <FilterableSortHead
-                    col="device_name"
-                    label="Device"
-                    sortBy={listState.sortBy}
-                    sortDir={listState.sortDir}
-                    onSort={listState.handleSort}
-                    filterValue={listState.filters.device_name}
-                    onFilterChange={(v) =>
-                      listState.setFilter("device_name", v)
-                    }
-                  />
-                  <FilterableSortHead
-                    col="entity_key"
-                    label="Entity"
-                    sortBy={listState.sortBy}
-                    sortDir={listState.sortDir}
-                    onSort={listState.handleSort}
-                    filterValue={listState.filters.entity_key}
-                    onFilterChange={(v) => listState.setFilter("entity_key", v)}
-                  />
-                  <TableHead className="w-24">Value</TableHead>
-                  <FilterableSortHead
-                    col="fire_count"
-                    label="Fires"
-                    sortBy={listState.sortBy}
-                    sortDir={listState.sortDir}
-                    onSort={listState.handleSort}
-                    filterable={false}
-                  />
-                  <FilterableSortHead
-                    col="message"
-                    label="Message"
-                    sortBy={listState.sortBy}
-                    sortDir={listState.sortDir}
-                    onSort={listState.handleSort}
-                    filterValue={listState.filters.message}
-                    onFilterChange={(v) => listState.setFilter("message", v)}
-                    sortable={false}
-                  />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {entries.length === 0 ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={8}
-                      className="text-center text-sm text-zinc-500 py-8"
-                    >
-                      No matches for current filters
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  entries.map((entry, i) => {
-                    const labels =
-                      typeof entry.entity_labels === "string"
-                        ? JSON.parse(entry.entity_labels)
-                        : entry.entity_labels || {};
-                    return (
-                      <TableRow
-                        key={`${entry.id ?? i}`}
-                        className={
-                          entry.severity === "critical"
-                            ? "bg-red-500/10"
-                            : entry.severity === "warning"
-                              ? "bg-orange-500/10"
-                              : entry.severity === "info"
-                                ? "bg-sky-500/10"
-                                : entry.severity === "healthy"
-                                  ? "bg-green-500/10"
-                                  : "bg-zinc-800/20"
-                        }
-                      >
-                        <TableCell className="text-zinc-500 text-xs whitespace-nowrap">
-                          {formatTime(entry.occurred_at, mode, tz)}
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-1">
-                            <Badge
-                              className={
-                                entry.severity === "critical"
-                                  ? "bg-red-600 text-white"
-                                  : entry.severity === "warning"
-                                    ? "bg-orange-600 text-white"
-                                    : entry.severity === "info"
-                                      ? "bg-sky-600 text-white"
-                                      : entry.severity === "healthy"
-                                        ? "bg-green-600 text-white"
-                                        : "bg-zinc-600 text-white"
-                              }
-                            >
-                              {entry.severity || "—"}
-                            </Badge>
-                            <span className="text-[10px] uppercase text-zinc-500"></span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="font-medium text-zinc-100">
-                          <Link
-                            to={`/alerts/definitions/${entry.definition_id}`}
-                            className="text-brand-400 hover:text-brand-300 hover:underline"
-                          >
-                            {entry.definition_name}
-                          </Link>
-                        </TableCell>
-                        <TableCell className="text-zinc-300">
-                          <div className="flex items-center gap-1">
-                            {entry.device_id ? (
-                              <Link
-                                to={`/devices/${entry.device_id}`}
-                                className="text-brand-400 hover:text-brand-300 hover:underline"
-                              >
-                                {entry.device_name || entry.device_id}
-                              </Link>
-                            ) : (
-                              <span>{entry.device_name || "—"}</span>
-                            )}
-                            {entry.device_name && (
-                              <button
-                                type="button"
-                                className="rounded p-0.5 text-zinc-600 hover:text-brand-400 hover:bg-brand-500/10 transition-colors cursor-pointer"
-                                title="Filter by this device"
-                                onClick={() =>
-                                  listState.setFilter(
-                                    "device_name",
-                                    entry.device_name,
-                                  )
-                                }
-                              >
-                                <Filter className="h-3 w-3" />
-                              </button>
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-zinc-400 text-xs font-mono">
-                          {labels.if_name ||
-                            labels.component ||
-                            entry.entity_key ||
-                            "—"}
-                        </TableCell>
-                        <TableCell className="text-zinc-300">
-                          {entry.action === "fire" &&
-                          entry.current_value != null
-                            ? Number(entry.current_value).toFixed(1)
-                            : "—"}
-                        </TableCell>
-                        <TableCell className="text-zinc-400">
-                          {entry.fire_count}
-                        </TableCell>
-                        <TableCell
-                          className="text-zinc-400 text-xs max-w-xs truncate"
-                          title={entry.message}
-                        >
-                          {entry.message}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })
-                )}
-              </TableBody>
-            </Table>
+            <div
+              className={
+                compact
+                  ? "[&_td]:py-1 [&_td]:text-xs [&_th]:py-1 [&_th]:text-xs"
+                  : ""
+              }
+            >
+              <FlexTable<AlertLogEntry>
+                orderedVisibleColumns={orderedVisibleColumns}
+                configMap={configMap}
+                onOrderChange={setOrder}
+                onWidthChange={setWidth}
+                rows={entries}
+                rowKey={(e) =>
+                  `${e.id ?? `${e.occurred_at}-${e.definition_id}-${e.entity_key ?? ""}`}`
+                }
+                sortBy={listState.sortBy}
+                sortDir={listState.sortDir}
+                onSort={listState.handleSort}
+                filters={listState.filters}
+                onFilterChange={(col, v) => listState.setFilter(col, v)}
+                rowClassName={(e) => severityRowClass(e.severity)}
+                emptyState="No matches for current filters"
+              />
+            </div>
             <PaginationBar
               page={listState.page}
               pageSize={listState.pageSize}
@@ -649,138 +616,163 @@ function DefinitionsTab({
   meta: { limit: number; offset: number; count: number; total: number };
   isFetching: boolean;
 }) {
+  const { compact } = useDisplayPreferences();
+
+  const columns = useMemo<FlexColumnDef<AlertDefinition>[]>(
+    () => [
+      {
+        key: "name",
+        label: "Name",
+        defaultWidth: 240,
+        cell: (d) => (
+          <Link
+            to={`/alerts/definitions/${d.id}`}
+            className="font-medium text-brand-400 hover:text-brand-300 hover:underline"
+          >
+            {d.name}
+          </Link>
+        ),
+      },
+      {
+        key: "app_name",
+        label: "App",
+        sortable: false,
+        defaultWidth: 160,
+        cellClassName: "text-zinc-400",
+        cell: (d) =>
+          d.app_name ? (
+            <Link
+              to={`/apps/${d.app_id}`}
+              className="text-brand-400 hover:text-brand-300 hover:underline"
+            >
+              {d.app_name}
+            </Link>
+          ) : (
+            "—"
+          ),
+      },
+      {
+        key: "expression",
+        label: "Expression",
+        sortable: false,
+        defaultWidth: 320,
+        cellClassName: "text-zinc-400 font-mono text-xs max-w-xs",
+        cell: (d) => (
+          <div className="space-y-0.5 truncate">
+            {(d.severity_tiers ?? []).map((t, i) => (
+              <div key={i} className="flex items-center gap-1.5">
+                <span
+                  className={`inline-flex items-center rounded px-1 text-[10px] uppercase font-semibold ${severityPillClass(t.severity)}`}
+                >
+                  {t.severity}
+                </span>
+                <span className="truncate">{t.expression}</span>
+              </div>
+            ))}
+          </div>
+        ),
+      },
+      {
+        key: "__window",
+        label: "Window",
+        pickerLabel: "Window",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 100,
+        cellClassName: "text-zinc-400",
+        cell: (d) => d.window,
+      },
+      {
+        key: "enabled",
+        label: "Enabled",
+        filterable: false,
+        defaultWidth: 100,
+        cell: (d) => (
+          <Badge variant={d.enabled ? "success" : "default"}>
+            {d.enabled ? "Enabled" : "Disabled"}
+          </Badge>
+        ),
+      },
+      {
+        key: "__instances",
+        label: "Instances",
+        pickerLabel: "Instances",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 100,
+        cellClassName: "text-zinc-400",
+        cell: (d) => d.instance_count ?? 0,
+      },
+      {
+        key: "__active",
+        label: "Active",
+        pickerLabel: "Active",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 100,
+        cell: (d) =>
+          (d.firing_count ?? 0) > 0 ? (
+            <Badge variant="destructive">{d.firing_count}</Badge>
+          ) : (
+            <span className="text-zinc-500">0</span>
+          ),
+      },
+    ],
+    [],
+  );
+
+  const {
+    orderedVisibleColumns,
+    configMap,
+    setHidden,
+    setWidth,
+    setOrder,
+    reset,
+  } = useColumnConfig<AlertDefinition>("alerts-definitions", columns);
+
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <ShieldCheck className="h-4 w-4" />
           Alert Definitions ({meta.total})
+          <div className="ml-auto">
+            <DisplayMenu
+              columns={columns}
+              configMap={configMap}
+              onToggleHidden={setHidden}
+              onReset={reset}
+            />
+          </div>
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <FilterableSortHead
-                col="name"
-                label="Name"
-                sortBy={listState.sortBy}
-                sortDir={listState.sortDir}
-                onSort={listState.handleSort}
-                filterValue={listState.filters.name}
-                onFilterChange={(v) => listState.setFilter("name", v)}
-              />
-              <FilterableSortHead
-                col="app_name"
-                label="App"
-                sortable={false}
-                sortBy={listState.sortBy}
-                sortDir={listState.sortDir}
-                onSort={listState.handleSort}
-                filterValue={listState.filters.app_name}
-                onFilterChange={(v) => listState.setFilter("app_name", v)}
-              />
-              <FilterableSortHead
-                col="expression"
-                label="Expression"
-                sortable={false}
-                sortBy={listState.sortBy}
-                sortDir={listState.sortDir}
-                onSort={listState.handleSort}
-                filterValue={listState.filters.expression}
-                onFilterChange={(v) => listState.setFilter("expression", v)}
-              />
-              <TableHead>Window</TableHead>
-              <FilterableSortHead
-                col="enabled"
-                label="Enabled"
-                sortBy={listState.sortBy}
-                sortDir={listState.sortDir}
-                onSort={listState.handleSort}
-                filterable={false}
-              />
-              <TableHead>Instances</TableHead>
-              <TableHead>Active</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {definitions.length === 0 ? (
-              <TableRow>
-                <TableCell
-                  colSpan={7}
-                  className="text-center text-zinc-500 py-8"
-                >
-                  {listState.hasActiveFilters
-                    ? "No definitions match your filters"
-                    : "No alert definitions configured"}
-                </TableCell>
-              </TableRow>
-            ) : (
-              definitions.map((defn) => (
-                <TableRow key={defn.id}>
-                  <TableCell className="font-medium text-zinc-100">
-                    <Link
-                      to={`/alerts/definitions/${defn.id}`}
-                      className="text-brand-400 hover:text-brand-300 hover:underline"
-                    >
-                      {defn.name}
-                    </Link>
-                  </TableCell>
-                  <TableCell className="text-zinc-400">
-                    {defn.app_name ? (
-                      <Link
-                        to={`/apps/${defn.app_id}`}
-                        className="text-brand-400 hover:text-brand-300 hover:underline"
-                      >
-                        {defn.app_name}
-                      </Link>
-                    ) : (
-                      "—"
-                    )}
-                  </TableCell>
-                  <TableCell className="text-zinc-400 font-mono text-xs max-w-xs">
-                    <div className="space-y-0.5 truncate">
-                      {(defn.severity_tiers ?? []).map((t, i) => (
-                        <div key={i} className="flex items-center gap-1.5">
-                          <span
-                            className={`inline-flex items-center rounded px-1 text-[10px] uppercase font-semibold ${
-                              t.severity === "critical"
-                                ? "bg-red-600 text-white"
-                                : t.severity === "warning"
-                                  ? "bg-orange-600 text-white"
-                                  : t.severity === "info"
-                                    ? "bg-sky-600 text-white"
-                                    : "bg-zinc-600 text-white"
-                            }`}
-                          >
-                            {t.severity}
-                          </span>
-                          <span className="truncate">{t.expression}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-zinc-400">{defn.window}</TableCell>
-                  <TableCell>
-                    <Badge variant={defn.enabled ? "success" : "default"}>
-                      {defn.enabled ? "Enabled" : "Disabled"}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-zinc-400">
-                    {defn.instance_count ?? 0}
-                  </TableCell>
-                  <TableCell>
-                    {(defn.firing_count ?? 0) > 0 ? (
-                      <Badge variant="destructive">{defn.firing_count}</Badge>
-                    ) : (
-                      <span className="text-zinc-500">0</span>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
+        <div
+          className={
+            compact
+              ? "[&_td]:py-1 [&_td]:text-xs [&_th]:py-1 [&_th]:text-xs"
+              : ""
+          }
+        >
+          <FlexTable<AlertDefinition>
+            orderedVisibleColumns={orderedVisibleColumns}
+            configMap={configMap}
+            onOrderChange={setOrder}
+            onWidthChange={setWidth}
+            rows={definitions}
+            rowKey={(d) => d.id}
+            sortBy={listState.sortBy}
+            sortDir={listState.sortDir}
+            onSort={listState.handleSort}
+            filters={listState.filters}
+            onFilterChange={(col, v) => listState.setFilter(col, v)}
+            emptyState={
+              listState.hasActiveFilters
+                ? "No definitions match your filters"
+                : "No alert definitions configured"
+            }
+          />
+        </div>
         <PaginationBar
           page={listState.page}
           pageSize={listState.pageSize}
