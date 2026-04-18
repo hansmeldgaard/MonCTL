@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Layers,
   Loader2,
@@ -15,14 +15,6 @@ import {
 } from "@/components/ui/card.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table.tsx";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
@@ -49,8 +41,12 @@ import {
 import { usePermissions } from "@/hooks/usePermissions.ts";
 import { useListState } from "@/hooks/useListState.ts";
 import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
-import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
+import { useDisplayPreferences } from "@/hooks/useDisplayPreferences.ts";
+import { useColumnConfig } from "@/hooks/useColumnConfig.ts";
+import { FlexTable } from "@/components/FlexTable/FlexTable.tsx";
+import { DisplayMenu } from "@/components/FlexTable/DisplayMenu.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
+import type { FlexColumnDef } from "@/components/FlexTable/types.ts";
 import type {
   IncidentRule,
   IncidentRuleDependsOn,
@@ -79,6 +75,7 @@ export function IncidentRulesPage() {
   const [deleteTarget, setDeleteTarget] = useState<IncidentRule | null>(null);
   const deleteMut = useDeleteIncidentRule();
   const { pageSize, scrollMode } = useTablePreferences();
+  const { compact } = useDisplayPreferences();
 
   const listState = useListState({
     columns: [
@@ -119,6 +116,145 @@ export function IncidentRulesPage() {
     return badges;
   };
 
+  const columns = useMemo<FlexColumnDef<IncidentRule>[]>(() => {
+    const cols: FlexColumnDef<IncidentRule>[] = [
+      {
+        key: "name",
+        label: "Name",
+        defaultWidth: 240,
+        cellClassName: "font-medium text-zinc-100",
+        cell: (r) => r.name,
+      },
+      {
+        key: "definition_name",
+        label: "Alert Definition",
+        defaultWidth: 200,
+        cellClassName: "text-zinc-400",
+        cell: (r) => r.definition_name ?? r.definition_id,
+      },
+      {
+        key: "mode",
+        label: "Mode",
+        filterable: false,
+        defaultWidth: 120,
+        cell: (r) => <Badge variant="default">{r.mode}</Badge>,
+      },
+      {
+        key: "__threshold",
+        label: "Threshold",
+        pickerLabel: "Threshold",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 140,
+        cellClassName: "text-zinc-300",
+        cell: (r) =>
+          r.mode === "consecutive"
+            ? `${r.fire_count_threshold} consecutive`
+            : `${r.fire_count_threshold} of ${r.window_size}`,
+      },
+      {
+        key: "severity",
+        label: "Severity",
+        defaultWidth: 120,
+        cell: (r) => (
+          <Badge variant={severityVariant(r.severity)}>{r.severity}</Badge>
+        ),
+      },
+      {
+        key: "__features",
+        label: "Features",
+        pickerLabel: "Features",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 200,
+        cell: (r) => {
+          const feats = featureBadges(r);
+          if (feats.length === 0) {
+            return <span className="text-xs text-zinc-600">—</span>;
+          }
+          return (
+            <div className="flex flex-wrap gap-1">
+              {feats.map((f) => (
+                <Badge key={f} variant="info" className="text-[10px]">
+                  <Layers className="h-2.5 w-2.5 mr-0.5" />
+                  {f}
+                </Badge>
+              ))}
+            </div>
+          );
+        },
+      },
+      {
+        key: "source",
+        label: "Source",
+        defaultWidth: 100,
+        cell: (r) => (
+          <Badge
+            variant={r.source === "mirror" ? "default" : "success"}
+            className="text-[10px]"
+          >
+            {r.source}
+          </Badge>
+        ),
+      },
+      {
+        key: "enabled",
+        label: "Enabled",
+        filterable: false,
+        defaultWidth: 100,
+        cell: (r) => (
+          <Badge variant={r.enabled ? "success" : "default"}>
+            {r.enabled ? "Enabled" : "Disabled"}
+          </Badge>
+        ),
+      },
+    ];
+    if (canManage("event")) {
+      cols.push({
+        key: "__actions",
+        label: "",
+        pickerLabel: "Actions",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 70,
+        cell: (r) => (
+          <div className="flex items-center gap-1">
+            <button
+              className="rounded p-1 text-zinc-600 hover:text-brand-400 hover:bg-brand-500/10 transition-colors cursor-pointer"
+              onClick={() => setEditTarget(r)}
+              title={
+                r.source === "mirror"
+                  ? "Edit (phase-2 fields only on mirror rules)"
+                  : "Edit"
+              }
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
+            {r.source !== "mirror" && (
+              <button
+                className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                onClick={() => setDeleteTarget(r)}
+                title="Delete"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+        ),
+      });
+    }
+    return cols;
+  }, [canManage]);
+
+  const {
+    orderedVisibleColumns,
+    configMap,
+    setHidden,
+    setWidth,
+    setOrder,
+    reset,
+  } = useColumnConfig<IncidentRule>("incident-rules", columns);
+
   if (isLoading) {
     return (
       <div className="flex h-64 items-center justify-center">
@@ -136,12 +272,20 @@ export function IncidentRulesPage() {
               <ShieldCheck className="h-4 w-4" />
               Incident Rules ({meta.total})
             </CardTitle>
-            {canManage("event") && (
-              <Button size="sm" onClick={() => setShowCreate(true)}>
-                <Plus className="h-3.5 w-3.5" />
-                Create Rule
-              </Button>
-            )}
+            <div className="flex items-center gap-2">
+              <DisplayMenu
+                columns={columns}
+                configMap={configMap}
+                onToggleHidden={setHidden}
+                onReset={reset}
+              />
+              {canManage("event") && (
+                <Button size="sm" onClick={() => setShowCreate(true)}>
+                  <Plus className="h-3.5 w-3.5" />
+                  Create Rule
+                </Button>
+              )}
+            </div>
           </div>
           <p className="text-xs text-zinc-500 mt-1">
             Incident rules drive the IncidentEngine. Configure a rule's severity
@@ -150,168 +294,32 @@ export function IncidentRulesPage() {
           </p>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <FilterableSortHead
-                  col="name"
-                  label="Name"
-                  sortBy={listState.sortBy}
-                  sortDir={listState.sortDir}
-                  onSort={listState.handleSort}
-                  filterValue={listState.filters.name}
-                  onFilterChange={(v) => listState.setFilter("name", v)}
-                />
-                <FilterableSortHead
-                  col="definition_name"
-                  label="Alert Definition"
-                  sortBy={listState.sortBy}
-                  sortDir={listState.sortDir}
-                  onSort={listState.handleSort}
-                  filterValue={listState.filters.definition_name}
-                  onFilterChange={(v) =>
-                    listState.setFilter("definition_name", v)
-                  }
-                />
-                <FilterableSortHead
-                  col="mode"
-                  label="Mode"
-                  sortBy={listState.sortBy}
-                  sortDir={listState.sortDir}
-                  onSort={listState.handleSort}
-                  filterable={false}
-                />
-                <TableHead>Threshold</TableHead>
-                <FilterableSortHead
-                  col="severity"
-                  label="Severity"
-                  sortBy={listState.sortBy}
-                  sortDir={listState.sortDir}
-                  onSort={listState.handleSort}
-                  filterValue={listState.filters.severity}
-                  onFilterChange={(v) => listState.setFilter("severity", v)}
-                />
-                <TableHead>Features</TableHead>
-                <FilterableSortHead
-                  col="source"
-                  label="Source"
-                  sortBy={listState.sortBy}
-                  sortDir={listState.sortDir}
-                  onSort={listState.handleSort}
-                  filterValue={listState.filters.source}
-                  onFilterChange={(v) => listState.setFilter("source", v)}
-                />
-                <FilterableSortHead
-                  col="enabled"
-                  label="Enabled"
-                  sortBy={listState.sortBy}
-                  sortDir={listState.sortDir}
-                  onSort={listState.handleSort}
-                  filterable={false}
-                />
-                <TableHead className="w-12"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rules.length === 0 ? (
-                <TableRow>
-                  <TableCell
-                    colSpan={9}
-                    className="text-center text-zinc-500 py-8"
-                  >
-                    {listState.hasActiveFilters
-                      ? "No rules match your filters"
-                      : "No incident rules configured — create a native rule or let mirror sync pick up from event policies"}
-                  </TableCell>
-                </TableRow>
-              ) : (
-                rules.map((r) => {
-                  const feats = featureBadges(r);
-                  const isMirror = r.source === "mirror";
-                  return (
-                    <TableRow key={r.id}>
-                      <TableCell className="font-medium text-zinc-100">
-                        {r.name}
-                      </TableCell>
-                      <TableCell className="text-zinc-400">
-                        {r.definition_name ?? r.definition_id}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="default">{r.mode}</Badge>
-                      </TableCell>
-                      <TableCell className="text-zinc-300">
-                        {r.mode === "consecutive"
-                          ? `${r.fire_count_threshold} consecutive`
-                          : `${r.fire_count_threshold} of ${r.window_size}`}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={severityVariant(r.severity)}>
-                          {r.severity}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        {feats.length === 0 ? (
-                          <span className="text-xs text-zinc-600">—</span>
-                        ) : (
-                          <div className="flex flex-wrap gap-1">
-                            {feats.map((f) => (
-                              <Badge
-                                key={f}
-                                variant="info"
-                                className="text-[10px]"
-                              >
-                                <Layers className="h-2.5 w-2.5 mr-0.5" />
-                                {f}
-                              </Badge>
-                            ))}
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={isMirror ? "default" : "success"}
-                          className="text-[10px]"
-                        >
-                          {r.source}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={r.enabled ? "success" : "default"}>
-                          {r.enabled ? "Enabled" : "Disabled"}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        {canManage("event") && (
-                          <div className="flex items-center gap-1">
-                            <button
-                              className="rounded p-1 text-zinc-600 hover:text-brand-400 hover:bg-brand-500/10 transition-colors cursor-pointer"
-                              onClick={() => setEditTarget(r)}
-                              title={
-                                isMirror
-                                  ? "Edit (phase-2 fields only on mirror rules)"
-                                  : "Edit"
-                              }
-                            >
-                              <Pencil className="h-3.5 w-3.5" />
-                            </button>
-                            {!isMirror && (
-                              <button
-                                className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                                onClick={() => setDeleteTarget(r)}
-                                title="Delete"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })
-              )}
-            </TableBody>
-          </Table>
+          <div
+            className={
+              compact
+                ? "[&_td]:py-1 [&_td]:text-xs [&_th]:py-1 [&_th]:text-xs"
+                : ""
+            }
+          >
+            <FlexTable<IncidentRule>
+              orderedVisibleColumns={orderedVisibleColumns}
+              configMap={configMap}
+              onOrderChange={setOrder}
+              onWidthChange={setWidth}
+              rows={rules}
+              rowKey={(r) => r.id}
+              sortBy={listState.sortBy}
+              sortDir={listState.sortDir}
+              onSort={listState.handleSort}
+              filters={listState.filters}
+              onFilterChange={(col, v) => listState.setFilter(col, v)}
+              emptyState={
+                listState.hasActiveFilters
+                  ? "No rules match your filters"
+                  : "No incident rules configured — create a native rule or let mirror sync pick up from event policies"
+              }
+            />
+          </div>
           <PaginationBar
             page={listState.page}
             pageSize={listState.pageSize}
