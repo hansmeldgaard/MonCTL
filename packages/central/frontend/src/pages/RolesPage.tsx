@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
 import { validateShortName } from "@/lib/validation.ts";
 import { usePermissions } from "@/hooks/usePermissions.ts";
@@ -22,6 +22,11 @@ import {
   useDeleteRole,
 } from "@/api/hooks.ts";
 import type { Role } from "@/types/api.ts";
+import { useDisplayPreferences } from "@/hooks/useDisplayPreferences.ts";
+import { useColumnConfig } from "@/hooks/useColumnConfig.ts";
+import { FlexTable } from "@/components/FlexTable/FlexTable.tsx";
+import { DisplayMenu } from "@/components/FlexTable/DisplayMenu.tsx";
+import type { FlexColumnDef } from "@/components/FlexTable/types.ts";
 
 function PermissionMatrix({
   permissions,
@@ -214,6 +219,105 @@ export function RolesPage() {
     setDeleteTarget(null);
   }
 
+  const { compact } = useDisplayPreferences();
+
+  const columns = useMemo<FlexColumnDef<Role>[]>(
+    () => [
+      {
+        key: "name",
+        label: "Name",
+        defaultWidth: 220,
+        cellClassName: "text-xs font-medium",
+        cell: (role) => (
+          <>
+            {role.name}
+            {role.is_system && (
+              <Badge variant="default" className="ml-2 text-[10px]">
+                System
+              </Badge>
+            )}
+          </>
+        ),
+      },
+      {
+        key: "description",
+        label: "Description",
+        defaultWidth: 320,
+        cellClassName: "text-xs text-zinc-400",
+        cell: (role) => role.description ?? "—",
+      },
+      {
+        key: "__permissions",
+        label: "Permissions",
+        pickerLabel: "Permissions",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 140,
+        cellClassName: "text-xs text-zinc-400",
+        cell: (role) => `${role.permissions.length} permissions`,
+      },
+      {
+        key: "__actions",
+        label: "",
+        pickerLabel: "Actions",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 100,
+        cell: (role) =>
+          isAdmin ? (
+            <div className="flex items-center justify-end gap-1">
+              <Button size="sm" variant="ghost" onClick={() => openEdit(role)}>
+                <Pencil className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setDeleteTarget(role)}
+                disabled={role.is_system}
+              >
+                <Trash2 className="h-3.5 w-3.5 text-red-400" />
+              </Button>
+            </div>
+          ) : null,
+      },
+    ],
+    [isAdmin],
+  );
+
+  const {
+    orderedVisibleColumns,
+    configMap,
+    setHidden,
+    setWidth,
+    setOrder,
+    reset: resetColumns,
+  } = useColumnConfig<Role>("roles", columns);
+
+  const [sortBy, setSortBy] = useState("name");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const handleSort = (col: string) => {
+    if (col === sortBy) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortBy(col);
+      setSortDir("asc");
+    }
+  };
+  const sortedRoles = useMemo(() => {
+    if (!roles) return [];
+    const copy = [...roles];
+    const getter: Record<string, (r: Role) => any> = {
+      name: (r) => r.name,
+      description: (r) => r.description ?? "",
+    };
+    const g = getter[sortBy];
+    if (!g) return copy;
+    return copy.sort((a, b) =>
+      sortDir === "asc"
+        ? String(g(a)).localeCompare(String(g(b)))
+        : String(g(b)).localeCompare(String(g(a))),
+    );
+  }, [roles, sortBy, sortDir]);
+
   if (isLoading) {
     return (
       <div className="flex justify-center py-12">
@@ -229,12 +333,16 @@ export function RolesPage() {
           <CardTitle className="flex items-center gap-2">
             <ShieldCheck className="h-4 w-4" />
             Roles
+            <div className="ml-auto flex items-center gap-2">
+              <DisplayMenu
+                columns={columns}
+                configMap={configMap}
+                onToggleHidden={setHidden}
+                onReset={resetColumns}
+              />
+            </div>
             {isAdmin && (
-              <Button
-                size="sm"
-                className="ml-auto gap-1.5"
-                onClick={openCreate}
-              >
+              <Button size="sm" className="gap-1.5" onClick={openCreate}>
                 <Plus className="h-3.5 w-3.5" />
                 Add Role
               </Button>
@@ -248,58 +356,27 @@ export function RolesPage() {
               <p className="text-sm">No roles defined yet.</p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-zinc-800 text-left text-xs text-zinc-500">
-                    <th className="pb-2 pr-4 font-medium">Name</th>
-                    <th className="pb-2 pr-4 font-medium">Description</th>
-                    <th className="pb-2 pr-4 font-medium">Permissions</th>
-                    <th className="pb-2 font-medium text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-800/50">
-                  {roles.map((role) => (
-                    <tr key={role.id} className="text-zinc-300">
-                      <td className="py-2.5 pr-4 text-xs font-medium">
-                        {role.name}
-                        {role.is_system && (
-                          <Badge variant="default" className="ml-2 text-[10px]">
-                            System
-                          </Badge>
-                        )}
-                      </td>
-                      <td className="py-2.5 pr-4 text-xs text-zinc-400">
-                        {role.description ?? "—"}
-                      </td>
-                      <td className="py-2.5 pr-4 text-xs text-zinc-400">
-                        {role.permissions.length} permissions
-                      </td>
-                      <td className="py-2.5 text-right">
-                        {isAdmin && (
-                          <div className="flex items-center justify-end gap-1">
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => openEdit(role)}
-                            >
-                              <Pencil className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => setDeleteTarget(role)}
-                              disabled={role.is_system}
-                            >
-                              <Trash2 className="h-3.5 w-3.5 text-red-400" />
-                            </Button>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div
+              className={
+                compact
+                  ? "[&_td]:py-1 [&_td]:text-xs [&_th]:py-1 [&_th]:text-xs"
+                  : ""
+              }
+            >
+              <FlexTable<Role>
+                orderedVisibleColumns={orderedVisibleColumns}
+                configMap={configMap}
+                onOrderChange={setOrder}
+                onWidthChange={setWidth}
+                rows={sortedRoles}
+                rowKey={(r) => r.id}
+                sortBy={sortBy}
+                sortDir={sortDir}
+                onSort={handleSort}
+                filters={{}}
+                onFilterChange={() => {}}
+                emptyState="No roles"
+              />
             </div>
           )}
         </CardContent>
