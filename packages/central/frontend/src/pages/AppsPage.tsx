@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { AppWindow, Loader2, Plug, Plus, Trash2 } from "lucide-react";
 import {
@@ -12,47 +12,37 @@ import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { Select } from "@/components/ui/select.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table.tsx";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import { useApps, useCreateApp, useDeleteApp } from "@/api/hooks.ts";
 import { useListState } from "@/hooks/useListState.ts";
 import { usePermissions } from "@/hooks/usePermissions.ts";
 import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
-import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
+import { useTimeDisplayMode } from "@/hooks/useTimeDisplayMode.ts";
+import { useDisplayPreferences } from "@/hooks/useDisplayPreferences.ts";
+import { useColumnConfig } from "@/hooks/useColumnConfig.ts";
+import { FlexTable } from "@/components/FlexTable/FlexTable.tsx";
+import { DisplayMenu } from "@/components/FlexTable/DisplayMenu.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
-import { timeAgo, formatDate } from "@/lib/utils.ts";
+import { formatTime } from "@/lib/utils.ts";
+import type { FlexColumnDef } from "@/components/FlexTable/types.ts";
 import type { AppSummary } from "@/types/api.ts";
 
 export function AppsPage() {
   const { canCreate, canDelete } = usePermissions();
   const { pageSize, scrollMode } = useTablePreferences();
   const tz = useTimezone();
+  const { mode } = useTimeDisplayMode();
+  const { compact } = useDisplayPreferences();
+
   const listState = useListState({
     columns: [
       { key: "name", label: "Name" },
       { key: "app_type", label: "Type" },
       { key: "target_table", label: "Target Table" },
       { key: "description", label: "Description", sortable: false },
-      {
-        key: "created_at",
-        label: "Created",
-        sortable: true,
-        filterable: false,
-      },
-      {
-        key: "updated_at",
-        label: "Updated",
-        sortable: true,
-        filterable: false,
-      },
+      { key: "created_at", label: "Created", filterable: false },
+      { key: "updated_at", label: "Updated", filterable: false },
     ],
     defaultPageSize: pageSize,
     scrollMode,
@@ -129,6 +119,121 @@ export function AppsPage() {
     }
   }
 
+  const columns = useMemo<FlexColumnDef<AppSummary>[]>(() => {
+    const cols: FlexColumnDef<AppSummary>[] = [
+      {
+        key: "name",
+        label: "Name",
+        defaultWidth: 220,
+        cell: (app) => (
+          <Link
+            to={`/apps/${app.id}`}
+            className="font-medium text-brand-400 hover:text-brand-300 transition-colors"
+          >
+            {app.name}
+          </Link>
+        ),
+      },
+      {
+        key: "app_type",
+        label: "Type",
+        defaultWidth: 100,
+        cell: (app) => <Badge variant="info">{app.app_type}</Badge>,
+      },
+      {
+        key: "target_table",
+        label: "Target Table",
+        defaultWidth: 160,
+        cell: (app) => (
+          <Badge variant="default" className="font-mono text-xs">
+            {app.target_table}
+          </Badge>
+        ),
+      },
+      {
+        key: "__connectors",
+        label: "Connectors",
+        pickerLabel: "Connectors",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 180,
+        cell: (app) =>
+          app.connector_bindings && app.connector_bindings.length > 0 ? (
+            <div className="flex flex-wrap gap-1">
+              {app.connector_bindings.map((cb) => (
+                <Badge
+                  key={cb.connector_type}
+                  variant="info"
+                  className="text-xs gap-1"
+                >
+                  <Plug className="h-2.5 w-2.5" />
+                  {cb.connector_name || cb.connector_type}
+                </Badge>
+              ))}
+            </div>
+          ) : (
+            <span className="text-zinc-600 text-xs">{"\u2014"}</span>
+          ),
+      },
+      {
+        key: "description",
+        label: "Description",
+        sortable: false,
+        defaultWidth: 280,
+        cellClassName: "text-zinc-400 text-sm max-w-[400px] truncate",
+        cell: (app) =>
+          app.description ?? <span className="text-zinc-600 italic">—</span>,
+      },
+      {
+        key: "created_at",
+        label: "Created",
+        filterable: false,
+        defaultWidth: 140,
+        cellClassName: "text-zinc-500 text-xs whitespace-nowrap",
+        cell: (app) =>
+          app.created_at ? formatTime(app.created_at, mode, tz) : "—",
+      },
+      {
+        key: "updated_at",
+        label: "Updated",
+        filterable: false,
+        defaultWidth: 140,
+        cellClassName: "text-zinc-500 text-xs whitespace-nowrap",
+        cell: (app) =>
+          app.updated_at ? formatTime(app.updated_at, mode, tz) : "—",
+      },
+    ];
+    if (canDelete("app")) {
+      cols.push({
+        key: "__actions",
+        label: "",
+        pickerLabel: "Actions",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 60,
+        cell: (app) => (
+          <button
+            onClick={() => setDeleteTarget(app)}
+            className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+            title="Delete"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        ),
+      });
+    }
+    return cols;
+  }, [canDelete, mode, tz]);
+
+  const {
+    orderedVisibleColumns,
+    configMap,
+    setHidden,
+    setWidth,
+    setOrder,
+    reset,
+  } = useColumnConfig<AppSummary>("apps", columns);
+
   if (isLoading) {
     return (
       <div className="flex h-64 items-center justify-center">
@@ -171,9 +276,17 @@ export function AppsPage() {
           <CardTitle className="flex items-center gap-2">
             <AppWindow className="h-4 w-4" />
             Apps
-            <Badge variant="default" className="ml-auto">
+            <Badge variant="default" className="ml-2">
               {meta.total}
             </Badge>
+            <div className="ml-auto">
+              <DisplayMenu
+                columns={columns}
+                configMap={configMap}
+                onToggleHidden={setHidden}
+                onReset={reset}
+              />
+            </div>
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -184,160 +297,28 @@ export function AppsPage() {
             </div>
           ) : (
             <>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <FilterableSortHead
-                      col="name"
-                      label="Name"
-                      sortBy={listState.sortBy}
-                      sortDir={listState.sortDir}
-                      onSort={listState.handleSort}
-                      filterValue={listState.filters.name}
-                      onFilterChange={(v) => listState.setFilter("name", v)}
-                    />
-                    <FilterableSortHead
-                      col="app_type"
-                      label="Type"
-                      sortBy={listState.sortBy}
-                      sortDir={listState.sortDir}
-                      onSort={listState.handleSort}
-                      filterValue={listState.filters.app_type}
-                      onFilterChange={(v) => listState.setFilter("app_type", v)}
-                    />
-                    <FilterableSortHead
-                      col="target_table"
-                      label="Target Table"
-                      sortBy={listState.sortBy}
-                      sortDir={listState.sortDir}
-                      onSort={listState.handleSort}
-                      filterValue={listState.filters.target_table}
-                      onFilterChange={(v) =>
-                        listState.setFilter("target_table", v)
-                      }
-                    />
-                    <TableHead>Connectors</TableHead>
-                    <FilterableSortHead
-                      col="description"
-                      label="Description"
-                      sortBy={listState.sortBy}
-                      sortDir={listState.sortDir}
-                      onSort={listState.handleSort}
-                      sortable={false}
-                      filterValue={listState.filters.description}
-                      onFilterChange={(v) =>
-                        listState.setFilter("description", v)
-                      }
-                    />
-                    <FilterableSortHead
-                      col="created_at"
-                      label="Created"
-                      sortBy={listState.sortBy}
-                      sortDir={listState.sortDir}
-                      onSort={listState.handleSort}
-                      filterable={false}
-                    />
-                    <FilterableSortHead
-                      col="updated_at"
-                      label="Updated"
-                      sortBy={listState.sortBy}
-                      sortDir={listState.sortDir}
-                      onSort={listState.handleSort}
-                      filterable={false}
-                    />
-                    <TableHead className="w-12"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {apps.length === 0 ? (
-                    <TableRow>
-                      <TableCell
-                        colSpan={6}
-                        className="text-center text-zinc-500 py-8"
-                      >
-                        No apps match your filters
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    apps.map((app) => (
-                      <TableRow key={app.id}>
-                        <TableCell>
-                          <Link
-                            to={`/apps/${app.id}`}
-                            className="font-medium text-brand-400 hover:text-brand-300 transition-colors"
-                          >
-                            {app.name}
-                          </Link>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="info">{app.app_type}</Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Badge
-                            variant="default"
-                            className="font-mono text-xs"
-                          >
-                            {app.target_table}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          {app.connector_bindings &&
-                          app.connector_bindings.length > 0 ? (
-                            <div className="flex flex-wrap gap-1">
-                              {app.connector_bindings.map((cb) => (
-                                <Badge
-                                  key={cb.connector_type}
-                                  variant="info"
-                                  className="text-xs gap-1"
-                                >
-                                  <Plug className="h-2.5 w-2.5" />
-                                  {cb.connector_name || cb.connector_type}
-                                </Badge>
-                              ))}
-                            </div>
-                          ) : (
-                            <span className="text-zinc-600 text-xs">
-                              {"\u2014"}
-                            </span>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-zinc-400 text-sm max-w-[400px] truncate">
-                          {app.description ?? (
-                            <span className="text-zinc-600 italic">—</span>
-                          )}
-                        </TableCell>
-                        <TableCell
-                          className="text-zinc-500 text-xs whitespace-nowrap"
-                          title={
-                            app.created_at ? formatDate(app.created_at, tz) : ""
-                          }
-                        >
-                          {app.created_at ? timeAgo(app.created_at) : "—"}
-                        </TableCell>
-                        <TableCell
-                          className="text-zinc-500 text-xs whitespace-nowrap"
-                          title={
-                            app.updated_at ? formatDate(app.updated_at, tz) : ""
-                          }
-                        >
-                          {app.updated_at ? timeAgo(app.updated_at) : "—"}
-                        </TableCell>
-                        {canDelete("app") && (
-                          <TableCell>
-                            <button
-                              onClick={() => setDeleteTarget(app)}
-                              className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                              title="Delete"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          </TableCell>
-                        )}
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
+              <div
+                className={
+                  compact
+                    ? "[&_td]:py-1 [&_td]:text-xs [&_th]:py-1 [&_th]:text-xs"
+                    : ""
+                }
+              >
+                <FlexTable<AppSummary>
+                  orderedVisibleColumns={orderedVisibleColumns}
+                  configMap={configMap}
+                  onOrderChange={setOrder}
+                  onWidthChange={setWidth}
+                  rows={apps}
+                  rowKey={(app) => app.id}
+                  sortBy={listState.sortBy}
+                  sortDir={listState.sortDir}
+                  onSort={listState.handleSort}
+                  filters={listState.filters}
+                  onFilterChange={(col, v) => listState.setFilter(col, v)}
+                  emptyState="No apps match your filters"
+                />
+              </div>
               <PaginationBar
                 page={listState.page}
                 pageSize={listState.pageSize}
@@ -354,7 +335,6 @@ export function AppsPage() {
         </CardContent>
       </Card>
 
-      {/* Add App Dialog */}
       <Dialog open={addOpen} onClose={() => setAddOpen(false)} title="New App">
         <form onSubmit={handleCreate} className="space-y-4">
           <div className="space-y-1.5">
@@ -437,7 +417,6 @@ export function AppsPage() {
         </form>
       </Dialog>
 
-      {/* Delete App Dialog */}
       <Dialog
         open={!!deleteTarget}
         onClose={() => {
