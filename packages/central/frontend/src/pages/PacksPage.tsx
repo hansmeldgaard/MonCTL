@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Boxes,
@@ -9,7 +9,12 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card.tsx";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import {
@@ -36,12 +41,17 @@ import type {
 } from "@/types/api.ts";
 import { CreatePackDialog } from "@/components/CreatePackDialog.tsx";
 import { usePermissions } from "@/hooks/usePermissions.ts";
-import { formatDate } from "@/lib/utils.ts";
+import { formatTime } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
+import { useTimeDisplayMode } from "@/hooks/useTimeDisplayMode.ts";
+import { useDisplayPreferences } from "@/hooks/useDisplayPreferences.ts";
 import { useListState } from "@/hooks/useListState.ts";
 import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
-import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
+import { useColumnConfig } from "@/hooks/useColumnConfig.ts";
+import { FlexTable } from "@/components/FlexTable/FlexTable.tsx";
+import { DisplayMenu } from "@/components/FlexTable/DisplayMenu.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
+import type { FlexColumnDef } from "@/components/FlexTable/types.ts";
 
 const SECTION_LABELS: Record<string, string> = {
   apps: "Apps",
@@ -63,6 +73,8 @@ const SECTION_LABELS: Record<string, string> = {
 export function PacksPage() {
   const { canCreate, canDelete } = usePermissions();
   const tz = useTimezone();
+  const { mode } = useTimeDisplayMode();
+  const { compact } = useDisplayPreferences();
   const navigate = useNavigate();
   const { pageSize, scrollMode } = useTablePreferences();
   const listState = useListState({
@@ -213,6 +225,118 @@ export function PacksPage() {
     setResolutions({});
   }
 
+  const columns = useMemo<FlexColumnDef<Pack>[]>(
+    () => [
+      {
+        key: "name",
+        label: "Name",
+        defaultWidth: 220,
+        cellClassName: "font-medium text-zinc-100",
+        cell: (p) => (
+          <button
+            type="button"
+            onClick={() => navigate(`/packs/${p.id}`)}
+            className="font-medium text-brand-400 hover:text-brand-300 transition-colors cursor-pointer"
+          >
+            {p.name}
+          </button>
+        ),
+      },
+      {
+        key: "pack_uid",
+        label: "UID",
+        defaultWidth: 200,
+        cell: (p) => <Badge variant="info">{p.pack_uid}</Badge>,
+      },
+      {
+        key: "current_version",
+        label: "Version",
+        filterable: false,
+        defaultWidth: 100,
+        cell: (p) => <Badge variant="default">v{p.current_version}</Badge>,
+      },
+      {
+        key: "description",
+        label: "Description",
+        sortable: false,
+        defaultWidth: 300,
+        cellClassName: "text-zinc-400 max-w-[300px] truncate",
+        cell: (p) => p.description ?? "—",
+      },
+      {
+        key: "__entities",
+        label: "Entities",
+        pickerLabel: "Entities",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 100,
+        cellClassName: "text-zinc-400",
+        cell: (p) => totalEntities(p),
+      },
+      {
+        key: "installed_at",
+        label: "Installed",
+        filterable: false,
+        defaultWidth: 140,
+        cellClassName: "text-zinc-500 text-xs whitespace-nowrap",
+        cell: (p) => formatTime(p.installed_at, mode, tz),
+      },
+      {
+        key: "__actions",
+        label: "",
+        pickerLabel: "Actions",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 120,
+        cell: (p) => (
+          <div
+            className="flex items-center gap-1"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => handleExport(p)}
+              className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer"
+              title="Export"
+            >
+              <Download className="h-4 w-4" />
+            </button>
+            {canCreate("app") && (
+              <button
+                onClick={() => {
+                  setReconcileError(null);
+                  setReconcileTarget(p);
+                }}
+                className="rounded p-1 text-zinc-600 hover:text-sky-400 hover:bg-sky-500/10 transition-colors cursor-pointer"
+                title="Reconcile with on-disk pack content"
+              >
+                <RefreshCw className="h-4 w-4" />
+              </button>
+            )}
+            {canDelete("app") && (
+              <button
+                onClick={() => setDeleteTarget(p)}
+                className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                title="Delete"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        ),
+      },
+    ],
+    [canCreate, canDelete, mode, tz, navigate],
+  );
+
+  const {
+    orderedVisibleColumns,
+    configMap,
+    setHidden,
+    setWidth,
+    setOrder,
+    reset: resetColumns,
+  } = useColumnConfig<Pack>("packs", columns);
+
   if (isLoading) {
     return (
       <div className="flex h-64 items-center justify-center">
@@ -262,7 +386,24 @@ export function PacksPage() {
       </div>
 
       <Card>
-        <CardContent className="pt-6">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Boxes className="h-4 w-4" />
+            Packs
+            <Badge variant="default" className="ml-2">
+              {meta.total}
+            </Badge>
+            <div className="ml-auto">
+              <DisplayMenu
+                columns={columns}
+                configMap={configMap}
+                onToggleHidden={setHidden}
+                onReset={resetColumns}
+              />
+            </div>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
           {!packs || packs.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
               <Boxes className="mb-2 h-8 w-8 text-zinc-600" />
@@ -272,123 +413,29 @@ export function PacksPage() {
               </p>
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <FilterableSortHead
-                    col="name"
-                    label="Name"
-                    sortBy={listState.sortBy}
-                    sortDir={listState.sortDir}
-                    onSort={listState.handleSort}
-                    filterValue={listState.filters.name}
-                    onFilterChange={(v) => listState.setFilter("name", v)}
-                  />
-                  <FilterableSortHead
-                    col="pack_uid"
-                    label="UID"
-                    sortBy={listState.sortBy}
-                    sortDir={listState.sortDir}
-                    onSort={listState.handleSort}
-                    filterValue={listState.filters.pack_uid}
-                    onFilterChange={(v) => listState.setFilter("pack_uid", v)}
-                  />
-                  <FilterableSortHead
-                    col="current_version"
-                    label="Version"
-                    sortBy={listState.sortBy}
-                    sortDir={listState.sortDir}
-                    onSort={listState.handleSort}
-                    filterable={false}
-                  />
-                  <FilterableSortHead
-                    col="description"
-                    label="Description"
-                    sortBy={listState.sortBy}
-                    sortDir={listState.sortDir}
-                    onSort={listState.handleSort}
-                    sortable={false}
-                    filterValue={listState.filters.description}
-                    onFilterChange={(v) =>
-                      listState.setFilter("description", v)
-                    }
-                  />
-                  <TableHead>Entities</TableHead>
-                  <FilterableSortHead
-                    col="installed_at"
-                    label="Installed"
-                    sortBy={listState.sortBy}
-                    sortDir={listState.sortDir}
-                    onSort={listState.handleSort}
-                    filterable={false}
-                  />
-                  <TableHead className="w-24"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {packs.map((p) => (
-                  <TableRow
-                    key={p.id}
-                    className="cursor-pointer"
-                    onClick={() => navigate(`/packs/${p.id}`)}
-                  >
-                    <TableCell className="font-medium text-zinc-100">
-                      {p.name}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="info">{p.pack_uid}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="default">v{p.current_version}</Badge>
-                    </TableCell>
-                    <TableCell className="text-zinc-400 max-w-[300px] truncate">
-                      {p.description ?? "—"}
-                    </TableCell>
-                    <TableCell className="text-zinc-400">
-                      {totalEntities(p)}
-                    </TableCell>
-                    <TableCell className="text-zinc-500">
-                      {formatDate(p.installed_at, tz)}
-                    </TableCell>
-                    <TableCell>
-                      <div
-                        className="flex items-center gap-1"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <button
-                          onClick={() => handleExport(p)}
-                          className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer"
-                          title="Export"
-                        >
-                          <Download className="h-4 w-4" />
-                        </button>
-                        {canCreate("app") && (
-                          <button
-                            onClick={() => {
-                              setReconcileError(null);
-                              setReconcileTarget(p);
-                            }}
-                            className="rounded p-1 text-zinc-600 hover:text-sky-400 hover:bg-sky-500/10 transition-colors cursor-pointer"
-                            title="Reconcile with on-disk pack content"
-                          >
-                            <RefreshCw className="h-4 w-4" />
-                          </button>
-                        )}
-                        {canDelete("app") && (
-                          <button
-                            onClick={() => setDeleteTarget(p)}
-                            className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                            title="Delete"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <div
+              className={
+                compact
+                  ? "[&_td]:py-1 [&_td]:text-xs [&_th]:py-1 [&_th]:text-xs"
+                  : ""
+              }
+            >
+              <FlexTable<Pack>
+                orderedVisibleColumns={orderedVisibleColumns}
+                configMap={configMap}
+                onOrderChange={setOrder}
+                onWidthChange={setWidth}
+                rows={packs}
+                rowKey={(p) => p.id}
+                sortBy={listState.sortBy}
+                sortDir={listState.sortDir}
+                onSort={listState.handleSort}
+                filters={listState.filters}
+                onFilterChange={(col, v) => listState.setFilter(col, v)}
+                rowClassName={() => "cursor-pointer"}
+                emptyState="No packs match your filters"
+              />
+            </div>
           )}
           <PaginationBar
             page={listState.page}
