@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Loader2, Plug, Plus, Trash2 } from "lucide-react";
 import {
@@ -11,14 +11,6 @@ import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table.tsx";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import {
   useConnectors,
@@ -29,32 +21,30 @@ import { usePermissions } from "@/hooks/usePermissions.ts";
 import { useListState } from "@/hooks/useListState.ts";
 import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
-import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
+import { useTimeDisplayMode } from "@/hooks/useTimeDisplayMode.ts";
+import { useDisplayPreferences } from "@/hooks/useDisplayPreferences.ts";
+import { useColumnConfig } from "@/hooks/useColumnConfig.ts";
+import { FlexTable } from "@/components/FlexTable/FlexTable.tsx";
+import { DisplayMenu } from "@/components/FlexTable/DisplayMenu.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
-import { timeAgo, formatDate } from "@/lib/utils.ts";
+import { formatTime } from "@/lib/utils.ts";
+import type { FlexColumnDef } from "@/components/FlexTable/types.ts";
 import type { ConnectorSummary } from "@/types/api.ts";
 
 export function ConnectorsPage() {
   const { canCreate, canDelete } = usePermissions();
   const { pageSize, scrollMode } = useTablePreferences();
   const tz = useTimezone();
+  const { mode } = useTimeDisplayMode();
+  const { compact } = useDisplayPreferences();
+
   const listState = useListState({
     columns: [
       { key: "name", label: "Name" },
       { key: "connector_type", label: "Type" },
       { key: "description", label: "Description", sortable: false },
-      {
-        key: "created_at",
-        label: "Created",
-        sortable: true,
-        filterable: false,
-      },
-      {
-        key: "updated_at",
-        label: "Updated",
-        sortable: true,
-        filterable: false,
-      },
+      { key: "created_at", label: "Created", filterable: false },
+      { key: "updated_at", label: "Updated", filterable: false },
     ],
     defaultPageSize: pageSize,
     scrollMode,
@@ -128,6 +118,120 @@ export function ConnectorsPage() {
     }
   }
 
+  const columns = useMemo<FlexColumnDef<ConnectorSummary>[]>(() => {
+    const cols: FlexColumnDef<ConnectorSummary>[] = [
+      {
+        key: "name",
+        label: "Name",
+        defaultWidth: 220,
+        cell: (c) => (
+          <Link
+            to={`/connectors/${c.id}`}
+            className="font-medium text-brand-400 hover:text-brand-300 transition-colors"
+          >
+            {c.name}
+          </Link>
+        ),
+      },
+      {
+        key: "connector_type",
+        label: "Type",
+        defaultWidth: 120,
+        cell: (c) => <Badge variant="info">{c.connector_type}</Badge>,
+      },
+      {
+        key: "description",
+        label: "Description",
+        sortable: false,
+        defaultWidth: 300,
+        cellClassName: "text-zinc-400 text-sm max-w-[400px] truncate",
+        cell: (c) =>
+          c.description ?? <span className="text-zinc-600 italic">—</span>,
+      },
+      {
+        key: "__version_count",
+        label: "Versions",
+        pickerLabel: "Versions",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 100,
+        cellClassName: "text-zinc-400 text-sm",
+        cell: (c) => c.version_count,
+      },
+      {
+        key: "__latest_version",
+        label: "Latest Version",
+        pickerLabel: "Latest Version",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 140,
+        cell: (c) =>
+          c.latest_version ? (
+            <Badge variant="default" className="font-mono text-xs">
+              {c.latest_version}
+            </Badge>
+          ) : (
+            <span className="text-zinc-600 italic text-sm">—</span>
+          ),
+      },
+      {
+        key: "__builtin",
+        label: "Built-in",
+        pickerLabel: "Built-in",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 100,
+        cell: (c) =>
+          c.is_builtin ? <Badge variant="success">built-in</Badge> : null,
+      },
+      {
+        key: "created_at",
+        label: "Created",
+        filterable: false,
+        defaultWidth: 140,
+        cellClassName: "text-zinc-500 text-xs whitespace-nowrap",
+        cell: (c) => (c.created_at ? formatTime(c.created_at, mode, tz) : "—"),
+      },
+      {
+        key: "updated_at",
+        label: "Updated",
+        filterable: false,
+        defaultWidth: 140,
+        cellClassName: "text-zinc-500 text-xs whitespace-nowrap",
+        cell: (c) => (c.updated_at ? formatTime(c.updated_at, mode, tz) : "—"),
+      },
+    ];
+    if (canDelete("connector")) {
+      cols.push({
+        key: "__actions",
+        label: "",
+        pickerLabel: "Actions",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 60,
+        cell: (c) => (
+          <button
+            onClick={() => setDeleteTarget(c)}
+            className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+            title="Delete"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        ),
+      });
+    }
+    return cols;
+  }, [canDelete, mode, tz]);
+
+  const {
+    orderedVisibleColumns,
+    configMap,
+    setHidden,
+    setWidth,
+    setOrder,
+    reset,
+  } = useColumnConfig<ConnectorSummary>("connectors", columns);
+
   if (isLoading) {
     return (
       <div className="flex h-64 items-center justify-center">
@@ -168,9 +272,17 @@ export function ConnectorsPage() {
           <CardTitle className="flex items-center gap-2">
             <Plug className="h-4 w-4" />
             Connectors
-            <Badge variant="default" className="ml-auto">
+            <Badge variant="default" className="ml-2">
               {meta.total}
             </Badge>
+            <div className="ml-auto">
+              <DisplayMenu
+                columns={columns}
+                configMap={configMap}
+                onToggleHidden={setHidden}
+                onReset={reset}
+              />
+            </div>
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -181,146 +293,28 @@ export function ConnectorsPage() {
             </div>
           ) : (
             <>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <FilterableSortHead
-                      col="name"
-                      label="Name"
-                      sortBy={listState.sortBy}
-                      sortDir={listState.sortDir}
-                      onSort={listState.handleSort}
-                      filterValue={listState.filters.name}
-                      onFilterChange={(v) => listState.setFilter("name", v)}
-                    />
-                    <FilterableSortHead
-                      col="connector_type"
-                      label="Type"
-                      sortBy={listState.sortBy}
-                      sortDir={listState.sortDir}
-                      onSort={listState.handleSort}
-                      filterValue={listState.filters.connector_type}
-                      onFilterChange={(v) =>
-                        listState.setFilter("connector_type", v)
-                      }
-                    />
-                    <FilterableSortHead
-                      col="description"
-                      label="Description"
-                      sortBy={listState.sortBy}
-                      sortDir={listState.sortDir}
-                      onSort={listState.handleSort}
-                      sortable={false}
-                      filterValue={listState.filters.description}
-                      onFilterChange={(v) =>
-                        listState.setFilter("description", v)
-                      }
-                    />
-                    <TableHead>Versions</TableHead>
-                    <TableHead>Latest Version</TableHead>
-                    <TableHead>Built-in</TableHead>
-                    <FilterableSortHead
-                      col="created_at"
-                      label="Created"
-                      sortBy={listState.sortBy}
-                      sortDir={listState.sortDir}
-                      onSort={listState.handleSort}
-                      filterable={false}
-                    />
-                    <FilterableSortHead
-                      col="updated_at"
-                      label="Updated"
-                      sortBy={listState.sortBy}
-                      sortDir={listState.sortDir}
-                      onSort={listState.handleSort}
-                      filterable={false}
-                    />
-                    <TableHead className="w-12"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {connectors.length === 0 ? (
-                    <TableRow>
-                      <TableCell
-                        colSpan={7}
-                        className="text-center text-zinc-500 py-8"
-                      >
-                        No connectors match your filters
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    connectors.map((c) => (
-                      <TableRow key={c.id}>
-                        <TableCell>
-                          <Link
-                            to={`/connectors/${c.id}`}
-                            className="font-medium text-brand-400 hover:text-brand-300 transition-colors"
-                          >
-                            {c.name}
-                          </Link>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="info">{c.connector_type}</Badge>
-                        </TableCell>
-                        <TableCell className="text-zinc-400 text-sm max-w-[400px] truncate">
-                          {c.description ?? (
-                            <span className="text-zinc-600 italic">—</span>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-zinc-400 text-sm">
-                          {c.version_count}
-                        </TableCell>
-                        <TableCell>
-                          {c.latest_version ? (
-                            <Badge
-                              variant="default"
-                              className="font-mono text-xs"
-                            >
-                              {c.latest_version}
-                            </Badge>
-                          ) : (
-                            <span className="text-zinc-600 italic text-sm">
-                              —
-                            </span>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          {c.is_builtin && (
-                            <Badge variant="success">built-in</Badge>
-                          )}
-                        </TableCell>
-                        <TableCell
-                          className="text-zinc-500 text-xs whitespace-nowrap"
-                          title={
-                            c.created_at ? formatDate(c.created_at, tz) : ""
-                          }
-                        >
-                          {c.created_at ? timeAgo(c.created_at) : "—"}
-                        </TableCell>
-                        <TableCell
-                          className="text-zinc-500 text-xs whitespace-nowrap"
-                          title={
-                            c.updated_at ? formatDate(c.updated_at, tz) : ""
-                          }
-                        >
-                          {c.updated_at ? timeAgo(c.updated_at) : "—"}
-                        </TableCell>
-                        {canDelete("connector") && (
-                          <TableCell>
-                            <button
-                              onClick={() => setDeleteTarget(c)}
-                              className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                              title="Delete"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          </TableCell>
-                        )}
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
+              <div
+                className={
+                  compact
+                    ? "[&_td]:py-1 [&_td]:text-xs [&_th]:py-1 [&_th]:text-xs"
+                    : ""
+                }
+              >
+                <FlexTable<ConnectorSummary>
+                  orderedVisibleColumns={orderedVisibleColumns}
+                  configMap={configMap}
+                  onOrderChange={setOrder}
+                  onWidthChange={setWidth}
+                  rows={connectors}
+                  rowKey={(c) => c.id}
+                  sortBy={listState.sortBy}
+                  sortDir={listState.sortDir}
+                  onSort={listState.handleSort}
+                  filters={listState.filters}
+                  onFilterChange={(col, v) => listState.setFilter(col, v)}
+                  emptyState="No connectors match your filters"
+                />
+              </div>
               <PaginationBar
                 page={listState.page}
                 pageSize={listState.pageSize}
@@ -337,7 +331,6 @@ export function ConnectorsPage() {
         </CardContent>
       </Card>
 
-      {/* Add Connector Dialog */}
       <Dialog
         open={addOpen}
         onClose={() => setAddOpen(false)}
@@ -393,7 +386,6 @@ export function ConnectorsPage() {
         </form>
       </Dialog>
 
-      {/* Delete Connector Dialog */}
       <Dialog
         open={!!deleteTarget}
         onClose={() => {
