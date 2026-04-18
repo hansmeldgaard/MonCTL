@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
 import { validateName, validateOid } from "@/lib/validation.ts";
 import { Loader2, Network, Pencil, Plus, Trash2 } from "lucide-react";
@@ -12,15 +12,12 @@ import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table.tsx";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
+import { useDisplayPreferences } from "@/hooks/useDisplayPreferences.ts";
+import { useColumnConfig } from "@/hooks/useColumnConfig.ts";
+import { FlexTable } from "@/components/FlexTable/FlexTable.tsx";
+import { DisplayMenu } from "@/components/FlexTable/DisplayMenu.tsx";
+import type { FlexColumnDef } from "@/components/FlexTable/types.ts";
 import {
   useSnmpOids,
   useCreateSnmpOid,
@@ -111,6 +108,101 @@ export function SnmpOidsPage() {
     }
   }
 
+  const { compact } = useDisplayPreferences();
+
+  const columns = useMemo<FlexColumnDef<SnmpOid>[]>(
+    () => [
+      {
+        key: "name",
+        label: "Name",
+        defaultWidth: 220,
+        cellClassName: "font-medium text-zinc-200",
+        cell: (o) => o.name,
+      },
+      {
+        key: "oid",
+        label: "OID",
+        defaultWidth: 260,
+        cellClassName: "font-mono text-xs text-zinc-400",
+        cell: (o) => o.oid,
+      },
+      {
+        key: "description",
+        label: "Description",
+        defaultWidth: 320,
+        cellClassName: "text-zinc-400 text-sm",
+        cell: (o) =>
+          o.description ?? <span className="text-zinc-600 italic">—</span>,
+      },
+      {
+        key: "__actions",
+        label: "",
+        pickerLabel: "Actions",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 90,
+        cell: (o) => (
+          <div className="flex items-center gap-1">
+            {canEdit("device") && (
+              <button
+                onClick={() => openEdit(o)}
+                className="rounded p-1 text-zinc-600 hover:text-brand-400 hover:bg-brand-500/10 transition-colors cursor-pointer"
+                title="Edit"
+              >
+                <Pencil className="h-4 w-4" />
+              </button>
+            )}
+            {canDelete("device") && (
+              <button
+                onClick={() => setDeleteTarget(o)}
+                className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                title="Delete"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        ),
+      },
+    ],
+    [canEdit, canDelete],
+  );
+
+  const {
+    orderedVisibleColumns,
+    configMap,
+    setHidden,
+    setWidth,
+    setOrder,
+    reset,
+  } = useColumnConfig<SnmpOid>("snmp-oids", columns);
+
+  const [sortBy, setSortBy] = useState("name");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const handleSort = (col: string) => {
+    if (col === sortBy) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortBy(col);
+      setSortDir("asc");
+    }
+  };
+  const sortedOids = useMemo(() => {
+    if (!oids) return [];
+    const copy = [...oids];
+    const getter: Record<string, (o: SnmpOid) => any> = {
+      name: (o) => o.name,
+      oid: (o) => o.oid,
+      description: (o) => o.description ?? "",
+    };
+    const g = getter[sortBy];
+    if (!g) return copy;
+    return copy.sort((a, b) =>
+      sortDir === "asc"
+        ? String(g(a)).localeCompare(String(g(b)))
+        : String(g(b)).localeCompare(String(g(a))),
+    );
+  }, [oids, sortBy, sortDir]);
+
   if (isLoading) {
     return (
       <div className="flex h-64 items-center justify-center">
@@ -147,9 +239,17 @@ export function SnmpOidsPage() {
           <CardTitle className="flex items-center gap-2">
             <Network className="h-4 w-4" />
             SNMP OIDs
-            <Badge variant="default" className="ml-auto">
+            <Badge variant="default" className="ml-2">
               {oids?.length ?? 0}
             </Badge>
+            <div className="ml-auto">
+              <DisplayMenu
+                columns={columns}
+                configMap={configMap}
+                onToggleHidden={setHidden}
+                onReset={reset}
+              />
+            </div>
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -170,55 +270,28 @@ export function SnmpOidsPage() {
               )}
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>OID</TableHead>
-                  <TableHead>Description</TableHead>
-                  <TableHead className="w-20"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {oids.map((o) => (
-                  <TableRow key={o.id}>
-                    <TableCell className="font-medium text-zinc-200">
-                      {o.name}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-zinc-400">
-                      {o.oid}
-                    </TableCell>
-                    <TableCell className="text-zinc-400 text-sm">
-                      {o.description ?? (
-                        <span className="text-zinc-600 italic">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1">
-                        {canEdit("device") && (
-                          <button
-                            onClick={() => openEdit(o)}
-                            className="rounded p-1 text-zinc-600 hover:text-brand-400 hover:bg-brand-500/10 transition-colors cursor-pointer"
-                            title="Edit"
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </button>
-                        )}
-                        {canDelete("device") && (
-                          <button
-                            onClick={() => setDeleteTarget(o)}
-                            className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                            title="Delete"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <div
+              className={
+                compact
+                  ? "[&_td]:py-1 [&_td]:text-xs [&_th]:py-1 [&_th]:text-xs"
+                  : ""
+              }
+            >
+              <FlexTable<SnmpOid>
+                orderedVisibleColumns={orderedVisibleColumns}
+                configMap={configMap}
+                onOrderChange={setOrder}
+                onWidthChange={setWidth}
+                rows={sortedOids}
+                rowKey={(o) => o.id}
+                sortBy={sortBy}
+                sortDir={sortDir}
+                onSort={handleSort}
+                filters={{}}
+                onFilterChange={() => {}}
+                emptyState="No SNMP OIDs"
+              />
+            </div>
           )}
         </CardContent>
       </Card>
