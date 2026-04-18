@@ -74,14 +74,21 @@ export interface AuthUser {
 }
 
 /** Opaque user-scoped UI state blob. Server stores it verbatim — schema
- *  versioning lives on the frontend under ui_preferences.tables[id].v1. */
+ *  versioning lives on the frontend under ui_preferences.tables[id].v1
+ *  and ui_preferences.display. */
 export interface UiPreferences {
+  /** Per-table column config (hidden / width / order). */
   tables?: Record<
     string,
     {
       v1?: Record<string, { width?: number; hidden?: boolean; order?: number }>;
     }
   >;
+  /** Global display toggles that apply across list pages. */
+  display?: {
+    compact?: boolean;
+    timeMode?: "relative" | "absolute";
+  };
 }
 
 export interface LoginPayload {

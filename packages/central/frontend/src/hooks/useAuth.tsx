@@ -8,6 +8,7 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 import { apiGet, apiPost } from "@/api/client.ts";
+import { hydrateUiPreferences } from "@/hooks/uiPreferencesStore.ts";
 import type { AuthUser, LoginPayload } from "@/types/api.ts";
 
 // How often to proactively refresh the access token (ms)
@@ -52,6 +53,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const res = await apiGet<AuthUser>("/auth/me");
       setUser(res.data);
+      // Keep the shared ui_preferences store in sync with the
+      // authoritative server value so concurrent writers
+      // (useColumnConfig + useDisplayPreferences) always merge into
+      // the same atomic snapshot.
+      hydrateUiPreferences(res.data?.ui_preferences);
     } catch {
       setUser(null);
     } finally {

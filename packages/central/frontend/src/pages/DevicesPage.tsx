@@ -12,7 +12,6 @@ import {
   FileText,
   FolderInput,
   Loader2,
-  Minus,
   Monitor,
   Plus,
   Power,
@@ -31,8 +30,8 @@ import { Button } from "@/components/ui/button.tsx";
 import { Select } from "@/components/ui/select.tsx";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import { FlexTable } from "@/components/FlexTable/FlexTable.tsx";
-import { ColumnPickerMenu } from "@/components/FlexTable/ColumnPickerMenu.tsx";
-import { TimeDisplayToggle } from "@/components/TimeDisplayToggle.tsx";
+import { DisplayMenu } from "@/components/FlexTable/DisplayMenu.tsx";
+import { useDisplayPreferences } from "@/hooks/useDisplayPreferences.ts";
 import type { FlexColumnDef } from "@/components/FlexTable/types.ts";
 import type { Device } from "@/types/api.ts";
 import {
@@ -130,8 +129,8 @@ export function DevicesPage() {
     filterLabelValue,
   ]);
 
-  // ── Compact mode ────────────────────────────────────────
-  const [compact, setCompact] = useState(false);
+  // ── Compact mode (server-synced via ui_preferences.display) ───────
+  const { compact } = useDisplayPreferences();
 
   // ── Selection ───────────────────────────────────────────
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -867,31 +866,13 @@ export function DevicesPage() {
           </div>
         )}
 
-        {/* Time display mode (absolute / relative) */}
-        <TimeDisplayToggle />
-
-        {/* Column picker */}
-        <ColumnPickerMenu
+        {/* View settings: compact density, time mode, column visibility */}
+        <DisplayMenu
           columns={columns}
           configMap={configMap}
           onToggleHidden={setHidden}
           onReset={resetColumns}
         />
-
-        {/* Compact toggle */}
-        <Button
-          size="sm"
-          variant="secondary"
-          onClick={() => setCompact(!compact)}
-          className="gap-1.5"
-        >
-          {compact ? (
-            <Plus className="h-3.5 w-3.5" />
-          ) : (
-            <Minus className="h-3.5 w-3.5" />
-          )}
-          {compact ? "Normal" : "Compact"}
-        </Button>
 
         {canCreate("device") && (
           <>

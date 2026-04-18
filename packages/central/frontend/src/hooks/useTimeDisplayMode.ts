@@ -1,47 +1,22 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback } from "react";
+import { useDisplayPreferences } from "@/hooks/useDisplayPreferences.ts";
 import type { TimeDisplayMode } from "@/lib/utils.ts";
 
-const STORAGE_KEY = "monctl:timeDisplayMode";
-const EVENT = "monctl:timeDisplayMode:change";
-
-function read(): TimeDisplayMode {
-  if (typeof window === "undefined") return "relative";
-  const v = window.localStorage.getItem(STORAGE_KEY);
-  return v === "absolute" ? "absolute" : "relative";
-}
-
 /** User preference: show timestamps as relative ("3m ago") or absolute
- *  (full date in the user's timezone). Persisted in localStorage and
- *  synchronised across hook instances in the same tab via a custom
- *  window event (native `storage` events only fire across tabs). */
+ *  (full date in the user's timezone). Now backed by server-side
+ *  ui_preferences.display.timeMode — delegates to useDisplayPreferences.
+ *  Kept as a thin wrapper so existing callers (TimeDisplayToggle,
+ *  AlertsPage, DeviceDetailPage) don't need to change. */
 export function useTimeDisplayMode(): {
   mode: TimeDisplayMode;
   setMode: (m: TimeDisplayMode) => void;
   toggle: () => void;
 } {
-  const [mode, setModeState] = useState<TimeDisplayMode>(read);
-
-  useEffect(() => {
-    const resync = () => setModeState(read());
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === STORAGE_KEY) resync();
-    };
-    window.addEventListener("storage", onStorage);
-    window.addEventListener(EVENT, resync);
-    return () => {
-      window.removeEventListener("storage", onStorage);
-      window.removeEventListener(EVENT, resync);
-    };
-  }, []);
-
-  const setMode = useCallback((m: TimeDisplayMode) => {
-    window.localStorage.setItem(STORAGE_KEY, m);
-    window.dispatchEvent(new Event(EVENT));
-  }, []);
+  const { timeMode, setTimeMode } = useDisplayPreferences();
 
   const toggle = useCallback(() => {
-    setMode(mode === "relative" ? "absolute" : "relative");
-  }, [mode, setMode]);
+    setTimeMode(timeMode === "relative" ? "absolute" : "relative");
+  }, [timeMode, setTimeMode]);
 
-  return { mode, setMode, toggle };
+  return { mode: timeMode, setMode: setTimeMode, toggle };
 }
