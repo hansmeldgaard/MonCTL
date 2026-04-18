@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
 import { validateName } from "@/lib/validation.ts";
 import {
@@ -54,9 +54,15 @@ import type {
   CollectorGroup,
   RegistrationToken,
 } from "@/types/api.ts";
-import { timeAgo, formatDate } from "@/lib/utils.ts";
+import { formatTime, timeAgo } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
+import { useTimeDisplayMode } from "@/hooks/useTimeDisplayMode.ts";
+import { useDisplayPreferences } from "@/hooks/useDisplayPreferences.ts";
 import { usePermissions } from "@/hooks/usePermissions.ts";
+import { useColumnConfig } from "@/hooks/useColumnConfig.ts";
+import { FlexTable } from "@/components/FlexTable/FlexTable.tsx";
+import { DisplayMenu } from "@/components/FlexTable/DisplayMenu.tsx";
+import type { FlexColumnDef } from "@/components/FlexTable/types.ts";
 
 // ── Status indicator helper ───────────────────────────────────────────────────
 
@@ -75,6 +81,72 @@ function StatusDot({ status }: { status: string }) {
       title={status}
     />
   );
+}
+
+// Client-side sort+filter for in-memory lists. Keeps the FlexTable
+// contract (sortBy/sortDir/filters) but applies it locally because
+// these endpoints don't paginate.
+function useClientSortFilter<TRow extends Record<string, any>>(
+  rows: TRow[],
+  defaultSortBy: string,
+  valueGetters: Record<
+    string,
+    (row: TRow) => string | number | null | undefined
+  >,
+) {
+  const [sortBy, setSortBy] = useState(defaultSortBy);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [filters, setFilters] = useState<Record<string, string>>({});
+
+  const handleSort = (col: string) => {
+    if (col === sortBy) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortBy(col);
+      setSortDir("asc");
+    }
+  };
+  const setFilter = (col: string, value: string) => {
+    setFilters((f) => ({ ...f, [col]: value }));
+  };
+
+  const filteredSorted = useMemo(() => {
+    let out = rows;
+    for (const [col, raw] of Object.entries(filters)) {
+      const needle = raw.trim().toLowerCase();
+      if (!needle) continue;
+      const getter = valueGetters[col];
+      if (!getter) continue;
+      out = out.filter((r) => {
+        const v = getter(r);
+        return v != null && String(v).toLowerCase().includes(needle);
+      });
+    }
+    const getter = valueGetters[sortBy];
+    if (getter) {
+      out = [...out].sort((a, b) => {
+        const av = getter(a);
+        const bv = getter(b);
+        if (av == null && bv == null) return 0;
+        if (av == null) return 1;
+        if (bv == null) return -1;
+        if (typeof av === "number" && typeof bv === "number")
+          return sortDir === "asc" ? av - bv : bv - av;
+        return sortDir === "asc"
+          ? String(av).localeCompare(String(bv))
+          : String(bv).localeCompare(String(av));
+      });
+    }
+    return out;
+  }, [rows, filters, sortBy, sortDir, valueGetters]);
+
+  return {
+    rows: filteredSorted,
+    sortBy,
+    sortDir,
+    filters,
+    handleSort,
+    setFilter,
+  };
 }
 
 // ── Pending Collectors Section ────────────────────────────────────────────────
@@ -455,7 +527,6 @@ function CollectorGroupsCard() {
     }
   }
 
-  // Count collectors per group from the collectors list
   const countByGroup = (groupId: string) =>
     collectors?.filter((c) => c.group_id === groupId).length ?? 0;
 
@@ -773,6 +844,9 @@ function EditCollectorDialog({
 
 function CollectorsCard() {
   const { isAdmin } = usePermissions();
+  const tz = useTimezone();
+  const { mode } = useTimeDisplayMode();
+  const { compact } = useDisplayPreferences();
   const { data: collectors, isLoading } = useCollectors();
   const { data: groups } = useCollectorGroups();
   const deleteCollector = useDeleteCollector();
@@ -780,10 +854,165 @@ function CollectorsCard() {
   const [editTarget, setEditTarget] = useState<Collector | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Collector | null>(null);
 
-  // Exclude PENDING from main table (they have their own card)
-  const nonPending = collectors?.filter((c) => c.status !== "PENDING") ?? [];
+  const nonPending = useMemo(
+    () => collectors?.filter((c) => c.status !== "PENDING") ?? [],
+    [collectors],
+  );
   const online = nonPending.filter((c) => c.status === "ACTIVE").length;
   const total = nonPending.length;
+
+  const valueGetters = useMemo<
+    Record<string, (c: Collector) => string | number | null | undefined>
+  >(
+    () => ({
+      status: (c) => c.status,
+      name: (c) => c.name,
+      hostname: (c) => c.hostname ?? null,
+      ip: (c) => (c.ip_addresses ?? []).join(", "),
+      group_name: (c) => c.group_name ?? null,
+      last_seen_at: (c) =>
+        c.last_seen_at ? new Date(c.last_seen_at).getTime() : 0,
+    }),
+    [],
+  );
+
+  const { rows, sortBy, sortDir, filters, handleSort, setFilter } =
+    useClientSortFilter(nonPending, "name", valueGetters);
+
+  const columns = useMemo<FlexColumnDef<Collector>[]>(
+    () => [
+      {
+        key: "status",
+        label: "Status",
+        defaultWidth: 80,
+        cell: (c) => <StatusDot status={c.status} />,
+      },
+      {
+        key: "__ws",
+        label: "WS",
+        pickerLabel: "WS",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 60,
+        cell: (c) => (
+          <span
+            className={`inline-block h-2 w-2 rounded-full ${
+              c.ws_connected ? "bg-emerald-400" : "bg-zinc-600"
+            }`}
+            title={
+              c.ws_connected
+                ? `WS connected since ${c.ws_connection?.connected_at ?? "—"}`
+                : "WS not connected"
+            }
+          />
+        ),
+      },
+      {
+        key: "name",
+        label: "Name",
+        defaultWidth: 180,
+        cellClassName: "font-medium text-zinc-100",
+        cell: (c) => c.name,
+      },
+      {
+        key: "hostname",
+        label: "Hostname",
+        defaultWidth: 180,
+        cellClassName: "font-mono text-xs text-zinc-400",
+        cell: (c) => c.hostname ?? "—",
+      },
+      {
+        key: "ip",
+        label: "IP Address",
+        defaultWidth: 180,
+        cellClassName: "font-mono text-xs text-zinc-400",
+        cell: (c) =>
+          c.ip_addresses && c.ip_addresses.length > 0 ? (
+            c.ip_addresses.join(", ")
+          ) : (
+            <span className="italic text-zinc-600">—</span>
+          ),
+      },
+      {
+        key: "group_name",
+        label: "Group",
+        defaultWidth: 140,
+        cell: (c) =>
+          c.group_name ? (
+            <Badge variant="info" className="text-xs">
+              {c.group_name}
+            </Badge>
+          ) : (
+            <span className="text-zinc-600 text-xs italic">—</span>
+          ),
+      },
+      {
+        key: "__labels",
+        label: "Labels",
+        pickerLabel: "Labels",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 180,
+        cell: (c) => (
+          <div className="flex flex-wrap gap-1">
+            {Object.entries(c.labels ?? {}).map(([k, v]) => (
+              <Badge key={k} variant="default" className="text-xs">
+                {k}: {v}
+              </Badge>
+            ))}
+          </div>
+        ),
+      },
+      {
+        key: "last_seen_at",
+        label: "Last Seen",
+        filterable: false,
+        defaultWidth: 140,
+        cellClassName: "text-zinc-500 text-sm",
+        cell: (c) => formatTime(c.last_seen_at, mode, tz),
+      },
+      ...(isAdmin
+        ? [
+            {
+              key: "__actions",
+              label: "",
+              pickerLabel: "Actions",
+              sortable: false,
+              filterable: false,
+              defaultWidth: 80,
+              cell: (c: Collector) => (
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setEditTarget(c)}
+                    className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer"
+                    title="Edit"
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={() => setDeleteTarget(c)}
+                    className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                    title="Delete"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              ),
+            } as FlexColumnDef<Collector>,
+          ]
+        : []),
+    ],
+    [isAdmin, mode, tz],
+  );
+
+  const {
+    orderedVisibleColumns,
+    configMap,
+    setHidden,
+    setWidth,
+    setOrder,
+    reset,
+  } = useColumnConfig<Collector>("collectors", columns);
 
   async function handleDelete() {
     if (!deleteTarget) return;
@@ -805,9 +1034,17 @@ function CollectorsCard() {
             <span className="ml-2 text-sm font-normal text-zinc-500">
               {online}/{total} online
             </span>
-            <Badge variant="default" className="ml-auto">
+            <Badge variant="default" className="ml-2">
               {total}
             </Badge>
+            <div className="ml-auto">
+              <DisplayMenu
+                columns={columns}
+                configMap={configMap}
+                onToggleHidden={setHidden}
+                onReset={reset}
+              />
+            </div>
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -824,96 +1061,28 @@ function CollectorsCard() {
               </p>
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-8">Status</TableHead>
-                  <TableHead className="w-8">WS</TableHead>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Hostname</TableHead>
-                  <TableHead>IP Address</TableHead>
-                  <TableHead>Group</TableHead>
-                  <TableHead>Labels</TableHead>
-                  <TableHead>Last Seen</TableHead>
-                  {isAdmin && <TableHead className="w-20"></TableHead>}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {nonPending.map((c) => (
-                  <TableRow key={c.id}>
-                    <TableCell>
-                      <StatusDot status={c.status} />
-                    </TableCell>
-                    <TableCell>
-                      <span
-                        className={`inline-block h-2 w-2 rounded-full ${
-                          c.ws_connected ? "bg-emerald-400" : "bg-zinc-600"
-                        }`}
-                        title={
-                          c.ws_connected
-                            ? `WS connected since ${c.ws_connection?.connected_at ?? "—"}`
-                            : "WS not connected"
-                        }
-                      />
-                    </TableCell>
-                    <TableCell className="font-medium text-zinc-100">
-                      {c.name}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-zinc-400">
-                      {c.hostname ?? "—"}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-zinc-400">
-                      {c.ip_addresses && c.ip_addresses.length > 0 ? (
-                        c.ip_addresses.join(", ")
-                      ) : (
-                        <span className="italic text-zinc-600">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {c.group_name ? (
-                        <Badge variant="info" className="text-xs">
-                          {c.group_name}
-                        </Badge>
-                      ) : (
-                        <span className="text-zinc-600 text-xs italic">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap gap-1">
-                        {Object.entries(c.labels ?? {}).map(([k, v]) => (
-                          <Badge key={k} variant="default" className="text-xs">
-                            {k}: {v}
-                          </Badge>
-                        ))}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-zinc-500 text-sm">
-                      {timeAgo(c.last_seen_at)}
-                    </TableCell>
-                    {isAdmin && (
-                      <TableCell>
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => setEditTarget(c)}
-                            className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer"
-                            title="Edit"
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </button>
-                          <button
-                            onClick={() => setDeleteTarget(c)}
-                            className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                            title="Delete"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </TableCell>
-                    )}
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <div
+              className={
+                compact
+                  ? "[&_td]:py-1 [&_td]:text-xs [&_th]:py-1 [&_th]:text-xs"
+                  : ""
+              }
+            >
+              <FlexTable<Collector>
+                orderedVisibleColumns={orderedVisibleColumns}
+                configMap={configMap}
+                onOrderChange={setOrder}
+                onWidthChange={setWidth}
+                rows={rows}
+                rowKey={(c) => c.id}
+                sortBy={sortBy}
+                sortDir={sortDir}
+                onSort={handleSort}
+                filters={filters}
+                onFilterChange={setFilter}
+                emptyState="No collectors match your filters"
+              />
+            </div>
           )}
         </CardContent>
       </Card>
@@ -1222,7 +1391,6 @@ docker save monctl-docker-stats:latest | ssh monctl@<COLLECTOR_IP> 'docker load'
 
   const step6 = `su - monctl -c 'cd /opt/monctl/collector && docker compose up -d'`;
 
-  // Full script for "Copy all" button
   const fullScript = `#!/bin/bash
 set -euo pipefail
 # MonCTL Collector Setup — ${name}
@@ -1263,7 +1431,6 @@ echo "Done! Approve the collector in MonCTL UI."`;
   return (
     <Dialog open onClose={onClose} title={`Setup: ${name}`} size="lg">
       <div className="space-y-5 max-h-[70vh] overflow-y-auto pr-1">
-        {/* Registration code + copy-all */}
         <div className="flex items-center justify-between rounded-lg bg-zinc-800 px-4 py-3">
           <div className="flex items-center gap-3">
             <span className="text-xs text-zinc-500 uppercase tracking-wider">
@@ -1307,7 +1474,6 @@ echo "Done! Approve the collector in MonCTL UI."`;
           script.
         </p>
 
-        {/* Step 1 */}
         <div>
           <h3 className="text-sm font-medium text-zinc-200 mb-2">
             Step 1: Create user &amp; install Docker
@@ -1315,7 +1481,6 @@ echo "Done! Approve the collector in MonCTL UI."`;
           <CopyBlock content={step1} />
         </div>
 
-        {/* Step 2 */}
         <div>
           <h3 className="text-sm font-medium text-zinc-200 mb-2">
             Step 2: Create directories
@@ -1323,7 +1488,6 @@ echo "Done! Approve the collector in MonCTL UI."`;
           <CopyBlock content={step2} />
         </div>
 
-        {/* Step 3 */}
         <div>
           <h3 className="text-sm font-medium text-zinc-200 mb-2">
             Step 3: Write{" "}
@@ -1334,7 +1498,6 @@ echo "Done! Approve the collector in MonCTL UI."`;
           <CopyBlock content={step3} />
         </div>
 
-        {/* Step 4 */}
         <div>
           <h3 className="text-sm font-medium text-zinc-200 mb-2">
             Step 4: Write{" "}
@@ -1345,7 +1508,6 @@ echo "Done! Approve the collector in MonCTL UI."`;
           <CopyBlock content={composeYml} />
         </div>
 
-        {/* Step 5 */}
         <div>
           <h3 className="text-sm font-medium text-zinc-200 mb-2">
             Step 5: Transfer Docker images
@@ -1360,7 +1522,6 @@ echo "Done! Approve the collector in MonCTL UI."`;
           </p>
         </div>
 
-        {/* Step 6 */}
         <div>
           <h3 className="text-sm font-medium text-zinc-200 mb-2">
             Step 6: Start services
@@ -1368,7 +1529,6 @@ echo "Done! Approve the collector in MonCTL UI."`;
           <CopyBlock content={step6} />
         </div>
 
-        {/* Step 7 */}
         <div className="rounded-lg bg-amber-500/10 border border-amber-500/20 px-4 py-3">
           <p className="text-sm text-amber-400">
             <strong>Step 7:</strong> The collector registers automatically using
@@ -1519,10 +1679,16 @@ function RegistrationTokensCard() {
                       <TableCell
                         className={`text-sm ${isExpired ? "text-red-400" : "text-zinc-500"}`}
                       >
-                        {t.expires_at ? formatDate(t.expires_at, tz) : "—"}
+                        {t.expires_at
+                          ? new Date(t.expires_at).toLocaleString(undefined, {
+                              timeZone: tz,
+                            })
+                          : "—"}
                       </TableCell>
                       <TableCell className="text-zinc-500 text-sm">
-                        {formatDate(t.created_at, tz)}
+                        {new Date(t.created_at).toLocaleString(undefined, {
+                          timeZone: tz,
+                        })}
                       </TableCell>
                       {isAdmin && (
                         <TableCell>
