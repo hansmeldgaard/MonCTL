@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
 import {
   validateUsername,
@@ -19,14 +19,6 @@ import { Select } from "@/components/ui/select.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table.tsx";
-import {
   useUsers,
   useCreateUser,
   useUpdateUser,
@@ -39,8 +31,14 @@ import {
 } from "@/api/hooks.ts";
 import type { User } from "@/types/api.ts";
 import { useAuth } from "@/hooks/useAuth.tsx";
-import { formatDate } from "@/lib/utils.ts";
+import { formatTime } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
+import { useTimeDisplayMode } from "@/hooks/useTimeDisplayMode.ts";
+import { useDisplayPreferences } from "@/hooks/useDisplayPreferences.ts";
+import { useColumnConfig } from "@/hooks/useColumnConfig.ts";
+import { FlexTable } from "@/components/FlexTable/FlexTable.tsx";
+import { DisplayMenu } from "@/components/FlexTable/DisplayMenu.tsx";
+import type { FlexColumnDef } from "@/components/FlexTable/types.ts";
 
 // ── Role badge helper ────────────────────────────────────
 
@@ -584,6 +582,8 @@ function EditUserDialog({ user, onClose }: EditUserDialogProps) {
 
 export function UsersPage() {
   const tz = useTimezone();
+  const { mode } = useTimeDisplayMode();
+  const { compact } = useDisplayPreferences();
   const { user: currentUser } = useAuth();
   const { data: users, isLoading } = useUsers();
   const deleteUser = useDeleteUser();
@@ -591,6 +591,147 @@ export function UsersPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<User | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
+
+  const columns = useMemo<FlexColumnDef<User>[]>(
+    () => [
+      {
+        key: "username",
+        label: "Username",
+        defaultWidth: 180,
+        cellClassName: "font-medium text-zinc-200 font-mono text-sm",
+        cell: (u) => u.username,
+      },
+      {
+        key: "display_name",
+        label: "Display Name",
+        defaultWidth: 200,
+        cellClassName: "text-zinc-400 text-sm",
+        cell: (u) => u.display_name ?? <span className="text-zinc-600">—</span>,
+      },
+      {
+        key: "role",
+        label: "Role",
+        defaultWidth: 160,
+        cell: (u) => (
+          <div className="flex items-center gap-1.5">
+            <RoleBadge role={u.role} />
+            {u.role_name && (
+              <span className="text-xs text-zinc-500">{u.role_name}</span>
+            )}
+          </div>
+        ),
+      },
+      {
+        key: "__tenants",
+        label: "Tenants",
+        pickerLabel: "Tenants",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 140,
+        cellClassName: "text-zinc-400 text-sm",
+        cell: (u) =>
+          u.role === "admin" || u.all_tenants ? (
+            <span className="text-emerald-400 text-xs font-medium">
+              All tenants
+            </span>
+          ) : (
+            <span className="text-zinc-500 text-xs">
+              {u.tenant_count ?? 0} assigned
+            </span>
+          ),
+      },
+      {
+        key: "is_active",
+        label: "Status",
+        filterable: false,
+        defaultWidth: 100,
+        cell: (u) => (
+          <Badge variant={u.is_active ? "success" : "default"}>
+            {u.is_active ? "active" : "disabled"}
+          </Badge>
+        ),
+      },
+      {
+        key: "created_at",
+        label: "Created",
+        filterable: false,
+        defaultWidth: 140,
+        cellClassName: "text-zinc-500 text-sm",
+        cell: (u) => formatTime(u.created_at, mode, tz),
+      },
+      {
+        key: "__actions",
+        label: "",
+        pickerLabel: "Actions",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 80,
+        cell: (u) => (
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setEditTarget(u)}
+              className="rounded p-1 text-zinc-600 hover:text-brand-400 hover:bg-brand-500/10 transition-colors cursor-pointer"
+              title="Edit user"
+            >
+              <UserCog className="h-4 w-4" />
+            </button>
+            {u.id !== currentUser?.user_id && (
+              <button
+                onClick={() => setDeleteTarget(u)}
+                className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                title="Delete user"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        ),
+      },
+    ],
+    [currentUser?.user_id, mode, tz],
+  );
+
+  const {
+    orderedVisibleColumns,
+    configMap,
+    setHidden,
+    setWidth,
+    setOrder,
+    reset,
+  } = useColumnConfig<User>("users", columns);
+
+  // Client-side sort (no API sort param, data returns as-is).
+  const [sortBy, setSortBy] = useState("username");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const handleSort = (col: string) => {
+    if (col === sortBy) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortBy(col);
+      setSortDir("asc");
+    }
+  };
+  const sortedUsers = useMemo(() => {
+    if (!users) return [];
+    const copy = [...users];
+    const getter: Record<string, (u: User) => any> = {
+      username: (u) => u.username,
+      display_name: (u) => u.display_name ?? "",
+      role: (u) => u.role,
+      is_active: (u) => (u.is_active ? 1 : 0),
+      created_at: (u) => (u.created_at ? new Date(u.created_at).getTime() : 0),
+    };
+    const g = getter[sortBy];
+    if (!g) return copy;
+    return copy.sort((a, b) => {
+      const av = g(a);
+      const bv = g(b);
+      if (typeof av === "number" && typeof bv === "number")
+        return sortDir === "asc" ? av - bv : bv - av;
+      return sortDir === "asc"
+        ? String(av).localeCompare(String(bv))
+        : String(bv).localeCompare(String(av));
+    });
+  }, [users, sortBy, sortDir]);
 
   // Guard: admin only
   if (currentUser && currentUser.role !== "admin") {
@@ -645,6 +786,14 @@ export function UsersPage() {
           <CardTitle className="flex items-center gap-2 text-sm">
             <UserCog className="h-4 w-4" />
             User Accounts
+            <div className="ml-auto">
+              <DisplayMenu
+                columns={columns}
+                configMap={configMap}
+                onToggleHidden={setHidden}
+                onReset={reset}
+              />
+            </div>
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -663,82 +812,28 @@ export function UsersPage() {
               </Button>
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Username</TableHead>
-                  <TableHead>Display Name</TableHead>
-                  <TableHead>Role</TableHead>
-                  <TableHead>Tenants</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead className="w-20"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {users.map((u) => (
-                  <TableRow key={u.id}>
-                    <TableCell className="font-medium text-zinc-200 font-mono text-sm">
-                      {u.username}
-                    </TableCell>
-                    <TableCell className="text-zinc-400 text-sm">
-                      {u.display_name ?? (
-                        <span className="text-zinc-600">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1.5">
-                        <RoleBadge role={u.role} />
-                        {u.role_name && (
-                          <span className="text-xs text-zinc-500">
-                            {u.role_name}
-                          </span>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-zinc-400 text-sm">
-                      {u.role === "admin" || u.all_tenants ? (
-                        <span className="text-emerald-400 text-xs font-medium">
-                          All tenants
-                        </span>
-                      ) : (
-                        <span className="text-zinc-500 text-xs">
-                          {u.tenant_count ?? 0} assigned
-                        </span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={u.is_active ? "success" : "default"}>
-                        {u.is_active ? "active" : "disabled"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-zinc-500 text-sm">
-                      {formatDate(u.created_at, tz)}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => setEditTarget(u)}
-                          className="rounded p-1 text-zinc-600 hover:text-brand-400 hover:bg-brand-500/10 transition-colors cursor-pointer"
-                          title="Edit user"
-                        >
-                          <UserCog className="h-4 w-4" />
-                        </button>
-                        {u.id !== currentUser?.user_id && (
-                          <button
-                            onClick={() => setDeleteTarget(u)}
-                            className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                            title="Delete user"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <div
+              className={
+                compact
+                  ? "[&_td]:py-1 [&_td]:text-xs [&_th]:py-1 [&_th]:text-xs"
+                  : ""
+              }
+            >
+              <FlexTable<User>
+                orderedVisibleColumns={orderedVisibleColumns}
+                configMap={configMap}
+                onOrderChange={setOrder}
+                onWidthChange={setWidth}
+                rows={sortedUsers}
+                rowKey={(u) => u.id}
+                sortBy={sortBy}
+                sortDir={sortDir}
+                onSort={handleSort}
+                filters={{}}
+                onFilterChange={() => {}}
+                emptyState="No users"
+              />
+            </div>
           )}
         </CardContent>
       </Card>
