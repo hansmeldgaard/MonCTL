@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router-dom";
 import {
   ChevronDown,
@@ -67,8 +67,13 @@ import {
 } from "@/api/hooks.ts";
 import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
+import { useDisplayPreferences } from "@/hooks/useDisplayPreferences.ts";
 import { usePermissions } from "@/hooks/usePermissions.ts";
+import { useColumnConfig } from "@/hooks/useColumnConfig.ts";
+import { FlexTable } from "@/components/FlexTable/FlexTable.tsx";
+import { DisplayMenu } from "@/components/FlexTable/DisplayMenu.tsx";
 import { formatDate } from "@/lib/utils.ts";
+import type { FlexColumnDef } from "@/components/FlexTable/types.ts";
 import type {
   Action,
   Automation,
@@ -127,6 +132,7 @@ function ActionsTab() {
   const [createOpen, setCreateOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Action | null>(null);
 
+  const { compact } = useDisplayPreferences();
   const { data, isLoading } = useActions({
     search: search || undefined,
     page,
@@ -135,6 +141,135 @@ function ActionsTab() {
   const actions = data?.data ?? [];
   const total = data?.total ?? 0;
 
+  const columns = useMemo<FlexColumnDef<Action>[]>(() => {
+    const cols: FlexColumnDef<Action>[] = [
+      {
+        key: "name",
+        label: "Name",
+        filterable: false,
+        defaultWidth: 280,
+        cell: (a) => (
+          <div>
+            <button
+              onClick={() => setEditAction(a)}
+              className="text-brand-400 hover:underline text-left cursor-pointer"
+            >
+              {a.name}
+            </button>
+            {a.description && (
+              <p className="text-xs text-zinc-500 mt-0.5 truncate max-w-xs">
+                {a.description}
+              </p>
+            )}
+          </div>
+        ),
+      },
+      {
+        key: "target",
+        label: "Target",
+        filterable: false,
+        defaultWidth: 120,
+        cell: (a) => (
+          <Badge variant={a.target === "collector" ? "success" : "info"}>
+            {a.target === "collector" ? (
+              <>
+                <Monitor className="h-3 w-3 mr-1" />
+                collector
+              </>
+            ) : (
+              <>
+                <Server className="h-3 w-3 mr-1" />
+                central
+              </>
+            )}
+          </Badge>
+        ),
+      },
+      {
+        key: "credential",
+        label: "Credential",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 160,
+        cellClassName: "text-sm",
+        cell: (a) =>
+          a.credential_id ? (
+            <span className="text-amber-400 flex items-center gap-1">
+              <Key className="h-3 w-3" />
+              direct
+            </span>
+          ) : a.credential_type ? (
+            <span className="text-zinc-400">{a.credential_type}</span>
+          ) : (
+            <span className="text-zinc-600">-</span>
+          ),
+      },
+      {
+        key: "timeout_seconds",
+        label: "Timeout",
+        filterable: false,
+        defaultWidth: 100,
+        cellClassName: "text-zinc-400 text-sm",
+        cell: (a) => `${a.timeout_seconds}s`,
+      },
+      {
+        key: "enabled",
+        label: "Enabled",
+        filterable: false,
+        defaultWidth: 90,
+        cell: (a) => (
+          <span
+            className={`inline-block h-2 w-2 rounded-full ${a.enabled ? "bg-emerald-500" : "bg-zinc-600"}`}
+          />
+        ),
+      },
+    ];
+    if (canEdit("automation") || canDelete("automation")) {
+      cols.push({
+        key: "__actions",
+        label: "",
+        pickerLabel: "Actions",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 80,
+        cell: (a) => (
+          <div className="flex gap-1">
+            {canEdit("automation") && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setEditAction(a)}
+                title="Edit"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </Button>
+            )}
+            {canDelete("automation") && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setDeleteTarget(a)}
+                title="Delete"
+              >
+                <Trash2 className="h-3.5 w-3.5 text-red-400" />
+              </Button>
+            )}
+          </div>
+        ),
+      });
+    }
+    return cols;
+  }, [canEdit, canDelete]);
+
+  const {
+    orderedVisibleColumns,
+    configMap,
+    setHidden,
+    setWidth,
+    setOrder,
+    reset,
+  } = useColumnConfig<Action>("automations-actions", columns);
+
   if (isLoading) {
     return (
       <div className="flex h-64 items-center justify-center">
@@ -142,6 +277,9 @@ function ActionsTab() {
       </div>
     );
   }
+
+  // Client-side sort (page is server-paginated).
+  const sortedActions = [...actions];
 
   return (
     <>
@@ -159,126 +297,53 @@ function ActionsTab() {
           }}
           className="w-64 h-8 text-sm"
         />
-        {canCreate("automation") && (
-          <Button
-            size="sm"
-            onClick={() => setCreateOpen(true)}
-            className="gap-1.5"
-          >
-            <Plus className="h-3.5 w-3.5" /> New Action
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          <DisplayMenu
+            columns={columns}
+            configMap={configMap}
+            onToggleHidden={setHidden}
+            onReset={reset}
+          />
+          {canCreate("automation") && (
+            <Button
+              size="sm"
+              onClick={() => setCreateOpen(true)}
+              className="gap-1.5"
+            >
+              <Plus className="h-3.5 w-3.5" /> New Action
+            </Button>
+          )}
+        </div>
       </div>
 
       <Card>
         <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead className="w-24">Target</TableHead>
-                <TableHead className="w-40">Credential</TableHead>
-                <TableHead className="w-24">Timeout</TableHead>
-                <TableHead className="w-20">Enabled</TableHead>
-                <TableHead className="w-20"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {actions.length === 0 ? (
-                <TableRow>
-                  <TableCell
-                    colSpan={6}
-                    className="text-center text-zinc-500 py-8"
-                  >
-                    {search
-                      ? "No actions match your search"
-                      : "No actions created yet"}
-                  </TableCell>
-                </TableRow>
-              ) : (
-                actions.map((a) => (
-                  <TableRow key={a.id}>
-                    <TableCell>
-                      <button
-                        onClick={() => setEditAction(a)}
-                        className="text-brand-400 hover:underline text-left cursor-pointer"
-                      >
-                        {a.name}
-                      </button>
-                      {a.description && (
-                        <p className="text-xs text-zinc-500 mt-0.5 truncate max-w-xs">
-                          {a.description}
-                        </p>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={a.target === "collector" ? "success" : "info"}
-                      >
-                        {a.target === "collector" ? (
-                          <>
-                            <Monitor className="h-3 w-3 mr-1" />
-                            collector
-                          </>
-                        ) : (
-                          <>
-                            <Server className="h-3 w-3 mr-1" />
-                            central
-                          </>
-                        )}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-sm">
-                      {a.credential_id ? (
-                        <span className="text-amber-400 flex items-center gap-1">
-                          <Key className="h-3 w-3" />
-                          direct
-                        </span>
-                      ) : a.credential_type ? (
-                        <span className="text-zinc-400">
-                          {a.credential_type}
-                        </span>
-                      ) : (
-                        <span className="text-zinc-600">-</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-zinc-400 text-sm">
-                      {a.timeout_seconds}s
-                    </TableCell>
-                    <TableCell>
-                      <span
-                        className={`inline-block h-2 w-2 rounded-full ${a.enabled ? "bg-emerald-500" : "bg-zinc-600"}`}
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex gap-1">
-                        {canEdit("automation") && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => setEditAction(a)}
-                            title="Edit"
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </Button>
-                        )}
-                        {canDelete("automation") && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => setDeleteTarget(a)}
-                            title="Delete"
-                          >
-                            <Trash2 className="h-3.5 w-3.5 text-red-400" />
-                          </Button>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
+          <div
+            className={
+              compact
+                ? "[&_td]:py-1 [&_td]:text-xs [&_th]:py-1 [&_th]:text-xs"
+                : ""
+            }
+          >
+            <FlexTable<Action>
+              orderedVisibleColumns={orderedVisibleColumns}
+              configMap={configMap}
+              onOrderChange={setOrder}
+              onWidthChange={setWidth}
+              rows={sortedActions}
+              rowKey={(a) => a.id}
+              sortBy=""
+              sortDir="asc"
+              onSort={() => {}}
+              filters={{}}
+              onFilterChange={() => {}}
+              emptyState={
+                search
+                  ? "No actions match your search"
+                  : "No actions created yet"
+              }
+            />
+          </div>
         </CardContent>
       </Card>
 
