@@ -1,8 +1,13 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useAuditLogins, useAuditMutations } from "@/api/hooks.ts";
 import type { AuditLoginEvent, AuditMutation } from "@/types/api.ts";
 import { cn, formatLogTimestamp } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
+import { useDisplayPreferences } from "@/hooks/useDisplayPreferences.ts";
+import { useColumnConfig } from "@/hooks/useColumnConfig.ts";
+import { FlexTable } from "@/components/FlexTable/FlexTable.tsx";
+import { DisplayMenu } from "@/components/FlexTable/DisplayMenu.tsx";
+import type { FlexColumnDef } from "@/components/FlexTable/types.ts";
 
 type View = "logins" | "mutations";
 
@@ -80,6 +85,77 @@ function LoginsTable({
   rows: AuditLoginEvent[];
   timezone: string;
 }) {
+  const { compact } = useDisplayPreferences();
+
+  const columns = useMemo<FlexColumnDef<AuditLoginEvent>[]>(
+    () => [
+      {
+        key: "timestamp",
+        label: "Timestamp",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 200,
+        cellClassName: "text-zinc-400 font-mono text-xs whitespace-nowrap",
+        cell: (r) =>
+          r.timestamp ? formatLogTimestamp(r.timestamp, timezone) : "—",
+      },
+      {
+        key: "event_type",
+        label: "Event",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 160,
+        cell: (r) => <EventBadge type={r.event_type} />,
+      },
+      {
+        key: "username",
+        label: "User",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 160,
+        cellClassName: "text-zinc-200",
+        cell: (r) => r.username || "—",
+      },
+      {
+        key: "ip_address",
+        label: "IP",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 140,
+        cellClassName: "text-zinc-400 font-mono text-xs",
+        cell: (r) => r.ip_address || "—",
+      },
+      {
+        key: "failure_reason",
+        label: "Reason",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 200,
+        cellClassName: "text-zinc-400 text-xs",
+        cell: (r) => r.failure_reason || "",
+      },
+      {
+        key: "user_agent",
+        label: "User-Agent",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 280,
+        cellClassName: "text-zinc-500 text-xs truncate max-w-xs",
+        cell: (r) => r.user_agent || "",
+      },
+    ],
+    [timezone],
+  );
+
+  const {
+    orderedVisibleColumns,
+    configMap,
+    setHidden,
+    setWidth,
+    setOrder,
+    reset,
+  } = useColumnConfig<AuditLoginEvent>("audit-logins", columns);
+
   if (!rows.length) {
     return (
       <div className="text-sm text-zinc-500 py-8 text-center">
@@ -88,44 +164,35 @@ function LoginsTable({
     );
   }
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="text-left text-xs uppercase tracking-wide text-zinc-500 border-b border-zinc-800">
-            <th className="py-2 px-3">Timestamp</th>
-            <th className="py-2 px-3">Event</th>
-            <th className="py-2 px-3">User</th>
-            <th className="py-2 px-3">IP</th>
-            <th className="py-2 px-3">Reason</th>
-            <th className="py-2 px-3">User-Agent</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr
-              key={r.id}
-              className="border-b border-zinc-900 hover:bg-zinc-900/40"
-            >
-              <td className="py-2 px-3 text-zinc-400 font-mono text-xs whitespace-nowrap">
-                {r.timestamp ? formatLogTimestamp(r.timestamp, timezone) : "—"}
-              </td>
-              <td className="py-2 px-3">
-                <EventBadge type={r.event_type} />
-              </td>
-              <td className="py-2 px-3 text-zinc-200">{r.username || "—"}</td>
-              <td className="py-2 px-3 text-zinc-400 font-mono text-xs">
-                {r.ip_address || "—"}
-              </td>
-              <td className="py-2 px-3 text-zinc-400 text-xs">
-                {r.failure_reason || ""}
-              </td>
-              <td className="py-2 px-3 text-zinc-500 text-xs truncate max-w-xs">
-                {r.user_agent || ""}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div>
+      <div className="flex items-center justify-end px-3 py-2 border-b border-zinc-800">
+        <DisplayMenu
+          columns={columns}
+          configMap={configMap}
+          onToggleHidden={setHidden}
+          onReset={reset}
+        />
+      </div>
+      <div
+        className={
+          compact ? "[&_td]:py-1 [&_td]:text-xs [&_th]:py-1 [&_th]:text-xs" : ""
+        }
+      >
+        <FlexTable<AuditLoginEvent>
+          orderedVisibleColumns={orderedVisibleColumns}
+          configMap={configMap}
+          onOrderChange={setOrder}
+          onWidthChange={setWidth}
+          rows={rows}
+          rowKey={(r) => r.id}
+          sortBy=""
+          sortDir="asc"
+          onSort={() => {}}
+          filters={{}}
+          onFilterChange={() => {}}
+          emptyState="No login events"
+        />
+      </div>
     </div>
   );
 }
@@ -234,6 +301,101 @@ function MutationsTable({
   timezone: string;
 }) {
   const [selected, setSelected] = useState<AuditMutation | null>(null);
+  const { compact } = useDisplayPreferences();
+
+  const columns = useMemo<FlexColumnDef<AuditMutation>[]>(
+    () => [
+      {
+        key: "timestamp",
+        label: "Timestamp",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 200,
+        cellClassName: "text-zinc-400 font-mono text-xs whitespace-nowrap",
+        cell: (r) => formatLogTimestamp(r.timestamp, timezone),
+      },
+      {
+        key: "action",
+        label: "Action",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 110,
+        cell: (r) => <ActionBadge action={r.action} />,
+      },
+      {
+        key: "resource",
+        label: "Resource",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 220,
+        cellClassName: "text-zinc-200",
+        cell: (r) => (
+          <>
+            {r.resource_type}
+            <span className="text-zinc-600 mx-1">/</span>
+            <span className="font-mono text-xs text-zinc-500">
+              {r.resource_id.slice(0, 8)}
+            </span>
+          </>
+        ),
+      },
+      {
+        key: "username",
+        label: "User",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 140,
+        cellClassName: "text-zinc-300",
+        cell: (r) => r.username || "system",
+      },
+      {
+        key: "ip_address",
+        label: "IP",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 140,
+        cellClassName: "text-zinc-400 font-mono text-xs",
+        cell: (r) => r.ip_address || "—",
+      },
+      {
+        key: "changed_fields",
+        label: "Fields",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 280,
+        cellClassName: "text-zinc-500 text-xs truncate max-w-xs",
+        cell: (r) =>
+          `${r.changed_fields.slice(0, 5).join(", ")}${r.changed_fields.length > 5 ? "…" : ""}`,
+      },
+      {
+        key: "__details",
+        label: "",
+        pickerLabel: "Details",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 80,
+        cell: (r) => (
+          <button
+            type="button"
+            onClick={() => setSelected(r)}
+            className="text-brand-400 hover:text-brand-300 text-xs underline cursor-pointer"
+          >
+            details
+          </button>
+        ),
+      },
+    ],
+    [timezone],
+  );
+
+  const {
+    orderedVisibleColumns,
+    configMap,
+    setHidden,
+    setWidth,
+    setOrder,
+    reset,
+  } = useColumnConfig<AuditMutation>("audit-mutations", columns);
 
   if (!rows.length) {
     return (
@@ -245,52 +407,33 @@ function MutationsTable({
 
   return (
     <>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-xs uppercase tracking-wide text-zinc-500 border-b border-zinc-800">
-              <th className="py-2 px-3">Timestamp</th>
-              <th className="py-2 px-3">Action</th>
-              <th className="py-2 px-3">Resource</th>
-              <th className="py-2 px-3">User</th>
-              <th className="py-2 px-3">IP</th>
-              <th className="py-2 px-3">Fields</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r, i) => (
-              <tr
-                key={`${r.request_id}-${r.resource_id}-${i}`}
-                onClick={() => setSelected(r)}
-                className="border-b border-zinc-900 hover:bg-zinc-900/40 cursor-pointer"
-              >
-                <td className="py-2 px-3 text-zinc-400 font-mono text-xs whitespace-nowrap">
-                  {formatLogTimestamp(r.timestamp, timezone)}
-                </td>
-                <td className="py-2 px-3">
-                  <ActionBadge action={r.action} />
-                </td>
-                <td className="py-2 px-3 text-zinc-200">
-                  {r.resource_type}
-                  <span className="text-zinc-600 mx-1">/</span>
-                  <span className="font-mono text-xs text-zinc-500">
-                    {r.resource_id.slice(0, 8)}
-                  </span>
-                </td>
-                <td className="py-2 px-3 text-zinc-300">
-                  {r.username || "system"}
-                </td>
-                <td className="py-2 px-3 text-zinc-400 font-mono text-xs">
-                  {r.ip_address || "—"}
-                </td>
-                <td className="py-2 px-3 text-zinc-500 text-xs truncate max-w-xs">
-                  {r.changed_fields.slice(0, 5).join(", ")}
-                  {r.changed_fields.length > 5 && "…"}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="flex items-center justify-end px-3 py-2 border-b border-zinc-800">
+        <DisplayMenu
+          columns={columns}
+          configMap={configMap}
+          onToggleHidden={setHidden}
+          onReset={reset}
+        />
+      </div>
+      <div
+        className={
+          compact ? "[&_td]:py-1 [&_td]:text-xs [&_th]:py-1 [&_th]:text-xs" : ""
+        }
+      >
+        <FlexTable<AuditMutation>
+          orderedVisibleColumns={orderedVisibleColumns}
+          configMap={configMap}
+          onOrderChange={setOrder}
+          onWidthChange={setWidth}
+          rows={rows}
+          rowKey={(r) => `${r.request_id}-${r.resource_id}-${r.timestamp}`}
+          sortBy=""
+          sortDir="asc"
+          onSort={() => {}}
+          filters={{}}
+          onFilterChange={() => {}}
+          emptyState="No mutation events"
+        />
       </div>
       {selected && (
         <MutationDetailModal
