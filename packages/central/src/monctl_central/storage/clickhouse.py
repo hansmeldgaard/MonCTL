@@ -3086,6 +3086,40 @@ class ClickHouseClient:
         rows = [dict(zip(cols, r, strict=False)) for r in result.result_rows]
         return rows, total
 
+    def query_latest_mutation_per_resource(
+        self,
+        *,
+        resource_type: str,
+        resource_ids: list[str],
+    ) -> list[dict]:
+        """Latest audit_mutation row per ``resource_id`` — batch lookup.
+
+        Returns one row per resource_id present in the table:
+        ``{resource_id, timestamp, user_id, username, action}``.
+        """
+        if not resource_ids:
+            return []
+        sql = (
+            "SELECT "
+            "resource_id, "
+            "max(timestamp) AS last_ts, "
+            "argMax(user_id, timestamp) AS user_id, "
+            "argMax(username, timestamp) AS username, "
+            "argMax(action, timestamp) AS action "
+            "FROM audit_mutations "
+            "WHERE resource_type = {resource_type:String} "
+            "AND resource_id IN {resource_ids:Array(String)} "
+            "GROUP BY resource_id"
+        )
+        params = {
+            "resource_type": resource_type,
+            "resource_ids": [str(r) for r in resource_ids],
+        }
+        client = self._get_client()
+        result = client.query(sql, parameters=params)
+        cols = result.column_names
+        return [dict(zip(cols, r, strict=False)) for r in result.result_rows]
+
     def _build_alert_log_filters(
         self,
         *,

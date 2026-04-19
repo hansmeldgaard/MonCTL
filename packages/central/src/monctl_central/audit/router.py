@@ -127,6 +127,34 @@ async def list_mutations(
     }
 
 
+@router.get("/latest")
+async def latest_mutations_by_resource(
+    resource_type: str,
+    resource_ids: str = Query(
+        ..., description="comma-separated resource ids (max 500)"
+    ),
+    auth: dict = Depends(_AUDIT_VIEW),
+):
+    """Latest audit mutation per resource_id — batch lookup for list pages."""
+    ids = [s.strip() for s in resource_ids.split(",") if s.strip()]
+    if not ids:
+        return {"status": "success", "data": []}
+    if len(ids) > 500:
+        raise HTTPException(400, "too many resource_ids (max 500)")
+    ch = get_clickhouse()
+    rows = ch.query_latest_mutation_per_resource(
+        resource_type=resource_type,
+        resource_ids=ids,
+    )
+    for r in rows:
+        ts = r.pop("last_ts", None)
+        if hasattr(ts, "isoformat"):
+            r["timestamp"] = ts.isoformat()
+        elif ts is not None:
+            r["timestamp"] = str(ts)
+    return {"status": "success", "data": rows}
+
+
 @router.get("/resources/{resource_type}/{resource_id}/history")
 async def resource_history(
     resource_type: str,

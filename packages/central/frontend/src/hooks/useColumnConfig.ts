@@ -72,7 +72,7 @@ function compact(config: ColumnConfigMap): ColumnConfigMap {
   for (const [key, entry] of Object.entries(config)) {
     const next: ColumnConfig = {};
     if (entry.width != null) next.width = entry.width;
-    if (entry.hidden === true) next.hidden = true;
+    if (entry.hidden != null) next.hidden = entry.hidden;
     if (entry.order != null) next.order = entry.order;
     if (Object.keys(next).length > 0) out[key] = next;
   }
