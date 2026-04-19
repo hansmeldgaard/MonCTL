@@ -29,14 +29,6 @@ import { Card, CardContent } from "@/components/ui/card.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { Select } from "@/components/ui/select.tsx";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table.tsx";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
 import {
   Tabs,
@@ -744,128 +736,15 @@ function AutomationsTab({
         )}
       </div>
 
-      <Card>
-        <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead className="w-24">Trigger</TableHead>
-                <TableHead className="w-48">Config</TableHead>
-                <TableHead className="w-32">Steps</TableHead>
-                <TableHead className="w-24">Cooldown</TableHead>
-                <TableHead className="w-20">Enabled</TableHead>
-                <TableHead className="w-28"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {automations.length === 0 ? (
-                <TableRow>
-                  <TableCell
-                    colSpan={7}
-                    className="text-center text-zinc-500 py-8"
-                  >
-                    {search
-                      ? "No automations match your search"
-                      : "No automations created yet"}
-                  </TableCell>
-                </TableRow>
-              ) : (
-                automations.map((a) => (
-                  <TableRow key={a.id}>
-                    <TableCell>
-                      <button
-                        onClick={() => setEditTarget(a)}
-                        className="text-brand-400 hover:underline text-left cursor-pointer"
-                      >
-                        {a.name}
-                      </button>
-                      {a.description && (
-                        <p className="text-xs text-zinc-500 mt-0.5 truncate max-w-xs">
-                          {a.description}
-                        </p>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={
-                          a.trigger_type === "incident" ? "info" : "warning"
-                        }
-                      >
-                        {a.trigger_type === "incident" ? (
-                          <>
-                            <Zap className="h-3 w-3 mr-1" />
-                            incident
-                          </>
-                        ) : (
-                          <>
-                            <Clock className="h-3 w-3 mr-1" />
-                            cron
-                          </>
-                        )}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-xs text-zinc-400 font-mono">
-                      {a.trigger_type === "incident"
-                        ? a.incident_state_trigger
-                          ? `on ${a.incident_state_trigger}`
-                          : "any transition"
-                        : a.cron_expression || "-"}
-                    </TableCell>
-                    <TableCell>
-                      <span className="text-zinc-300 text-sm">
-                        {a.steps.length} step{a.steps.length !== 1 ? "s" : ""}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-zinc-400 text-sm">
-                      {formatCooldown(a.cooldown_seconds)}
-                    </TableCell>
-                    <TableCell>
-                      <span
-                        className={`inline-block h-2 w-2 rounded-full ${a.enabled ? "bg-emerald-500" : "bg-zinc-600"}`}
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex gap-1">
-                        {a.trigger_type === "cron" && canEdit("automation") && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => setTriggerTarget(a)}
-                            title="Manual trigger"
-                          >
-                            <Play className="h-3.5 w-3.5 text-emerald-400" />
-                          </Button>
-                        )}
-                        {canEdit("automation") && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => setEditTarget(a)}
-                            title="Edit"
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </Button>
-                        )}
-                        {canDelete("automation") && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => setDeleteTarget(a)}
-                            title="Delete"
-                          >
-                            <Trash2 className="h-3.5 w-3.5 text-red-400" />
-                          </Button>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+      <AutomationsFlexCard
+        automations={automations}
+        search={search}
+        canEdit={canEdit}
+        canDelete={canDelete}
+        onEdit={setEditTarget}
+        onDelete={setDeleteTarget}
+        onTrigger={setTriggerTarget}
+      />
 
       {total > pageSize && (
         <PaginationBar
@@ -903,6 +782,208 @@ function AutomationsTab({
         />
       )}
     </>
+  );
+}
+
+function AutomationsFlexCard({
+  automations,
+  search,
+  canEdit,
+  canDelete,
+  onEdit,
+  onDelete,
+  onTrigger,
+}: {
+  automations: Automation[];
+  search: string;
+  canEdit: (resource: string) => boolean;
+  canDelete: (resource: string) => boolean;
+  onEdit: (a: Automation) => void;
+  onDelete: (a: Automation) => void;
+  onTrigger: (a: Automation) => void;
+}) {
+  const { compact } = useDisplayPreferences();
+
+  const columns = useMemo<FlexColumnDef<Automation>[]>(
+    () => [
+      {
+        key: "name",
+        label: "Name",
+        filterable: false,
+        defaultWidth: 280,
+        cell: (a) => (
+          <div>
+            <button
+              onClick={() => onEdit(a)}
+              className="text-brand-400 hover:underline text-left cursor-pointer"
+            >
+              {a.name}
+            </button>
+            {a.description && (
+              <p className="text-xs text-zinc-500 mt-0.5 truncate max-w-xs">
+                {a.description}
+              </p>
+            )}
+          </div>
+        ),
+      },
+      {
+        key: "trigger_type",
+        label: "Trigger",
+        filterable: false,
+        defaultWidth: 110,
+        cell: (a) => (
+          <Badge variant={a.trigger_type === "incident" ? "info" : "warning"}>
+            {a.trigger_type === "incident" ? (
+              <>
+                <Zap className="h-3 w-3 mr-1" />
+                incident
+              </>
+            ) : (
+              <>
+                <Clock className="h-3 w-3 mr-1" />
+                cron
+              </>
+            )}
+          </Badge>
+        ),
+      },
+      {
+        key: "config",
+        label: "Config",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 200,
+        cellClassName: "text-xs text-zinc-400 font-mono",
+        cell: (a) =>
+          a.trigger_type === "incident"
+            ? a.incident_state_trigger
+              ? `on ${a.incident_state_trigger}`
+              : "any transition"
+            : a.cron_expression || "-",
+      },
+      {
+        key: "steps",
+        label: "Steps",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 120,
+        cellClassName: "text-zinc-300 text-sm",
+        cell: (a) => `${a.steps.length} step${a.steps.length !== 1 ? "s" : ""}`,
+      },
+      {
+        key: "cooldown_seconds",
+        label: "Cooldown",
+        filterable: false,
+        defaultWidth: 110,
+        cellClassName: "text-zinc-400 text-sm",
+        cell: (a) => formatCooldown(a.cooldown_seconds),
+      },
+      {
+        key: "enabled",
+        label: "Enabled",
+        filterable: false,
+        defaultWidth: 90,
+        cell: (a) => (
+          <span
+            className={`inline-block h-2 w-2 rounded-full ${a.enabled ? "bg-emerald-500" : "bg-zinc-600"}`}
+          />
+        ),
+      },
+      {
+        key: "__actions",
+        label: "",
+        pickerLabel: "Actions",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 110,
+        cell: (a) => (
+          <div className="flex gap-1">
+            {a.trigger_type === "cron" && canEdit("automation") && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => onTrigger(a)}
+                title="Manual trigger"
+              >
+                <Play className="h-3.5 w-3.5 text-emerald-400" />
+              </Button>
+            )}
+            {canEdit("automation") && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => onEdit(a)}
+                title="Edit"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </Button>
+            )}
+            {canDelete("automation") && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => onDelete(a)}
+                title="Delete"
+              >
+                <Trash2 className="h-3.5 w-3.5 text-red-400" />
+              </Button>
+            )}
+          </div>
+        ),
+      },
+    ],
+    [canEdit, canDelete, onEdit, onDelete, onTrigger],
+  );
+
+  const {
+    orderedVisibleColumns,
+    configMap,
+    setHidden,
+    setWidth,
+    setOrder,
+    reset,
+  } = useColumnConfig<Automation>("automations-list", columns);
+
+  return (
+    <Card>
+      <CardContent className="p-0">
+        <div className="flex items-center justify-end px-3 py-2 border-b border-zinc-800">
+          <DisplayMenu
+            columns={columns}
+            configMap={configMap}
+            onToggleHidden={setHidden}
+            onReset={reset}
+          />
+        </div>
+        <div
+          className={
+            compact
+              ? "[&_td]:py-1 [&_td]:text-xs [&_th]:py-1 [&_th]:text-xs"
+              : ""
+          }
+        >
+          <FlexTable<Automation>
+            orderedVisibleColumns={orderedVisibleColumns}
+            configMap={configMap}
+            onOrderChange={setOrder}
+            onWidthChange={setWidth}
+            rows={automations}
+            rowKey={(a) => a.id}
+            sortBy=""
+            sortDir="asc"
+            onSort={() => {}}
+            filters={{}}
+            onFilterChange={() => {}}
+            emptyState={
+              search
+                ? "No automations match your search"
+                : "No automations created yet"
+            }
+          />
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -1718,6 +1799,7 @@ function ManualTriggerDialog({
 
 function RunHistoryTab() {
   const { pageSize } = useTablePreferences();
+  const { compact } = useDisplayPreferences();
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState("");
   const [selectedRun, setSelectedRun] = useState<string | null>(null);
@@ -1729,6 +1811,115 @@ function RunHistoryTab() {
   });
   const runs = data?.data ?? [];
   const total = data?.total ?? 0;
+
+  type RunRow = (typeof runs)[number];
+
+  const columns = useMemo<FlexColumnDef<RunRow>[]>(
+    () => [
+      {
+        key: "automation_name",
+        label: "Automation",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 240,
+        cellClassName: "text-zinc-200",
+        cell: (r) => (
+          <button
+            type="button"
+            onClick={() => setSelectedRun(r.run_id)}
+            className="text-left text-brand-400 hover:underline cursor-pointer"
+          >
+            {r.automation_name}
+          </button>
+        ),
+      },
+      {
+        key: "trigger_type",
+        label: "Trigger",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 110,
+        cell: (r) => (
+          <Badge
+            variant={
+              r.trigger_type === "incident"
+                ? "info"
+                : r.trigger_type === "event"
+                  ? "info"
+                  : r.trigger_type === "cron"
+                    ? "warning"
+                    : "default"
+            }
+          >
+            {r.trigger_type}
+          </Badge>
+        ),
+      },
+      {
+        key: "device_name",
+        label: "Device",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 200,
+        cellClassName: "text-zinc-300 text-sm",
+        cell: (r) => r.device_name || "-",
+      },
+      {
+        key: "status",
+        label: "Status",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 110,
+        cell: (r) => statusBadge(r.status),
+      },
+      {
+        key: "steps",
+        label: "Steps",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 90,
+        cellClassName: "text-zinc-400 text-sm",
+        cell: (r) => `${r.completed_steps}/${r.total_steps}`,
+      },
+      {
+        key: "duration_ms",
+        label: "Duration",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 100,
+        cellClassName: "text-zinc-400 text-sm",
+        cell: (r) => formatDuration(r.duration_ms),
+      },
+      {
+        key: "triggered_by",
+        label: "Triggered By",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 130,
+        cellClassName: "text-zinc-500 text-xs",
+        cell: (r) => r.triggered_by,
+      },
+      {
+        key: "started_at",
+        label: "Started",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 120,
+        cellClassName: "text-zinc-500 text-xs",
+        cell: (r) => timeAgo(r.started_at),
+      },
+    ],
+    [],
+  );
+
+  const {
+    orderedVisibleColumns,
+    configMap,
+    setHidden,
+    setWidth,
+    setOrder,
+    reset,
+  } = useColumnConfig<RunRow>("automations-runs", columns);
 
   if (isLoading) {
     return (
@@ -1755,79 +1946,40 @@ function RunHistoryTab() {
           <option value="timeout">Timeout</option>
           <option value="running">Running</option>
         </Select>
+        <div className="ml-auto">
+          <DisplayMenu
+            columns={columns}
+            configMap={configMap}
+            onToggleHidden={setHidden}
+            onReset={reset}
+          />
+        </div>
       </div>
 
       <Card>
         <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Automation</TableHead>
-                <TableHead className="w-24">Trigger</TableHead>
-                <TableHead>Device</TableHead>
-                <TableHead className="w-24">Status</TableHead>
-                <TableHead className="w-24">Steps</TableHead>
-                <TableHead className="w-24">Duration</TableHead>
-                <TableHead className="w-28">Triggered By</TableHead>
-                <TableHead className="w-28">Started</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {runs.length === 0 ? (
-                <TableRow>
-                  <TableCell
-                    colSpan={8}
-                    className="text-center text-zinc-500 py-8"
-                  >
-                    No automation runs yet
-                  </TableCell>
-                </TableRow>
-              ) : (
-                runs.map((r) => (
-                  <TableRow
-                    key={r.run_id}
-                    className="cursor-pointer hover:bg-zinc-800/50"
-                    onClick={() => setSelectedRun(r.run_id)}
-                  >
-                    <TableCell className="text-zinc-200">
-                      {r.automation_name}
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={
-                          r.trigger_type === "incident"
-                            ? "info"
-                            : r.trigger_type === "event"
-                              ? "info"
-                              : r.trigger_type === "cron"
-                                ? "warning"
-                                : "default"
-                        }
-                      >
-                        {r.trigger_type}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-zinc-300 text-sm">
-                      {r.device_name || "-"}
-                    </TableCell>
-                    <TableCell>{statusBadge(r.status)}</TableCell>
-                    <TableCell className="text-zinc-400 text-sm">
-                      {r.completed_steps}/{r.total_steps}
-                    </TableCell>
-                    <TableCell className="text-zinc-400 text-sm">
-                      {formatDuration(r.duration_ms)}
-                    </TableCell>
-                    <TableCell className="text-zinc-500 text-xs">
-                      {r.triggered_by}
-                    </TableCell>
-                    <TableCell className="text-zinc-500 text-xs">
-                      {timeAgo(r.started_at)}
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
+          <div
+            className={
+              compact
+                ? "[&_td]:py-1 [&_td]:text-xs [&_th]:py-1 [&_th]:text-xs"
+                : ""
+            }
+          >
+            <FlexTable<RunRow>
+              orderedVisibleColumns={orderedVisibleColumns}
+              configMap={configMap}
+              onOrderChange={setOrder}
+              onWidthChange={setWidth}
+              rows={runs}
+              rowKey={(r) => r.run_id}
+              sortBy=""
+              sortDir="asc"
+              onSort={() => {}}
+              filters={{}}
+              onFilterChange={() => {}}
+              emptyState="No automation runs yet"
+            />
+          </div>
         </CardContent>
       </Card>
 
