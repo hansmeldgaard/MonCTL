@@ -33,6 +33,7 @@ import type {
   CredentialTemplate,
   CredentialType,
   CredentialTemplateField,
+  DebugRunBundle,
   Device,
   DuplicateCandidate,
   DeviceAssignment,
@@ -1348,6 +1349,21 @@ export function usePollConfigNow() {
         qc.invalidateQueries({ queryKey: ["config-changelog", deviceId] });
       }, 3000);
     },
+  });
+}
+
+export function useDebugRun() {
+  return useMutation({
+    mutationFn: ({
+      deviceId,
+      assignmentId,
+    }: {
+      deviceId: string;
+      assignmentId: string;
+    }) =>
+      apiPost<DebugRunBundle>(`/devices/${deviceId}/debug-run`, {
+        assignment_id: assignmentId,
+      }),
   });
 }
 

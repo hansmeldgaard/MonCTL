@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import urllib.request
 import json
 
@@ -14,17 +15,21 @@ _central_client = None
 _sidecar_url = "http://monctl-docker-stats:9100"
 _app_manager = None
 _credential_manager = None
+_node_id: str = ""
+_debug_lock = asyncio.Lock()
 
 
 def init_handlers(scheduler, central_client, sidecar_url: str = "http://localhost:9100",
-                  app_manager=None, credential_manager=None):
+                  app_manager=None, credential_manager=None, node_id: str = ""):
     """Initialize handler references. Called during cache-node startup."""
-    global _job_scheduler, _central_client, _sidecar_url, _app_manager, _credential_manager
+    global _job_scheduler, _central_client, _sidecar_url
+    global _app_manager, _credential_manager, _node_id
     _job_scheduler = scheduler
     _central_client = central_client
     _sidecar_url = sidecar_url
     _app_manager = app_manager
     _credential_manager = credential_manager
+    _node_id = node_id
 
 
 async def handle_poll_device(payload: dict) -> dict:
@@ -175,3 +180,48 @@ async def handle_probe_oids(payload: dict) -> dict:
     except Exception as exc:
         logger.warning("probe_oids_failed", device_host=device_host, error=str(exc))
         return {"success": False, "error": str(exc)}
+
+
+def _empty_bundle(error: str) -> dict:
+    """Fallback bundle with the full shape so the UI can render it."""
+    return {
+        "success": False,
+        "error": error,
+        "result": None,
+        "logs": [],
+        "stdout": "",
+        "stderr": "",
+        "traceback": None,
+        "fail_phase": None,
+        "duration_ms": 0,
+    }
+
+
+async def handle_debug_run(payload: dict) -> dict:
+    """Execute a single debug poll for an assignment and return a full diagnostic bundle.
+
+    Runs inline on the cache-node (not dispatched to a poll-worker) so we can
+    capture stdout/stderr + log records + traceback. Does NOT submit the
+    result or reschedule — purely diagnostic.
+    """
+    assignment_id = payload.get("assignment_id")
+    if not assignment_id:
+        return _empty_bundle("assignment_id required")
+    if not _job_scheduler or not _app_manager or not _credential_manager:
+        return _empty_bundle("scheduler/managers not available")
+
+    job = _job_scheduler.get_job(assignment_id)
+    if job is None:
+        return _empty_bundle(
+            f"assignment {assignment_id} not scheduled on this collector",
+        )
+
+    from monctl_collector.polling.debug_runner import run_debug
+
+    async with _debug_lock:
+        return await run_debug(
+            job,
+            app_manager=_app_manager,
+            credential_manager=_credential_manager,
+            node_id=_node_id,
+        )

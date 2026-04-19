@@ -169,6 +169,7 @@ async def run(cfg: CollectorConfig) -> None:
         sidecar_url=sidecar_url,
         app_manager=probe_app_manager,
         credential_manager=credential_manager,
+        node_id=node_id,
     )
 
     ws_client.register_handler("poll_device", handle_poll_device)
@@ -177,8 +178,9 @@ async def run(cfg: CollectorConfig) -> None:
     ws_client.register_handler("module_update", handle_module_update)
     ws_client.register_handler("docker_health", handle_docker_health)
     ws_client.register_handler("docker_logs", handle_docker_logs)
-    from monctl_collector.central.ws_handlers import handle_probe_oids
+    from monctl_collector.central.ws_handlers import handle_probe_oids, handle_debug_run
     ws_client.register_handler("probe_oids", handle_probe_oids)
+    ws_client.register_handler("debug_run", handle_debug_run)
 
     from monctl_collector.central.action_handler import handle_run_action
     ws_client.register_handler("run_action", handle_run_action)

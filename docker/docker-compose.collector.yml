@@ -30,8 +30,13 @@ services:
       MONCTL_GRPC_ADDRESS: 0.0.0.0:50051
       MONCTL_DB_PATH: /data/cache.db
       MONCTL_SETUP_YAML: /etc/monctl/setup.yaml
+      # Reuse the same app/venv store as poll-workers so Debug Run can
+      # execute apps inline without re-installing their dependencies.
+      MONCTL_APPS_DIR: /shared/apps
+      MONCTL_VENVS_DIR: /shared/venvs
     volumes:
       - cache_data:/data
+      - app_data:/shared # shared with poll-workers for venv reuse
       - /etc/monctl/setup.yaml:/etc/monctl/setup.yaml:rw
       - /etc/machine-id:/etc/machine-id:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro

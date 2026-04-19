@@ -57,7 +57,7 @@ async def send_command(
     allowed_types = {
         "poll_device", "config_reload", "health_check",
         "module_update", "docker_health", "docker_logs",
-        "probe_oids",
+        "probe_oids", "debug_run",
     }
     if command_type not in allowed_types:
         raise HTTPException(

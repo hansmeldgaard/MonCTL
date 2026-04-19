@@ -94,6 +94,10 @@ class JobScheduler:
                 pass
         logger.info("job_scheduler_stopped")
 
+    def get_job(self, job_id: str) -> JobDefinition | None:
+        """Return the fully resolved JobDefinition for job_id, or None if not scheduled here."""
+        return self._my_jobs.get(job_id)
+
     async def trigger_immediate(self, job_id: str) -> bool:
         """Mark a job for immediate execution by the next worker that pulls jobs."""
         if job_id in self._my_jobs:

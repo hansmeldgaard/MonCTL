@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { ChevronDown, ListChecks, Loader2, Trash2 } from "lucide-react";
+import { Bug, ChevronDown, ListChecks, Loader2, Trash2 } from "lucide-react";
 import { CredentialCell } from "@/components/CredentialCell.tsx";
+import { DebugRunDialog } from "@/components/DebugRunDialog.tsx";
 import { IntervalInput } from "@/components/IntervalInput";
 import {
   Card,
@@ -73,6 +74,14 @@ export function AssignmentsPage() {
 
   // Selection
   const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  // Debug Run dialog
+  const [debugTarget, setDebugTarget] = useState<{
+    deviceId: string;
+    assignmentId: string;
+    appName: string;
+    deviceName: string;
+  } | null>(null);
 
   // Bulk actions
   const [bulkOpen, setBulkOpen] = useState(false);
@@ -387,6 +396,35 @@ export function AssignmentsPage() {
           );
         },
       },
+      {
+        key: "__actions",
+        label: "",
+        pickerLabel: "Actions",
+        sortable: false,
+        filterable: false,
+        minWidth: 60,
+        defaultWidth: 60,
+        cell: (a: any) =>
+          canEdit("device") ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 w-6 p-0 text-brand-400 hover:text-brand-300"
+              onClick={(e) => {
+                e.stopPropagation();
+                setDebugTarget({
+                  deviceId: a.device.id,
+                  assignmentId: a.id,
+                  appName: a.app.name,
+                  deviceName: a.device.name,
+                });
+              }}
+              title="Debug Run — run this app once and see the full output"
+            >
+              <Bug className="h-3 w-3" />
+            </Button>
+          ) : null,
+      },
     ],
     [
       allVisibleSelected,
@@ -396,6 +434,7 @@ export function AssignmentsPage() {
       toggleSelectAll,
       timeMode,
       tz,
+      canEdit,
     ],
   );
 
@@ -694,6 +733,15 @@ export function AssignmentsPage() {
           />
         </CardContent>
       </Card>
+
+      <DebugRunDialog
+        open={!!debugTarget}
+        onClose={() => setDebugTarget(null)}
+        deviceId={debugTarget?.deviceId ?? ""}
+        assignmentId={debugTarget?.assignmentId ?? ""}
+        appName={debugTarget?.appName ?? ""}
+        deviceName={debugTarget?.deviceName ?? ""}
+      />
     </div>
   );
 }

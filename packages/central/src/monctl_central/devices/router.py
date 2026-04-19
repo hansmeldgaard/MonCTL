@@ -1127,6 +1127,124 @@ async def poll_device_now(
     return {"status": "success", "data": {"ws_notified": ws_notified, "poll_triggered": poll_triggered}}
 
 
+class DebugRunRequest(BaseModel):
+    assignment_id: str
+
+
+@router.post("/{device_id}/debug-run")
+async def debug_run_assignment(
+    device_id: str,
+    body: DebugRunRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_permission("device", "edit")),
+):
+    """Run a single diagnostic poll for one assignment and return the full
+    bundle (PollResult + logs + stdout + stderr + traceback + fail_phase).
+
+    Executes inline on the cache-node hosting the collector — does NOT
+    submit the result to ClickHouse or update scheduler profiles.
+    """
+    device = await db.get(Device, uuid.UUID(device_id))
+    if device is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+    if not check_tenant_access(auth, device.tenant_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    from monctl_central.ws.router import manager as ws_manager
+    from monctl_central.storage.models import AppAssignment
+
+    try:
+        assignment_uuid = uuid.UUID(body.assignment_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid assignment_id")
+
+    assignment = await db.get(AppAssignment, assignment_uuid)
+    if assignment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assignment not found")
+
+    # Resolve candidate collectors. For pinned assignments there's exactly
+    # one; for group assignments consistent hashing partitions the job onto
+    # one collector in the group and we don't know which one without asking.
+    # Fan out to all candidates in parallel and take the first one that
+    # actually has the job cached (others return an empty bundle with
+    # "not scheduled on this collector").
+    collector_ids: list[uuid.UUID] = []
+    if assignment.collector_id:
+        collector_ids.append(assignment.collector_id)
+    elif device.collector_group_id:
+        result = await db.execute(
+            select(Collector.id).where(
+                Collector.group_id == device.collector_group_id,
+                Collector.status == "ACTIVE",
+            )
+        )
+        collector_ids = list(result.scalars().all())
+    if not collector_ids:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No active collector available for this assignment",
+        )
+
+    timeout_s = int(assignment.resource_limits.get("timeout_seconds", 30)) + 30
+    timeout_s = max(10, min(timeout_s, 400))
+
+    payload = {"assignment_id": str(assignment.id), "device_id": device_id}
+
+    async def _ask(cid: uuid.UUID) -> tuple[uuid.UUID, dict | None, str | None]:
+        try:
+            b = await ws_manager.broadcast_command(
+                cid, "debug_run", payload, timeout=timeout_s,
+            )
+            return cid, b, None
+        except KeyError:
+            return cid, None, "not_connected"
+        except asyncio.TimeoutError:
+            return cid, None, "timeout"
+        except Exception as exc:  # noqa: BLE001
+            return cid, None, str(exc)
+
+    responses = await asyncio.gather(*(_ask(cid) for cid in collector_ids))
+
+    # Prefer a bundle that actually executed the job. The owner is the
+    # collector whose response has either success=True, a non-null result,
+    # or an error other than the "not scheduled on this collector" marker.
+    owner_bundle: dict | None = None
+    disconnected_count = 0
+    timed_out_count = 0
+    for _cid, bundle, err in responses:
+        if err == "not_connected":
+            disconnected_count += 1
+            continue
+        if err == "timeout":
+            timed_out_count += 1
+            continue
+        if bundle is None:
+            continue
+        err_msg = bundle.get("error") or ""
+        if "not scheduled on this collector" in err_msg:
+            continue
+        owner_bundle = bundle
+        break
+
+    if owner_bundle is None:
+        if timed_out_count:
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=f"No collector responded within {timeout_s}s",
+            )
+        if disconnected_count == len(collector_ids):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No candidate collector is connected via WebSocket",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No collector owns this assignment (job not scheduled)",
+        )
+
+    return {"status": "success", "data": owner_bundle}
+
+
 # ── Interface Rules ─────────────────────────────────────────
 
 
