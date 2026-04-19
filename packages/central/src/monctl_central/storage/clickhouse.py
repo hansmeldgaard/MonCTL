@@ -2832,15 +2832,22 @@ class ClickHouseClient:
     def query_host_metrics_history(
         self,
         *,
+        step_seconds: int,
         host_label: str | None = None,
         host_role: str | None = None,
         from_ts: datetime | None = None,
         to_ts: datetime | None = None,
         limit: int = 20000,
     ) -> list[dict]:
-        """Return host metric samples with optional host/time filters."""
+        """Return host metric samples bucketed to ``step_seconds`` intervals.
+
+        Collapses raw per-push rows (sidecar pushes every 15s) into time
+        buckets server-side so chart responses stay ~hundreds of rows per
+        host regardless of range. ``avg()`` on gauges, ``max()`` on monotonic
+        counters and peak ints, ``any()`` on categorical strings.
+        """
         wheres: list[str] = []
-        params: dict[str, Any] = {}
+        params: dict[str, Any] = {"step": int(step_seconds)}
         if host_label:
             wheres.append("host_label = {host_label:String}")
             params["host_label"] = host_label
@@ -2854,10 +2861,28 @@ class ClickHouseClient:
             wheres.append("timestamp <= {to_ts:DateTime}")
             params["to_ts"] = to_ts.strftime("%Y-%m-%d %H:%M:%S")
         where_sql = ("WHERE " + " AND ".join(wheres)) if wheres else ""
-        col_list = ", ".join(_HOST_METRICS_HISTORY_INSERT_COLUMNS)
         sql = (
-            f"SELECT {col_list} "
+            "SELECT "
+            "toStartOfInterval(timestamp, INTERVAL {step:UInt32} SECOND) AS timestamp, "
+            "host_label, "
+            "any(host_role) AS host_role, "
+            "avg(cpu_count) AS cpu_count, "
+            "avg(load_1m) AS load_1m, "
+            "avg(load_5m) AS load_5m, "
+            "avg(load_15m) AS load_15m, "
+            "avg(mem_total_bytes) AS mem_total_bytes, "
+            "avg(mem_used_bytes) AS mem_used_bytes, "
+            "avg(mem_available_bytes) AS mem_available_bytes, "
+            "avg(swap_total_bytes) AS swap_total_bytes, "
+            "avg(swap_used_bytes) AS swap_used_bytes, "
+            "avg(disk_total_bytes) AS disk_total_bytes, "
+            "avg(disk_used_bytes) AS disk_used_bytes, "
+            "avg(disk_free_bytes) AS disk_free_bytes, "
+            "max(uptime_seconds) AS uptime_seconds, "
+            "max(containers_running) AS containers_running, "
+            "max(containers_total) AS containers_total "
             f"FROM host_metrics_history {where_sql} "
+            "GROUP BY timestamp, host_label "
             "ORDER BY host_label, timestamp ASC "
             f"LIMIT {int(limit)}"
         )
@@ -2868,6 +2893,7 @@ class ClickHouseClient:
     def query_container_metrics_history(
         self,
         *,
+        step_seconds: int,
         host_label: str | None = None,
         host_role: str | None = None,
         container_name: str | None = None,
@@ -2875,9 +2901,9 @@ class ClickHouseClient:
         to_ts: datetime | None = None,
         limit: int = 50000,
     ) -> list[dict]:
-        """Return per-container metric samples with optional filters."""
+        """Return per-container metric samples bucketed to ``step_seconds``."""
         wheres: list[str] = []
-        params: dict[str, Any] = {}
+        params: dict[str, Any] = {"step": int(step_seconds)}
         if host_label:
             wheres.append("host_label = {host_label:String}")
             params["host_label"] = host_label
@@ -2894,10 +2920,26 @@ class ClickHouseClient:
             wheres.append("timestamp <= {to_ts:DateTime}")
             params["to_ts"] = to_ts.strftime("%Y-%m-%d %H:%M:%S")
         where_sql = ("WHERE " + " AND ".join(wheres)) if wheres else ""
-        col_list = ", ".join(_CONTAINER_METRICS_HISTORY_INSERT_COLUMNS)
         sql = (
-            f"SELECT {col_list} "
+            "SELECT "
+            "toStartOfInterval(timestamp, INTERVAL {step:UInt32} SECOND) AS timestamp, "
+            "host_label, "
+            "container_name, "
+            "any(host_role) AS host_role, "
+            "any(image) AS image, "
+            "any(status) AS status, "
+            "avg(cpu_pct) AS cpu_pct, "
+            "avg(mem_usage_bytes) AS mem_usage_bytes, "
+            "avg(mem_limit_bytes) AS mem_limit_bytes, "
+            "avg(mem_pct) AS mem_pct, "
+            "max(net_rx_bytes) AS net_rx_bytes, "
+            "max(net_tx_bytes) AS net_tx_bytes, "
+            "max(block_read_bytes) AS block_read_bytes, "
+            "max(block_write_bytes) AS block_write_bytes, "
+            "max(pids) AS pids, "
+            "max(restart_count) AS restart_count "
             f"FROM container_metrics_history {where_sql} "
+            "GROUP BY timestamp, host_label, container_name "
             "ORDER BY host_label, container_name, timestamp ASC "
             f"LIMIT {int(limit)}"
         )

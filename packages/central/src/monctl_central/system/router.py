@@ -2040,6 +2040,24 @@ async def get_db_size_history(
     return {"status": "success", "data": rows, "meta": {"count": len(rows)}}
 
 
+def _bucket_step_for_range(from_ts, to_ts) -> int:
+    """Pick a bucket width so each series returns ~250–400 rows.
+
+    1h -> 60s, 6h -> 120s, 24h -> 300s, 7d+ -> 1800s. Bucket >= 15s sidecar
+    push interval so we never synthesize detail we don't have.
+    """
+    if from_ts is None or to_ts is None:
+        return 300
+    span_s = max(int((to_ts - from_ts).total_seconds()), 1)
+    if span_s <= 3600:
+        return 60
+    if span_s <= 6 * 3600:
+        return 120
+    if span_s <= 24 * 3600:
+        return 300
+    return 1800
+
+
 @router.get("/host-metrics-history")
 async def get_host_metrics_history(
     host_label: str | None = None,
@@ -2052,8 +2070,9 @@ async def get_host_metrics_history(
 ):
     """Return per-host CPU/memory/disk samples from host_metrics_history.
 
-    Data is persisted from every docker-stats sidecar push (one row per
-    push per host), so time resolution matches the sidecar push interval.
+    Rows are bucketed server-side via ``toStartOfInterval`` at a step derived
+    from the requested range (see ``_bucket_step_for_range``) so the chart
+    payload stays small regardless of how long the sidecars have been pushing.
     """
     from datetime import datetime
 
@@ -2065,13 +2084,18 @@ async def get_host_metrics_history(
         except ValueError:
             return None
 
+    parsed_from = _parse(from_ts)
+    parsed_to = _parse(to_ts)
+    step = _bucket_step_for_range(parsed_from, parsed_to)
+
     try:
         rows = await asyncio.to_thread(
             ch.query_host_metrics_history,
+            step_seconds=step,
             host_label=host_label,
             host_role=host_role,
-            from_ts=_parse(from_ts),
-            to_ts=_parse(to_ts),
+            from_ts=parsed_from,
+            to_ts=parsed_to,
             limit=min(max(int(limit), 1), 100000),
         )
     except Exception:
@@ -2127,14 +2151,19 @@ async def get_container_metrics_history(
         except ValueError:
             return None
 
+    parsed_from = _parse(from_ts)
+    parsed_to = _parse(to_ts)
+    step = _bucket_step_for_range(parsed_from, parsed_to)
+
     try:
         rows = await asyncio.to_thread(
             ch.query_container_metrics_history,
+            step_seconds=step,
             host_label=host_label,
             host_role=host_role,
             container_name=container_name,
-            from_ts=_parse(from_ts),
-            to_ts=_parse(to_ts),
+            from_ts=parsed_from,
+            to_ts=parsed_to,
             limit=min(max(int(limit), 1), 200000),
         )
     except Exception:
