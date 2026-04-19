@@ -31,7 +31,6 @@ import {
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Select } from "@/components/ui/select.tsx";
-import { ClearableInput } from "@/components/ui/clearable-input.tsx";
 import {
   Table,
   TableBody,
@@ -59,6 +58,11 @@ import {
   useRestartNodes,
 } from "@/api/hooks.ts";
 import { timeAgo, formatBytes } from "@/lib/utils.ts";
+import { useDisplayPreferences } from "@/hooks/useDisplayPreferences.ts";
+import { useColumnConfig } from "@/hooks/useColumnConfig.ts";
+import { FlexTable } from "@/components/FlexTable/FlexTable.tsx";
+import { DisplayMenu } from "@/components/FlexTable/DisplayMenu.tsx";
+import type { FlexColumnDef } from "@/components/FlexTable/types.ts";
 import type {
   UpgradeJob,
   UpgradeJobStep,
@@ -66,6 +70,33 @@ import type {
   OsInstallJobStep,
   PackageInventoryItem,
 } from "@/types/api.ts";
+
+interface UpgradeNode {
+  id: string;
+  hostname: string;
+  role: string;
+  group_name?: string | null;
+  ip?: string;
+  monctl_version?: string | null;
+  os_version?: string | null;
+  kernel_version?: string | null;
+  python_version?: string | null;
+  last_reported_at?: string | null;
+  reboot_required?: boolean;
+}
+
+interface UpgradePackageRow {
+  id: string;
+  version: string;
+  package_type: string;
+  filename: string;
+  file_size: number;
+  contains_central?: boolean;
+  contains_collector?: boolean;
+  uploaded_by?: string | null;
+  created_at: string;
+  changelog?: string | null;
+}
 
 // ── Status helpers ────────────────────────────────────────────────────────────
 
@@ -287,15 +318,6 @@ export function UpgradesPage() {
       prev.col === col
         ? { col, dir: prev.dir === "asc" ? "desc" : "asc" }
         : { col, dir: "asc" },
-    );
-  };
-
-  const nodeSortIcon = (col: string) => {
-    if (nodeSort.col !== col) return <span className="text-zinc-600">↕</span>;
-    return (
-      <span className="text-brand-400">
-        {nodeSort.dir === "asc" ? "↑" : "↓"}
-      </span>
     );
   };
 
@@ -538,216 +560,29 @@ export function UpgradesPage() {
               No nodes have reported version information yet.
             </p>
           ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-8">
-                      <input
-                        type="checkbox"
-                        checked={
-                          nodes.length > 0 &&
-                          nodes.every((n) => selectedNodes.has(n.hostname))
-                        }
-                        onChange={() => {
-                          if (
-                            nodes.every((n) => selectedNodes.has(n.hostname))
-                          ) {
-                            setSelectedNodes(new Set());
-                          } else {
-                            setSelectedNodes(
-                              new Set(nodes.map((n) => n.hostname)),
-                            );
-                          }
-                        }}
-                        className="accent-brand-500"
-                      />
-                    </TableHead>
-                    <TableHead>
-                      <div
-                        className="flex items-center gap-1 cursor-pointer select-none"
-                        onClick={() => handleNodeSort("hostname")}
-                      >
-                        Hostname {nodeSortIcon("hostname")}
-                      </div>
-                      <ClearableInput
-                        placeholder="Filter…"
-                        value={nodeFilterHostname}
-                        onChange={(e) => setNodeFilterHostname(e.target.value)}
-                        onClear={() => setNodeFilterHostname("")}
-                        className="mt-1 h-6 text-xs"
-                      />
-                    </TableHead>
-                    <TableHead>
-                      <div
-                        className="flex items-center gap-1 cursor-pointer select-none"
-                        onClick={() => handleNodeSort("role")}
-                      >
-                        Role {nodeSortIcon("role")}
-                      </div>
-                      <ClearableInput
-                        placeholder="Filter…"
-                        value={nodeFilterRole}
-                        onChange={(e) => setNodeFilterRole(e.target.value)}
-                        onClear={() => setNodeFilterRole("")}
-                        className="mt-1 h-6 text-xs"
-                      />
-                    </TableHead>
-                    <TableHead>
-                      <div
-                        className="flex items-center gap-1 cursor-pointer select-none"
-                        onClick={() => handleNodeSort("group_name")}
-                      >
-                        Group {nodeSortIcon("group_name")}
-                      </div>
-                      <ClearableInput
-                        placeholder="Filter…"
-                        value={nodeFilterGroup}
-                        onChange={(e) => setNodeFilterGroup(e.target.value)}
-                        onClear={() => setNodeFilterGroup("")}
-                        className="mt-1 h-6 text-xs"
-                      />
-                    </TableHead>
-                    <TableHead>
-                      <div
-                        className="flex items-center gap-1 cursor-pointer select-none"
-                        onClick={() => handleNodeSort("ip")}
-                      >
-                        IP {nodeSortIcon("ip")}
-                      </div>
-                      <ClearableInput
-                        placeholder="Filter…"
-                        value={nodeFilterIp}
-                        onChange={(e) => setNodeFilterIp(e.target.value)}
-                        onClear={() => setNodeFilterIp("")}
-                        className="mt-1 h-6 text-xs"
-                      />
-                    </TableHead>
-                    <TableHead>
-                      <div
-                        className="flex items-center gap-1 cursor-pointer select-none"
-                        onClick={() => handleNodeSort("monctl_version")}
-                      >
-                        MonCTL {nodeSortIcon("monctl_version")}
-                      </div>
-                    </TableHead>
-                    <TableHead>
-                      <div
-                        className="flex items-center gap-1 cursor-pointer select-none"
-                        onClick={() => handleNodeSort("os_version")}
-                      >
-                        OS {nodeSortIcon("os_version")}
-                      </div>
-                      <ClearableInput
-                        placeholder="Filter…"
-                        value={nodeFilterOs}
-                        onChange={(e) => setNodeFilterOs(e.target.value)}
-                        onClear={() => setNodeFilterOs("")}
-                        className="mt-1 h-6 text-xs"
-                      />
-                    </TableHead>
-                    <TableHead>
-                      <div
-                        className="flex items-center gap-1 cursor-pointer select-none"
-                        onClick={() => handleNodeSort("kernel_version")}
-                      >
-                        Kernel {nodeSortIcon("kernel_version")}
-                      </div>
-                    </TableHead>
-                    <TableHead>Python</TableHead>
-                    <TableHead>
-                      <div
-                        className="flex items-center gap-1 cursor-pointer select-none"
-                        onClick={() => handleNodeSort("last_reported_at")}
-                      >
-                        Last Reported {nodeSortIcon("last_reported_at")}
-                      </div>
-                    </TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {nodes.map((node) => (
-                    <TableRow key={node.id}>
-                      <TableCell>
-                        <input
-                          type="checkbox"
-                          checked={selectedNodes.has(node.hostname)}
-                          onChange={() => {
-                            setSelectedNodes((prev) => {
-                              const next = new Set(prev);
-                              if (next.has(node.hostname))
-                                next.delete(node.hostname);
-                              else next.add(node.hostname);
-                              return next;
-                            });
-                          }}
-                          className="accent-brand-500"
-                        />
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">
-                        <div className="flex items-center gap-1.5">
-                          {node.hostname}
-                          {node.reboot_required && (
-                            <Badge
-                              className="bg-amber-500/15 text-amber-300 border-amber-500/30 text-[10px]"
-                              title="Reboot required"
-                            >
-                              <RefreshCw className="h-2.5 w-2.5 mr-0.5" />
-                              reboot
-                            </Badge>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          className={
-                            node.role === "central"
-                              ? "bg-brand-500/15 text-brand-400 border-brand-500/30 text-xs"
-                              : "bg-zinc-500/15 text-zinc-400 border-zinc-500/30 text-xs"
-                          }
-                        >
-                          {node.role}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-xs">
-                        {node.group_name ? (
-                          <button
-                            type="button"
-                            onClick={() => selectGroup(node.group_name!)}
-                            className="text-zinc-300 hover:text-brand-400 underline-offset-2 hover:underline"
-                            title={`Select all nodes in ${node.group_name}`}
-                          >
-                            {node.group_name}
-                          </button>
-                        ) : (
-                          <span className="text-zinc-600">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">
-                        {node.ip || "\u2014"}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">
-                        {node.monctl_version || "\u2014"}
-                      </TableCell>
-                      <TableCell className="text-xs">
-                        {node.os_version || "\u2014"}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">
-                        {node.kernel_version || "\u2014"}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">
-                        {node.python_version || "\u2014"}
-                      </TableCell>
-                      <TableCell className="text-xs text-zinc-400">
-                        {node.last_reported_at
-                          ? timeAgo(node.last_reported_at)
-                          : "\u2014"}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+            <SystemNodesFlexTable
+              nodes={nodes}
+              selectedNodes={selectedNodes}
+              setSelectedNodes={setSelectedNodes}
+              filters={{
+                hostname: nodeFilterHostname,
+                role: nodeFilterRole,
+                group_name: nodeFilterGroup,
+                ip: nodeFilterIp,
+                os_version: nodeFilterOs,
+              }}
+              setFilter={(col, v) => {
+                if (col === "hostname") setNodeFilterHostname(v);
+                else if (col === "role") setNodeFilterRole(v);
+                else if (col === "group_name") setNodeFilterGroup(v);
+                else if (col === "ip") setNodeFilterIp(v);
+                else if (col === "os_version") setNodeFilterOs(v);
+              }}
+              sortBy={nodeSort.col}
+              sortDir={nodeSort.dir}
+              onSort={handleNodeSort}
+              onSelectGroup={selectGroup}
+            />
           )}
         </CardContent>
       </Card>
@@ -796,82 +631,15 @@ export function UpgradesPage() {
               No upgrade packages uploaded yet.
             </p>
           ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Version</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead>Filename</TableHead>
-                    <TableHead>Size</TableHead>
-                    <TableHead>Components</TableHead>
-                    <TableHead>Uploaded By</TableHead>
-                    <TableHead>Uploaded</TableHead>
-                    <TableHead className="w-20"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {packages.map((pkg) => (
-                    <TableRow
-                      key={pkg.id}
-                      className={`cursor-pointer ${selectedPkgId === pkg.id ? "bg-brand-500/10" : ""}`}
-                      onClick={() =>
-                        setSelectedPkgId(
-                          selectedPkgId === pkg.id ? null : pkg.id,
-                        )
-                      }
-                    >
-                      <TableCell className="font-mono text-xs font-semibold">
-                        {pkg.version}
-                      </TableCell>
-                      <TableCell className="text-xs">
-                        {pkg.package_type}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs max-w-48 truncate">
-                        {pkg.filename}
-                      </TableCell>
-                      <TableCell className="text-xs">
-                        {formatBytes(pkg.file_size)}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex gap-1">
-                          {pkg.contains_central && (
-                            <Badge className="bg-brand-500/15 text-brand-400 border-brand-500/30 text-[10px]">
-                              central
-                            </Badge>
-                          )}
-                          {pkg.contains_collector && (
-                            <Badge className="bg-zinc-500/15 text-zinc-400 border-zinc-500/30 text-[10px]">
-                              collector
-                            </Badge>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-xs text-zinc-400">
-                        {pkg.uploaded_by || "\u2014"}
-                      </TableCell>
-                      <TableCell className="text-xs text-zinc-400">
-                        {timeAgo(pkg.created_at)}
-                      </TableCell>
-                      <TableCell>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 w-7 p-0 text-zinc-500 hover:text-red-400"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            deleteMutation.mutate(pkg.id);
-                          }}
-                          disabled={deleteMutation.isPending}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+            <UpgradePackagesFlexTable
+              packages={packages as UpgradePackageRow[]}
+              selectedPkgId={selectedPkgId}
+              onSelect={(id) =>
+                setSelectedPkgId(selectedPkgId === id ? null : id)
+              }
+              onDelete={(id) => deleteMutation.mutate(id)}
+              deletePending={deleteMutation.isPending}
+            />
           )}
           {selectedPkg?.changelog && (
             <div className="mt-3 rounded-md bg-zinc-800/50 border border-zinc-700 p-3">
@@ -1435,6 +1203,405 @@ export function UpgradesPage() {
 }
 
 // ── Package Node Detail (expanded row) ───────────────────────────────────────
+
+function SystemNodesFlexTable({
+  nodes,
+  selectedNodes,
+  setSelectedNodes,
+  filters,
+  setFilter,
+  sortBy,
+  sortDir,
+  onSort,
+  onSelectGroup,
+}: {
+  nodes: UpgradeNode[];
+  selectedNodes: Set<string>;
+  setSelectedNodes: (
+    update: Set<string> | ((prev: Set<string>) => Set<string>),
+  ) => void;
+  filters: Record<string, string>;
+  setFilter: (col: string, value: string) => void;
+  sortBy: string;
+  sortDir: "asc" | "desc";
+  onSort: (col: string) => void;
+  onSelectGroup: (group: string) => void;
+}) {
+  const { compact } = useDisplayPreferences();
+
+  const allSelected =
+    nodes.length > 0 && nodes.every((n) => selectedNodes.has(n.hostname));
+  const someSelected = selectedNodes.size > 0 && !allSelected;
+
+  const columns = useMemo<FlexColumnDef<UpgradeNode>[]>(
+    () => [
+      {
+        key: "__select",
+        label: (
+          <input
+            type="checkbox"
+            checked={allSelected}
+            ref={(el) => {
+              if (el) el.indeterminate = someSelected;
+            }}
+            onChange={() => {
+              if (allSelected) setSelectedNodes(new Set());
+              else setSelectedNodes(new Set(nodes.map((n) => n.hostname)));
+            }}
+            className="accent-brand-500"
+          />
+        ),
+        pickerLabel: "Select",
+        sortable: false,
+        filterable: false,
+        alwaysVisible: true,
+        minWidth: 40,
+        defaultWidth: 40,
+        cell: (node) => (
+          <input
+            type="checkbox"
+            checked={selectedNodes.has(node.hostname)}
+            onChange={() => {
+              setSelectedNodes((prev) => {
+                const next = new Set(prev);
+                if (next.has(node.hostname)) next.delete(node.hostname);
+                else next.add(node.hostname);
+                return next;
+              });
+            }}
+            className="accent-brand-500"
+          />
+        ),
+      },
+      {
+        key: "hostname",
+        label: "Hostname",
+        defaultWidth: 220,
+        cellClassName: "font-mono text-xs",
+        cell: (node) => (
+          <div className="flex items-center gap-1.5">
+            {node.hostname}
+            {node.reboot_required && (
+              <Badge
+                className="bg-amber-500/15 text-amber-300 border-amber-500/30 text-[10px]"
+                title="Reboot required"
+              >
+                <RefreshCw className="h-2.5 w-2.5 mr-0.5" />
+                reboot
+              </Badge>
+            )}
+          </div>
+        ),
+      },
+      {
+        key: "role",
+        label: "Role",
+        defaultWidth: 110,
+        cell: (node) => (
+          <Badge
+            className={
+              node.role === "central"
+                ? "bg-brand-500/15 text-brand-400 border-brand-500/30 text-xs"
+                : "bg-zinc-500/15 text-zinc-400 border-zinc-500/30 text-xs"
+            }
+          >
+            {node.role}
+          </Badge>
+        ),
+      },
+      {
+        key: "group_name",
+        label: "Group",
+        defaultWidth: 140,
+        cellClassName: "text-xs",
+        cell: (node) =>
+          node.group_name ? (
+            <button
+              type="button"
+              onClick={() => onSelectGroup(node.group_name!)}
+              className="text-zinc-300 hover:text-brand-400 underline-offset-2 hover:underline"
+              title={`Select all nodes in ${node.group_name}`}
+            >
+              {node.group_name}
+            </button>
+          ) : (
+            <span className="text-zinc-600">—</span>
+          ),
+      },
+      {
+        key: "ip",
+        label: "IP",
+        defaultWidth: 130,
+        cellClassName: "font-mono text-xs",
+        cell: (node) => node.ip || "\u2014",
+      },
+      {
+        key: "monctl_version",
+        label: "MonCTL",
+        filterable: false,
+        defaultWidth: 110,
+        cellClassName: "font-mono text-xs",
+        cell: (node) => node.monctl_version || "\u2014",
+      },
+      {
+        key: "os_version",
+        label: "OS",
+        defaultWidth: 160,
+        cellClassName: "text-xs",
+        cell: (node) => node.os_version || "\u2014",
+      },
+      {
+        key: "kernel_version",
+        label: "Kernel",
+        filterable: false,
+        defaultWidth: 160,
+        cellClassName: "font-mono text-xs",
+        cell: (node) => node.kernel_version || "\u2014",
+      },
+      {
+        key: "python_version",
+        label: "Python",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 110,
+        cellClassName: "font-mono text-xs",
+        cell: (node) => node.python_version || "\u2014",
+      },
+      {
+        key: "last_reported_at",
+        label: "Last Reported",
+        filterable: false,
+        defaultWidth: 130,
+        cellClassName: "text-xs text-zinc-400",
+        cell: (node) =>
+          node.last_reported_at ? timeAgo(node.last_reported_at) : "\u2014",
+      },
+    ],
+    [
+      allSelected,
+      someSelected,
+      selectedNodes,
+      setSelectedNodes,
+      nodes,
+      onSelectGroup,
+    ],
+  );
+
+  const {
+    orderedVisibleColumns,
+    configMap,
+    setHidden,
+    setWidth,
+    setOrder,
+    reset,
+  } = useColumnConfig<UpgradeNode>("upgrades-nodes", columns);
+
+  return (
+    <div>
+      <div className="flex items-center justify-end mb-2">
+        <DisplayMenu
+          columns={columns}
+          configMap={configMap}
+          onToggleHidden={setHidden}
+          onReset={reset}
+        />
+      </div>
+      <div
+        className={
+          compact ? "[&_td]:py-1 [&_td]:text-xs [&_th]:py-1 [&_th]:text-xs" : ""
+        }
+      >
+        <FlexTable<UpgradeNode>
+          orderedVisibleColumns={orderedVisibleColumns}
+          configMap={configMap}
+          onOrderChange={setOrder}
+          onWidthChange={setWidth}
+          rows={nodes}
+          rowKey={(n) => n.id}
+          sortBy={sortBy}
+          sortDir={sortDir}
+          onSort={onSort}
+          filters={filters}
+          onFilterChange={setFilter}
+          emptyState="No nodes match your filters"
+        />
+      </div>
+    </div>
+  );
+}
+
+function UpgradePackagesFlexTable({
+  packages,
+  selectedPkgId,
+  onSelect,
+  onDelete,
+  deletePending,
+}: {
+  packages: UpgradePackageRow[];
+  selectedPkgId: string | null;
+  onSelect: (id: string) => void;
+  onDelete: (id: string) => void;
+  deletePending: boolean;
+}) {
+  const { compact } = useDisplayPreferences();
+
+  const columns = useMemo<FlexColumnDef<UpgradePackageRow>[]>(
+    () => [
+      {
+        key: "version",
+        label: "Version",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 110,
+        cellClassName: "font-mono text-xs font-semibold",
+        cell: (pkg) => (
+          <button
+            type="button"
+            onClick={() => onSelect(pkg.id)}
+            className="text-left hover:text-brand-300 cursor-pointer"
+          >
+            {pkg.version}
+          </button>
+        ),
+      },
+      {
+        key: "package_type",
+        label: "Type",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 100,
+        cellClassName: "text-xs",
+        cell: (pkg) => pkg.package_type,
+      },
+      {
+        key: "filename",
+        label: "Filename",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 280,
+        cellClassName: "font-mono text-xs max-w-48 truncate",
+        cell: (pkg) => pkg.filename,
+      },
+      {
+        key: "file_size",
+        label: "Size",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 90,
+        cellClassName: "text-xs",
+        cell: (pkg) => formatBytes(pkg.file_size),
+      },
+      {
+        key: "__components",
+        label: "Components",
+        pickerLabel: "Components",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 160,
+        cell: (pkg) => (
+          <div className="flex gap-1">
+            {pkg.contains_central && (
+              <Badge className="bg-brand-500/15 text-brand-400 border-brand-500/30 text-[10px]">
+                central
+              </Badge>
+            )}
+            {pkg.contains_collector && (
+              <Badge className="bg-zinc-500/15 text-zinc-400 border-zinc-500/30 text-[10px]">
+                collector
+              </Badge>
+            )}
+          </div>
+        ),
+      },
+      {
+        key: "uploaded_by",
+        label: "Uploaded By",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 130,
+        cellClassName: "text-xs text-zinc-400",
+        cell: (pkg) => pkg.uploaded_by || "\u2014",
+      },
+      {
+        key: "created_at",
+        label: "Uploaded",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 120,
+        cellClassName: "text-xs text-zinc-400",
+        cell: (pkg) => timeAgo(pkg.created_at),
+      },
+      {
+        key: "__actions",
+        label: "",
+        pickerLabel: "Actions",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 60,
+        cell: (pkg) => (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 w-7 p-0 text-zinc-500 hover:text-red-400"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(pkg.id);
+            }}
+            disabled={deletePending}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        ),
+      },
+    ],
+    [onSelect, onDelete, deletePending],
+  );
+
+  const {
+    orderedVisibleColumns,
+    configMap,
+    setHidden,
+    setWidth,
+    setOrder,
+    reset,
+  } = useColumnConfig<UpgradePackageRow>("upgrades-packages", columns);
+
+  return (
+    <div>
+      <div className="flex items-center justify-end mb-2">
+        <DisplayMenu
+          columns={columns}
+          configMap={configMap}
+          onToggleHidden={setHidden}
+          onReset={reset}
+        />
+      </div>
+      <div
+        className={
+          compact ? "[&_td]:py-1 [&_td]:text-xs [&_th]:py-1 [&_th]:text-xs" : ""
+        }
+      >
+        <FlexTable<UpgradePackageRow>
+          orderedVisibleColumns={orderedVisibleColumns}
+          configMap={configMap}
+          onOrderChange={setOrder}
+          onWidthChange={setWidth}
+          rows={packages}
+          rowKey={(p) => p.id}
+          sortBy=""
+          sortDir="asc"
+          onSort={() => {}}
+          filters={{}}
+          onFilterChange={() => {}}
+          rowClassName={(p) =>
+            selectedPkgId === p.id ? "bg-brand-500/10" : undefined
+          }
+          emptyState="No upgrade packages"
+        />
+      </div>
+    </div>
+  );
+}
 
 function PackageNodeDetail({
   pkg,
