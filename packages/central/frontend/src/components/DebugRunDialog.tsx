@@ -273,14 +273,20 @@ function BundleView({
   );
 }
 
+function lineCount(s: string | undefined | null): number {
+  if (!s) return 0;
+  const trimmed = s.endsWith("\n") ? s.slice(0, -1) : s;
+  return trimmed.split("\n").length;
+}
+
 function tabCount(bundle: DebugRunBundle, key: TabKey): number | undefined {
   switch (key) {
     case "logs":
       return bundle.logs?.length ?? 0;
     case "stdout":
-      return bundle.stdout?.length ?? 0;
+      return lineCount(bundle.stdout);
     case "stderr":
-      return bundle.stderr?.length ?? 0;
+      return lineCount(bundle.stderr);
     case "metrics":
       return bundle.result?.metrics?.length ?? 0;
     default:
