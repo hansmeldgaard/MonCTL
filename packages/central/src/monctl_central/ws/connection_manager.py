@@ -305,7 +305,12 @@ class ConnectionManager:
         # Try local first (fast path)
         conn = self._connections.get(collector_id)
         if conn:
-            return await conn.send_request(msg_type, payload, timeout=timeout)
+            result = await conn.send_request(msg_type, payload, timeout=timeout)
+            # Normalise to the same shape as the Redis-fanout path which
+            # unwraps the WS envelope in _handle_broadcast_command.
+            if isinstance(result, dict) and "payload" in result:
+                return result["payload"]
+            return result
 
         # Broadcast via Redis
         r = await _get_redis()

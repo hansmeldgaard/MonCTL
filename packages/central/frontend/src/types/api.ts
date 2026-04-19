@@ -2103,3 +2103,45 @@ export interface AutomationRun {
   duration_ms: number;
   triggered_by: string;
 }
+
+// ── Debug Run ────────────────────────────────────────────────────────────────
+
+export interface DebugLogRecord {
+  level: string;
+  logger: string;
+  message: string;
+  timestamp: number;
+  module?: string;
+  lineno?: number;
+  exc_info?: string;
+}
+
+export interface DebugPollResult {
+  job_id: string;
+  device_id: string | null;
+  collector_node: string;
+  timestamp: number;
+  metrics: Array<Record<string, unknown>>;
+  config_data: Record<string, unknown> | null;
+  status: string;
+  reachable: boolean;
+  error_message: string | null;
+  execution_time_ms: number;
+  error_category: string;
+  started_at: number | null;
+  rtt_ms: number | null;
+  response_time_ms: number | null;
+  interface_rows: Array<Record<string, unknown>> | null;
+}
+
+export interface DebugRunBundle {
+  success: boolean;
+  error?: string;
+  result: DebugPollResult | null;
+  logs: DebugLogRecord[];
+  stdout: string;
+  stderr: string;
+  traceback: string | null;
+  fail_phase: "setup" | "connect" | "poll" | null;
+  duration_ms: number;
+}

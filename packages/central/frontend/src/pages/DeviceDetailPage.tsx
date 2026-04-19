@@ -12,6 +12,7 @@ import {
   ArrowUpDown,
   BarChart2,
   Bell,
+  Bug,
   Clock,
   Database,
   FileText,
@@ -153,6 +154,8 @@ import type {
 import { useListState } from "@/hooks/useListState.ts";
 import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
 import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
+import { DebugRunDialog } from "@/components/DebugRunDialog.tsx";
+import { usePermissions } from "@/hooks/usePermissions";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
 import { SchemaConfigFields } from "@/components/SchemaConfigFields.tsx";
 import { ConfigDataRenderer } from "@/components/ConfigDataRenderer.tsx";
@@ -4675,10 +4678,15 @@ function AssignmentsTab({ deviceId }: { deviceId: string }) {
   const { data: device } = useDevice(deviceId);
   const { data: assignments, isLoading } = useDeviceAssignments(deviceId);
   const deleteAssignment = useDeleteAssignment();
+  const { canEdit } = usePermissions();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [applyTemplateOpen, setApplyTemplateOpen] = useState(false);
+  const [debugAssignment, setDebugAssignment] = useState<{
+    id: string;
+    appName: string;
+  } | null>(null);
 
   if (isLoading) {
     return (
@@ -4832,6 +4840,19 @@ function AssignmentsTab({ deviceId }: { deviceId: string }) {
                   >
                     <Pencil className="h-3 w-3" />
                   </Button>
+                  {canEdit("device") && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 w-6 p-0 text-brand-400 hover:text-brand-300"
+                      onClick={() =>
+                        setDebugAssignment({ id: a.id, appName: a.app.name })
+                      }
+                      title="Debug Run — run this app once and see the full output"
+                    >
+                      <Bug className="h-3 w-3" />
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
                     size="sm"
@@ -4906,6 +4927,15 @@ function AssignmentsTab({ deviceId }: { deviceId: string }) {
         onClose={() => setApplyTemplateOpen(false)}
         deviceIds={[deviceId]}
         deviceName={device?.name}
+      />
+
+      <DebugRunDialog
+        open={!!debugAssignment}
+        onClose={() => setDebugAssignment(null)}
+        deviceId={deviceId}
+        assignmentId={debugAssignment?.id ?? ""}
+        appName={debugAssignment?.appName ?? ""}
+        deviceName={device?.name ?? ""}
       />
     </div>
   );
