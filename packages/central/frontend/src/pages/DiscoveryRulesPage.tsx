@@ -1,6 +1,14 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Loader2, Pencil, Plus, Search, Server, Trash2 } from "lucide-react";
+import {
+  FileText as TemplatesIcon,
+  Loader2,
+  Pencil,
+  Plus,
+  Search,
+  Server,
+  Trash2,
+} from "lucide-react";
 import {
   Card,
   CardContent,
@@ -13,17 +21,13 @@ import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { Select } from "@/components/ui/select.tsx";
 import { SearchableSelect } from "@/components/ui/searchable-select.tsx";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table.tsx";
 import { Dialog, DialogFooter } from "@/components/ui/dialog.tsx";
-import { FilterableSortHead } from "@/components/FilterableSortHead.tsx";
+import { useDisplayPreferences } from "@/hooks/useDisplayPreferences.ts";
+import { useColumnConfig } from "@/hooks/useColumnConfig.ts";
+import { FlexTable } from "@/components/FlexTable/FlexTable.tsx";
+import { DisplayMenu } from "@/components/FlexTable/DisplayMenu.tsx";
 import { PaginationBar } from "@/components/PaginationBar.tsx";
+import type { FlexColumnDef } from "@/components/FlexTable/types.ts";
 import {
   useDeviceTypes,
   useCreateDeviceType,
@@ -42,7 +46,7 @@ import { DeviceCategoriesPage } from "@/pages/DeviceTypesPage.tsx";
 import { usePermissions } from "@/hooks/usePermissions.ts";
 import { cn } from "@/lib/utils.ts";
 import type { DeviceType, TemplateBinding } from "@/types/api.ts";
-import { ArrowDown, ArrowUp, ChevronDown, FileText, X } from "lucide-react";
+import { ArrowDown, ArrowUp, FileText, X } from "lucide-react";
 
 const TABS = [
   { key: "types", label: "Device Types", icon: Search },
@@ -108,7 +112,155 @@ function DeviceTypesTab() {
   const [showCreate, setShowCreate] = useState(false);
   const [editTarget, setEditTarget] = useState<DeviceType | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeviceType | null>(null);
-  const [expandedRow, setExpandedRow] = useState<string | null>(null);
+  const [templatesTarget, setTemplatesTarget] = useState<DeviceType | null>(
+    null,
+  );
+  const { compact } = useDisplayPreferences();
+
+  const columns = useMemo<FlexColumnDef<DeviceType>[]>(
+    () => [
+      {
+        key: "name",
+        label: "Name",
+        defaultWidth: 220,
+        cellClassName: "font-medium text-zinc-100",
+        cell: (rule) => (
+          <span className="flex items-center gap-1.5">
+            {rule.name}
+            {rule.pack_id && (
+              <Badge variant="default" className="text-xs text-zinc-500">
+                pack
+              </Badge>
+            )}
+          </span>
+        ),
+      },
+      {
+        key: "sys_object_id_pattern",
+        label: "sysObjectID Pattern",
+        defaultWidth: 240,
+        cellClassName: "font-mono text-xs text-zinc-400",
+        cell: (rule) => rule.sys_object_id_pattern,
+      },
+      {
+        key: "device_category_name",
+        label: "Category",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 140,
+        cell: (rule) => (
+          <Badge variant="info" className="text-xs">
+            {rule.device_category_name || "—"}
+          </Badge>
+        ),
+      },
+      {
+        key: "vendor",
+        label: "Vendor",
+        defaultWidth: 140,
+        cellClassName: "text-zinc-300",
+        cell: (rule) => rule.vendor || "—",
+      },
+      {
+        key: "model",
+        label: "Model",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 160,
+        cellClassName: "text-zinc-400 text-sm",
+        cell: (rule) => rule.model || "—",
+      },
+      {
+        key: "os_family",
+        label: "OS Family",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 140,
+        cellClassName: "text-zinc-400 text-sm",
+        cell: (rule) => rule.os_family || "—",
+      },
+      {
+        key: "priority",
+        label: "Priority",
+        filterable: false,
+        defaultWidth: 90,
+        cellClassName: "text-zinc-500 text-sm tabular-nums",
+        cell: (rule) => rule.priority,
+      },
+      {
+        key: "__device_count",
+        label: "Devices",
+        pickerLabel: "Devices",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 90,
+        cell: (rule) =>
+          (rule as any).device_count > 0 ? (
+            <Link
+              to={`/devices?device_type_name=${encodeURIComponent(rule.name)}`}
+              className="text-sm font-medium text-brand-400 hover:text-brand-300 transition-colors"
+            >
+              {(rule as any).device_count}
+            </Link>
+          ) : (
+            <span className="text-sm text-zinc-600">0</span>
+          ),
+      },
+      {
+        key: "__actions",
+        label: "",
+        pickerLabel: "Actions",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 130,
+        cell: (rule) => (
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setTemplatesTarget(rule)}
+              className="rounded p-1 text-zinc-600 hover:text-brand-400 hover:bg-brand-500/10 transition-colors cursor-pointer"
+              title="Linked templates"
+            >
+              <TemplatesIcon className="h-3.5 w-3.5" />
+            </button>
+            {rule.pack_id ? (
+              <span className="text-xs text-zinc-600 italic">pack</span>
+            ) : (
+              <>
+                {canEdit("device") && (
+                  <button
+                    onClick={() => setEditTarget(rule)}
+                    className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer"
+                    title="Edit"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                )}
+                {canDelete("device") && (
+                  <button
+                    onClick={() => setDeleteTarget(rule)}
+                    className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                    title="Delete"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        ),
+      },
+    ],
+    [canEdit, canDelete],
+  );
+
+  const {
+    orderedVisibleColumns,
+    configMap,
+    setHidden,
+    setWidth,
+    setOrder,
+    reset,
+  } = useColumnConfig<DeviceType>("device-types", columns);
 
   if (isLoading) {
     return (
@@ -142,180 +294,43 @@ function DeviceTypesTab() {
           <CardTitle className="flex items-center gap-2">
             <Search className="h-4 w-4" />
             Device Types ({meta.total})
+            <div className="ml-auto">
+              <DisplayMenu
+                columns={columns}
+                configMap={configMap}
+                onToggleHidden={setHidden}
+                onReset={reset}
+              />
+            </div>
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <FilterableSortHead
-                  col="name"
-                  label="Name"
-                  sortBy={listState.sortBy}
-                  sortDir={listState.sortDir}
-                  onSort={listState.handleSort}
-                  filterValue={listState.filters.name}
-                  onFilterChange={(v) => listState.setFilter("name", v)}
-                />
-                <FilterableSortHead
-                  col="sys_object_id_pattern"
-                  label="sysObjectID Pattern"
-                  sortBy={listState.sortBy}
-                  sortDir={listState.sortDir}
-                  onSort={listState.handleSort}
-                  filterValue={listState.filters.sys_object_id_pattern}
-                  onFilterChange={(v) =>
-                    listState.setFilter("sys_object_id_pattern", v)
-                  }
-                />
-                <TableHead>Category</TableHead>
-                <FilterableSortHead
-                  col="vendor"
-                  label="Vendor"
-                  sortBy={listState.sortBy}
-                  sortDir={listState.sortDir}
-                  onSort={listState.handleSort}
-                  filterValue={listState.filters.vendor}
-                  onFilterChange={(v) => listState.setFilter("vendor", v)}
-                />
-                <TableHead>Model</TableHead>
-                <TableHead>OS Family</TableHead>
-                <FilterableSortHead
-                  col="priority"
-                  label="Priority"
-                  sortBy={listState.sortBy}
-                  sortDir={listState.sortDir}
-                  onSort={listState.handleSort}
-                  filterable={false}
-                />
-                <TableHead className="text-center">Devices</TableHead>
-                <TableHead className="w-20"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rules.length === 0 ? (
-                <TableRow>
-                  <TableCell
-                    colSpan={9}
-                    className="text-center text-zinc-500 py-8"
-                  >
-                    {listState.hasActiveFilters
-                      ? "No device types match your filters"
-                      : "No device types defined — add types to enable SNMP device auto-classification"}
-                  </TableCell>
-                </TableRow>
-              ) : (
-                rules.map((rule) => (
-                  <>
-                    <TableRow
-                      key={rule.id}
-                      className="cursor-pointer hover:bg-zinc-800/50"
-                      onClick={() =>
-                        setExpandedRow(expandedRow === rule.id ? null : rule.id)
-                      }
-                    >
-                      <TableCell className="font-medium text-zinc-100">
-                        <span className="flex items-center gap-1.5">
-                          <ChevronDown
-                            className={cn(
-                              "h-3.5 w-3.5 text-zinc-600 transition-transform",
-                              expandedRow === rule.id ? "" : "-rotate-90",
-                            )}
-                          />
-                          {rule.name}
-                          {rule.pack_id && (
-                            <Badge
-                              variant="default"
-                              className="text-xs text-zinc-500"
-                            >
-                              pack
-                            </Badge>
-                          )}
-                        </span>
-                      </TableCell>
-                      <TableCell className="font-mono text-xs text-zinc-400">
-                        {rule.sys_object_id_pattern}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="info" className="text-xs">
-                          {rule.device_category_name || "—"}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-zinc-300">
-                        {rule.vendor || "—"}
-                      </TableCell>
-                      <TableCell className="text-zinc-400 text-sm">
-                        {rule.model || "—"}
-                      </TableCell>
-                      <TableCell className="text-zinc-400 text-sm">
-                        {rule.os_family || "—"}
-                      </TableCell>
-                      <TableCell className="text-zinc-500 text-sm tabular-nums">
-                        {rule.priority}
-                      </TableCell>
-                      <TableCell className="text-center">
-                        {(rule as any).device_count > 0 ? (
-                          <Link
-                            to={`/devices?device_type_name=${encodeURIComponent(rule.name)}`}
-                            className="text-sm font-medium text-brand-400 hover:text-brand-300 transition-colors"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            {(rule as any).device_count}
-                          </Link>
-                        ) : (
-                          <span className="text-sm text-zinc-600">0</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <div
-                          className="flex items-center gap-1"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          {rule.pack_id ? (
-                            <span className="text-xs text-zinc-600 italic">
-                              pack-managed
-                            </span>
-                          ) : (
-                            <>
-                              {canEdit("device") && (
-                                <button
-                                  onClick={() => setEditTarget(rule)}
-                                  className="rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer"
-                                >
-                                  <Pencil className="h-3.5 w-3.5" />
-                                </button>
-                              )}
-                              {canDelete("device") && (
-                                <button
-                                  onClick={() => setDeleteTarget(rule)}
-                                  className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </button>
-                              )}
-                            </>
-                          )}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                    {expandedRow === rule.id && (
-                      <TableRow key={`${rule.id}-templates`}>
-                        <TableCell
-                          colSpan={8}
-                          className="bg-zinc-900/50 px-6 py-3"
-                        >
-                          <DeviceTypeTemplateBindingsPanel
-                            deviceTypeId={rule.id}
-                            deviceCategoryId={rule.device_category_id}
-                          />
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </>
-                ))
-              )}
-            </TableBody>
-          </Table>
+          <div
+            className={
+              compact
+                ? "[&_td]:py-1 [&_td]:text-xs [&_th]:py-1 [&_th]:text-xs"
+                : ""
+            }
+          >
+            <FlexTable<DeviceType>
+              orderedVisibleColumns={orderedVisibleColumns}
+              configMap={configMap}
+              onOrderChange={setOrder}
+              onWidthChange={setWidth}
+              rows={rules}
+              rowKey={(r) => r.id}
+              sortBy={listState.sortBy}
+              sortDir={listState.sortDir}
+              onSort={listState.handleSort}
+              filters={listState.filters}
+              onFilterChange={(col, v) => listState.setFilter(col, v)}
+              emptyState={
+                listState.hasActiveFilters
+                  ? "No device types match your filters"
+                  : "No device types defined — add types to enable SNMP device auto-classification"
+              }
+            />
+          </div>
           <PaginationBar
             page={listState.page}
             pageSize={listState.pageSize}
@@ -340,6 +355,27 @@ function DeviceTypesTab() {
         rule={deleteTarget}
         onClose={() => setDeleteTarget(null)}
       />
+
+      {templatesTarget && (
+        <Dialog
+          open
+          onClose={() => setTemplatesTarget(null)}
+          title={`Templates: ${templatesTarget.name}`}
+        >
+          <DeviceTypeTemplateBindingsPanel
+            deviceTypeId={templatesTarget.id}
+            deviceCategoryId={templatesTarget.device_category_id}
+          />
+          <DialogFooter>
+            <Button
+              variant="secondary"
+              onClick={() => setTemplatesTarget(null)}
+            >
+              Close
+            </Button>
+          </DialogFooter>
+        </Dialog>
+      )}
     </div>
   );
 }
