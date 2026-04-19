@@ -61,7 +61,8 @@ export function DebugRunDialog({
       open={open}
       onClose={handleClose}
       title={`Debug Run — ${appName}`}
-      size="xl"
+      size="full"
+      className="!max-w-[min(95vw,1600px)] h-[85vh]"
     >
       {!bundle && !mutation.isPending && !mutation.isError && (
         <IdleView appName={appName} deviceName={deviceName} onRun={handleRun} />
@@ -335,7 +336,7 @@ function LogsPane({ logs }: { logs: DebugLogRecord[] }) {
     );
   }
   return (
-    <div className="font-mono text-xs bg-zinc-950 rounded p-3 overflow-auto max-h-[60vh] space-y-0.5">
+    <div className="font-mono text-xs bg-zinc-950 rounded p-3 overflow-auto max-h-[65vh] space-y-0.5">
       {lines.map((r, i) => (
         <div
           key={i}
@@ -360,7 +361,7 @@ function TextPane({ text }: { text: string }) {
     );
   }
   return (
-    <pre className="font-mono text-xs bg-zinc-950 rounded p-3 overflow-auto max-h-[60vh] whitespace-pre-wrap break-all text-zinc-300">
+    <pre className="font-mono text-xs bg-zinc-950 rounded p-3 overflow-auto max-h-[65vh] whitespace-pre-wrap break-all text-zinc-300">
       {text}
     </pre>
   );
