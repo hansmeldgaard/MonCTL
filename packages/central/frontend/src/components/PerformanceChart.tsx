@@ -46,13 +46,93 @@ interface Props {
   onZoom?: (fromMs: number, toMs: number) => void;
 }
 
-function formatTimeLabel(ts: number, timezone: string): string {
-  return new Date(ts).toLocaleTimeString("en-US", {
+const TICK_STEPS_MS = [
+  5 * 60_000, // 5m
+  10 * 60_000,
+  15 * 60_000,
+  30 * 60_000,
+  60 * 60_000, // 1h
+  2 * 3600_000,
+  3 * 3600_000,
+  6 * 3600_000,
+  12 * 3600_000,
+  24 * 3600_000, // 1d
+  2 * 86_400_000,
+  7 * 86_400_000,
+];
+
+function pickTickStep(rangeMs: number, targetCount: number): number {
+  const ideal = rangeMs / targetCount;
+  for (const step of TICK_STEPS_MS) {
+    if (step >= ideal) return step;
+  }
+  return TICK_STEPS_MS[TICK_STEPS_MS.length - 1];
+}
+
+function computeTicks(
+  [from, to]: [number, number],
+  timezone: string,
+  targetCount: number,
+): number[] {
+  if (!(to > from)) return [];
+  const step = pickTickStep(to - from, targetCount);
+  // Align first tick to a round boundary in the user's timezone.
+  // getTimezoneOffset() isn't usable for an arbitrary IANA zone, so we use
+  // Intl to derive the zone offset at `from` and bucket accordingly.
+  const offsetMs = tzOffsetMs(from, timezone);
+  const localFrom = from + offsetMs;
+  const alignedLocal = Math.ceil(localFrom / step) * step;
+  const first = alignedLocal - offsetMs;
+  const ticks: number[] = [];
+  for (let t = first; t <= to; t += step) ticks.push(t);
+  return ticks;
+}
+
+function tzOffsetMs(ts: number, timezone: string): number {
+  // Difference between the wall-clock time in `timezone` and UTC, in ms.
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(new Date(ts));
+  const map: Record<string, number> = {};
+  for (const p of parts)
+    if (p.type !== "literal") map[p.type] = Number(p.value);
+  const asUTC = Date.UTC(
+    map.year,
+    map.month - 1,
+    map.day,
+    map.hour === 24 ? 0 : map.hour,
+    map.minute,
+    map.second,
+  );
+  return asUTC - ts;
+}
+
+function formatTick(
+  ts: number,
+  timezone: string,
+  includeDate: boolean,
+): string {
+  const d = new Date(ts);
+  const time = d.toLocaleTimeString("en-US", {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
     timeZone: timezone,
   });
+  if (!includeDate) return time;
+  const date = d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: timezone,
+  });
+  return `${date} ${time}`;
 }
 
 export function PerformanceChart({
@@ -122,6 +202,15 @@ export function PerformanceChart({
 
   const domain = zoomDomain ?? fullDomain;
 
+  const { ticks, includeDate } = useMemo(() => {
+    const rangeMs = domain[1] - domain[0];
+    const includeDate = rangeMs > 24 * 3600_000;
+    return {
+      ticks: computeTicks(domain, timezone, 8),
+      includeDate,
+    };
+  }, [domain, timezone]);
+
   const handleMouseDown = useCallback(
     (e: { activeLabel?: string | number }) => {
       if (e?.activeLabel != null) {
@@ -189,7 +278,7 @@ export function PerformanceChart({
           <span className="text-[10px] text-zinc-600">Drag to zoom</span>
         )}
       </div>
-      <div className="h-72 select-none">
+      <div className="h-[28rem] select-none">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart
             data={chartData}
@@ -209,11 +298,15 @@ export function PerformanceChart({
               scale="time"
               domain={domain}
               allowDataOverflow={!!zoomDomain}
+              ticks={ticks.length ? ticks : undefined}
               stroke="#52525b"
               fontSize={10}
               tickLine={false}
               axisLine={false}
-              tickFormatter={(ts: number) => formatTimeLabel(ts, timezone)}
+              minTickGap={includeDate ? 40 : 20}
+              tickFormatter={(ts: number) =>
+                formatTick(ts, timezone, includeDate)
+              }
             />
             <YAxis
               stroke="#52525b"
