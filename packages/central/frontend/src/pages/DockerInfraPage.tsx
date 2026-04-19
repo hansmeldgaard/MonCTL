@@ -48,6 +48,11 @@ import {
   formatLogTimestamp,
 } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
+import { useDisplayPreferences } from "@/hooks/useDisplayPreferences.ts";
+import { useColumnConfig } from "@/hooks/useColumnConfig.ts";
+import { FlexTable } from "@/components/FlexTable/FlexTable.tsx";
+import { DisplayMenu } from "@/components/FlexTable/DisplayMenu.tsx";
+import type { FlexColumnDef } from "@/components/FlexTable/types.ts";
 import type {
   DockerSystemInfo,
   DockerEvent,
@@ -536,6 +541,7 @@ type ContainerSort =
 
 function ContainersTab({ hostLabel }: { hostLabel: string }) {
   const stats = useDockerHostStats(hostLabel);
+  const { compact } = useDisplayPreferences();
   const [sortBy, setSortBy] = useState<ContainerSort>("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [selectedContainer, setSelectedContainer] = useState<string | null>(
@@ -548,8 +554,8 @@ function ContainersTab({ hostLabel }: { hostLabel: string }) {
       | undefined;
     if (!raw) return [];
     const sorted = [...raw].sort((a, b) => {
-      const aVal = a[sortBy] ?? 0;
-      const bVal = b[sortBy] ?? 0;
+      const aVal = (a as unknown as Record<string, unknown>)[sortBy] ?? 0;
+      const bVal = (b as unknown as Record<string, unknown>)[sortBy] ?? 0;
       if (typeof aVal === "string" && typeof bVal === "string")
         return sortDir === "asc"
           ? aVal.localeCompare(bVal)
@@ -561,44 +567,130 @@ function ContainersTab({ hostLabel }: { hostLabel: string }) {
     return sorted;
   }, [stats.data, sortBy, sortDir]);
 
-  function toggleSort(field: ContainerSort) {
+  const handleSort = (col: string) => {
+    const field = col as ContainerSort;
     if (sortBy === field) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     else {
       setSortBy(field);
       setSortDir(field === "name" ? "asc" : "desc");
     }
-  }
+  };
 
-  function SortHead({
-    label,
-    field,
-    className,
-  }: {
-    label: string;
-    field: ContainerSort;
-    className?: string;
-  }) {
-    const active = sortBy === field;
-    return (
-      <TableHead
-        className={`text-xs py-1 cursor-pointer select-none hover:text-zinc-200 ${className ?? ""}`}
-        onClick={() => toggleSort(field)}
-      >
-        <span className="inline-flex items-center gap-1">
-          {label}
-          {active ? (
-            sortDir === "asc" ? (
-              <ArrowUp className="h-3 w-3" />
-            ) : (
-              <ArrowDown className="h-3 w-3" />
-            )
-          ) : (
-            <ArrowUpDown className="h-3 w-3 text-zinc-600" />
-          )}
-        </span>
-      </TableHead>
-    );
-  }
+  const columns = useMemo<FlexColumnDef<ContainerStats>[]>(
+    () => [
+      {
+        key: "name",
+        label: "Container",
+        filterable: false,
+        defaultWidth: 220,
+        cellClassName: "text-xs font-mono",
+        cell: (c) => (
+          <button
+            type="button"
+            onClick={() =>
+              setSelectedContainer(selectedContainer === c.name ? null : c.name)
+            }
+            className="text-left hover:text-brand-300 transition-colors cursor-pointer"
+          >
+            {c.name}
+          </button>
+        ),
+      },
+      {
+        key: "status",
+        label: "Status",
+        filterable: false,
+        defaultWidth: 120,
+        cellClassName: "text-xs",
+        cell: (c) => (
+          <span className="flex items-center gap-1.5">
+            <span
+              className={`h-2 w-2 rounded-full ${c.status === "running" ? (c.health === "unhealthy" ? "bg-red-400" : "bg-emerald-400") : "bg-zinc-600"}`}
+            />
+            {c.status}
+          </span>
+        ),
+      },
+      {
+        key: "cpu_pct",
+        label: "CPU",
+        filterable: false,
+        defaultWidth: 80,
+        cellClassName: "text-xs font-mono text-right",
+        cell: (c) => (c.cpu_pct != null ? `${c.cpu_pct}%` : "\u2014"),
+      },
+      {
+        key: "mem_pct",
+        label: "Memory",
+        filterable: false,
+        defaultWidth: 140,
+        cellClassName: "text-xs font-mono text-right",
+        cell: (c) => (
+          <>
+            {c.mem_usage_bytes != null
+              ? formatBytes(c.mem_usage_bytes)
+              : "\u2014"}
+            {c.mem_pct != null && (
+              <span className="text-zinc-600 ml-1">({c.mem_pct}%)</span>
+            )}
+          </>
+        ),
+      },
+      {
+        key: "__net_io",
+        label: "Net I/O",
+        pickerLabel: "Net I/O",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 130,
+        cellClassName: "text-xs font-mono text-right",
+        cell: (c) =>
+          c.net_rx_bytes != null
+            ? `${formatBytes(c.net_rx_bytes)}/${formatBytes(c.net_tx_bytes ?? 0)}`
+            : "\u2014",
+      },
+      {
+        key: "restart_count",
+        label: "Restarts",
+        filterable: false,
+        defaultWidth: 90,
+        cellClassName: "text-xs font-mono text-right",
+        cell: (c) => (
+          <span
+            className={
+              c.restart_count > 3
+                ? "text-red-400"
+                : c.restart_count > 0
+                  ? "text-amber-400"
+                  : "text-zinc-600"
+            }
+          >
+            {c.restart_count}
+          </span>
+        ),
+      },
+      {
+        key: "__uptime",
+        label: "Uptime",
+        pickerLabel: "Uptime",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 110,
+        cellClassName: "text-xs font-mono text-right",
+        cell: (c) => (c.started_at ? timeAgo(c.started_at) : "\u2014"),
+      },
+    ],
+    [selectedContainer],
+  );
+
+  const {
+    orderedVisibleColumns,
+    configMap,
+    setHidden,
+    setWidth,
+    setOrder,
+    reset,
+  } = useColumnConfig<ContainerStats>("docker-containers", columns);
 
   if (stats.isLoading)
     return (
@@ -607,88 +699,45 @@ function ContainersTab({ hostLabel }: { hostLabel: string }) {
 
   return (
     <div className="space-y-3">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <SortHead label="Container" field="name" />
-            <SortHead label="Status" field="status" className="w-20" />
-            <SortHead label="CPU" field="cpu_pct" className="w-16 text-right" />
-            <SortHead
-              label="Memory"
-              field="mem_pct"
-              className="w-32 text-right"
-            />
-            <TableHead className="text-xs py-1 w-28 text-right">
-              Net I/O
-            </TableHead>
-            <SortHead
-              label="Restarts"
-              field="restart_count"
-              className="w-16 text-right"
-            />
-            <TableHead className="text-xs py-1 w-24 text-right">
-              Uptime
-            </TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {containers.map((c) => (
-            <TableRow
-              key={c.name}
-              className={`cursor-pointer ${c.health === "unhealthy" ? "bg-red-500/5" : c.status !== "running" ? "bg-zinc-800/30" : ""} ${selectedContainer === c.name ? "bg-blue-500/10" : "hover:bg-zinc-800/50"}`}
-              onClick={() =>
-                setSelectedContainer(
-                  selectedContainer === c.name ? null : c.name,
-                )
-              }
-            >
-              <TableCell className="py-1 text-xs font-mono min-w-[180px]">
-                {c.name}
-              </TableCell>
-              <TableCell className="py-1 text-xs">
-                <span className="flex items-center gap-1.5">
-                  <span
-                    className={`h-2 w-2 rounded-full ${c.status === "running" ? (c.health === "unhealthy" ? "bg-red-400" : "bg-emerald-400") : "bg-zinc-600"}`}
-                  />
-                  {c.status}
-                </span>
-              </TableCell>
-              <TableCell className="py-1 text-xs font-mono text-right">
-                {c.cpu_pct != null ? `${c.cpu_pct}%` : "\u2014"}
-              </TableCell>
-              <TableCell className="py-1 text-xs font-mono text-right">
-                {c.mem_usage_bytes != null
-                  ? formatBytes(c.mem_usage_bytes)
-                  : "\u2014"}
-                {c.mem_pct != null && (
-                  <span className="text-zinc-600 ml-1">({c.mem_pct}%)</span>
-                )}
-              </TableCell>
-              <TableCell className="py-1 text-xs font-mono text-right">
-                {c.net_rx_bytes != null
-                  ? `${formatBytes(c.net_rx_bytes)}/${formatBytes(c.net_tx_bytes ?? 0)}`
-                  : "\u2014"}
-              </TableCell>
-              <TableCell className="py-1 text-xs font-mono text-right">
-                <span
-                  className={
-                    c.restart_count > 3
-                      ? "text-red-400"
-                      : c.restart_count > 0
-                        ? "text-amber-400"
-                        : "text-zinc-600"
-                  }
-                >
-                  {c.restart_count}
-                </span>
-              </TableCell>
-              <TableCell className="py-1 text-xs font-mono text-right">
-                {c.started_at ? timeAgo(c.started_at) : "\u2014"}
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+      <div className="flex items-center justify-end">
+        <DisplayMenu
+          columns={columns}
+          configMap={configMap}
+          onToggleHidden={setHidden}
+          onReset={reset}
+        />
+      </div>
+      <div
+        className={
+          compact ? "[&_td]:py-1 [&_td]:text-xs [&_th]:py-1 [&_th]:text-xs" : ""
+        }
+      >
+        <FlexTable<ContainerStats>
+          orderedVisibleColumns={orderedVisibleColumns}
+          configMap={configMap}
+          onOrderChange={setOrder}
+          onWidthChange={setWidth}
+          rows={containers}
+          rowKey={(c) => c.name}
+          sortBy={sortBy}
+          sortDir={sortDir}
+          onSort={handleSort}
+          filters={{}}
+          onFilterChange={() => {}}
+          rowClassName={(c) => {
+            const base =
+              c.health === "unhealthy"
+                ? "bg-red-500/5"
+                : c.status !== "running"
+                  ? "bg-zinc-800/30"
+                  : undefined;
+            const sel =
+              selectedContainer === c.name ? "bg-blue-500/10" : undefined;
+            return sel ?? base;
+          }}
+          emptyState="No containers"
+        />
+      </div>
 
       {/* Inline log viewer */}
       {selectedContainer && (
@@ -1161,89 +1210,196 @@ function ImagesTab({ hostLabel }: { hostLabel: string }) {
         </Card>
       )}
 
-      {/* Images table */}
-      <div>
-        <h3 className="text-sm font-semibold text-zinc-300 mb-2">
-          Images ({data.image_count})
-        </h3>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="text-xs py-1">Tags</TableHead>
-              <TableHead className="text-xs py-1 w-20">ID</TableHead>
-              <TableHead className="text-xs py-1 w-24 text-right">
-                Size
-              </TableHead>
-              <TableHead className="text-xs py-1 w-32">Created</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {data.images.map((img: DockerImageInfo) => (
-              <TableRow
-                key={img.id}
-                className={img.dangling ? "bg-amber-500/5" : ""}
-              >
-                <TableCell className="py-1 text-xs font-mono">
-                  {img.tags.length > 0 ? (
-                    img.tags.join(", ")
-                  ) : (
-                    <span className="text-amber-400">&lt;dangling&gt;</span>
-                  )}
-                </TableCell>
-                <TableCell className="py-1 text-xs font-mono text-zinc-500">
-                  {img.id.replace("sha256:", "").slice(0, 12)}
-                </TableCell>
-                <TableCell className="py-1 text-xs font-mono text-right">
-                  {formatBytes(img.size_bytes)}
-                </TableCell>
-                <TableCell className="py-1 text-xs text-zinc-500">
-                  {timeAgo(img.created)}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
+      <ImagesFlexTable images={data.images} count={data.image_count} />
+      <VolumesFlexTable volumes={data.volumes} count={data.volume_count} />
+    </div>
+  );
+}
 
-      {/* Volumes table */}
-      <div>
-        <h3 className="text-sm font-semibold text-zinc-300 mb-2">
-          Volumes ({data.volume_count})
+function ImagesFlexTable({
+  images,
+  count,
+}: {
+  images: DockerImageInfo[];
+  count: number;
+}) {
+  const { compact } = useDisplayPreferences();
+  const columns = useMemo<FlexColumnDef<DockerImageInfo>[]>(
+    () => [
+      {
+        key: "tags",
+        label: "Tags",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 320,
+        cellClassName: "text-xs font-mono",
+        cell: (img) =>
+          img.tags.length > 0 ? (
+            img.tags.join(", ")
+          ) : (
+            <span className="text-amber-400">&lt;dangling&gt;</span>
+          ),
+      },
+      {
+        key: "id",
+        label: "ID",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 110,
+        cellClassName: "text-xs font-mono text-zinc-500",
+        cell: (img) => img.id.replace("sha256:", "").slice(0, 12),
+      },
+      {
+        key: "size_bytes",
+        label: "Size",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 100,
+        cellClassName: "text-xs font-mono text-right",
+        cell: (img) => formatBytes(img.size_bytes),
+      },
+      {
+        key: "created",
+        label: "Created",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 120,
+        cellClassName: "text-xs text-zinc-500",
+        cell: (img) => timeAgo(img.created),
+      },
+    ],
+    [],
+  );
+
+  const {
+    orderedVisibleColumns,
+    configMap,
+    setHidden,
+    setWidth,
+    setOrder,
+    reset,
+  } = useColumnConfig<DockerImageInfo>("docker-images", columns);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-sm font-semibold text-zinc-300">
+          Images ({count})
         </h3>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="text-xs py-1">Name</TableHead>
-              <TableHead className="text-xs py-1 w-20">Driver</TableHead>
-              <TableHead className="text-xs py-1 w-32">Created</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {data.volumes.map((vol: DockerVolumeInfo) => (
-              <TableRow key={vol.name}>
-                <TableCell className="py-1 text-xs font-mono">
-                  {vol.name}
-                </TableCell>
-                <TableCell className="py-1 text-xs text-zinc-500">
-                  {vol.driver}
-                </TableCell>
-                <TableCell className="py-1 text-xs text-zinc-500">
-                  {timeAgo(vol.created)}
-                </TableCell>
-              </TableRow>
-            ))}
-            {data.volumes.length === 0 && (
-              <TableRow>
-                <TableCell
-                  colSpan={3}
-                  className="py-4 text-center text-zinc-500 text-xs"
-                >
-                  No volumes
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
+        <DisplayMenu
+          columns={columns}
+          configMap={configMap}
+          onToggleHidden={setHidden}
+          onReset={reset}
+        />
+      </div>
+      <div
+        className={
+          compact ? "[&_td]:py-1 [&_td]:text-xs [&_th]:py-1 [&_th]:text-xs" : ""
+        }
+      >
+        <FlexTable<DockerImageInfo>
+          orderedVisibleColumns={orderedVisibleColumns}
+          configMap={configMap}
+          onOrderChange={setOrder}
+          onWidthChange={setWidth}
+          rows={images}
+          rowKey={(img) => img.id}
+          sortBy=""
+          sortDir="asc"
+          onSort={() => {}}
+          filters={{}}
+          onFilterChange={() => {}}
+          rowClassName={(img) => (img.dangling ? "bg-amber-500/5" : undefined)}
+          emptyState="No images"
+        />
+      </div>
+    </div>
+  );
+}
+
+function VolumesFlexTable({
+  volumes,
+  count,
+}: {
+  volumes: DockerVolumeInfo[];
+  count: number;
+}) {
+  const { compact } = useDisplayPreferences();
+  const columns = useMemo<FlexColumnDef<DockerVolumeInfo>[]>(
+    () => [
+      {
+        key: "name",
+        label: "Name",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 360,
+        cellClassName: "text-xs font-mono",
+        cell: (v) => v.name,
+      },
+      {
+        key: "driver",
+        label: "Driver",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 100,
+        cellClassName: "text-xs text-zinc-500",
+        cell: (v) => v.driver,
+      },
+      {
+        key: "created",
+        label: "Created",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 120,
+        cellClassName: "text-xs text-zinc-500",
+        cell: (v) => timeAgo(v.created),
+      },
+    ],
+    [],
+  );
+
+  const {
+    orderedVisibleColumns,
+    configMap,
+    setHidden,
+    setWidth,
+    setOrder,
+    reset,
+  } = useColumnConfig<DockerVolumeInfo>("docker-volumes", columns);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-sm font-semibold text-zinc-300">
+          Volumes ({count})
+        </h3>
+        <DisplayMenu
+          columns={columns}
+          configMap={configMap}
+          onToggleHidden={setHidden}
+          onReset={reset}
+        />
+      </div>
+      <div
+        className={
+          compact ? "[&_td]:py-1 [&_td]:text-xs [&_th]:py-1 [&_th]:text-xs" : ""
+        }
+      >
+        <FlexTable<DockerVolumeInfo>
+          orderedVisibleColumns={orderedVisibleColumns}
+          configMap={configMap}
+          onOrderChange={setOrder}
+          onWidthChange={setWidth}
+          rows={volumes}
+          rowKey={(v) => v.name}
+          sortBy=""
+          sortDir="asc"
+          onSort={() => {}}
+          filters={{}}
+          onFilterChange={() => {}}
+          emptyState="No volumes"
+        />
       </div>
     </div>
   );
