@@ -20,6 +20,7 @@ import {
   useBulkUpdateAssignments,
   useBulkDeleteAssignments,
   useCredentials,
+  useLatestMutations,
 } from "@/api/hooks.ts";
 import { formatTime } from "@/lib/utils.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
@@ -65,6 +66,16 @@ export function AssignmentsPage() {
     isFetching,
   } = useAssignments(listState.params);
   const assignments = response?.data ?? [];
+
+  const assignmentIds = useMemo(
+    () => assignments.map((a: any) => a.id as string),
+    [assignments],
+  );
+  const { data: auditByIdRaw } = useLatestMutations(
+    "assignment",
+    assignmentIds,
+  );
+  const auditById = auditByIdRaw ?? {};
   const meta = (response as any)?.meta ?? {
     limit: 50,
     offset: 0,
@@ -397,6 +408,46 @@ export function AssignmentsPage() {
         },
       },
       {
+        key: "last_changed_by",
+        label: "Last changed by",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 140,
+        cellClassName: "text-zinc-400 text-xs whitespace-nowrap",
+        cell: (a: any) => {
+          const m = auditById[a.id];
+          if (!m) return "—";
+          return (
+            <span title={`${m.action} · ${m.user_id || m.username}`}>
+              {m.username || m.user_id || "—"}
+            </span>
+          );
+        },
+      },
+      {
+        key: "last_changed_at",
+        label: "Last changed",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 120,
+        cellClassName: "text-zinc-500 text-xs whitespace-nowrap",
+        cell: (a: any) => {
+          const m = auditById[a.id];
+          if (!m?.timestamp) return "—";
+          return (
+            <span
+              title={formatTime(
+                m.timestamp,
+                timeMode === "relative" ? "absolute" : "relative",
+                tz,
+              )}
+            >
+              {formatTime(m.timestamp, timeMode, tz)}
+            </span>
+          );
+        },
+      },
+      {
         key: "__actions",
         label: "",
         pickerLabel: "Actions",
@@ -435,6 +486,7 @@ export function AssignmentsPage() {
       timeMode,
       tz,
       canEdit,
+      auditById,
     ],
   );
 

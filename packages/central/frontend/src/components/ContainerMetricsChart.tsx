@@ -84,7 +84,6 @@ export function ContainerMetricsChart({ hosts }: { hosts: string[] }) {
     host_label: effectiveHost,
     from: fromIso,
     to: toIso,
-    limit: 100000,
     enabled: !!effectiveHost,
   });
 

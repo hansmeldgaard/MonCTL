@@ -78,7 +78,6 @@ export function HostMetricsChart() {
     from: fromIso,
     to: toIso,
     host_role: role === "all" ? undefined : role,
-    limit: 50000,
   });
 
   const { chartData, hosts } = useMemo(() => {

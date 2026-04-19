@@ -110,8 +110,69 @@ export function SchemaConfigFields({
       {Object.entries(properties).map(([key, prop]) => {
         const widget = prop["x-widget"] as string | undefined;
         const title = (prop.title as string) ?? key;
+        const description = prop.description as string | undefined;
         const defaultVal = prop.default;
         const currentVal = config[key] ?? defaultVal ?? "";
+        const enumOptions = Array.isArray(prop.enum)
+          ? (prop.enum as unknown[])
+          : null;
+
+        // Enum → select (takes precedence over type-based rendering)
+        if (enumOptions) {
+          return (
+            <div key={key} className="space-y-1">
+              <span className="text-xs text-zinc-400">{title}</span>
+              <Select
+                id={`${prefix}-${key}`}
+                value={String(currentVal)}
+                onChange={(e) => setField(key, e.target.value)}
+                disabled={disabled}
+              >
+                {enumOptions.map((opt) => (
+                  <option key={String(opt)} value={String(opt)}>
+                    {String(opt)}
+                  </option>
+                ))}
+              </Select>
+              {description && (
+                <span className="text-[11px] text-zinc-500">{description}</span>
+              )}
+            </div>
+          );
+        }
+
+        // Boolean → checkbox
+        if (prop.type === "boolean") {
+          const checked =
+            currentVal === true ||
+            currentVal === "true" ||
+            currentVal === 1 ||
+            currentVal === "1";
+          return (
+            <label
+              key={key}
+              className="flex items-start gap-2 text-xs cursor-pointer"
+            >
+              <input
+                id={`${prefix}-${key}`}
+                type="checkbox"
+                checked={checked}
+                onChange={(e) => setField(key, e.target.checked)}
+                disabled={disabled}
+                className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded border-zinc-600 bg-zinc-800 text-brand-500 focus:ring-brand-500 focus:ring-offset-0"
+              />
+              <span className="min-w-0">
+                <span className="text-zinc-300 whitespace-nowrap">{title}</span>
+                {description && (
+                  <span className="text-zinc-500">
+                    {" — "}
+                    {description}
+                  </span>
+                )}
+              </span>
+            </label>
+          );
+        }
 
         // SNMP OID selector
         if (widget === "snmp-oid") {

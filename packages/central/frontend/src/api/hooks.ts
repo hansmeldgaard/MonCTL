@@ -4598,3 +4598,35 @@ export function useResourceHistory(
     enabled: !!resourceType && !!resourceId,
   });
 }
+
+export interface LatestMutation {
+  resource_id: string;
+  timestamp: string;
+  user_id: string;
+  username: string;
+  action: string;
+}
+
+export function useLatestMutations(
+  resourceType: string,
+  resourceIds: string[],
+) {
+  const sortedIds = [...resourceIds].sort();
+  const idsParam = sortedIds.join(",");
+  return useQuery({
+    queryKey: ["audit-latest", resourceType, idsParam],
+    queryFn: () =>
+      apiGet<LatestMutation[]>(
+        `/audit/latest?resource_type=${encodeURIComponent(resourceType)}&resource_ids=${encodeURIComponent(idsParam)}`,
+      ),
+    enabled: sortedIds.length > 0,
+    select: (res) => {
+      const map: Record<string, LatestMutation> = {};
+      for (const row of res.data ?? []) {
+        map[row.resource_id] = row;
+      }
+      return map;
+    },
+    staleTime: 30_000,
+  });
+}
