@@ -23,12 +23,28 @@ logger = structlog.get_logger()
 # Defence-in-depth: the collector trusts central, but we still validate
 # path-segment identifiers before URL interpolation so a malformed/hostile
 # response can't inject `..`, `/`, or query-string characters into requests.
+# `app_id` / `connector_id` / `version_id` are identifier-shaped (slug or
+# UUID) so the strict form is enforced.
 _SAFE_IDENT_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+# `credential_name` is user-facing and legitimately contains spaces, dashes,
+# colons etc. (e.g. "SSH - monctl"). `urllib.parse.quote(safe='')` is the
+# real defence — this regex just rejects control bytes, NUL, path-traversal
+# sequences and URL-structural characters.
+_CRED_NAME_FORBIDDEN_RE = re.compile(r"[\x00-\x1f\x7f/?#]")
 
 
 def _require_safe_ident(kind: str, value: str) -> str:
     if not value or not _SAFE_IDENT_RE.match(value):
         raise ValueError(f"invalid {kind}: {value!r}")
+    return value
+
+
+def _require_safe_cred_name(value: str) -> str:
+    if not value:
+        raise ValueError("invalid credential_name: <empty>")
+    if ".." in value or _CRED_NAME_FORBIDDEN_RE.search(value):
+        raise ValueError(f"invalid credential_name: {value!r}")
     return value
 
 
@@ -208,7 +224,7 @@ class CentralAPIClient:
         actually referenced by this collector's assignments. Optional for
         pre-migration deployments using only the shared secret.
         """
-        _require_safe_ident("credential_name", credential_name)
+        _require_safe_cred_name(credential_name)
         params: dict[str, str] = {}
         if collector_id:
             params["collector_id"] = collector_id
