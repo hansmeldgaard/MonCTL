@@ -29,6 +29,11 @@ logger = structlog.get_logger()
 _MIN_BACKOFF = 1.0
 _MAX_BACKOFF = 300.0
 _BATCH_SIZE = 100
+# Cap the forwarder buffer. A 10M-row limit at ~1 KB/row ≈ 10 GB on disk, which
+# is the point at which a small-disk collector would crash anyway. Older rows
+# are FIFO-dropped past the cap so the container stays alive.
+_MAX_BUFFER_ROWS = 10_000_000
+_BUFFER_CHECK_INTERVAL = 60.0  # seconds between size-cap checks
 
 
 class Forwarder:
@@ -55,6 +60,8 @@ class Forwarder:
         self._running = False
         self._task: asyncio.Task | None = None
         self._last_cleanup = 0.0
+        self._last_buffer_check = 0.0
+        self._dropped_total = 0
 
     # ── Lifecycle ────────────────────────────────────────────────────────────
 
@@ -108,6 +115,12 @@ class Forwarder:
                 await self._cleanup()
                 self._last_cleanup = now
 
+            # Size-cap check — prevents the buffer from filling the disk when
+            # central has been unreachable for days.
+            if now - self._last_buffer_check > _BUFFER_CHECK_INTERVAL:
+                await self._enforce_size_cap()
+                self._last_buffer_check = now
+
     async def _flush_batch(self) -> int:
         """Send one batch of unsent results. Returns number of results sent."""
         rows = await self._cache.dequeue_results(self._batch_size)
@@ -152,6 +165,27 @@ class Forwarder:
                 logger.info("results_buffer_cleaned", deleted=deleted)
         except Exception as exc:
             logger.warning("cleanup_error", error=str(exc))
+
+    async def _enforce_size_cap(self) -> None:
+        """FIFO-drop oldest rows when the buffer exceeds `_MAX_BUFFER_ROWS`."""
+        try:
+            total = await self._cache.count_results()
+            if total <= _MAX_BUFFER_ROWS:
+                return
+            overshoot = total - _MAX_BUFFER_ROWS
+            # Drop 5% extra in one go so we don't re-trigger immediately.
+            to_drop = overshoot + (_MAX_BUFFER_ROWS // 20)
+            dropped = await self._cache.drop_oldest_results(to_drop)
+            self._dropped_total += dropped
+            logger.warning(
+                "forwarder_buffer_dropped",
+                total_before=total,
+                dropped=dropped,
+                dropped_total=self._dropped_total,
+                max_rows=_MAX_BUFFER_ROWS,
+            )
+        except Exception as exc:
+            logger.warning("buffer_cap_check_failed", error=str(exc))
 
     def _auth_headers(self) -> dict:
         if self._cfg.api_key:

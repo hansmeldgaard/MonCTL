@@ -446,6 +446,30 @@ class LocalCache:
         await self._db.commit()
         return count
 
+    async def count_results(self) -> int:
+        """Total rows in the forwarder buffer (sent + unsent)."""
+        async with self._db.execute("SELECT COUNT(*) AS c FROM results") as cur:
+            row = await cur.fetchone()
+        return int(row["c"]) if row else 0
+
+    async def drop_oldest_results(self, count: int) -> int:
+        """FIFO-drop the `count` oldest rows. Returns rows actually deleted.
+
+        Called when the buffer exceeds its size cap — losing old results is
+        strictly better than filling the collector's disk and crashing the
+        whole container.
+        """
+        if count <= 0:
+            return 0
+        async with self._db.execute(
+            "DELETE FROM results WHERE id IN "
+            "(SELECT id FROM results ORDER BY created_at LIMIT ?)",
+            (count,),
+        ) as cur:
+            deleted = cur.rowcount
+        await self._db.commit()
+        return deleted
+
     # ── App cache (shared across collector group) ─────────────────────────────
 
     async def app_cache_get(self, app_id: str, device_id: str, key: str) -> dict | None:
