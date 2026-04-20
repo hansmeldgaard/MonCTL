@@ -8,9 +8,26 @@ Connector binding required:
     alias "snmp" → SNMP connector with credential providing auth parameters
 """
 
+import asyncio
 import time
+
+import structlog
+
 from monctl_collector.polling.base import BasePoller
 from monctl_collector.jobs.models import PollContext, PollResult
+
+logger = structlog.get_logger()
+
+
+def _classify_error(exc: BaseException) -> str:
+    """See apps/snmp_check.py for the full rationale — kept in-sync across apps."""
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError, ConnectionError, OSError)):
+        return "device"
+    if exc.__class__.__name__ in {"NoResponseError", "RequestTimeout"}:
+        return "device"
+    if isinstance(exc, (KeyError, TypeError)):
+        return "config"
+    return "app"
 
 # SNMP OIDs for interface data (base OIDs, append .ifIndex for GET)
 _IF_OIDS = {
@@ -84,16 +101,26 @@ class Poller(BasePoller):
     """SNMP interface poller — uses the SNMP connector for protocol operations."""
 
     async def poll(self, context: PollContext) -> PollResult:
+        start = time.time()
         host = context.device_host or context.parameters.get("host", "")
         include_filter = context.parameters.get("include_interfaces", [])
         exclude_filter = context.parameters.get("exclude_interfaces", [])
         exclude_oper = set(context.parameters.get("exclude_oper_status", []))
         monitored = context.parameters.get("monitored_interfaces")
         poll_interval = context.job.interval
-        start = time.time()
+        logger.debug(
+            "snmp_iface_start",
+            host=host,
+            job_id=context.job.job_id,
+            mode="targeted" if monitored else "walk",
+            monitored_count=len(monitored) if monitored else 0,
+            include=len(include_filter or []),
+            exclude=len(exclude_filter or []),
+        )
 
         snmp = context.connectors.get("snmp")
         if snmp is None:
+            logger.debug("snmp_iface_no_connector", job_id=context.job.job_id)
             return PollResult(
                 job_id=context.job.job_id,
                 device_id=context.job.device_id,
@@ -106,7 +133,7 @@ class Poller(BasePoller):
                 error_message="No SNMP connector bound (expected alias 'snmp'). "
                               "Assign an SNMP connector with alias 'snmp' to this app assignment.",
                 error_category="config",
-                execution_time_ms=0,
+                execution_time_ms=int((time.time() - start) * 1000),
             )
 
         try:
@@ -260,6 +287,14 @@ class Poller(BasePoller):
                 interface_rows.append(row)
 
             execution_ms = int((time.time() - start) * 1000)
+            logger.debug(
+                "snmp_iface_complete",
+                host=host,
+                interfaces=len(interface_rows),
+                mode="targeted" if monitored else "walk",
+                execution_ms=execution_ms,
+                partial_error=bool(snmp_error),
+            )
             return PollResult(
                 job_id=context.job.job_id,
                 device_id=context.job.device_id,
@@ -280,6 +315,14 @@ class Poller(BasePoller):
             )
         except Exception as exc:
             execution_ms = int((time.time() - start) * 1000)
+            category = _classify_error(exc)
+            logger.debug(
+                "snmp_iface_failed",
+                host=host,
+                exc=type(exc).__name__,
+                category=category,
+                execution_ms=execution_ms,
+            )
             return PollResult(
                 job_id=context.job.job_id,
                 device_id=context.job.device_id,
@@ -288,6 +331,6 @@ class Poller(BasePoller):
                 metrics=[], config_data=None,
                 status="critical", reachable=False,
                 error_message=f"{type(exc).__name__}: {exc}",
-                error_category="device",
+                error_category=category,
                 execution_time_ms=execution_ms,
             )
