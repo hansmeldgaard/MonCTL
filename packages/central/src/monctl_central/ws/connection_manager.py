@@ -12,7 +12,7 @@ import json
 import os
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Iterable
 
 import structlog
 from fastapi import WebSocket
@@ -357,6 +357,39 @@ class ConnectionManager:
 
         _, raw = result
         return json.loads(raw)
+
+    async def notify_config_reload(
+        self,
+        collector_ids: Iterable[uuid.UUID],
+        timeout: float = 3.0,
+    ) -> int:
+        """Fire `config_reload` to every collector in parallel.
+
+        Uses :meth:`broadcast_command` so the reload is routed via Redis if the
+        collector's WebSocket lives on a different central node. Errors
+        per-collector (disconnect, timeout, Redis down) are logged at DEBUG
+        and swallowed — a single broken WS must not abort the caller.
+
+        Returns the count of collectors that ACKed within ``timeout``.
+        """
+        ids = list(collector_ids)
+        if not ids:
+            return 0
+
+        async def _one(cid: uuid.UUID) -> int:
+            try:
+                await self.broadcast_command(cid, "config_reload", {}, timeout=timeout)
+                return 1
+            except Exception as exc:
+                logger.debug(
+                    "ws_config_reload_failed",
+                    collector_id=str(cid),
+                    error=str(exc),
+                )
+                return 0
+
+        results = await asyncio.gather(*(_one(cid) for cid in ids))
+        return sum(results)
 
     async def start_command_listener(self) -> asyncio.Task:
         """Subscribe to Redis command channel and route to local connections.

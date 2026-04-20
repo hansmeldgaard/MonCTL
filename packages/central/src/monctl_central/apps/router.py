@@ -1699,17 +1699,30 @@ async def set_latest_version(
     )
     coll_ids.update(row[0] for row in group_rows.all() if row[0])
 
+    ws_notified = 0
     if coll_ids:
         await db.execute(
             update(Collector)
             .where(Collector.id.in_(coll_ids))
             .values(config_version=Collector.config_version + 1, updated_at=utc_now())
         )
+        await db.flush()
+        # Push-notify affected collectors so they force a full /jobs sync
+        # immediately instead of waiting for their next poll cycle.
+        from monctl_central.ws.router import manager as ws_manager
+        ws_notified = await ws_manager.notify_config_reload(coll_ids)
+    else:
+        await db.flush()
 
-    await db.flush()
     return {
         "status": "success",
-        "data": {"id": str(target.id), "version": target.version, "is_latest": True},
+        "data": {
+            "id": str(target.id),
+            "version": target.version,
+            "is_latest": True,
+            "collectors_bumped": len(coll_ids),
+            "ws_notified": ws_notified,
+        },
     }
 
 

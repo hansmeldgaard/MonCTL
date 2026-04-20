@@ -488,24 +488,40 @@ async def set_latest_version(
         )
     )
 
+    bump_filter = or_(
+        Collector.id.in_(pinned_sub),
+        sa.and_(
+            Collector.group_id.in_(group_sub),
+            Collector.status == "ACTIVE",
+        ),
+    )
     await db.execute(
         update(Collector)
-        .where(
-            or_(
-                Collector.id.in_(pinned_sub),
-                sa.and_(
-                    Collector.group_id.in_(group_sub),
-                    Collector.status == "ACTIVE",
-                ),
-            )
-        )
+        .where(bump_filter)
         .values(config_version=Collector.config_version + 1, updated_at=utc_now())
     )
 
     await db.flush()
+
+    # Collect the collector ids we just bumped so we can push a config_reload
+    # over WS — forces an immediate full /jobs sync instead of waiting for the
+    # collector's next poll cycle (up to ~10 min with default full-sync every
+    # 10 cycles of 60s). broadcast_command routes via Redis if the collector's
+    # WS lives on a different central node.
+    bumped_ids_rows = await db.execute(
+        select(Collector.id).where(bump_filter)
+    )
+    bumped_ids = [row[0] for row in bumped_ids_rows.all()]
+
+    from monctl_central.ws.router import manager as ws_manager
+    ws_notified = await ws_manager.notify_config_reload(bumped_ids)
+
+    data = _fmt_version(target)
+    data["collectors_bumped"] = len(bumped_ids)
+    data["ws_notified"] = ws_notified
     return {
         "status": "success",
-        "data": _fmt_version(target),
+        "data": data,
     }
 
 
