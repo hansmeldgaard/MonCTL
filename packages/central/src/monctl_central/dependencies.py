@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import uuid
 from typing import AsyncGenerator
 
@@ -424,7 +425,11 @@ async def require_collector_auth(
 
     shared_secret = os.environ.get("MONCTL_COLLECTOR_API_KEY", "")
 
-    if credentials and shared_secret and credentials.credentials == shared_secret:
+    if (
+        credentials
+        and shared_secret
+        and hmac.compare_digest(credentials.credentials, shared_secret)
+    ):
         return {"auth_type": "collector_shared_secret", "tenant_ids": None}
 
     # Check HTTP Basic Auth (pip sends credentials this way)
@@ -434,7 +439,7 @@ async def require_collector_auth(
             try:
                 decoded = base64.b64decode(auth_header[6:]).decode()
                 _, password = decoded.split(":", 1)
-                if password == shared_secret:
+                if hmac.compare_digest(password, shared_secret):
                     return {"auth_type": "collector_shared_secret", "tenant_ids": None}
             except Exception:
                 pass
