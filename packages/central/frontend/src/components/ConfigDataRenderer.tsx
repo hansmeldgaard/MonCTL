@@ -59,9 +59,13 @@ function TemplateRenderer({
   <script>window.__configData = ${dataJson};</script>
   ${renderedHtml}
   <script>
+    // srcDoc + allow-same-origin → iframe inherits parent origin, so we can
+    // target it explicitly. "*" would let any document embedding us receive
+    // these height messages (and passively fingerprint config-template usage).
+    var _parentOrigin = window.location.origin;
     function sendHeight() {
       var h = document.documentElement.scrollHeight;
-      window.parent.postMessage({ type: 'config-renderer-height', height: h }, '*');
+      window.parent.postMessage({ type: 'config-renderer-height', height: h }, _parentOrigin);
     }
     sendHeight();
     new MutationObserver(sendHeight).observe(document.body, { childList: true, subtree: true });
@@ -71,6 +75,9 @@ function TemplateRenderer({
 
   useEffect(() => {
     function handleMessage(e: MessageEvent) {
+      // Only trust our own iframe — an attacker-controlled tab could otherwise
+      // send fake height messages to grow the frame and overlay real UI.
+      if (e.origin !== window.location.origin) return;
       if (
         e.data?.type === "config-renderer-height" &&
         typeof e.data.height === "number"

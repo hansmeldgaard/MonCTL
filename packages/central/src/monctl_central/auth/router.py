@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -20,10 +21,93 @@ from monctl_central.config import settings
 from monctl_central.dependencies import get_db
 from monctl_central.storage.models import SystemSetting, User
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 _ACCESS_MAX_AGE = settings.jwt_access_token_expire_minutes * 60
 _REFRESH_MAX_AGE = settings.jwt_refresh_token_expire_days * 86400
+
+# Login rate-limit tuning. A live attacker is obvious at this cadence — real
+# users virtually never hit 10 failures in 10 minutes, so the blast radius on
+# legitimate traffic is minimal. Shared across central nodes via Redis so an
+# attacker can't spread the storm around HAProxy.
+_LOGIN_FAIL_WINDOW = 600        # 10 minutes
+_LOGIN_FAIL_THRESHOLD = 10      # failures before lockout
+_LOGIN_LOCK_DURATION = 900      # 15 minute lockout
+_LOGIN_RL_KEY = "login_rl"      # redis key prefix
+_LOGIN_LOCK_KEY = "login_lock"  # redis key prefix
+
+
+def _rl_client_ip(request: Request) -> str:
+    """Trust X-Forwarded-For's first hop when HAProxy fronts central."""
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+async def _check_login_locked(ip: str, username: str) -> None:
+    """Raise 429 if (ip, username) is currently locked out. No-op if Redis is down."""
+    from monctl_central.cache import _redis
+
+    if _redis is None:
+        return
+    try:
+        locked = await _redis.get(f"{_LOGIN_LOCK_KEY}:{ip}:{username}")
+    except Exception:
+        logger.warning("login_rl_redis_unavailable", exc_info=True)
+        return
+    if locked:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed attempts. Try again in 15 minutes.",
+            headers={"Retry-After": str(_LOGIN_LOCK_DURATION)},
+        )
+
+
+async def _record_login_failure(
+    ip: str, username: str, db: AsyncSession, user_id: uuid.UUID | None
+) -> None:
+    """Count failure; on threshold, set a lockout key and emit an audit event."""
+    from monctl_central.cache import _redis
+
+    if _redis is None:
+        return
+    try:
+        key = f"{_LOGIN_RL_KEY}:{ip}:{username}"
+        count = await _redis.incr(key)
+        if count == 1:
+            await _redis.expire(key, _LOGIN_FAIL_WINDOW)
+        if count >= _LOGIN_FAIL_THRESHOLD:
+            await _redis.setex(
+                f"{_LOGIN_LOCK_KEY}:{ip}:{username}", _LOGIN_LOCK_DURATION, "1"
+            )
+            # Separate audit event so operators can distinguish lockouts from
+            # normal password-miss noise.
+            await record_login_event(
+                db,
+                event_type="login_locked",
+                username=username,
+                user_id=user_id,
+                failure_reason=f"threshold_{_LOGIN_FAIL_THRESHOLD}_in_{_LOGIN_FAIL_WINDOW}s",
+            )
+    except Exception:
+        logger.warning("login_rl_record_failed", exc_info=True)
+
+
+async def _clear_login_counters(ip: str, username: str) -> None:
+    from monctl_central.cache import _redis
+
+    if _redis is None:
+        return
+    try:
+        await _redis.delete(
+            f"{_LOGIN_RL_KEY}:{ip}:{username}",
+            f"{_LOGIN_LOCK_KEY}:{ip}:{username}",
+        )
+    except Exception:
+        pass
 
 
 class LoginRequest(BaseModel):
@@ -50,31 +134,37 @@ async def _get_effective_idle_timeout(user: User, db: AsyncSession) -> int:
 
 @router.post("/login")
 async def login(
-    request: LoginRequest,
+    login_req: LoginRequest,
+    request: Request,
     response: Response,
     db: AsyncSession = Depends(get_db),
 ):
     """Authenticate with username + password. Sets HTTP-only cookies."""
-    stmt = select(User).where(User.username == request.username)
+    ip = _rl_client_ip(request)
+    await _check_login_locked(ip, login_req.username)
+
+    stmt = select(User).where(User.username == login_req.username)
     result = await db.execute(stmt)
     user = result.scalar_one_or_none()
 
     if user is None:
+        await _record_login_failure(ip, login_req.username, db, None)
         await record_login_event(
             db,
             event_type="login_failed",
-            username=request.username,
+            username=login_req.username,
             failure_reason="user_not_found",
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
         )
-    if not verify_password(request.password, user.password_hash):
+    if not verify_password(login_req.password, user.password_hash):
+        await _record_login_failure(ip, login_req.username, db, user.id)
         await record_login_event(
             db,
             event_type="login_failed",
-            username=request.username,
+            username=login_req.username,
             user_id=user.id,
             failure_reason="invalid_password",
         )
@@ -83,10 +173,11 @@ async def login(
             detail="Invalid username or password",
         )
     if not user.is_active:
+        await _record_login_failure(ip, login_req.username, db, user.id)
         await record_login_event(
             db,
             event_type="login_failed",
-            username=request.username,
+            username=login_req.username,
             user_id=user.id,
             failure_reason="user_inactive",
         )
@@ -94,6 +185,9 @@ async def login(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is disabled",
         )
+
+    # Successful login — clear any accumulated failure count for this pair.
+    await _clear_login_counters(ip, login_req.username)
 
     await record_login_event(
         db,
@@ -107,12 +201,12 @@ async def login(
 
     response.set_cookie(
         "access_token", access,
-        httponly=True, samesite="lax", secure=False,
+        httponly=True, samesite="strict", secure=settings.cookie_secure,
         max_age=_ACCESS_MAX_AGE, path="/",
     )
     response.set_cookie(
         "refresh_token", refresh,
-        httponly=True, samesite="lax", secure=False,
+        httponly=True, samesite="strict", secure=settings.cookie_secure,
         max_age=_REFRESH_MAX_AGE, path="/v1/auth",
     )
 
@@ -234,7 +328,7 @@ async def refresh(
     access = create_access_token(str(user.id), user.username, user.role)
     response.set_cookie(
         "access_token", access,
-        httponly=True, samesite="lax", secure=False,
+        httponly=True, samesite="strict", secure=settings.cookie_secure,
         max_age=_ACCESS_MAX_AGE, path="/",
     )
 

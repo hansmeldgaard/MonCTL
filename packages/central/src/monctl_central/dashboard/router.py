@@ -266,7 +266,10 @@ async def _collector_status(db: AsyncSession) -> dict:
 # ---------------------------------------------------------------------------
 
 async def _performance_top_n(tenant_ids: list[str] | None) -> dict:
-    """Top 10 devices by CPU, memory, and interface bandwidth from ClickHouse."""
+    """Top 10 devices by CPU, memory, and interface bandwidth from ClickHouse.
+
+    The 3 CH queries are independent — fire them concurrently via gather.
+    """
     ch = get_clickhouse()
     result: dict[str, list] = {"cpu": [], "memory": [], "bandwidth": []}
 
@@ -275,27 +278,65 @@ async def _performance_top_n(tenant_ids: list[str] | None) -> dict:
         tid = tenant_ids[0].replace("'", "")
         tenant_filter = f" AND tenant_id = toUUID('{tid}')"
 
-    # ── Top CPU utilization ───────────────────────────────────────────────
-    try:
-        cpu_sql = f"""
-            SELECT
-                device_id,
-                device_name,
-                component,
-                metric_values[indexOf(metric_names, 'utilization_pct')] AS cpu_pct,
-                executed_at
-            FROM performance_latest FINAL
-            WHERE component_type = 'cpu'
-              AND has(metric_names, 'utilization_pct')
-              AND device_id != toUUID('00000000-0000-0000-0000-000000000000')
-              {tenant_filter}
-            ORDER BY cpu_pct DESC
-            LIMIT 20
-        """
-        cpu_rows = await asyncio.to_thread(lambda: ch._get_client().query(cpu_sql))
+    cpu_sql = f"""
+        SELECT
+            device_id,
+            device_name,
+            component,
+            metric_values[indexOf(metric_names, 'utilization_pct')] AS cpu_pct,
+            executed_at
+        FROM performance_latest FINAL
+        WHERE component_type = 'cpu'
+          AND has(metric_names, 'utilization_pct')
+          AND device_id != toUUID('00000000-0000-0000-0000-000000000000')
+          {tenant_filter}
+        ORDER BY cpu_pct DESC
+        LIMIT 20
+    """
+    mem_sql = f"""
+        SELECT
+            device_id,
+            device_name,
+            metric_values[indexOf(metric_names, 'utilization_pct')] AS mem_pct,
+            executed_at
+        FROM performance_latest FINAL
+        WHERE component_type = 'memory'
+          AND has(metric_names, 'utilization_pct')
+          AND device_id != toUUID('00000000-0000-0000-0000-000000000000')
+          {tenant_filter}
+        ORDER BY mem_pct DESC
+        LIMIT 10
+    """
+    bw_sql = f"""
+        SELECT
+            device_id,
+            device_name,
+            if_name,
+            greatest(in_utilization_pct, out_utilization_pct) AS max_util,
+            in_rate_bps,
+            out_rate_bps,
+            if_speed_mbps,
+            executed_at
+        FROM interface_latest FINAL
+        WHERE device_id != toUUID('00000000-0000-0000-0000-000000000000')
+          AND if_speed_mbps > 0
+          {tenant_filter}
+        ORDER BY max_util DESC
+        LIMIT 10
+    """
 
+    cpu_res, mem_res, bw_res = await asyncio.gather(
+        asyncio.to_thread(lambda: ch._get_client().query(cpu_sql)),
+        asyncio.to_thread(lambda: ch._get_client().query(mem_sql)),
+        asyncio.to_thread(lambda: ch._get_client().query(bw_sql)),
+        return_exceptions=True,
+    )
+
+    if isinstance(cpu_res, Exception):
+        logger.exception("Failed to query CPU top-n for dashboard", exc_info=cpu_res)
+    else:
         seen_devices: set[str] = set()
-        for row in cpu_rows.result_set:
+        for row in cpu_res.result_set:
             did = str(row[0])
             if did not in seen_devices:
                 seen_devices.add(did)
@@ -309,27 +350,11 @@ async def _performance_top_n(tenant_ids: list[str] | None) -> dict:
                 })
             if len(result["cpu"]) >= 10:
                 break
-    except Exception:
-        logger.exception("Failed to query CPU top-n for dashboard")
 
-    # ── Top memory utilization ────────────────────────────────────────────
-    try:
-        mem_sql = f"""
-            SELECT
-                device_id,
-                device_name,
-                metric_values[indexOf(metric_names, 'utilization_pct')] AS mem_pct,
-                executed_at
-            FROM performance_latest FINAL
-            WHERE component_type = 'memory'
-              AND has(metric_names, 'utilization_pct')
-              AND device_id != toUUID('00000000-0000-0000-0000-000000000000')
-              {tenant_filter}
-            ORDER BY mem_pct DESC
-            LIMIT 10
-        """
-        mem_rows = await asyncio.to_thread(lambda: ch._get_client().query(mem_sql))
-        for row in mem_rows.result_set:
+    if isinstance(mem_res, Exception):
+        logger.exception("Failed to query memory top-n for dashboard", exc_info=mem_res)
+    else:
+        for row in mem_res.result_set:
             result["memory"].append({
                 "device_id": str(row[0]),
                 "device_name": row[1],
@@ -337,30 +362,11 @@ async def _performance_top_n(tenant_ids: list[str] | None) -> dict:
                 "unit": "%",
                 "executed_at": row[3].isoformat() if row[3] else None,
             })
-    except Exception:
-        logger.exception("Failed to query memory top-n for dashboard")
 
-    # ── Top bandwidth utilization ─────────────────────────────────────────
-    try:
-        bw_sql = f"""
-            SELECT
-                device_id,
-                device_name,
-                if_name,
-                greatest(in_utilization_pct, out_utilization_pct) AS max_util,
-                in_rate_bps,
-                out_rate_bps,
-                if_speed_mbps,
-                executed_at
-            FROM interface_latest FINAL
-            WHERE device_id != toUUID('00000000-0000-0000-0000-000000000000')
-              AND if_speed_mbps > 0
-              {tenant_filter}
-            ORDER BY max_util DESC
-            LIMIT 10
-        """
-        bw_rows = await asyncio.to_thread(lambda: ch._get_client().query(bw_sql))
-        for row in bw_rows.result_set:
+    if isinstance(bw_res, Exception):
+        logger.exception("Failed to query bandwidth top-n for dashboard", exc_info=bw_res)
+    else:
+        for row in bw_res.result_set:
             result["bandwidth"].append({
                 "device_id": str(row[0]),
                 "device_name": row[1],
@@ -372,7 +378,5 @@ async def _performance_top_n(tenant_ids: list[str] | None) -> dict:
                 "speed_mbps": row[6],
                 "executed_at": row[7].isoformat() if row[7] else None,
             })
-    except Exception:
-        logger.exception("Failed to query bandwidth top-n for dashboard")
 
     return result

@@ -10,6 +10,7 @@ import {
   YAxis,
 } from "recharts";
 import { useIngestionRateHistory } from "@/api/hooks.ts";
+import { ensureUTC } from "@/lib/utils";
 import {
   Card,
   CardContent,
@@ -67,7 +68,7 @@ export function IngestionRateChart() {
     if (!q.data) return [];
     const byTs = new Map<number, Record<string, number>>();
     for (const r of q.data) {
-      const ts = new Date(r.timestamp + "Z").getTime();
+      const ts = new Date(ensureUTC(r.timestamp)).getTime();
       const row = byTs.get(ts) ?? ({ ts } as Record<string, number>);
       row[r.table_name] = r.rows_per_second;
       byTs.set(ts, row);

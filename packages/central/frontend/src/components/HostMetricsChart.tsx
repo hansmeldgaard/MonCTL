@@ -10,6 +10,7 @@ import {
   YAxis,
 } from "recharts";
 import { useHostMetricsHistory } from "@/api/hooks.ts";
+import { ensureUTC } from "@/lib/utils";
 import {
   Card,
   CardContent,
@@ -100,7 +101,7 @@ export function HostMetricsChart() {
             ? (r.disk_used_bytes / r.disk_total_bytes) * 100
             : 0;
       }
-      const ts = new Date(r.timestamp + "Z").getTime();
+      const ts = new Date(ensureUTC(r.timestamp)).getTime();
       const row = byTs.get(ts) ?? ({ ts } as Record<string, number>);
       row[r.host_label] = value;
       byTs.set(ts, row);

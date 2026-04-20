@@ -7,6 +7,7 @@ Uses aiohttp with connection pooling and configurable timeout.
 from __future__ import annotations
 
 import json
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -18,6 +19,17 @@ import structlog
 from monctl_collector.jobs.models import ConnectorBinding, JobDefinition
 
 logger = structlog.get_logger()
+
+# Defence-in-depth: the collector trusts central, but we still validate
+# path-segment identifiers before URL interpolation so a malformed/hostile
+# response can't inject `..`, `/`, or query-string characters into requests.
+_SAFE_IDENT_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
+def _require_safe_ident(kind: str, value: str) -> str:
+    if not value or not _SAFE_IDENT_RE.match(value):
+        raise ValueError(f"invalid {kind}: {value!r}")
+    return value
 
 
 class CentralAPIClient:
@@ -123,6 +135,7 @@ class CentralAPIClient:
 
     async def get_app_metadata(self, app_id: str, version: str | None = None) -> dict:
         """Return app metadata: requirements, entry_class, checksum."""
+        _require_safe_ident("app_id", app_id)
         params: dict[str, str] = {}
         if version:
             params["version"] = version
@@ -134,6 +147,7 @@ class CentralAPIClient:
 
     async def get_app_code(self, app_id: str, version: str | None = None) -> dict:
         """Return app source code, checksum, requirements, and entry_class."""
+        _require_safe_ident("app_id", app_id)
         params: dict[str, str] = {}
         if version:
             params["version"] = version
@@ -147,6 +161,7 @@ class CentralAPIClient:
 
     async def get_connector_metadata(self, connector_id: str, version_id: str | None = None) -> dict:
         """Return connector metadata: name, version, requirements, entry_class, checksum."""
+        _require_safe_ident("connector_id", connector_id)
         params: dict[str, str] = {}
         if version_id:
             params["version_id"] = version_id
@@ -158,6 +173,7 @@ class CentralAPIClient:
 
     async def get_connector_code(self, connector_id: str, version_id: str | None = None) -> dict:
         """Return connector source code."""
+        _require_safe_ident("connector_id", connector_id)
         params: dict[str, str] = {}
         if version_id:
             params["version_id"] = version_id
@@ -174,6 +190,7 @@ class CentralAPIClient:
 
         Returns: {"name": ..., "type": ..., "data": {...}}
         """
+        _require_safe_ident("credential_name", credential_name)
         async with self._session.get(
             self._url(f"/credentials/{quote(credential_name, safe='')}")
         ) as resp:

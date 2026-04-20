@@ -17,6 +17,17 @@ logger = logging.getLogger(__name__)
 _LEADER_KEY = "monctl:scheduler:leader"
 _LEADER_TTL = 30  # seconds — must renew before this expires
 
+# Atomic compare-and-renew: refresh TTL only if the key still holds our ID.
+# Avoids the TOCTOU between GET and EXPIRE where another instance could
+# acquire in between. Returns 1 if renewed, 0 if not ours.
+_RENEW_LUA = """
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+    return redis.call("EXPIRE", KEYS[1], ARGV[2])
+else
+    return 0
+end
+"""
+
 
 class LeaderElection:
     """Redis-based leader election using SETNX + TTL renewal."""
@@ -47,14 +58,17 @@ class LeaderElection:
                 await self._task
             except asyncio.CancelledError:
                 pass
-        # Release leadership if we hold it
+        # Release leadership if we hold it — atomic compare-and-delete so we
+        # don't wipe another instance's freshly-acquired key.
         if self._is_leader:
             try:
-                current = await self._redis.get(_LEADER_KEY)
-                if current == self._instance_id:
-                    await self._redis.delete(_LEADER_KEY)
+                await self._redis.eval(
+                    'if redis.call("GET", KEYS[1]) == ARGV[1] then '
+                    'return redis.call("DEL", KEYS[1]) else return 0 end',
+                    1, _LEADER_KEY, self._instance_id,
+                )
             except Exception:
-                pass
+                logger.warning("leader_release_failed instance_id=%s", self._instance_id)
             self._is_leader = False
 
     async def _run(self) -> None:
@@ -88,11 +102,12 @@ class LeaderElection:
             self._is_leader = True
             return
 
-        # Check if we already hold the lock
-        current = await self._redis.get(_LEADER_KEY)
-        if current == self._instance_id:
-            # Renew TTL
-            await self._redis.expire(_LEADER_KEY, _LEADER_TTL)
+        # Atomic compare-and-renew — only refresh TTL if the key still holds
+        # our instance ID. Returns 1 if renewed, 0 if someone else is leader.
+        renewed = await self._redis.eval(
+            _RENEW_LUA, 1, _LEADER_KEY, self._instance_id, _LEADER_TTL
+        )
+        if renewed:
             self._is_leader = True
         else:
             if self._is_leader:

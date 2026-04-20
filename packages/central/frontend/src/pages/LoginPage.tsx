@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
-import { Navigate } from "react-router-dom";
+import { Navigate, useSearchParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth.tsx";
 import { useField, validateAll } from "@/hooks/useFieldValidation.ts";
@@ -11,6 +11,7 @@ import { ApiError } from "@/api/client.ts";
 
 export function LoginPage() {
   const { login, isAuthenticated, isLoading: authLoading } = useAuth();
+  const [searchParams] = useSearchParams();
   const usernameField = useField("", required);
   const passwordField = useField("", required);
   const [error, setError] = useState("");
@@ -25,7 +26,13 @@ export function LoginPage() {
   }
 
   if (isAuthenticated) {
-    return <Navigate to="/" replace />;
+    // Return to the page the user was on before the 401 bounced them here.
+    // `next` must start with "/" and not be itself a login path — any other
+    // form is discarded to avoid open-redirect via crafted ?next= values.
+    const rawNext = searchParams.get("next") || "/";
+    const next =
+      rawNext.startsWith("/") && !rawNext.startsWith("/login") ? rawNext : "/";
+    return <Navigate to={next} replace />;
   }
 
   const handleSubmit = async (e: FormEvent) => {

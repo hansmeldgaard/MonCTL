@@ -245,12 +245,13 @@ class AppManager:
     def _create_venv(self, venv_dir: Path, requirements: list[str]) -> None:
         """Create a new virtualenv and pip-install requirements.
 
-        When pip_index_url is set (e.g. pointing at central's PEP 503 endpoint),
-        the URL is passed via PIP_INDEX_URL env var with embedded auth credentials
-        so that pip can authenticate against central's collector API.
-        PIP_TRUSTED_HOST is set for self-signed TLS certificates.
+        The central API key is passed to pip via a mode-0600 `pip.conf` written
+        to a private temp directory and exposed with `PIP_CONFIG_FILE`, so the
+        credential never lands in `/proc/self/environ`, process listings, or
+        subprocess-env dumps the way `PIP_INDEX_URL` would.
         """
         import os
+        import tempfile
         from urllib.parse import urlparse
 
         venv_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -262,42 +263,65 @@ class AppManager:
         python_exe = venv_dir / "bin" / "python"
         cmd = [str(python_exe), "-m", "pip", "install", "--quiet"]
 
-        # Build environment with pip index configuration
         env = dict(os.environ)
+        # Strip inherited credential-bearing pip env so we can't accidentally
+        # re-export them into the pip process if this method is called with a
+        # parent that has them set.
+        env.pop("PIP_INDEX_URL", None)
+        env.pop("PIP_EXTRA_INDEX_URL", None)
 
-        if self._cfg.pip_index_url:
-            index_url = self._cfg.pip_index_url
-            # Inject auth credentials into the URL if we have a central API key
-            # Format: https://__token__:<api_key>@host/api/v1/pypi/simple/
-            central_api_key = os.environ.get("MONCTL_COLLECTOR_API_KEY") or os.environ.get("MONCTL_CENTRAL_API_KEY") or os.environ.get("CENTRAL_API_KEY")
-            if central_api_key and "://" in index_url:
+        pip_conf_dir: str | None = None
+        try:
+            if self._cfg.pip_index_url:
+                index_url = self._cfg.pip_index_url
+                central_api_key = (
+                    os.environ.get("MONCTL_COLLECTOR_API_KEY")
+                    or os.environ.get("MONCTL_CENTRAL_API_KEY")
+                    or os.environ.get("CENTRAL_API_KEY")
+                )
+                if central_api_key and "://" in index_url:
+                    parsed = urlparse(index_url)
+                    if not parsed.username:
+                        index_url = index_url.replace(
+                            f"{parsed.scheme}://",
+                            f"{parsed.scheme}://__token__:{central_api_key}@",
+                        )
+
                 parsed = urlparse(index_url)
-                if not parsed.username:
-                    authed_url = index_url.replace(
-                        f"{parsed.scheme}://",
-                        f"{parsed.scheme}://__token__:{central_api_key}@",
-                    )
-                    index_url = authed_url
+                trusted_host = parsed.hostname or ""
 
-            env["PIP_INDEX_URL"] = index_url
-            cmd += ["--index-url", index_url]
+                # Write a private pip.conf. The file is mode 0600 and lives in
+                # a per-install temp dir that we unlink in the finally block.
+                pip_conf_dir = tempfile.mkdtemp(prefix="monctl-pip-")
+                pip_conf_path = os.path.join(pip_conf_dir, "pip.conf")
+                conf_lines = [
+                    "[global]",
+                    f"index-url = {index_url}",
+                ]
+                if trusted_host:
+                    conf_lines.append(f"trusted-host = {trusted_host}")
+                with open(pip_conf_path, "w", encoding="utf-8") as fh:
+                    fh.write("\n".join(conf_lines) + "\n")
+                os.chmod(pip_conf_path, 0o600)
+                env["PIP_CONFIG_FILE"] = pip_conf_path
 
-            # Trust the host for self-signed TLS
-            parsed = urlparse(index_url)
-            if parsed.hostname:
-                env["PIP_TRUSTED_HOST"] = parsed.hostname
-                cmd += ["--trusted-host", parsed.hostname]
+            self._pip_cache.mkdir(parents=True, exist_ok=True)
+            cmd += ["--cache-dir", str(self._pip_cache)]
+            cmd += requirements
 
-        self._pip_cache.mkdir(parents=True, exist_ok=True)
-        cmd += ["--cache-dir", str(self._pip_cache)]
+            result = subprocess.run(cmd, capture_output=True, text=True, env=env)
+            if result.returncode != 0:
+                # Don't echo env/index-url into the error — strip any token
+                # substring defensively even though we never injected one into
+                # argv. The stderr can still name the index URL without creds.
+                raise RuntimeError(
+                    f"pip install failed for venv {venv_dir.parent.name}:\n{result.stderr}"
+                )
+        finally:
+            if pip_conf_dir is not None:
+                import shutil
 
-        cmd += requirements
-
-        result = subprocess.run(cmd, capture_output=True, text=True, env=env)
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"pip install failed for venv {venv_dir.parent.name}:\n{result.stderr}"
-            )
+                shutil.rmtree(pip_conf_dir, ignore_errors=True)
 
     def _write_app_files(self, app_dir: Path, code: str, metadata: dict) -> None:
         """Write module.py + metadata.json to disk."""

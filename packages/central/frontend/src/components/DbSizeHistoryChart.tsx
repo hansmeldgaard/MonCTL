@@ -10,6 +10,7 @@ import {
   YAxis,
 } from "recharts";
 import { useDbSizeHistory } from "@/api/hooks.ts";
+import { ensureUTC } from "@/lib/utils";
 import {
   Card,
   CardContent,
@@ -60,7 +61,7 @@ export function DbSizeHistoryChart() {
     const byTs = new Map<number, { ts: number; pg?: number; ch?: number }>();
 
     for (const r of pgQuery.data ?? []) {
-      const ts = new Date(r.timestamp + "Z").getTime();
+      const ts = new Date(ensureUTC(r.timestamp)).getTime();
       const row = byTs.get(ts) ?? { ts };
       row.pg = r.bytes;
       byTs.set(ts, row);
@@ -69,7 +70,7 @@ export function DbSizeHistoryChart() {
     // CH: sum across tables per-timestamp (one sampler pass → one ts, many rows)
     const chTotals = new Map<number, number>();
     for (const r of chQuery.data ?? []) {
-      const ts = new Date(r.timestamp + "Z").getTime();
+      const ts = new Date(ensureUTC(r.timestamp)).getTime();
       chTotals.set(ts, (chTotals.get(ts) ?? 0) + r.bytes);
     }
     for (const [ts, total] of chTotals) {

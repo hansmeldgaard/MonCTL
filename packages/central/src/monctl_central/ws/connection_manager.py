@@ -64,7 +64,13 @@ class CollectorConnection:
                 self.last_seen_at = datetime.now(timezone.utc)
                 await _redis_set_connection(self.collector_id, self.name,
                                             self.connected_at, self.last_seen_at)
-            except Exception:
+            except Exception as exc:
+                logger.info(
+                    "ws_keepalive_stopped",
+                    collector_id=str(self.collector_id),
+                    name=self.name,
+                    error=str(exc),
+                )
                 break
 
     async def send(self, message: dict) -> None:
@@ -186,8 +192,12 @@ class ConnectionManager:
             await old.stop_keepalive()
             try:
                 await old.websocket.close(code=4000, reason="Replaced by new connection")
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug(
+                    "ws_stale_close_failed",
+                    collector_id=str(collector_id),
+                    error=str(exc),
+                )
 
         conn = CollectorConnection(collector_id, name, websocket)
         self._connections[collector_id] = conn
@@ -244,7 +254,12 @@ class ConnectionManager:
             return False
         try:
             return await r.exists(f"{_REDIS_WS_PREFIX}{collector_id}") > 0
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "ws_redis_exists_failed",
+                collector_id=str(collector_id),
+                error=str(exc),
+            )
             return False
 
     async def get_connection_info(self, collector_id: uuid.UUID) -> dict | None:
@@ -264,8 +279,12 @@ class ConnectionManager:
             val = await r.get(f"{_REDIS_WS_PREFIX}{collector_id}")
             if val:
                 return json.loads(val)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "ws_redis_get_failed",
+                collector_id=str(collector_id),
+                error=str(exc),
+            )
         return None
 
     def get_local_status(self) -> list[dict]:

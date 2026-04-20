@@ -174,6 +174,59 @@ async def delete_cached_api_key(key_hash: str) -> None:
         pass
 
 
+async def invalidate_user_auth_cache(db, user_id: str) -> None:
+    """Drop all cached auth entries for a user: user_perms + every user-bound API key.
+
+    Called when a user is deactivated, deleted, or has their role changed so that
+    admin actions take effect within one request rather than after the 5 min TTL.
+    """
+    if _redis is not None:
+        try:
+            await _redis.delete(f"user_perms:{user_id}")
+        except Exception:
+            logger.debug("user_perms_invalidation_failed", exc_info=True)
+
+    # User-bound API keys are cached by key_hash — fetch the hashes from DB.
+    try:
+        import uuid as _uuid
+
+        from sqlalchemy import select
+
+        from monctl_central.storage.models import ApiKey
+
+        rows = (
+            await db.execute(
+                select(ApiKey.key_hash).where(ApiKey.user_id == _uuid.UUID(user_id))
+            )
+        ).scalars().all()
+        for kh in rows:
+            await delete_cached_api_key(kh)
+    except Exception:
+        logger.debug("user_api_key_invalidation_failed", exc_info=True)
+
+
+async def invalidate_collector_auth_cache(db, collector_id: str) -> None:
+    """Drop cached entries for every API key belonging to a collector."""
+    try:
+        import uuid as _uuid
+
+        from sqlalchemy import select
+
+        from monctl_central.storage.models import ApiKey
+
+        rows = (
+            await db.execute(
+                select(ApiKey.key_hash).where(
+                    ApiKey.collector_id == _uuid.UUID(collector_id)
+                )
+            )
+        ).scalars().all()
+        for kh in rows:
+            await delete_cached_api_key(kh)
+    except Exception:
+        logger.debug("collector_api_key_invalidation_failed", exc_info=True)
+
+
 # ---------------------------------------------------------------------------
 # Credential cache
 # ---------------------------------------------------------------------------

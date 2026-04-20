@@ -6,6 +6,19 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+/**
+ * Ensure a timestamp string parses as UTC. Central returns ISO timestamps
+ * without a "Z" suffix for some endpoints; blindly appending "Z" to a value
+ * that already has an offset produces garbage ("2026-04-19T10:00+02:00Z"),
+ * so callers went through bespoke guards. Use this helper everywhere.
+ */
+export function ensureUTC(ts: string | null | undefined): string {
+  if (!ts) return "";
+  // Already has explicit UTC marker or an offset (+/-HH:MM or +/-HHMM)
+  if (ts.endsWith("Z") || /[+-]\d{2}:?\d{2}$/.test(ts)) return ts;
+  return ts + "Z";
+}
+
 export function formatDate(
   dateStr: string | null | undefined,
   timezone = "UTC",

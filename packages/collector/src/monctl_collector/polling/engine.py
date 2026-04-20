@@ -282,6 +282,16 @@ class PollEngine:
         sem = self._heavy_sem if is_heavy else self._light_sem
 
         self._running.add(job.job_id)
+        try:
+            await self._run_job_inner(sj, sem)
+        finally:
+            # Outer guard so _running never retains a leaked job_id — if the
+            # sem acquisition hangs or any post-sem step raises, the set would
+            # otherwise grow unbounded and block rescheduling of this job.
+            self._running.discard(job.job_id)
+
+    async def _run_job_inner(self, sj: ScheduledJob, sem: asyncio.Semaphore) -> None:
+        job = sj.job
         start = time.time()
         result: PollResult | None = None
 
@@ -362,13 +372,19 @@ class PollEngine:
                         pass
                     raise  # re-raise TimeoutError
 
-                # Auto-fill error_category for apps that return an error result
-                # without classifying it. Most uploaded apps catch connector
-                # exceptions and build their own PollResult with error_message
-                # only — default those to "device" since that is overwhelmingly
-                # the real cause (target timeout / unreachable).
+                # Apps MUST classify their own error_category. If they don't, it
+                # is almost always an app bug (uncaught branch, missing field)
+                # rather than a real target-device problem, so default to "app"
+                # and log WARN — using "device" would mask app bugs as device
+                # outages and skew the classification used by alerting.
                 if result is not None and result.status != "ok" and not result.error_category:
-                    result.error_category = "device"
+                    logger.warning(
+                        "app_missing_error_category",
+                        job_id=job.job_id,
+                        app=job.app_id,
+                        error_message=result.error_message,
+                    )
+                    result.error_category = "app"
 
             except asyncio.TimeoutError:
                 execution_ms = int((time.time() - start) * 1000)
@@ -418,7 +434,6 @@ class PollEngine:
                     pass
 
         execution_time = time.time() - start
-        self._running.discard(job.job_id)
 
         # Attach started_at to the result for central ingestion
         if result and result.started_at is None:

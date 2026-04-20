@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
+import time
 import urllib.request
 from datetime import datetime, timezone
 
@@ -18,6 +20,27 @@ logger = structlog.get_logger()
 
 BATCH_INTERVAL_SECONDS = 10
 MAX_LINES_PER_BATCH = 5000
+
+# Drop any log line whose message matches one of these patterns — they almost
+# always carry credentials in plaintext. The structlog-shipped logs on central
+# already redact via `audit/diff.py`, but container stdout is raw and a single
+# `logger.error(f"auth failed: {creds}")` in any third-party app would leak
+# into ClickHouse. Cheap belt-and-braces at the shipper boundary.
+_SECRET_PATTERNS = [
+    re.compile(r"(?i)\b(password|passwd|pwd)\s*[:=]\s*\S+"),
+    re.compile(r"(?i)\b(api[_-]?key|apikey)\s*[:=]\s*\S+"),
+    re.compile(r"(?i)\b(token|bearer|secret|jwt)\s*[:=]\s*\S+"),
+    re.compile(r"(?i)\bAuthorization:\s*Bearer\s+\S+"),
+    re.compile(r"(?i)\bsnmp_community\s*[:=]\s*\S+"),
+]
+
+# Hard cap on lines per cycle per container — a runaway container flooding
+# stdout must not swamp central's ingest pipeline for its neighbours.
+_PER_CONTAINER_RATE_LIMIT = 500
+
+
+def _contains_secret(msg: str) -> bool:
+    return any(p.search(msg) for p in _SECRET_PATTERNS)
 
 
 class LogShipper:
@@ -40,6 +63,9 @@ class LogShipper:
         self._log_level_filter = log_level_filter
         self._running = False
         self._last_timestamps: dict[str, str] = {}
+        self._dropped_secret = 0
+        self._dropped_rate = 0
+        self._last_stats_log = 0.0
 
     @property
     def log_level_filter(self) -> str:
@@ -58,6 +84,18 @@ class LogShipper:
                 await self._collect_and_ship()
             except Exception as exc:
                 logger.warning("log_shipper_cycle_error", error=str(exc))
+
+            now = time.time()
+            if now - self._last_stats_log > 300 and (
+                self._dropped_secret or self._dropped_rate
+            ):
+                logger.info(
+                    "log_shipper_drops",
+                    dropped_secret=self._dropped_secret,
+                    dropped_rate=self._dropped_rate,
+                )
+                self._last_stats_log = now
+
             await asyncio.sleep(BATCH_INTERVAL_SECONDS)
 
     async def stop(self):
@@ -135,8 +173,17 @@ class LogShipper:
                         if line_ts > last_ts:
                             new_lines.append(line)
 
+                shipped_this_container = 0
                 for line in new_lines:
+                    if shipped_this_container >= _PER_CONTAINER_RATE_LIMIT:
+                        self._dropped_rate += 1
+                        continue
+
                     if isinstance(line, dict):
+                        msg = line.get("message", str(line))
+                        if _contains_secret(msg):
+                            self._dropped_secret += 1
+                            continue
                         entries.append({
                             "timestamp": line.get(
                                 "timestamp", datetime.now(timezone.utc).isoformat()
@@ -144,9 +191,9 @@ class LogShipper:
                             "source_type": "docker",
                             "container_name": name,
                             "image_name": container.get("image", ""),
-                            "level": self._detect_level(line.get("message", "")),
+                            "level": self._detect_level(msg),
                             "stream": line.get("stream", "stdout"),
-                            "message": line.get("message", str(line)),
+                            "message": msg,
                         })
                     else:
                         # Raw string — parse Docker timestamp prefix if present
@@ -157,6 +204,9 @@ class LogShipper:
                         if z_pos > 0 and line[4] == '-' and line[10] == 'T':
                             ts = line[:z_pos + 1]
                             msg = line[z_pos + 2:]
+                        if _contains_secret(msg):
+                            self._dropped_secret += 1
+                            continue
                         entries.append({
                             "timestamp": ts,
                             "source_type": "docker",
@@ -166,6 +216,7 @@ class LogShipper:
                             "stream": "stdout",
                             "message": msg,
                         })
+                    shipped_this_container += 1
 
                 if new_lines:
                     last = new_lines[-1]

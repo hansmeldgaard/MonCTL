@@ -140,8 +140,16 @@ function buildListQs(params: ListParams): string {
 
 // ── Polling intervals ────────────────────────────────────
 
-const POLL_LIST = 30_000; // 30 seconds for list views
-const POLL_DETAIL = 15_000; // 15 seconds for detail views
+// Poll intervals used by `refetchInterval`. Exported as functions so every
+// hook automatically pauses while the tab is hidden — React Query v5 already
+// defaults `refetchIntervalInBackground` to false, but an explicit guard
+// survives future default changes and documents intent at the call site.
+const POLL_LIST_MS = 30_000; // 30 seconds for list views
+const POLL_DETAIL_MS = 15_000; // 15 seconds for detail views
+const POLL_LIST: number | (() => number | false) = () =>
+  typeof document !== "undefined" && document.hidden ? false : POLL_LIST_MS;
+const POLL_DETAIL: number | (() => number | false) = () =>
+  typeof document !== "undefined" && document.hidden ? false : POLL_DETAIL_MS;
 
 // ── Devices ──────────────────────────────────────────────
 

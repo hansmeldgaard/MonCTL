@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import urllib.parse
 import urllib.request
 import json
 
@@ -87,7 +88,8 @@ async def handle_docker_health(payload: dict) -> dict:
             data = json.loads(resp.read().decode())
         return {"success": True, "data": data}
     except Exception as exc:
-        return {"success": False, "error": str(exc)}
+        logger.warning("docker_health_failed", error=str(exc))
+        return {"success": False, "error": type(exc).__name__}
 
 
 async def handle_docker_logs(payload: dict) -> dict:
@@ -96,13 +98,17 @@ async def handle_docker_logs(payload: dict) -> dict:
     tail = payload.get("tail", 100)
 
     try:
-        url = f"{_sidecar_url}/logs?container={container}&tail={tail}"
+        qs = urllib.parse.urlencode(
+            {"container": container, "tail": tail},
+            quote_via=urllib.parse.quote,
+        )
+        url = f"{_sidecar_url}/logs?{qs}"
         req = urllib.request.Request(url, method="GET")
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode())
         return {"success": True, "data": data}
     except Exception as exc:
-        return {"success": False, "error": str(exc)}
+        return {"success": False, "error": type(exc).__name__}
 
 
 async def handle_probe_oids(payload: dict) -> dict:
@@ -179,7 +185,7 @@ async def handle_probe_oids(payload: dict) -> dict:
 
     except Exception as exc:
         logger.warning("probe_oids_failed", device_host=device_host, error=str(exc))
-        return {"success": False, "error": str(exc)}
+        return {"success": False, "error": type(exc).__name__}
 
 
 def _empty_bundle(error: str) -> dict:

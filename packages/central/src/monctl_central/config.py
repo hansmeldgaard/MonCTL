@@ -77,6 +77,10 @@ class Settings(BaseSettings):
     jwt_access_token_expire_minutes: int = 30
     jwt_refresh_token_expire_days: int = 7
 
+    # Emit `Secure` flag on auth cookies. Default True — override with MONCTL_COOKIE_SECURE=false
+    # only for dev setups that serve the UI over plain HTTP (no HAProxy TLS termination).
+    cookie_secure: bool = True
+
     # Upgrade management
     upgrade_storage_dir: str = "/data/upgrades"
 

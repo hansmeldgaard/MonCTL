@@ -188,10 +188,14 @@ async def register_collector(
         collector.last_seen_at = utc_now()
         collector.updated_at = utc_now()
 
-        # Delete old API keys for this collector
+        # Delete old API keys for this collector and drop them from the cache so
+        # a re-registered collector cannot keep operating with its previous key.
+        from monctl_central.cache import delete_cached_api_key
+
         old_keys_stmt = select(ApiKey).where(ApiKey.collector_id == collector.id)
         old_keys = (await db.execute(old_keys_stmt)).scalars().all()
         for old_key in old_keys:
+            await delete_cached_api_key(old_key.key_hash)
             await db.delete(old_key)
         await db.flush()
     else:
