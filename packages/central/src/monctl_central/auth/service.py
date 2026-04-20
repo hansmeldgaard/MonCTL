@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import timedelta
 
 import bcrypt
@@ -21,26 +22,41 @@ def verify_password(password: str, password_hash: str) -> bool:
     return bcrypt.checkpw(password.encode(), password_hash.encode())
 
 
-def create_access_token(user_id: str, username: str, role: str) -> str:
-    """Create a short-lived JWT access token (stored in HTTP-only cookie)."""
+def create_access_token(
+    user_id: str, username: str, role: str, token_version: int
+) -> str:
+    """Create a short-lived JWT access token (stored in HTTP-only cookie).
+
+    Embeds `tv` (token_version) so that bumping `users.token_version` on
+    logout / role change invalidates every outstanding access token for
+    this user without waiting for the 15 min natural expiry (F-CEN-006).
+    """
     now = utc_now()
     payload = {
         "sub": user_id,
         "username": username,
         "role": role,
         "type": "access",
+        "tv": token_version,
         "iat": now,
         "exp": now + timedelta(minutes=settings.jwt_access_token_expire_minutes),
     }
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 
-def create_refresh_token(user_id: str) -> str:
-    """Create a long-lived JWT refresh token."""
+def create_refresh_token(user_id: str, token_version: int) -> str:
+    """Create a long-lived JWT refresh token.
+
+    Carries `tv` + a unique `jti`. The `jti` is marked in Redis on first
+    use at `/refresh` so a replayed refresh token is detected and rotates
+    the user's `token_version`, revoking the whole family (F-CEN-005).
+    """
     now = utc_now()
     payload = {
         "sub": user_id,
         "type": "refresh",
+        "tv": token_version,
+        "jti": str(uuid.uuid4()),
         "iat": now,
         "exp": now + timedelta(days=settings.jwt_refresh_token_expire_days),
     }

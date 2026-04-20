@@ -220,8 +220,10 @@ async def require_management_key(api_key: dict = Depends(get_api_key)) -> dict:
 async def _get_user_from_cookie(request: Request, db: AsyncSession) -> dict | None:
     """Extract and validate the JWT access token from the cookie.
 
-    Loads tenant restrictions from the user_tenants table.
-    Returns None if no cookie or invalid token (does not raise).
+    Loads tenant restrictions from the user_tenants table. Returns None on
+    any of: missing cookie, invalid JWT, inactive user, or a `tv` claim
+    that no longer matches `users.token_version` (revoked on logout or
+    role change — F-CEN-006).
     """
     token = request.cookies.get("access_token")
     if not token:
@@ -238,25 +240,24 @@ async def _get_user_from_cookie(request: Request, db: AsyncSession) -> dict | No
         user_id = payload["sub"]
         role = payload["role"]
 
-        # Admins always see everything
-        if role == "admin":
+        # Always load the user row so we can enforce the token_version gate.
+        # The cost is a single indexed PK lookup per request; cheap given the
+        # authz blast-radius of not enforcing it.
+        user = await db.get(User, uuid.UUID(user_id))
+        if user is None or not user.is_active:
+            return None
+        if payload.get("tv", 0) != (user.token_version or 0):
+            return None
+
+        if role == "admin" or user.all_tenants:
             tenant_ids = None
         else:
-            # Load user record for all_tenants flag
-            user = await db.get(User, uuid.UUID(user_id))
-            if user is None or not user.is_active:
-                return None
-
-            if user.all_tenants:
-                tenant_ids = None
-            else:
-                # Load tenant assignments
-                rows = (await db.execute(
-                    select(UserTenant.tenant_id).where(
-                        UserTenant.user_id == uuid.UUID(user_id)
-                    )
-                )).scalars().all()
-                tenant_ids = [str(tid) for tid in rows]
+            rows = (await db.execute(
+                select(UserTenant.tenant_id).where(
+                    UserTenant.user_id == uuid.UUID(user_id)
+                )
+            )).scalars().all()
+            tenant_ids = [str(tid) for tid in rows]
 
         return {
             "user_id": user_id,
@@ -264,7 +265,7 @@ async def _get_user_from_cookie(request: Request, db: AsyncSession) -> dict | No
             "role": role,
             "auth_type": "user",
             "tenant_ids": tenant_ids,
-            "role_id": str(user.role_id) if (role != "admin" and user and user.role_id) else None,
+            "role_id": str(user.role_id) if (role != "admin" and user.role_id) else None,
         }
     except Exception:
         return None
