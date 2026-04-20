@@ -496,7 +496,17 @@ async def get_me(request: Request, db: AsyncSession = Depends(get_db)):
     user = (await db.execute(
         sa_select(User).options(selectinload(User.assigned_role)).where(User.id == uuid.UUID(user_id))
     )).scalar_one_or_none()
-    all_tenants = getattr(user, "all_tenants", False) if user else False
+
+    # token_version gate — `/me` has its own JWT decode path (doesn't route
+    # through `_get_user_from_cookie`), so the check has to live here too.
+    # Without this, a logged-out / role-changed user's access token would
+    # keep `/me` returning data until natural exp (F-CEN-006).
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=401, detail="User not found or disabled")
+    if payload.get("tv", 0) != (user.token_version or 0):
+        raise HTTPException(status_code=401, detail="Token revoked")
+
+    all_tenants = getattr(user, "all_tenants", False)
 
     if role == "admin" or all_tenants:
         tenant_ids = None  # unrestricted
