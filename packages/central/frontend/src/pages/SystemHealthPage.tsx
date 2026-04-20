@@ -35,6 +35,7 @@ import { DbSizeHistoryChart } from "@/components/DbSizeHistoryChart.tsx";
 import { HostMetricsChart } from "@/components/HostMetricsChart.tsx";
 import { IngestionRateChart } from "@/components/IngestionRateChart.tsx";
 import { Select } from "@/components/ui/select.tsx";
+import { ensureUTC } from "@/lib/utils";
 import {
   Table,
   TableBody,
@@ -184,9 +185,7 @@ function FreshnessDot({ isoDate }: { isoDate: string | null }) {
   if (!isoDate)
     return <span className="inline-block h-2 w-2 rounded-full bg-zinc-600" />;
   // ClickHouse returns DateTime without timezone suffix — force UTC interpretation
-  const ts =
-    isoDate.includes("Z") || isoDate.includes("+") ? isoDate : isoDate + "Z";
-  const age = (Date.now() - new Date(ts).getTime()) / 1000;
+  const age = (Date.now() - new Date(ensureUTC(isoDate)).getTime()) / 1000;
   const color =
     age < 120 ? "bg-emerald-400" : age < 600 ? "bg-amber-400" : "bg-red-400";
   return <span className={`inline-block h-2 w-2 rounded-full ${color}`} />;
@@ -899,12 +898,7 @@ function ClickHouseCard({
                         <span className="flex items-center gap-1.5">
                           <FreshnessDot isoDate={info.latest_received_at} />
                           {info.latest_received_at
-                            ? timeAgo(
-                                info.latest_received_at.includes("Z") ||
-                                  info.latest_received_at.includes("+")
-                                  ? info.latest_received_at
-                                  : info.latest_received_at + "Z",
-                              )
+                            ? timeAgo(ensureUTC(info.latest_received_at))
                             : "\u2014"}
                         </span>
                       ) : (

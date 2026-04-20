@@ -10,6 +10,7 @@ import {
   YAxis,
 } from "recharts";
 import { useContainerMetricsHistory } from "@/api/hooks.ts";
+import { ensureUTC } from "@/lib/utils";
 import {
   Card,
   CardContent,
@@ -100,7 +101,7 @@ export function ContainerMetricsChart({ hosts }: { hosts: string[] }) {
         r.container_name,
         Math.max(peakByContainer.get(r.container_name) ?? 0, value),
       );
-      const ts = new Date(r.timestamp + "Z").getTime();
+      const ts = new Date(ensureUTC(r.timestamp)).getTime();
       const row = byTs.get(ts) ?? ({ ts } as Record<string, number>);
       row[r.container_name] = value;
       byTs.set(ts, row);
