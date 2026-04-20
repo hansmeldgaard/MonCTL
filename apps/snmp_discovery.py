@@ -25,11 +25,27 @@ config_data keys returned:
 
 from __future__ import annotations
 
+import asyncio
 import binascii
 import time
 
+import structlog
+
 from monctl_collector.polling.base import BasePoller
 from monctl_collector.jobs.models import PollContext, PollResult
+
+logger = structlog.get_logger()
+
+
+def _classify_error(exc: BaseException) -> str:
+    """See apps/snmp_check.py for the full rationale — kept in-sync across apps."""
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError, ConnectionError, OSError)):
+        return "device"
+    if exc.__class__.__name__ in {"NoResponseError", "RequestTimeout"}:
+        return "device"
+    if isinstance(exc, (KeyError, TypeError)):
+        return "config"
+    return "app"
 
 
 def _decode_snmp_value(value) -> str:
@@ -63,10 +79,19 @@ class Poller(BasePoller):
     """SNMP discovery poller — collects system identity for device classification."""
 
     async def poll(self, context: PollContext) -> PollResult:
+        start = time.time()
         host = context.device_host or context.parameters.get("host", "localhost")
+        elig_oids = context.parameters.get("_eligibility_oids") or []
+        logger.debug(
+            "snmp_discovery_start",
+            host=host,
+            job_id=context.job.job_id,
+            eligibility_probes=len(elig_oids),
+        )
 
         snmp = context.connectors.get("snmp")
         if snmp is None:
+            logger.debug("snmp_discovery_no_connector", job_id=context.job.job_id)
             return PollResult(
                 job_id=context.job.job_id,
                 device_id=context.job.device_id,
@@ -79,10 +104,9 @@ class Poller(BasePoller):
                 error_message="No SNMP connector bound (expected alias 'snmp'). "
                               "Bind the built-in 'snmp' connector with alias 'snmp' on this assignment.",
                 error_category="config",
-                execution_time_ms=0,
+                execution_time_ms=int((time.time() - start) * 1000),
             )
 
-        start = time.monotonic()
         try:
             # Connector connect/close is managed by the polling engine — calling
             # snmp.connect(host) here would double-open the transport and risk
@@ -90,7 +114,13 @@ class Poller(BasePoller):
             oid_list = list(_SYS_OIDS.values())
             raw = await snmp.get(oid_list)
 
-            rtt_ms = (time.monotonic() - start) * 1000
+            rtt_ms = (time.time() - start) * 1000
+            logger.debug(
+                "snmp_discovery_sys_oids_ok",
+                host=host,
+                rtt_ms=round(rtt_ms, 3),
+                returned=len(raw),
+            )
 
             # Map OID values back to friendly names
             oid_to_key = {v: k for k, v in _SYS_OIDS.items()}
@@ -173,7 +203,15 @@ class Poller(BasePoller):
             )
 
         except Exception as exc:
-            rtt_ms = (time.monotonic() - start) * 1000
+            rtt_ms = (time.time() - start) * 1000
+            category = _classify_error(exc)
+            logger.debug(
+                "snmp_discovery_failed",
+                host=host,
+                exc=type(exc).__name__,
+                category=category,
+                rtt_ms=round(rtt_ms, 3),
+            )
             return PollResult(
                 job_id=context.job.job_id,
                 device_id=context.job.device_id,
@@ -186,7 +224,7 @@ class Poller(BasePoller):
                 status="critical",
                 reachable=False,
                 error_message=f"SNMP discovery failed — {host}: {exc}",
-                error_category="device",
+                error_category=category,
                 execution_time_ms=int(rtt_ms),
                 rtt_ms=0.0,
             )
