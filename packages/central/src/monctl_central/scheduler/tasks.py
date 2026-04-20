@@ -20,6 +20,17 @@ from monctl_central.scheduler.leader import LeaderElection
 logger = logging.getLogger(__name__)
 
 
+def _log_task_exception(task: asyncio.Task) -> None:
+    """Done-callback that surfaces exceptions from fire-and-forget tasks."""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.exception(
+            "scheduler_background_task_failed", exc_info=exc, extra={"task": task.get_name()}
+        )
+
+
 class SchedulerRunner:
     """Runs periodic tasks only when this instance is the elected leader."""
 
@@ -39,6 +50,7 @@ class SchedulerRunner:
         self._last_inventory_collect: datetime | None = None
         self._last_eligibility_scan: datetime | None = None
         self._last_template_auto_apply: datetime | None = None
+        self._alert_cycle_lock = asyncio.Lock()
 
     async def start(self) -> asyncio.Task:
         self._task = asyncio.create_task(self._run())
@@ -56,7 +68,10 @@ class SchedulerRunner:
         cycle = 0
         # One-shot at startup: configure apt source on this central node (so
         # `apt-get install` via sidecar uses the local apt-cache proxy).
-        asyncio.create_task(self._setup_local_apt_source())
+        apt_task = asyncio.create_task(
+            self._setup_local_apt_source(), name="setup_local_apt_source"
+        )
+        apt_task.add_done_callback(_log_task_exception)
         while True:
             await asyncio.sleep(30)
             cycle += 1
@@ -94,9 +109,15 @@ class SchedulerRunner:
                 if cycle % 10 == 3:
                     await self._sample_ingestion_rates()
                 # OS update check (daily) — fire-and-forget to avoid blocking alerts
-                asyncio.create_task(self._check_os_updates())
+                os_task = asyncio.create_task(
+                    self._check_os_updates(), name="check_os_updates"
+                )
+                os_task.add_done_callback(_log_task_exception)
                 # Package inventory collection (every 6h) — fire-and-forget
-                asyncio.create_task(self._collect_package_inventory())
+                inv_task = asyncio.create_task(
+                    self._collect_package_inventory(), name="collect_package_inventory"
+                )
+                inv_task.add_done_callback(_log_task_exception)
                 # Template auto-apply (interval-based, configurable)
                 if cycle % 10 == 7:
                     await self._run_template_auto_apply()
@@ -485,29 +506,38 @@ class SchedulerRunner:
             logger.exception("alert_instance_sync_error")
 
     async def _evaluate_alerts(self) -> None:
-        """Run alert engine evaluation if ClickHouse is available."""
+        """Run alert engine evaluation if ClickHouse is available.
+
+        Guarded by `_alert_cycle_lock` so a slow CH query (>30s) can't overlap
+        with the next cycle's invocation and fire duplicate state transitions.
+        """
         if self._ch is None:
             return
 
-        try:
-            from monctl_central.alerting.engine import AlertEngine
-
-            engine = AlertEngine(
-                session_factory=self._session_factory,
-                ch_client=self._ch,
-            )
-            await engine.evaluate_all()
-        except Exception:
-            logger.exception("alert_evaluation_error")
+        if self._alert_cycle_lock.locked():
+            logger.warning("alert_evaluation_skipped_previous_cycle_in_flight")
             return
 
-        from monctl_central.cache import _redis
-        from monctl_common.utils import utc_now
+        async with self._alert_cycle_lock:
+            try:
+                from monctl_central.alerting.engine import AlertEngine
 
-        if _redis:
-            await _redis.set(
-                "monctl:scheduler:last_evaluate_alerts", utc_now().isoformat()
-            )
+                engine = AlertEngine(
+                    session_factory=self._session_factory,
+                    ch_client=self._ch,
+                )
+                await engine.evaluate_all()
+            except Exception:
+                logger.exception("alert_evaluation_error")
+                return
+
+            from monctl_central.cache import _redis
+            from monctl_common.utils import utc_now
+
+            if _redis:
+                await _redis.set(
+                    "monctl:scheduler:last_evaluate_alerts", utc_now().isoformat()
+                )
 
     async def _evaluate_incidents(self) -> None:
         """IncidentEngine — dispatches opened/escalated/cleared transitions
