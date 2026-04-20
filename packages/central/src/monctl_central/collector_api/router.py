@@ -1269,6 +1269,18 @@ class CollectorResult(BaseModel):
 class SubmitResultsRequest(BaseModel):
     collector_node: str               # hostname of the cache-node
     results: list[CollectorResult]
+    # Deterministic per-batch id supplied by the collector (F-COL-038). When
+    # present, central short-circuits duplicate POSTs caused by in-flight
+    # response loss with a 202 no-op instead of re-ingesting. Older
+    # collectors that predate the forwarder bump will omit this and simply
+    # keep the prior at-least-once behaviour.
+    batch_id: str | None = None
+
+
+# TTL for the "batch already ingested" marker. A minute is plenty — mid-
+# flight response loss is measured in seconds. Longer than the forwarder's
+# max backoff (300s) so a retry at peak backoff still hits the marker.
+_BATCH_DEDUP_TTL = 900
 
 
 _STATUS_TO_STATE = {
@@ -1576,6 +1588,35 @@ async def submit_results(
     from PostgreSQL and cached in Redis.
     """
     ch = get_clickhouse()
+
+    # Idempotency: collectors stamp a deterministic batch_id so a retry of
+    # the same rows (triggered by an in-flight response drop) short-circuits
+    # here instead of re-ingesting into ClickHouse. Best-effort: if Redis is
+    # down we fall through to the ingest path — duplicates are preferable to
+    # dropping a batch entirely. (F-COL-038)
+    if request.batch_id:
+        from monctl_central.cache import _redis
+        if _redis is not None:
+            try:
+                marker = f"batch_seen:{request.batch_id}"
+                if await _redis.get(marker):
+                    logger.info(
+                        "collector_results_batch_duplicate",
+                        batch_id=request.batch_id,
+                        collector_node=request.collector_node,
+                        results=len(request.results),
+                    )
+                    return {
+                        "status": "success",
+                        "data": {
+                            "duplicate": True,
+                            "ingested": 0,
+                            "skipped": 0,
+                            "unauthorised": 0,
+                        },
+                    }
+            except Exception as exc:
+                logger.debug("batch_dedup_check_failed", error=str(exc))
 
     # Resolve the caller's collector identity so we can enforce per-collector
     # ownership on assignment IDs the caller claims results for (F-CEN-014).
@@ -2011,6 +2052,20 @@ async def submit_results(
                     ch.insert_by_table(table, rows)
                 except Exception:
                     logger.exception("clickhouse_insert_error", node=request.collector_node, table=table)
+
+    # Stamp the dedup marker only after the ingest path ran without raising.
+    # If central crashed mid-ingest the marker is absent, so the collector's
+    # retry will re-ingest as expected. Marker TTL covers the forwarder's
+    # max backoff window.
+    if request.batch_id:
+        from monctl_central.cache import _redis
+        if _redis is not None:
+            try:
+                await _redis.set(
+                    f"batch_seen:{request.batch_id}", "1", ex=_BATCH_DEDUP_TTL,
+                )
+            except Exception as exc:
+                logger.debug("batch_dedup_mark_failed", error=str(exc))
 
     return {
         "accepted": len(ch_rows),

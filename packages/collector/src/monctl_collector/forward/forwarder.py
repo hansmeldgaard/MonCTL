@@ -15,6 +15,7 @@ Behaviour:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import time
 
@@ -130,9 +131,19 @@ class Forwarder:
         ids = [row_id for row_id, _ in rows]
         results = [result for _, result in rows]
 
+        # Deterministic batch_id: same rows + same node → same id on retry.
+        # If the POST succeeded server-side but the response was lost in
+        # transit, the retry will carry the same batch_id and central can
+        # short-circuit with a 202 (F-COL-038). Salted with the node id so
+        # collisions across nodes that happen to share SQLite ids can't
+        # cross-dedup.
+        batch_seed = f"{self._node_id}:{','.join(str(i) for i in sorted(ids))}"
+        batch_id = hashlib.sha256(batch_seed.encode()).hexdigest()[:32]
+
         url = f"{self._cfg.url.rstrip('/')}/api/v1/results"
         payload = {
             "collector_node": self._node_id,
+            "batch_id": batch_id,
             "results": results,
         }
 
