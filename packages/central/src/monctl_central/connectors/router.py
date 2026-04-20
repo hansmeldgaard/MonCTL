@@ -17,9 +17,13 @@ from sqlalchemy.orm import selectinload
 from monctl_central.common.filters import ilike_filter
 from monctl_central.dependencies import get_db, require_permission
 from monctl_central.storage.models import (
+    AppAssignment,
+    AppConnectorBinding,
     AssignmentConnectorBinding,
+    Collector,
     Connector,
     ConnectorVersion,
+    Device,
 )
 from monctl_common.utils import utc_now
 
@@ -414,7 +418,14 @@ async def set_latest_version(
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_permission("connector", "edit")),
 ):
-    """Mark a version as the latest. Clears is_latest on all other versions."""
+    """Mark a version as the latest. Clears is_latest on all other versions and
+    bumps collector.config_version on every collector whose assignments would
+    resolve to the new version — both pinned and group-based, via app-level
+    bindings with `connector_version_id IS NULL` or assignment-level override
+    bindings with the same condition.
+    """
+    from sqlalchemy import or_, update
+
     stmt = (
         select(Connector)
         .options(selectinload(Connector.versions))
@@ -435,6 +446,62 @@ async def set_latest_version(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Version not found")
 
     target.is_latest = True
+
+    cid = uuid.UUID(connector_id)
+
+    # Apps whose app-level binding follows this connector's latest (version_id IS NULL).
+    apps_follow_sub = select(AppConnectorBinding.app_id).where(
+        AppConnectorBinding.connector_id == cid,
+        AppConnectorBinding.connector_version_id.is_(None),
+    )
+
+    # Assignments whose per-assignment override points at this connector with
+    # follow-latest semantics. These override the app-level binding.
+    assn_override_sub = select(AssignmentConnectorBinding.assignment_id).where(
+        AssignmentConnectorBinding.connector_id == cid,
+        AssignmentConnectorBinding.connector_version_id.is_(None),
+    )
+
+    affected_where = sa.and_(
+        AppAssignment.enabled == sa.true(),
+        or_(
+            AppAssignment.app_id.in_(apps_follow_sub),
+            AppAssignment.id.in_(assn_override_sub),
+        ),
+    )
+
+    # Pinned collectors directly attached to affected assignments.
+    pinned_sub = select(AppAssignment.collector_id).where(
+        affected_where,
+        AppAssignment.collector_id.is_not(None),
+    )
+
+    # Group-based: assignment has device_id → device has collector_group_id →
+    # every collector in that group runs this job (via consistent hashing).
+    group_sub = (
+        select(Device.collector_group_id)
+        .join(AppAssignment, AppAssignment.device_id == Device.id)
+        .where(
+            affected_where,
+            AppAssignment.collector_id.is_(None),
+            Device.collector_group_id.is_not(None),
+        )
+    )
+
+    await db.execute(
+        update(Collector)
+        .where(
+            or_(
+                Collector.id.in_(pinned_sub),
+                sa.and_(
+                    Collector.group_id.in_(group_sub),
+                    Collector.status == "ACTIVE",
+                ),
+            )
+        )
+        .values(config_version=Collector.config_version + 1, updated_at=utc_now())
+    )
+
     await db.flush()
     return {
         "status": "success",
