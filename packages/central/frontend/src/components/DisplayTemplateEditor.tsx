@@ -216,7 +216,7 @@ export function DisplayTemplateEditor({
           >
             <iframe
               ref={iframeRef}
-              sandbox="allow-scripts allow-same-origin"
+              sandbox="allow-scripts"
               title="Template Preview"
               className="w-full h-full border-0 bg-zinc-900"
             />

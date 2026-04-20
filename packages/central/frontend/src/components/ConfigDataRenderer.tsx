@@ -49,23 +49,24 @@ function TemplateRenderer({
     },
   );
 
-  // Inject config data as window.__configData for templates that use JS to parse it
+  const safeCss = sanitizeTemplateCss(template.css ?? "");
   const dataJson = JSON.stringify(data).replace(/<\//g, "<\\/");
 
+  // Sandbox is "allow-scripts" only — deliberately no "allow-same-origin".
+  // The iframe runs at an opaque origin, so even if a template (admin-authored)
+  // is compromised, injected scripts cannot read parent cookies, localStorage,
+  // or DOM. Height messages use "*" because null origins cannot target a
+  // specific origin; the parent verifies `event.source === iframe.contentWindow`.
   const srcDoc = `<!DOCTYPE html><html><head><style>
     html, body { margin: 0; padding: 8px; background: #18181b; color: #e4e4e7; font-family: system-ui, -apple-system, sans-serif; font-size: 14px; overflow: hidden; }
-    ${template.css ?? ""}
+    ${safeCss}
   </style></head><body>
   <script>window.__configData = ${dataJson};</script>
   ${renderedHtml}
   <script>
-    // srcDoc + allow-same-origin → iframe inherits parent origin, so we can
-    // target it explicitly. "*" would let any document embedding us receive
-    // these height messages (and passively fingerprint config-template usage).
-    var _parentOrigin = window.location.origin;
     function sendHeight() {
       var h = document.documentElement.scrollHeight;
-      window.parent.postMessage({ type: 'config-renderer-height', height: h }, _parentOrigin);
+      window.parent.postMessage({ type: 'config-renderer-height', height: h }, '*');
     }
     sendHeight();
     new MutationObserver(sendHeight).observe(document.body, { childList: true, subtree: true });
@@ -75,9 +76,7 @@ function TemplateRenderer({
 
   useEffect(() => {
     function handleMessage(e: MessageEvent) {
-      // Only trust our own iframe — an attacker-controlled tab could otherwise
-      // send fake height messages to grow the frame and overlay real UI.
-      if (e.origin !== window.location.origin) return;
+      if (e.source !== iframeRef.current?.contentWindow) return;
       if (
         e.data?.type === "config-renderer-height" &&
         typeof e.data.height === "number"
@@ -94,13 +93,19 @@ function TemplateRenderer({
       <iframe
         ref={iframeRef}
         srcDoc={srcDoc}
-        sandbox="allow-scripts allow-same-origin"
+        sandbox="allow-scripts"
         title="Config Data"
         className="w-full border-0 rounded-md"
         style={{ height: `${height}px`, background: "#18181b" }}
       />
     </div>
   );
+}
+
+function sanitizeTemplateCss(css: string): string {
+  return css
+    .replace(/<\/style\b/gi, "<\\/style")
+    .replace(/<script\b/gi, "<\\script");
 }
 
 /**
