@@ -1673,15 +1673,32 @@ async def set_latest_version(
 
     target.is_latest = True
 
-    # Bump config_version on all collectors that have use_latest assignments for this app
-    collector_ids_stmt = (
+    # Bump config_version on every collector running a `use_latest=True`
+    # assignment of this app — both pinned (collector_id IS NOT NULL) and
+    # group-based (collector_id IS NULL; the job fans out to every collector
+    # in the device's collector_group via consistent hashing).
+    from monctl_central.storage.models import Device as _Device
+    aid = uuid.UUID(app_id)
+
+    pinned_rows = await db.execute(
         select(AppAssignment.collector_id)
-        .where(AppAssignment.app_id == uuid.UUID(app_id))
+        .where(AppAssignment.app_id == aid)
         .where(AppAssignment.use_latest == True)  # noqa: E712
         .where(AppAssignment.collector_id.isnot(None))
     )
-    coll_rows = await db.execute(collector_ids_stmt)
-    coll_ids = {row[0] for row in coll_rows.all() if row[0]}
+    coll_ids = {row[0] for row in pinned_rows.all() if row[0]}
+
+    group_rows = await db.execute(
+        select(Collector.id)
+        .join(_Device, _Device.collector_group_id == Collector.group_id)
+        .join(AppAssignment, AppAssignment.device_id == _Device.id)
+        .where(AppAssignment.app_id == aid)
+        .where(AppAssignment.use_latest == True)  # noqa: E712
+        .where(AppAssignment.collector_id.is_(None))
+        .where(Collector.status == "ACTIVE")
+    )
+    coll_ids.update(row[0] for row in group_rows.all() if row[0])
+
     if coll_ids:
         await db.execute(
             update(Collector)
