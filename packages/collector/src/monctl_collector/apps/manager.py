@@ -27,6 +27,7 @@ import asyncio
 import hashlib
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import venv
@@ -42,6 +43,40 @@ if TYPE_CHECKING:
     from monctl_collector.polling.base import BasePoller
 
 logger = structlog.get_logger()
+
+
+# Whitelist for pip requirement strings. Blocks argv flag smuggling
+# (e.g. "--index-url http://evil" injected via a compromised pack) and
+# VCS/URL/editable installs. Allows PEP 503 package names, optional
+# bracket extras, and simple version specifiers separated by commas.
+_SAFE_REQ_RE = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._-]*"
+    r"(?:\[[A-Za-z0-9_,.\s-]+\])?"
+    r"(?:\s*(?:[<>!~]=?|==)\s*[A-Za-z0-9._*+-]+"
+    r"(?:\s*,\s*(?:[<>!~]=?|==)\s*[A-Za-z0-9._*+-]+)*)?"
+    r"\s*$"
+)
+
+
+def _validate_requirements(requirements: list[str]) -> list[str]:
+    """Validate every pack-supplied requirement string before handing to pip.
+
+    Raises RuntimeError on the first rejected entry so the venv is not created
+    with a partially-trusted dependency list.
+    """
+    validated: list[str] = []
+    for raw in requirements:
+        req = raw.strip()
+        if not req:
+            continue
+        if not _SAFE_REQ_RE.match(req):
+            raise RuntimeError(
+                f"Rejected pip requirement {raw!r}: only plain PEP 503 "
+                "names + version specifiers are allowed (no flags, URLs, "
+                "VCS refs, or env markers)."
+            )
+        validated.append(req)
+    return validated
 
 
 def _venv_hash(python_version: str, requirements: list[str]) -> str:
@@ -254,10 +289,12 @@ class AppManager:
         import tempfile
         from urllib.parse import urlparse
 
+        safe_requirements = _validate_requirements(requirements)
+
         venv_dir.parent.mkdir(parents=True, exist_ok=True)
         venv.create(str(venv_dir), with_pip=True, clear=True)
 
-        if not requirements:
+        if not safe_requirements:
             return
 
         python_exe = venv_dir / "bin" / "python"
@@ -307,7 +344,7 @@ class AppManager:
 
             self._pip_cache.mkdir(parents=True, exist_ok=True)
             cmd += ["--cache-dir", str(self._pip_cache)]
-            cmd += requirements
+            cmd += safe_requirements
 
             result = subprocess.run(cmd, capture_output=True, text=True, env=env)
             if result.returncode != 0:
