@@ -23,14 +23,45 @@ manager = ConnectionManager()
 @router.websocket("/ws/collector")
 async def collector_ws(
     websocket: WebSocket,
-    token: str = Query(...),
+    token: str | None = Query(None),
     collector_id: str | None = Query(None),
 ):
-    """Persistent WebSocket for collector command channel."""
-    cid, collector_name = await authenticate_ws(websocket, token, collector_id)
+    """Persistent WebSocket for collector command channel.
+
+    Auth: prefer `Authorization: Bearer <key>` on the upgrade request.
+    Fall back to `?token=<key>` for backwards compatibility with older
+    collectors (F-CEN-018). Tokens in URLs leak into HAProxy / proxy
+    access logs, so the query path emits a deprecation warning so ops
+    can identify stragglers before removing it entirely.
+    """
+    auth_header = websocket.headers.get("authorization", "")
+    effective_token: str | None = None
+    used_header = False
+    if auth_header.lower().startswith("bearer "):
+        effective_token = auth_header[7:].strip()
+        used_header = True
+    elif token:
+        effective_token = token
+        logger.warning(
+            "ws_auth_query_param_deprecated",
+            client_host=websocket.client.host if websocket.client else None,
+            hint="Upgrade collector to send Authorization header",
+        )
+
+    if not effective_token:
+        await websocket.accept()
+        await websocket.close(code=4001, reason="Missing auth token")
+        return
+
+    cid, collector_name = await authenticate_ws(
+        websocket, effective_token, collector_id,
+    )
     collector_id = cid
     if collector_id is None:
         return
+
+    if used_header:
+        logger.debug("ws_auth_header", collector_id=str(collector_id))
 
     await websocket.accept()
     await manager.connect(collector_id, collector_name, websocket)

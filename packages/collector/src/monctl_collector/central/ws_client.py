@@ -38,9 +38,14 @@ class WebSocketClient:
         collector_id: str = "",
     ):
         ws_url = central_url.replace("https://", "wss://").replace("http://", "ws://")
-        self._ws_url = f"{ws_url.rstrip('/')}/ws/collector?token={api_key}"
-        if collector_id:
-            self._ws_url += f"&collector_id={collector_id}"
+        # Auth goes in the Authorization header (F-CEN-018) — URL query strings
+        # get logged by HAProxy + intermediate proxies, which is a classic
+        # token-leak vector. Only the collector_id hint stays in the URL.
+        base = f"{ws_url.rstrip('/')}/ws/collector"
+        self._ws_url = (
+            f"{base}?collector_id={collector_id}" if collector_id else base
+        )
+        self._api_key = api_key
         self._node_id = node_id
         self._verify_ssl = verify_ssl
         self._handlers: dict[str, Callable[..., Awaitable]] = {}
@@ -69,6 +74,7 @@ class WebSocketClient:
                     self._ws_url,
                     ssl=ssl_ctx,
                     heartbeat=30,
+                    headers={"Authorization": f"Bearer {self._api_key}"},
                 )
                 logger.info("ws_connected", url=self._ws_url.split("?")[0])
                 attempt = 0
