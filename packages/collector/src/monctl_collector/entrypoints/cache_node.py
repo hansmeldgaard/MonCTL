@@ -70,6 +70,7 @@ async def run(cfg: CollectorConfig) -> None:
         api_key=cfg.central.api_key,
         timeout=cfg.central.timeout,
         verify_ssl=cfg.central.verify_ssl,
+        collector_id=cfg.collector_id or None,
     )
     await central_client.open()
 

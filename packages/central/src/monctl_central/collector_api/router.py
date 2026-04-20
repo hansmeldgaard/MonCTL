@@ -76,6 +76,224 @@ async def _require_active_collector(auth: dict, db: AsyncSession) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Caller-collector resolution + per-collector ownership checks (F-CEN-014/15/16)
+# ---------------------------------------------------------------------------
+
+async def _resolve_caller_collector(
+    db: AsyncSession,
+    auth: dict,
+    *,
+    fallback_hostname: str | None = None,
+    request: Request | None = None,
+    hint_collector_id: str | None = None,
+) -> Collector | None:
+    """Best-effort resolution of the calling collector identity.
+
+    Priority order (strongest first):
+      1. `auth["collector_id"]` — present when the caller authenticated via
+         their per-collector API key (created at registration). Trusted.
+      2. `X-Collector-Id` header (sent by up-to-date collectors on every
+         request) or `hint_collector_id` from an explicit query param.
+      3. `fallback_hostname` matched against `Collector.hostname` — weaker
+         because hostname is caller-supplied in the request body, but it
+         matches how the legacy shared-secret flow already identifies the
+         caller for denormalisation.
+
+    Returns the Collector row or None when nothing resolves.
+    """
+    cid = auth.get("collector_id")
+    if cid:
+        try:
+            coll = await db.get(Collector, uuid.UUID(cid))
+            if coll is not None:
+                return coll
+        except ValueError:
+            pass
+
+    header_cid = (
+        request.headers.get("x-collector-id")
+        if request is not None
+        else None
+    )
+    for hint in (hint_collector_id, header_cid):
+        if not hint:
+            continue
+        try:
+            coll = await db.get(Collector, uuid.UUID(hint))
+            if coll is not None:
+                return coll
+        except ValueError:
+            continue
+
+    if fallback_hostname:
+        stmt = select(Collector).where(Collector.hostname == fallback_hostname)
+        coll = (await db.execute(stmt)).scalar_one_or_none()
+        if coll is not None:
+            return coll
+
+    return None
+
+
+async def _caller_owns_assignment(
+    db: AsyncSession, caller: Collector, assignment_id: uuid.UUID,
+) -> bool:
+    """Return True if `caller` is entitled to submit results / fetch creds / ...
+    for the given assignment.
+
+    Entitlement rules:
+      - Pinned: `AppAssignment.collector_id == caller.id` → True.
+      - Group-level (unpinned): the device must live in the same
+        `collector_group_id` the caller belongs to. Any collector in the
+        group is trusted to handle any assignment for that group's devices
+        (which matches the consistent-hash partitioning — a rebalance can
+        re-assign jobs within a group at any time, so pinning a check to
+        one specific collector UUID would fight the load balancer).
+      - Host-unbound (monitors w/ no device, e.g. central self-checks): the
+        assignment may have `device_id IS NULL`. These are treated as
+        group-level and allowed for any collector in the pinned group or
+        any collector when the assignment itself is unpinned.
+    """
+    assignment = await db.get(AppAssignment, assignment_id)
+    if assignment is None:
+        return False
+
+    # Pinned to the caller exactly → always allowed.
+    if assignment.collector_id and assignment.collector_id == caller.id:
+        return True
+
+    # Pinned to a *different* collector → never allowed.
+    if assignment.collector_id and assignment.collector_id != caller.id:
+        return False
+
+    # Unpinned assignment — check device/group.
+    if assignment.device_id is None:
+        # No device → a host-unbound assignment. Accept from any ACTIVE
+        # collector; the job scheduler already constrains which collector
+        # picks it up via consistent hashing.
+        return True
+
+    device = await db.get(Device, assignment.device_id)
+    if device is None:
+        return False
+
+    if caller.group_id is None or device.collector_group_id is None:
+        # Grouping not in use — preserve legacy behaviour, don't block.
+        return True
+
+    return device.collector_group_id == caller.group_id
+
+
+async def _caller_allowed_credentials(
+    db: AsyncSession, caller: Collector,
+) -> set[str]:
+    """Credential names the caller is entitled to fetch.
+
+    Union of three sources (matches the credential-resolution chain):
+      1. `AssignmentCredentialOverride` rows for assignments owned by caller.
+      2. `AppAssignment.credential_id` for assignments owned by caller.
+      3. `Device.credentials` JSONB mapping for devices in caller's group.
+    """
+    from sqlalchemy.orm import selectinload
+
+    allowed_ids: set[uuid.UUID] = set()
+
+    # Assignments scope: caller-pinned + caller-group unpinned
+    owned_assignments_stmt = (
+        select(AppAssignment)
+        .options(selectinload(AppAssignment.connector_bindings))
+        .outerjoin(Device, AppAssignment.device_id == Device.id)
+        .where(
+            or_(
+                AppAssignment.collector_id == caller.id,
+                (
+                    AppAssignment.collector_id.is_(None)
+                    & (
+                        Device.collector_group_id == caller.group_id
+                        if caller.group_id is not None
+                        else True
+                    )
+                ),
+            )
+        )
+    )
+    owned = (await db.execute(owned_assignments_stmt)).scalars().unique().all()
+    owned_assignment_ids = [a.id for a in owned]
+
+    for a in owned:
+        if a.credential_id:
+            allowed_ids.add(a.credential_id)
+
+    # Per-assignment, per-connector-type overrides
+    if owned_assignment_ids:
+        overrides = (
+            await db.execute(
+                select(AssignmentCredentialOverride.credential_id).where(
+                    AssignmentCredentialOverride.assignment_id.in_(owned_assignment_ids)
+                )
+            )
+        ).scalars().all()
+        allowed_ids.update(c for c in overrides if c is not None)
+
+    # Device-level default credentials JSONB — collect every value from any
+    # device the caller touches. In the legacy no-group world, this covers
+    # devices explicitly pinned via AppAssignment too.
+    device_ids: set[uuid.UUID] = set()
+    for a in owned:
+        if a.device_id:
+            device_ids.add(a.device_id)
+
+    if device_ids:
+        device_rows = (
+            await db.execute(
+                select(Device.credentials).where(Device.id.in_(device_ids))
+            )
+        ).scalars().all()
+        for cred_map in device_rows:
+            if isinstance(cred_map, dict):
+                for v in cred_map.values():
+                    if v:
+                        try:
+                            allowed_ids.add(uuid.UUID(str(v)))
+                        except (ValueError, TypeError):
+                            continue
+
+    if not allowed_ids:
+        return set()
+
+    name_rows = (
+        await db.execute(select(Credential.name).where(Credential.id.in_(allowed_ids)))
+    ).scalars().all()
+    return set(name_rows)
+
+
+async def _caller_allowed_app_ids(
+    db: AsyncSession, caller: Collector,
+) -> set[uuid.UUID]:
+    """App UUIDs legitimately in use by the caller's owned assignments."""
+    if caller.group_id is None:
+        # No grouping configured — use every assignment pinned to caller.
+        stmt = select(AppAssignment.app_id).where(
+            AppAssignment.collector_id == caller.id
+        )
+    else:
+        stmt = (
+            select(AppAssignment.app_id)
+            .outerjoin(Device, AppAssignment.device_id == Device.id)
+            .where(
+                or_(
+                    AppAssignment.collector_id == caller.id,
+                    (
+                        AppAssignment.collector_id.is_(None)
+                        & (Device.collector_group_id == caller.group_id)
+                    ),
+                )
+            )
+        )
+    rows = (await db.execute(stmt)).scalars().all()
+    return {r for r in rows if r is not None}
+
+
+# ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
 
@@ -955,11 +1173,52 @@ async def upload_app_code(
 @router.get("/credentials/{credential_name}", tags=["collector-api"])
 async def get_credential(
     credential_name: str,
+    http_request: Request,
+    collector_id: str | None = Query(
+        default=None,
+        description="Caller collector UUID when not authenticated via per-collector key.",
+    ),
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
-    """Return decrypted credential data for a named credential."""
+    """Return decrypted credential data for a named credential.
+
+    Restricted (F-CEN-015) to credentials actually referenced by an
+    assignment routed to the caller — prevents full credential vault
+    exfiltration via a stolen/misbehaving collector key.
+    """
     await _require_active_collector(auth, db)
+
+    caller = await _resolve_caller_collector(
+        db, auth,
+        request=http_request,
+        hint_collector_id=collector_id,
+    )
+
+    if caller is not None:
+        allowed = await _caller_allowed_credentials(db, caller)
+        if credential_name not in allowed:
+            logger.warning(
+                "collector_credential_unauthorised",
+                collector_id=str(caller.id),
+                collector_name=caller.name,
+                credential_name=credential_name,
+            )
+            # Deliberate: 404, not 403 — don't leak whether the credential
+            # exists at all. Matches the pattern in the auth router.
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Credential '{credential_name}' not found",
+            )
+    else:
+        # No caller identity at all — legacy shared-secret without the
+        # collector_id query hint. Preserve current behaviour but log so
+        # ops can see which deployments still need the per-collector key.
+        logger.warning(
+            "collector_credential_no_identity",
+            credential_name=credential_name,
+            auth_type=auth.get("auth_type"),
+        )
 
     stmt = select(Credential).where(Credential.name == credential_name)
     result = await db.execute(stmt)
@@ -1306,6 +1565,7 @@ async def _resolve_interface_id(
 @router.post("/results", status_code=status.HTTP_202_ACCEPTED, tags=["collector-api"])
 async def submit_results(
     request: SubmitResultsRequest,
+    http_request: Request,
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
@@ -1317,14 +1577,32 @@ async def submit_results(
     """
     ch = get_clickhouse()
 
-    # Try to find a matching collector record by hostname
-    collector_stmt = select(Collector).where(Collector.hostname == request.collector_node)
-    collector_row = await db.execute(collector_stmt)
-    collector = collector_row.scalar_one_or_none()
-    collector_uuid = str(collector.id) if collector else "00000000-0000-0000-0000-000000000000"
+    # Resolve the caller's collector identity so we can enforce per-collector
+    # ownership on assignment IDs the caller claims results for (F-CEN-014).
+    # Prefers the per-collector API-key path; falls back to hostname match,
+    # which is what the denorm logic below already relies on.
+    caller_collector = await _resolve_caller_collector(
+        db, auth,
+        fallback_hostname=request.collector_node,
+        request=http_request,
+    )
+    collector_uuid = (
+        str(caller_collector.id) if caller_collector
+        else "00000000-0000-0000-0000-000000000000"
+    )
+    if caller_collector is None:
+        # No identity at all — can't enforce. Log loudly so ops notice any
+        # collector still running unbranded; accept results to preserve the
+        # pre-fix behaviour until the fleet is fully migrated.
+        logger.warning(
+            "collector_results_no_identity",
+            collector_node=request.collector_node,
+            auth_type=auth.get("auth_type"),
+        )
 
     ch_rows = []
     skipped = 0
+    unauthorised = 0
     for r in request.results:
         # Handle discovery jobs (job_id = "discovery-{device_id}", not a UUID)
         is_discovery = r.job_id.startswith("discovery-")
@@ -1354,6 +1632,22 @@ async def submit_results(
         except ValueError:
             skipped += 1
             continue
+
+        # Per-assignment ownership check (F-CEN-014). Only enforced when we
+        # have a resolved caller collector — otherwise we'd lock out any
+        # legacy shared-secret caller. Every rejection is logged so a
+        # misbehaving or compromised collector shows up in audit logs.
+        if caller_collector is not None:
+            owns = await _caller_owns_assignment(db, caller_collector, assignment_id)
+            if not owns:
+                logger.warning(
+                    "collector_results_unauthorised",
+                    collector_id=str(caller_collector.id),
+                    collector_name=caller_collector.name,
+                    assignment_id=str(assignment_id),
+                )
+                unauthorised += 1
+                continue
 
         # Map status string to integer state
         state = _STATUS_TO_STATE.get(r.status.lower(), 3)
@@ -1721,6 +2015,7 @@ async def submit_results(
     return {
         "accepted": len(ch_rows),
         "skipped": skipped,
+        "unauthorised": unauthorised,
     }
 
 
@@ -2154,13 +2449,32 @@ async def _resolve_collector_group(
 @router.post("/app-cache/push", tags=["collector-api"])
 async def push_app_cache(
     req: AppCachePushRequest,
+    http_request: Request,
     collector_id: str | None = Query(None),
     node_id: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_auth),
 ):
-    """Collectors push dirty cache entries to central."""
+    """Collectors push dirty cache entries to central.
+
+    Cache writes are scoped to the caller's `collector_group_id`, and
+    entries for `app_id` values the caller isn't actually running are
+    rejected (F-CEN-016) — prevents a misbehaving collector from
+    poisoning cache rows for unrelated apps within its group.
+    """
     group_id = await _resolve_collector_group(db, auth, collector_id, node_id)
+
+    # Per-app ownership gate (F-CEN-016). Only enforced when we can resolve
+    # a caller identity; otherwise preserves the legacy behaviour.
+    caller = await _resolve_caller_collector(
+        db, auth,
+        request=http_request,
+        hint_collector_id=collector_id,
+    )
+
+    allowed_app_ids: set[uuid.UUID] | None = None
+    if caller is not None:
+        allowed_app_ids = await _caller_allowed_app_ids(db, caller)
 
     # Resolve app names → UUIDs (collectors use app name, DB uses UUID)
     app_names = {e.app_id for e in req.entries}
@@ -2172,6 +2486,7 @@ async def push_app_cache(
 
     accepted = 0
     rejected = 0
+    unauthorised = 0
 
     for entry in req.entries:
         try:
@@ -2189,6 +2504,15 @@ async def push_app_cache(
                 logger.warning("app_cache_push_unknown_app", app_id=entry.app_id)
                 rejected += 1
                 continue
+
+        if allowed_app_ids is not None and resolved_app_id not in allowed_app_ids:
+            logger.warning(
+                "app_cache_push_unauthorised",
+                collector_id=str(caller.id) if caller else None,
+                app_id=str(resolved_app_id),
+            )
+            unauthorised += 1
+            continue
 
         try:
             resolved_device_id = uuid.UUID(entry.device_id)
@@ -2218,7 +2542,14 @@ async def push_app_cache(
         accepted += 1
 
     await db.flush()
-    return {"status": "success", "data": {"accepted": accepted, "rejected": rejected}}
+    return {
+        "status": "success",
+        "data": {
+            "accepted": accepted,
+            "rejected": rejected,
+            "unauthorised": unauthorised,
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
