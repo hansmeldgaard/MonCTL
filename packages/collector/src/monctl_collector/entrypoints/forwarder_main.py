@@ -61,8 +61,8 @@ async def run(cfg: CollectorConfig) -> None:
 
 
 def main() -> None:
-    import logging
-    logging.basicConfig(level=logging.INFO)
+    from monctl_collector.logging_setup import setup_logging
+    setup_logging()
     cfg = load_config()
     asyncio.run(run(cfg))
 
