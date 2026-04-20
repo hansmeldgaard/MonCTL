@@ -150,9 +150,31 @@ async def _mark_refresh_jti_used(jti: str) -> bool:
 
 
 async def _revoke_all_user_tokens(db: AsyncSession, user: User) -> None:
-    """Bump `token_version` — invalidates every access + refresh JWT for this user."""
+    """Bump `token_version` — invalidates every access + refresh JWT for this user.
+
+    Uses its OWN session+commit rather than the request-scoped `db`. The
+    replay-detection path that calls us immediately raises HTTPException(401),
+    which triggers `get_db`'s rollback — so a `db.flush()` here would be
+    thrown away, same shape of bug as the login-audit gotcha. Committing
+    on a separate session guarantees the bump survives the 401.
+    """
+    _ = db  # kept for API stability / documentation
+    from monctl_central.dependencies import get_session_factory
+    from sqlalchemy import update
+    from monctl_common.utils import utc_now
+
+    factory = get_session_factory()
+    async with factory() as session:
+        await session.execute(
+            update(User)
+            .where(User.id == user.id)
+            .values(
+                token_version=(user.token_version or 0) + 1,
+                updated_at=utc_now(),
+            )
+        )
+        await session.commit()
     user.token_version = (user.token_version or 0) + 1
-    await db.flush()
 
 
 async def _get_effective_idle_timeout(user: User, db: AsyncSession) -> int:
