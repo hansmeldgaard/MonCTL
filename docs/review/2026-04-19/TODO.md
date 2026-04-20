@@ -16,32 +16,32 @@
 
 ## Wave 1 — Quick wins (all S, mostly HIGH security)
 
-- [ ] **F-CEN-001** Gate cookie `secure` flag behind `settings.cookie_secure` (default `True`). `auth/router.py:108-117, 235-239`
-- [ ] **F-CEN-002** Switch `samesite="lax"` → `"strict"` on auth cookies
-- [ ] **F-CEN-012** Use `hmac.compare_digest` for shared-secret comparisons in `dependencies.py:427, 437`
-- [ ] **F-CEN-041** Wrap `asyncio.create_task` in scheduler with a done-callback that logs exceptions
-- [ ] **F-CEN-044** Replace bare-excepts in `ws/connection_manager.py:67, 136, 189, 247, 267` with structured logging
-- [ ] **F-CEN-042** Add `asyncio.Lock` around the 30s alerting cycle
-- [ ] **F-CEN-040** Replace leader-election TOCTOU (`leader.py:92-95`) with atomic Lua script or `SET key val XX EX 30`
-- [ ] **F-CEN-027** `asyncio.gather` the 4 dashboard CH queries
-- [ ] **F-CEN-009** Invalidate `api_key:*` and `user_perms:*` Redis entries on credential/role mutations
-- [ ] **F-COL-011** Validate `app_id`/`connector_id`/`credential_name` regex before URL interpolation in collector client
-- [ ] **F-COL-020** Add jitter to WS reconnect backoff steps in `ws_client.py:21, 99`
-- [ ] **F-COL-022** Wrap WS handler invocation in `asyncio.wait_for(..., 30.0)` at `ws_handlers.py:134`
-- [ ] **F-COL-023** Replace `str(exc)` in WS handler error responses with `type(exc).__name__`
-- [ ] **F-COL-024** `urllib.parse.quote(container, safe="")` in log-fetch URL at `ws_handlers.py:99`
-- [ ] **F-COL-047** Startup assertion: `central.url` and `api_key` must be non-empty
-- [ ] **F-COL-003** Change engine fallback category from `"device"` to `"app"` + log WARN (`polling/engine.py:370-371`)
-- [ ] **F-COL-002** Wrap `_run_job` body in outer `try/finally` so `self._running.discard` always fires
-- [ ] **F-APP-001** Remove `snmp_discovery.py:87` stray `snmp.connect(host)`; bump pack
-- [ ] **F-WEB-010** Add `document.hidden` check to `refetchInterval` in `src/api/hooks.ts`
-- [ ] **F-WEB-019** Add `ensureUTC(ts)` helper; replace all `timestamp + "Z"` usages
-- [ ] **F-WEB-014** Set global `staleTime: 5000` on `QueryClient`
-- [ ] **F-WEB-005** Replace `window.location.href = "/login"` with router `navigate("/login?next=...")`
+- [x] **F-CEN-001** Gate cookie `secure` flag behind `settings.cookie_secure` (default `True`). `auth/router.py:108-117, 235-239`
+- [x] **F-CEN-002** Switch `samesite="lax"` → `"strict"` on auth cookies
+- [x] **F-CEN-012** Use `hmac.compare_digest` for shared-secret comparisons in `dependencies.py:427, 437`
+- [x] **F-CEN-041** Wrap `asyncio.create_task` in scheduler with a done-callback that logs exceptions
+- [x] **F-CEN-044** Replace bare-excepts in `ws/connection_manager.py:67, 136, 189, 247, 267` with structured logging
+- [x] **F-CEN-042** Add `asyncio.Lock` around the 30s alerting cycle
+- [x] **F-CEN-040** Replace leader-election TOCTOU (`leader.py:92-95`) with atomic Lua script or `SET key val XX EX 30`
+- [x] **F-CEN-027** `asyncio.gather` the 4 dashboard CH queries
+- [x] **F-CEN-009** Invalidate `api_key:*` and `user_perms:*` Redis entries on credential/role mutations
+- [x] **F-COL-011** Validate `app_id`/`connector_id`/`credential_name` regex before URL interpolation in collector client
+- [x] **F-COL-020** Add jitter to WS reconnect backoff steps in `ws_client.py:21, 99`
+- [x] **F-COL-022** Wrap WS handler invocation in `asyncio.wait_for(..., 30.0)` at `ws_handlers.py:134`
+- [x] **F-COL-023** Replace `str(exc)` in WS handler error responses with `type(exc).__name__`
+- [x] **F-COL-024** `urllib.parse.quote(container, safe="")` in log-fetch URL at `ws_handlers.py:99`
+- [x] **F-COL-047** Startup assertion: `central.url` and `api_key` must be non-empty
+- [x] **F-COL-003** Change engine fallback category from `"device"` to `"app"` + log WARN (`polling/engine.py:370-371`)
+- [x] **F-COL-002** Wrap `_run_job` body in outer `try/finally` so `self._running.discard` always fires
+- [x] **F-APP-001** Remove `snmp_discovery.py:87` stray `snmp.connect(host)`; bump pack
+- [x] **F-WEB-010** Add `document.hidden` check to `refetchInterval` in `src/api/hooks.ts`
+- [x] **F-WEB-019** Add `ensureUTC(ts)` helper; replace all `timestamp + "Z"` usages
+- [x] **F-WEB-014** Set global `staleTime: 5000` on `QueryClient` — already at `10_000` in `main.tsx:13`; stronger than the 5s recommendation, finding based on outdated state
+- [x] **F-WEB-005** Replace `window.location.href = "/login"` with router `navigate("/login?next=...")`
 
 ## Wave 2 — Mid-effort security + correctness (M)
 
-- [ ] **F-CEN-004** Login rate-limit (Redis token bucket) + account lockout
+- [x] **F-CEN-004** Login rate-limit (Redis token bucket) + account lockout
 - [ ] **F-CEN-005** Refresh-token rotation + replay detection
 - [ ] **F-CEN-006** Server-side session revocation via user `token_version`
 - [ ] **F-CEN-014** Join `AppAssignment` on `job_id` to verify caller owns it
@@ -49,21 +49,21 @@
 - [ ] **F-CEN-016** Ownership check in app-cache push/pull
 - [ ] **F-CEN-018** WS token header-auth (not URL query param); central + collector coordination
 - [ ] **F-CEN-050** Unit test enumerates mutating routers; fail if touched table missing from `audit/resource_map.py`
-- [ ] **F-CEN-026** Column allow-list per results endpoint (no more `SELECT *`)
+- [ ] **F-CEN-026** Column allow-list per results endpoint (no more `SELECT *`) — _deferred: raw-tier arrays (`metric_names`/`metric_values`) are the main payload so the `SELECT *` there is justified; rollup tiers are already narrow. A genuine win requires per-call-site column trimming with frontend changes to match_
 - [ ] **F-CEN-022** DSL compiler hardening + adversarial test corpus
-- [ ] **F-COL-030** Move pip API key out of `PIP_INDEX_URL` env → temp `pip.conf` with 0o600
+- [x] **F-COL-030** Move pip API key out of `PIP_INDEX_URL` env → temp `pip.conf` with 0o600
 - [ ] **F-COL-031** Validate pip requirement strings; `--require-hashes`, `--no-build-isolation`
 - [ ] **F-COL-026** Add auth on the peer gRPC channel (UDS or shared bearer)
-- [ ] **F-COL-036** Enforce max-rows on forwarder SQLite + FIFO drop
+- [x] **F-COL-036** Enforce max-rows on forwarder SQLite + FIFO drop
 - [ ] **F-COL-038** Batch-id + server-side dedup for idempotent forwarder retries
-- [ ] **F-COL-044** Regex filter + rate limiting in log shipper
+- [x] **F-COL-044** Regex filter + rate limiting in log shipper
 - [ ] **F-APP-004** Typed error categorisation in all 4 SNMP reference apps
 - [ ] **F-APP-006** Add `logger.debug` tracing to all 4 reference apps (template for future pollers)
 - [ ] **F-APP-011** Bump pack versions + add `scripts/validate_packs.py` to CI
 - [ ] **F-WEB-001** DOMPurify-sanitise + proper `sandbox` on `ConfigDataRenderer` iframe
-- [ ] **F-WEB-002** Replace `postMessage(..., "*")` with explicit origin
-- [ ] **F-WEB-006** Cap & redact error-body stringification in `api/client.ts`
-- [ ] **F-WEB-007** Cross-tab logout via `BroadcastChannel`
+- [x] **F-WEB-002** Replace `postMessage(..., "*")` with explicit origin
+- [x] **F-WEB-006** Cap & redact error-body stringification in `api/client.ts`
+- [x] **F-WEB-007** Cross-tab logout via `BroadcastChannel`
 
 ## Wave 3 — Large initiatives (L)
 
