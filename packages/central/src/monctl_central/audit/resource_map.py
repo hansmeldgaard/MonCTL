@@ -8,7 +8,13 @@ tables like job queues or cache state).
 
 from __future__ import annotations
 
-# tablename → resource_type label (used in the audit UI filters)
+# tablename → resource_type label (used in the audit UI filters).
+#
+# KEEP IN SYNC with `tests/unit/test_audit_resource_map_coverage.py`
+# (F-CEN-050): that test enumerates every SQLAlchemy model and fails
+# if its table is neither listed here nor explicitly opted out of
+# auditing. Add new mutating tables here; add genuinely-bookkeeping
+# tables to the opt-out list with a short reason.
 TABLE_TO_RESOURCE: dict[str, str] = {
     # Core assets
     "devices": "device",
@@ -20,6 +26,8 @@ TABLE_TO_RESOURCE: dict[str, str] = {
     "credentials": "credential",
     "credential_keys": "credential_key",
     "credential_templates": "credential_template",
+    "credential_types": "credential_type",
+    "credential_values": "credential_value",
     "connectors": "connector",
     "connector_versions": "connector_version",
     # Users / access control
@@ -28,35 +36,38 @@ TABLE_TO_RESOURCE: dict[str, str] = {
     "roles": "role",
     "role_permissions": "role_permission",
     "tenants": "tenant",
-    # Alerting / events / automations
+    # Alerting / incidents / automations
     "alert_definitions": "alert_definition",
     "threshold_variables": "threshold_variable",
     "threshold_overrides": "threshold_override",
-    "event_policies": "event_policy",
+    "incident_rules": "incident_rule",
     "actions": "action",
     "automations": "automation",
     "automation_steps": "automation_step",
     # Templates / packs / modules
-    "monitoring_templates": "template",
-    "template_bindings": "template_binding",
+    "templates": "template",
+    "device_category_template_bindings": "template_binding",
+    "device_type_template_bindings": "template_binding",
     "packs": "pack",
     "python_modules": "python_module",
+    "snmp_oids": "snmp_oid",
+    "label_keys": "label_key",
     # Collectors / infrastructure
     "collectors": "collector",
     "collector_groups": "collector_group",
     "collector_clusters": "collector_cluster",
-    "docker_hosts": "docker_host",
-    # Settings
+    # Settings / security
     "system_settings": "system_setting",
     "data_retention_overrides": "data_retention_override",
+    "tls_certificates": "tls_certificate",
     # Dashboards
     "analytics_dashboards": "analytics_dashboard",
     "analytics_widgets": "analytics_widget",
-    # Discovery
-    "discovery_rules": "discovery_rule",
-    # Upgrade jobs (central-initiated)
+    # Upgrade jobs (central-initiated — remote execution, worth auditing)
     "upgrade_packages": "upgrade_package",
     "upgrade_jobs": "upgrade_job",
+    "os_install_jobs": "os_install_job",
+    "os_install_audit": "os_install_audit",
 }
 
 
