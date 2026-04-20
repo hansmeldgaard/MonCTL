@@ -478,26 +478,36 @@ async def update_user(
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
+    auth_changed = False
     if request.role is not None:
+        if user.role != request.role:
+            auth_changed = True
         user.role = request.role
     if request.role_id is not None:
-        user.role_id = uuid.UUID(request.role_id) if request.role_id else None
-        # Invalidate permission cache
-        from monctl_central.cache import _redis
-        if _redis:
-            await _redis.delete(f"user_perms:{user_id}")
+        new_role_id = uuid.UUID(request.role_id) if request.role_id else None
+        if user.role_id != new_role_id:
+            auth_changed = True
+        user.role_id = new_role_id
     if request.display_name is not None:
         user.display_name = request.display_name
     if request.email is not None:
         user.email = request.email
     if request.all_tenants is not None:
+        if user.all_tenants != request.all_tenants:
+            auth_changed = True
         user.all_tenants = request.all_tenants
     if request.is_active is not None:
+        if user.is_active and not request.is_active:
+            auth_changed = True
         user.is_active = request.is_active
     if request.timezone is not None:
         user.timezone = request.timezone
     user.updated_at = utc_now()
     await db.flush()
+
+    if auth_changed:
+        from monctl_central.cache import invalidate_user_auth_cache
+        await invalidate_user_auth_cache(db, user_id)
     # Reload with relationship
     from sqlalchemy.orm import selectinload
     user = (await db.execute(
@@ -523,6 +533,10 @@ async def delete_user(
     user = await db.get(User, uuid.UUID(user_id))
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    from monctl_central.cache import invalidate_user_auth_cache
+    await invalidate_user_auth_cache(db, user_id)
+
     await db.delete(user)
 
 

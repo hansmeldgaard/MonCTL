@@ -172,15 +172,16 @@ async def update_role(
             db.add(RolePermission(role_id=role.id, resource=p.resource, action=p.action))
         await db.flush()
 
-    # Invalidate permission cache for all users with this role
-    from monctl_central.cache import _redis
-    if _redis:
-        users = (await db.execute(
-            select(User.id).where(User.role_id == role.id)
-        )).scalars().all()
-        if users:
-            keys = [f"user_perms:{uid}" for uid in users]
-            await _redis.delete(*keys)
+    # Invalidate permission cache + user-bound API key cache for every user
+    # with this role — the api_key payload embeds the permissions list, so a
+    # stale entry would keep the old perms until the 5 min TTL.
+    from monctl_central.cache import invalidate_user_auth_cache
+
+    users = (await db.execute(
+        select(User.id).where(User.role_id == role.id)
+    )).scalars().all()
+    for uid in users:
+        await invalidate_user_auth_cache(db, str(uid))
 
     role = (await db.execute(
         select(Role).options(selectinload(Role.permissions)).where(Role.id == role.id)
