@@ -2,10 +2,10 @@
   "monctl_pack": "1.0",
   "pack_uid": "snmp-core",
   "name": "SNMP Core Monitoring",
-  "version": "1.3.2",
+  "version": "2.1.1",
   "description": "Core SNMP monitoring apps: reachability check, interface polling, device discovery, and uptime tracking.",
   "author": "MonCTL",
-  "changelog": "v1.3.2 - Reference apps (snmp_check 2.1.1, snmp_interface_poller 1.3.1, snmp_discovery 1.4.2, snmp_uptime 1.1.1): typed error categorisation (device/config/app) replaces hardcoded 'device', and dense logger.debug(...) tracing for Debug Run (F-APP-004 + F-APP-006).\nv1.3.1 - snmp_discovery 1.4.1: drop stray snmp.connect() — the polling engine owns connector lifecycle; double-connect leaked sockets (F-APP-001).\nv1.3.0 - Per-tier message_template + healthy tier for recovery messages",
+  "changelog": "v2.1.1 - Pack version realigned with max contained app version (snmp_check 2.1.1). No functional changes vs v1.3.2; audit trail only (F-APP-011).\nv1.3.2 - Reference apps (snmp_check 2.1.1, snmp_interface_poller 1.3.1, snmp_discovery 1.4.2, snmp_uptime 1.1.1): typed error categorisation (device/config/app) replaces hardcoded 'device', and dense logger.debug(...) tracing for Debug Run (F-APP-004 + F-APP-006).\nv1.3.1 - snmp_discovery 1.4.1: drop stray snmp.connect() — the polling engine owns connector lifecycle; double-connect leaked sockets (F-APP-001).\nv1.3.0 - Per-tier message_template + healthy tier for recovery messages",
   "exported_at": null,
   "contents": {
     "apps": [
