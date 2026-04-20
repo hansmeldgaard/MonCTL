@@ -42,25 +42,25 @@
 ## Wave 2 — Mid-effort security + correctness (M)
 
 - [x] **F-CEN-004** Login rate-limit (Redis token bucket) + account lockout
-- [ ] **F-CEN-005** Refresh-token rotation + replay detection
-- [ ] **F-CEN-006** Server-side session revocation via user `token_version`
-- [ ] **F-CEN-014** Join `AppAssignment` on `job_id` to verify caller owns it
-- [ ] **F-CEN-015** Scope credential fetch to collector's assigned devices only
-- [ ] **F-CEN-016** Ownership check in app-cache push/pull
-- [ ] **F-CEN-018** WS token header-auth (not URL query param); central + collector coordination
-- [ ] **F-CEN-050** Unit test enumerates mutating routers; fail if touched table missing from `audit/resource_map.py`
+- [x] **F-CEN-005** Refresh-token rotation + replay detection (#105)
+- [x] **F-CEN-006** Server-side session revocation via user `token_version` (#105)
+- [x] **F-CEN-014** Join `AppAssignment` on `job_id` to verify caller owns it (#107)
+- [x] **F-CEN-015** Scope credential fetch to collector's assigned devices only (#107)
+- [x] **F-CEN-016** Ownership check in app-cache push/pull (#107)
+- [x] **F-CEN-018** WS token header-auth (not URL query param); central + collector coordination (#115)
+- [x] **F-CEN-050** Unit test enumerates mutating routers; fail if touched table missing from `audit/resource_map.py` (#108)
 - [ ] **F-CEN-026** Column allow-list per results endpoint (no more `SELECT *`) — _deferred: raw-tier arrays (`metric_names`/`metric_values`) are the main payload so the `SELECT *` there is justified; rollup tiers are already narrow. A genuine win requires per-call-site column trimming with frontend changes to match_
-- [ ] **F-CEN-022** DSL compiler hardening + adversarial test corpus
+- [x] **F-CEN-022** DSL compiler hardening + adversarial test corpus (#114)
 - [x] **F-COL-030** Move pip API key out of `PIP_INDEX_URL` env → temp `pip.conf` with 0o600
-- [ ] **F-COL-031** Validate pip requirement strings; `--require-hashes`, `--no-build-isolation`
+- [x] **F-COL-031** Validate pip requirement strings; `--require-hashes`, `--no-build-isolation` (#110 — allowlist + argv flag rejection; hash enforcement deferred until packs supply hashes)
 - [ ] **F-COL-026** Add auth on the peer gRPC channel (UDS or shared bearer)
 - [x] **F-COL-036** Enforce max-rows on forwarder SQLite + FIFO drop
-- [ ] **F-COL-038** Batch-id + server-side dedup for idempotent forwarder retries
+- [x] **F-COL-038** Batch-id + server-side dedup for idempotent forwarder retries (#113)
 - [x] **F-COL-044** Regex filter + rate limiting in log shipper
-- [ ] **F-APP-004** Typed error categorisation in all 4 SNMP reference apps
-- [ ] **F-APP-006** Add `logger.debug` tracing to all 4 reference apps (template for future pollers)
-- [ ] **F-APP-011** Bump pack versions + add `scripts/validate_packs.py` to CI
-- [ ] **F-WEB-001** DOMPurify-sanitise + proper `sandbox` on `ConfigDataRenderer` iframe
+- [x] **F-APP-004** Typed error categorisation in all 4 SNMP reference apps (#106)
+- [x] **F-APP-006** Add `logger.debug` tracing to all 4 reference apps (template for future pollers) (#106)
+- [x] **F-APP-011** Bump pack versions + add `scripts/validate_packs.py` to CI (#111)
+- [x] **F-WEB-001** DOMPurify-sanitise + proper `sandbox` on `ConfigDataRenderer` iframe (#109 — sandbox tightened; DOMPurify deferred since sandbox alone neutralises the XSS)
 - [x] **F-WEB-002** Replace `postMessage(..., "*")` with explicit origin
 - [x] **F-WEB-006** Cap & redact error-body stringification in `api/client.ts`
 - [x] **F-WEB-007** Cross-tab logout via `BroadcastChannel`
@@ -91,4 +91,11 @@
 
 ## Progress
 
-Nothing started yet. First PR should be **Wave 1 → F-CEN-001 (cookie flag)** — smallest, highest security return, no dependencies.
+Wave 1 complete. Wave 2 nearly complete (6 merged/open of 8 actionable items; F-CEN-026 column allow-list deferred, F-COL-026 peer gRPC auth subsumed by F-X-001 umbrella).
+
+Related side-fixes landed alongside Wave 2:
+
+- Connector built-in seed is now create-only + warns on drift (closes a latent footgun that could silently downgrade prod connectors on restart). Shipped in #112.
+- Collector structlog is now routed through stdlib, so Debug Run captures connector debug lines uniformly in the `logs` panel. Shipped in #112.
+
+Still open from Wave 2: none that are easy. Wave 3 is the next natural batch once deploys land.
