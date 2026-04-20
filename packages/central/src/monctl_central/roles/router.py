@@ -172,16 +172,21 @@ async def update_role(
             db.add(RolePermission(role_id=role.id, resource=p.resource, action=p.action))
         await db.flush()
 
-    # Invalidate permission cache + user-bound API key cache for every user
-    # with this role — the api_key payload embeds the permissions list, so a
-    # stale entry would keep the old perms until the 5 min TTL.
+    # Invalidate permission cache + user-bound API key cache + every
+    # outstanding JWT for users with this role. The api_key cache payload
+    # embeds the permissions list and access tokens carry stale perms via
+    # their role claim, so both need to be dropped on a permission edit.
     from monctl_central.cache import invalidate_user_auth_cache
 
-    users = (await db.execute(
-        select(User.id).where(User.role_id == role.id)
+    user_rows = (await db.execute(
+        select(User).where(User.role_id == role.id)
     )).scalars().all()
-    for uid in users:
-        await invalidate_user_auth_cache(db, str(uid))
+    for u in user_rows:
+        u.token_version = (u.token_version or 0) + 1
+    if user_rows:
+        await db.flush()
+    for u in user_rows:
+        await invalidate_user_auth_cache(db, str(u.id))
 
     role = (await db.execute(
         select(Role).options(selectinload(Role.permissions)).where(Role.id == role.id)

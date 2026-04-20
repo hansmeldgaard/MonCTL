@@ -115,6 +115,46 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
+# Refresh-token replay detection. Every refresh token has a `jti` claim; the
+# first time `/refresh` accepts it we record the jti in Redis with TTL equal
+# to the refresh lifetime. A second attempt with the same jti indicates the
+# token was stolen and replayed after the legitimate holder rotated it — we
+# bump the user's `token_version` which invalidates the whole family.
+_REFRESH_USED_KEY = "refresh_used"
+
+
+async def _mark_refresh_jti_used(jti: str) -> bool:
+    """Atomically mark a jti as used. Returns True on first use, False on replay.
+
+    If Redis is down we fail open (return True) so refresh keeps working on
+    infrastructure outages — refresh rotation is defence-in-depth, not a
+    primary control. The primary control is `token_version`.
+    """
+    from monctl_central.cache import _redis
+
+    if _redis is None:
+        return True
+    try:
+        # NX ensures only the first setter succeeds — subsequent callers
+        # get `None` back, which is the replay signal.
+        ok = await _redis.set(
+            f"{_REFRESH_USED_KEY}:{jti}",
+            "1",
+            nx=True,
+            ex=_REFRESH_MAX_AGE,
+        )
+        return bool(ok)
+    except Exception:
+        logger.warning("refresh_jti_redis_unavailable", exc_info=True)
+        return True
+
+
+async def _revoke_all_user_tokens(db: AsyncSession, user: User) -> None:
+    """Bump `token_version` — invalidates every access + refresh JWT for this user."""
+    user.token_version = (user.token_version or 0) + 1
+    await db.flush()
+
+
 async def _get_effective_idle_timeout(user: User, db: AsyncSession) -> int:
     """Return the effective idle timeout in minutes for this user.
 
@@ -196,8 +236,9 @@ async def login(
         user_id=user.id,
     )
 
-    access = create_access_token(str(user.id), user.username, user.role)
-    refresh = create_refresh_token(str(user.id))
+    tv = user.token_version or 0
+    access = create_access_token(str(user.id), user.username, user.role, tv)
+    refresh = create_refresh_token(str(user.id), tv)
 
     response.set_cookie(
         "access_token", access,
@@ -239,8 +280,12 @@ async def logout(
     response: Response,
     db: AsyncSession = Depends(get_db),
 ):
-    """Clear authentication cookies."""
-    # Best-effort: identify the user from the existing access_token cookie
+    """Clear authentication cookies and revoke all tokens for this user.
+
+    Bumping `token_version` immediately invalidates every outstanding
+    access + refresh JWT for the user — a leaked token no longer has the
+    15 min / 7 day natural validity window it used to (F-CEN-006).
+    """
     username = ""
     user_id: uuid.UUID | None = None
     token = request.cookies.get("access_token")
@@ -253,6 +298,11 @@ async def logout(
                 user_id = uuid.UUID(sub)
         except Exception:
             pass
+
+    if user_id is not None:
+        user = await db.get(User, user_id)
+        if user is not None:
+            await _revoke_all_user_tokens(db, user)
 
     await record_login_event(
         db,
@@ -272,7 +322,13 @@ async def refresh(
     response: Response,
     db: AsyncSession = Depends(get_db),
 ):
-    """Use the refresh token cookie to issue a new access token."""
+    """Rotate refresh token + issue new access token. Detects replay.
+
+    Behaviour (F-CEN-005):
+      - First use of a refresh-token jti → issue new pair, mark jti used.
+      - Second use of the same jti → replay, revoke all user tokens.
+      - Token version lower than the user's current value → revoked, reject.
+    """
     token = request.cookies.get("refresh_token")
     if not token:
         await record_login_event(
@@ -318,6 +374,38 @@ async def refresh(
         )
         raise HTTPException(status_code=401, detail="User not found or disabled")
 
+    # Token-version gate: a stale refresh token that predates a logout /
+    # role change is outright rejected, no rotation attempt.
+    if payload.get("tv", 0) != (user.token_version or 0):
+        await record_login_event(
+            db,
+            event_type="token_refresh_failed",
+            username=user.username,
+            user_id=user.id,
+            failure_reason="token_version_mismatch",
+        )
+        raise HTTPException(status_code=401, detail="Token revoked")
+
+    # Replay detection: atomically mark the jti as used. If it was already
+    # marked, someone replayed the previous rotation's now-invalidated
+    # token — treat as a compromise signal and revoke the whole family.
+    jti = payload.get("jti")
+    if jti:
+        fresh = await _mark_refresh_jti_used(jti)
+        if not fresh:
+            await _revoke_all_user_tokens(db, user)
+            await record_login_event(
+                db,
+                event_type="token_refresh_failed",
+                username=user.username,
+                user_id=user.id,
+                failure_reason="refresh_token_replay",
+            )
+            logger.warning(
+                "refresh_token_replay_detected user_id=%s jti=%s", user.id, jti
+            )
+            raise HTTPException(status_code=401, detail="Token revoked")
+
     await record_login_event(
         db,
         event_type="token_refresh",
@@ -325,11 +413,18 @@ async def refresh(
         user_id=user.id,
     )
 
-    access = create_access_token(str(user.id), user.username, user.role)
+    tv = user.token_version or 0
+    access = create_access_token(str(user.id), user.username, user.role, tv)
+    new_refresh = create_refresh_token(str(user.id), tv)
     response.set_cookie(
         "access_token", access,
         httponly=True, samesite="strict", secure=settings.cookie_secure,
         max_age=_ACCESS_MAX_AGE, path="/",
+    )
+    response.set_cookie(
+        "refresh_token", new_refresh,
+        httponly=True, samesite="strict", secure=settings.cookie_secure,
+        max_age=_REFRESH_MAX_AGE, path="/v1/auth",
     )
 
     idle_timeout = await _get_effective_idle_timeout(user, db)

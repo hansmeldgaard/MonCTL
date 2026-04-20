@@ -502,6 +502,10 @@ async def update_user(
         user.is_active = request.is_active
     if request.timezone is not None:
         user.timezone = request.timezone
+    if auth_changed:
+        # Revoke every outstanding JWT for this user — they'll need to
+        # re-auth to pick up the new role/tenants/active state.
+        user.token_version = (user.token_version or 0) + 1
     user.updated_at = utc_now()
     await db.flush()
 

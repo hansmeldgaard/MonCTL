@@ -651,6 +651,15 @@ class User(Base):
             "{width?, hidden?, order?}}}}}"
         ),
     )
+    token_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0", default=0,
+        comment=(
+            "Monotonic counter embedded in access + refresh JWTs. A token "
+            "is only accepted when its `tv` claim equals this value. "
+            "Bumped on logout / role change / permission change to force "
+            "re-auth fleet-wide."
+        ),
+    )
     # Legacy single-tenant FK (kept for backward compat, not used for access control)
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True
