@@ -592,6 +592,13 @@ class SshConnector:
         },
     ]
 
+    def _parse_semver(v: str | None) -> tuple[int, ...]:
+        import re as _re
+        if not v:
+            return (0,)
+        parts = _re.findall(r"\d+", v)
+        return tuple(int(p) for p in parts) if parts else (0,)
+
     async with factory() as session:
         for spec in _BUILTIN_CONNECTORS:
             existing = (await session.execute(
@@ -601,6 +608,7 @@ class SshConnector:
             src_checksum = hashlib.sha256(spec["source_code"].encode()).hexdigest()
 
             if existing is None:
+                # Fresh DB: seed the connector + initial version.
                 connector = Connector(
                     name=spec["name"],
                     description=spec["description"],
@@ -619,31 +627,63 @@ class SshConnector:
                     checksum=src_checksum,
                 )
                 session.add(version)
-                logger.info("connector_seeded", name=spec["name"])
-            else:
-                # Sync source_code if checksum differs on the latest version
-                latest_stmt = select(ConnectorVersion).where(
-                    ConnectorVersion.connector_id == existing.id,
-                    ConnectorVersion.is_latest == True,  # noqa: E712
+                logger.info("connector_seeded", name=spec["name"],
+                            version=spec["version"])
+                continue
+
+            # Existing connector: never mutate the installed is_latest
+            # source_code. Operators upload newer versions through the
+            # admin API (and promote them via is_latest). The seed is
+            # purely fresh-install bootstrap. Blindly syncing the seed's
+            # source over an uploaded newer version would silently revert
+            # fleet-wide features (see feedback_check_memory_before_writing_code).
+            latest_stmt = select(ConnectorVersion).where(
+                ConnectorVersion.connector_id == existing.id,
+                ConnectorVersion.is_latest == True,  # noqa: E712
+            )
+            latest_ver = (await session.execute(latest_stmt)).scalar_one_or_none()
+            if latest_ver is None:
+                # No is_latest row — recover by inserting the seed version
+                # as is_latest so the fleet has something to pull.
+                version = ConnectorVersion(
+                    connector_id=existing.id,
+                    version=spec["version"],
+                    source_code=spec["source_code"],
+                    requirements=spec.get("requirements"),
+                    entry_class=spec["entry_class"],
+                    is_latest=True,
+                    checksum=src_checksum,
                 )
-                latest_ver = (await session.execute(latest_stmt)).scalar_one_or_none()
-                needs_update = (
-                    latest_ver
-                    and (
-                        latest_ver.checksum != src_checksum
-                        or latest_ver.requirements != spec.get("requirements")
-                    )
+                session.add(version)
+                logger.warning(
+                    "connector_reseeded_no_latest",
+                    name=spec["name"], version=spec["version"],
                 )
-                if needs_update:
-                    latest_ver.source_code = spec["source_code"]
-                    latest_ver.checksum = src_checksum
-                    latest_ver.requirements = spec.get("requirements")
-                    latest_ver.entry_class = spec["entry_class"]
-                    # Only update version string if it won't violate unique constraint
-                    if latest_ver.version == spec["version"] or latest_ver.version is None:
-                        latest_ver.version = spec["version"]
-                    logger.info("connector_updated", name=spec["name"],
-                                version=latest_ver.version)
+                continue
+
+            seed_v = _parse_semver(spec["version"])
+            installed_v = _parse_semver(latest_ver.version)
+            if seed_v > installed_v:
+                # Seed has a newer version than what's installed. We do NOT
+                # auto-promote — just surface it so ops can upload + promote
+                # deliberately. This breaks the silent-downgrade footgun.
+                logger.warning(
+                    "connector_seed_newer_than_installed",
+                    name=spec["name"],
+                    seed_version=spec["version"],
+                    installed_version=latest_ver.version,
+                    hint="Upload the new version via POST /v1/connectors/{id}/versions",
+                )
+            elif latest_ver.checksum != src_checksum:
+                # Same-or-older seed, but source drifted — almost certainly
+                # because an operator uploaded patched source under the same
+                # version label. Log for audit; do NOT overwrite.
+                logger.info(
+                    "connector_seed_drift_detected",
+                    name=spec["name"],
+                    installed_version=latest_ver.version,
+                    seed_version=spec["version"],
+                )
 
         await session.commit()
 
