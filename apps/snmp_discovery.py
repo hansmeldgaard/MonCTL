@@ -84,9 +84,9 @@ class Poller(BasePoller):
 
         start = time.monotonic()
         try:
-            await snmp.connect(host)
-
-            # Query all system OIDs in one GET
+            # Connector connect/close is managed by the polling engine — calling
+            # snmp.connect(host) here would double-open the transport and risk
+            # leaking sockets when the engine's idempotent guard kicks in.
             oid_list = list(_SYS_OIDS.values())
             raw = await snmp.get(oid_list)
 
