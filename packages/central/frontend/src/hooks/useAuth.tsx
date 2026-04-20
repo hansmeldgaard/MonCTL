@@ -29,6 +29,12 @@ const ACTIVITY_EVENTS: (keyof WindowEventMap)[] = [
   "scroll",
 ];
 
+// BroadcastChannel name for propagating logout across tabs of the same origin.
+// A logout in one tab clears the cookies server-side, but other open tabs still
+// hold rendered authenticated UI until their next API call; broadcasting a
+// message lets them drop `user` immediately and redirect to /login.
+const LOGOUT_CHANNEL = "monctl-auth-logout";
+
 interface AuthState {
   user: AuthUser | null;
   isLoading: boolean;
@@ -79,7 +85,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await apiPost("/auth/logout");
     } finally {
       setUser(null);
+      try {
+        if (typeof BroadcastChannel !== "undefined") {
+          const ch = new BroadcastChannel(LOGOUT_CHANNEL);
+          ch.postMessage({ type: "logout", at: Date.now() });
+          ch.close();
+        }
+      } catch {
+        /* BroadcastChannel may be disabled in strict embeds — ignore */
+      }
     }
+  }, []);
+
+  // Listen for cross-tab logouts. When another tab signs out, we drop our
+  // in-memory user so the route guards kick in and push us to /login.
+  useEffect(() => {
+    if (typeof BroadcastChannel === "undefined") return;
+    const ch = new BroadcastChannel(LOGOUT_CHANNEL);
+    ch.onmessage = (ev) => {
+      if (ev.data?.type === "logout") {
+        setUser(null);
+      }
+    };
+    return () => ch.close();
   }, []);
 
   // ---------- Initial load ----------

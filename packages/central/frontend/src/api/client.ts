@@ -2,6 +2,51 @@ import type { ApiResponse } from "@/types/api.ts";
 
 const BASE_URL = "/v1";
 
+/**
+ * Cap + redact an error-response body before surfacing it to the UI. Servers
+ * sometimes echo validation errors that include request fields (usernames,
+ * emails, credential names); JSON-stringifying them straight into a toast or
+ * error-tracking payload is an info-disclosure risk. We strip known-sensitive
+ * keys and trim the result to keep tool output and logs readable.
+ */
+const _SENSITIVE_KEY =
+  /(password|api_key|token|secret|jwt|credential|private)/i;
+
+function _sanitize(value: unknown, depth = 0): unknown {
+  if (depth > 2) return "[…]";
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) {
+    return value.slice(0, 10).map((v) => _sanitize(v, depth + 1));
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    out[k] = _SENSITIVE_KEY.test(k) ? "[REDACTED]" : _sanitize(v, depth + 1);
+  }
+  return out;
+}
+
+function safeStringifyError(body: unknown, max = 200): string {
+  try {
+    const s = JSON.stringify(_sanitize(body));
+    return s.length > max ? s.slice(0, max) + "…" : s;
+  } catch {
+    return "Unknown error";
+  }
+}
+
+/**
+ * Send the user to /login preserving the page they were on so that after a
+ * successful re-auth the router can bounce them back. `client.ts` runs outside
+ * of React, so we can't use `useNavigate` here — `location.replace` is the
+ * right primitive (no extra history entry, no back-button loop into a 401 page).
+ */
+function redirectToLogin() {
+  if (window.location.pathname.startsWith("/login")) return;
+  const next = window.location.pathname + window.location.search;
+  const qs = next && next !== "/" ? `?next=${encodeURIComponent(next)}` : "";
+  window.location.replace(`/login${qs}`);
+}
+
 export class ApiError extends Error {
   status: number;
   detail: unknown;
@@ -79,9 +124,7 @@ async function request<T>(
   }
 
   if (res.status === 401) {
-    if (!window.location.pathname.startsWith("/login")) {
-      window.location.href = "/login";
-    }
+    redirectToLogin();
     throw new ApiError(401, "Unauthorized");
   }
 
@@ -106,12 +149,14 @@ async function request<T>(
         message = detail;
       } else if (detail && typeof detail === "object") {
         message =
-          (detail as { message?: string }).message ?? JSON.stringify(detail);
+          (detail as { message?: string }).message ??
+          safeStringifyError(detail);
       } else {
-        message = JSON.stringify(body);
+        message = safeStringifyError(body);
       }
     } catch {
-      message = await res.text().catch(() => "Unknown error");
+      const raw = await res.text().catch(() => "Unknown error");
+      message = raw.length > 200 ? raw.slice(0, 200) + "…" : raw;
     }
     throw new ApiError(res.status, message, detail);
   }
@@ -192,9 +237,7 @@ export async function apiPostFormData<T>(
   }
 
   if (res.status === 401) {
-    if (!window.location.pathname.startsWith("/login")) {
-      window.location.href = "/login";
-    }
+    redirectToLogin();
     throw new ApiError(401, "Unauthorized");
   }
 
@@ -219,12 +262,14 @@ export async function apiPostFormData<T>(
         message = detail;
       } else if (detail && typeof detail === "object") {
         message =
-          (detail as { message?: string }).message ?? JSON.stringify(detail);
+          (detail as { message?: string }).message ??
+          safeStringifyError(detail);
       } else {
-        message = JSON.stringify(body);
+        message = safeStringifyError(body);
       }
     } catch {
-      message = await res.text().catch(() => "Unknown error");
+      const raw = await res.text().catch(() => "Unknown error");
+      message = raw.length > 200 ? raw.slice(0, 200) + "…" : raw;
     }
     throw new ApiError(res.status, message, detail);
   }
