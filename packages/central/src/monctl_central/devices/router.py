@@ -1047,13 +1047,8 @@ async def refresh_interface_metadata(
                     Collector.status == "ACTIVE",
                 )
             )
-            for cid in result.scalars().all():
-                if ws_manager.is_connected_local(cid):
-                    try:
-                        await ws_manager.send_command(cid, "config_reload", {}, timeout=5)
-                        ws_notified += 1
-                    except Exception:
-                        pass
+            collector_ids = list(result.scalars().all())
+            ws_notified = await ws_manager.notify_config_reload(collector_ids)
     except Exception:
         pass
 
