@@ -112,11 +112,28 @@ _TOKEN_RE = re.compile(
     |(?P<ARITH>[+\-*/])
     |(?P<NUMBER>-?\d+(?:\.\d+)?)
     |(?P<STRING>'[^']*'|"[^"]*")
-    |(?P<WORD>[a-zA-Z_]\w*)
+    |(?P<WORD>[A-Za-z_][A-Za-z0-9_]*)
     |(?P<WS>\s+)
     """,
-    re.VERBOSE,
+    re.VERBOSE | re.ASCII,
 )
+
+# Belt-and-braces identifier guard. Every place the compiler interpolates
+# an identifier into raw SQL runs the string through this regex again, so
+# a future tokenizer bug (e.g. relaxing WORD to admit unicode/quotes) can't
+# quietly turn into SQL injection. Keep the character class in sync with
+# the WORD group above.
+_SAFE_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _assert_safe_identifier(value: str, where: str) -> str:
+    if not isinstance(value, str) or not _SAFE_IDENT_RE.match(value):
+        raise ParseError(f"Invalid identifier in {where}: {value!r}")
+    if len(value) > IDENTIFIER_MAX_LENGTH:
+        raise ParseError(
+            f"Identifier in {where} exceeds {IDENTIFIER_MAX_LENGTH} chars: {value!r}"
+        )
+    return value
 
 _AGG_FUNCS = {"avg", "max", "min", "sum", "count", "last", "rate"}
 _KEYWORDS = {"AND", "OR", "IN", "NOT", "CHANGED"}
@@ -539,6 +556,7 @@ _COUNTER_SUFFIXES = ("_octets", "_pkts", "_bytes", "_count", "_total")
 
 _VALID_WINDOWS = {"30s", "1m", "5m", "15m", "1h"}
 _VALID_SEVERITIES = {"info", "warning", "critical", "emergency"}
+_VALID_COMPARE_OPS = {">", "<", ">=", "<=", "==", "!="}
 
 
 @dataclass
@@ -954,20 +972,23 @@ class _Compiler:
             # Arithmetic / aggregation comparison
             arith_alias = self._compile_arith_select(node.left)
 
+            if node.op not in _VALID_COMPARE_OPS:
+                raise ParseError(f"Invalid comparison operator: {node.op!r}")
             ch_op = "=" if node.op == "==" else node.op
 
             if isinstance(node.right, ThresholdRef):
                 ref = node.right
                 if ref.is_named:
                     # Named reference — use ref name as param key
+                    safe_name = _assert_safe_identifier(ref.name, "threshold name")
                     self._having_parts.append(
-                        f"{arith_alias} {ch_op} {{{ref.name}:Float64}}"
+                        f"{arith_alias} {ch_op} {{{safe_name}:Float64}}"
                     )
-                    self.params[ref.name] = 0.0  # default, resolved at runtime
+                    self.params[safe_name] = 0.0  # default, resolved at runtime
                     self.threshold_params.append(ThresholdParam(
-                        name=ref.name,
+                        name=safe_name,
                         default_value=0.0,
-                        param_key=ref.name,
+                        param_key=safe_name,
                     ))
                 else:
                     # Inline value — auto-generated param key
@@ -1049,8 +1070,10 @@ class _Compiler:
 
     def _agg_to_sql(self, agg: AggCall) -> str:
         """Compile a single AggCall to SQL, registering WHERE extras as needed."""
-        metric = agg.metric
+        metric = _assert_safe_identifier(agg.metric, "agg metric")
         func = agg.func
+        if func not in _AGG_FUNCS:
+            raise ParseError(f"Unknown aggregation function: {func!r}")
 
         if func == "rate":
             return self._rate_to_sql(metric)
@@ -1074,6 +1097,7 @@ class _Compiler:
 
     def _rate_to_sql(self, metric: str) -> str:
         """Compile rate(metric) to SQL."""
+        metric = _assert_safe_identifier(metric, "rate metric")
         # Interface table: use pre-computed _rate column if available
         if self.target_table == "interface" and metric in _INTERFACE_RATE_COLUMNS:
             return f"argMax({metric}_rate, executed_at)"
@@ -1114,20 +1138,24 @@ class _Compiler:
 
     def _build_config_where(self, node: ASTNode, parts: list[str]) -> None:
         if isinstance(node, Comparison) and isinstance(node.left, str):
+            if node.op not in _VALID_COMPARE_OPS:
+                raise ParseError(f"Invalid comparison operator: {node.op!r}")
             ch_op = "=" if node.op == "==" else node.op
-            param_key = f"_str_val_{self._str_idx}"
-            parts.append(f"config_key = '{node.left}'")
-            parts.append(f"config_value {ch_op} {{{param_key}:String}}")
-            self.params[param_key] = str(node.right)
+            key = _assert_safe_identifier(node.left, "config_key")
+            param_key_name = f"_str_val_{self._str_idx}"
+            parts.append(f"config_key = '{key}'")
+            parts.append(f"config_value {ch_op} {{{param_key_name}:String}}")
+            self.params[param_key_name] = str(node.right)
             self._str_idx += 1
         elif isinstance(node, InList):
+            key = _assert_safe_identifier(node.identifier, "config_key")
             param_keys = []
             for i, val in enumerate(node.values):
                 pk = f"_in_val_{self._str_idx}_{i}"
                 self.params[pk] = val
                 param_keys.append(f"{{{pk}:String}}")
             op_str = "NOT IN" if node.negated else "IN"
-            parts.append(f"config_key = '{node.identifier}'")
+            parts.append(f"config_key = '{key}'")
             parts.append(f"config_value {op_str} ({', '.join(param_keys)})")
             self._str_idx += 1
         elif isinstance(node, BoolOp):
