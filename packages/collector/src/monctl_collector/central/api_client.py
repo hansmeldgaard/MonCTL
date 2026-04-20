@@ -23,7 +23,15 @@ logger = structlog.get_logger()
 # Defence-in-depth: the collector trusts central, but we still validate
 # path-segment identifiers before URL interpolation so a malformed/hostile
 # response can't inject `..`, `/`, or query-string characters into requests.
+# `app_id` / `connector_id` / `version_id` are identifier-shaped (slug or
+# UUID) so the strict form is enforced.
 _SAFE_IDENT_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+# `credential_name` is user-facing and legitimately contains spaces, dashes,
+# colons etc. (e.g. "SSH - monctl"). `urllib.parse.quote(safe='')` is the
+# real defence — this regex just rejects control bytes, NUL, path-traversal
+# sequences and URL-structural characters.
+_CRED_NAME_FORBIDDEN_RE = re.compile(r"[\x00-\x1f\x7f/?#]")
 
 
 def _require_safe_ident(kind: str, value: str) -> str:
@@ -32,22 +40,41 @@ def _require_safe_ident(kind: str, value: str) -> str:
     return value
 
 
+def _require_safe_cred_name(value: str) -> str:
+    if not value:
+        raise ValueError("invalid credential_name: <empty>")
+    if ".." in value or _CRED_NAME_FORBIDDEN_RE.search(value):
+        raise ValueError(f"invalid credential_name: {value!r}")
+    return value
+
+
 class CentralAPIClient:
     """Client for the MonCTL central server collector API (/api/v1/)."""
 
     def __init__(
-        self, base_url: str, api_key: str | None = None, timeout: int = 30, verify_ssl: bool = True,
+        self,
+        base_url: str,
+        api_key: str | None = None,
+        timeout: int = 30,
+        verify_ssl: bool = True,
+        collector_id: str | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._timeout = aiohttp.ClientTimeout(total=timeout)
         self._verify_ssl = verify_ssl
+        self._collector_id = collector_id
         self._session: aiohttp.ClientSession | None = None
 
     async def open(self) -> None:
         headers: dict[str, str] = {}
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
+        # Identify the caller so central can enforce per-collector ownership
+        # (F-CEN-014/015/016). Falls back silently on central versions that
+        # don't read the header.
+        if self._collector_id:
+            headers["X-Collector-Id"] = self._collector_id
         connector = aiohttp.TCPConnector(ssl=self._verify_ssl)
         self._session = aiohttp.ClientSession(
             headers=headers,
@@ -185,14 +212,25 @@ class CentralAPIClient:
 
     # ── Credentials ───────────────────────────────────────────────────────────
 
-    async def get_credential(self, credential_name: str) -> dict:
+    async def get_credential(
+        self, credential_name: str, collector_id: str | None = None,
+    ) -> dict:
         """Return decrypted credential data for a named credential.
 
         Returns: {"name": ..., "type": ..., "data": {...}}
+
+        `collector_id` identifies the calling collector to central so that
+        the F-CEN-015 ownership check can scope credential access to names
+        actually referenced by this collector's assignments. Optional for
+        pre-migration deployments using only the shared secret.
         """
-        _require_safe_ident("credential_name", credential_name)
+        _require_safe_cred_name(credential_name)
+        params: dict[str, str] = {}
+        if collector_id:
+            params["collector_id"] = collector_id
         async with self._session.get(
-            self._url(f"/credentials/{quote(credential_name, safe='')}")
+            self._url(f"/credentials/{quote(credential_name, safe='')}"),
+            params=params or None,
         ) as resp:
             resp.raise_for_status()
             return (await resp.json())
