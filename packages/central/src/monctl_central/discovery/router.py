@@ -63,24 +63,24 @@ async def trigger_discovery(
 
     await set_discovery_flag(device_id)
 
-    # Notify collectors in this group via WebSocket to sync jobs immediately
+    # Notify collectors in this group via WebSocket to sync jobs immediately.
+    # Uses `notify_config_reload` so the reload is fanned out via Redis if
+    # the collector's WS lives on a different central node. Previous code
+    # used `send_command` + `is_connected_local`, which silently dropped the
+    # notification for any collector whose WS was not on the central that
+    # served this HTTP request — and additionally filtered on status
+    # "APPROVED" which never occurs in steady state (collectors are "ACTIVE"
+    # once they start heartbeating).
     ws_notified = 0
     try:
         result = await db.execute(
             select(Collector.id).where(
                 Collector.group_id == device.collector_group_id,
-                Collector.status == "APPROVED",
+                Collector.status == "ACTIVE",
             )
         )
-        collector_ids = result.scalars().all()
-
-        for cid in collector_ids:
-            if ws_manager.is_connected_local(cid):
-                try:
-                    await ws_manager.send_command(cid, "config_reload", {}, timeout=5)
-                    ws_notified += 1
-                except Exception as exc:
-                    logger.debug("ws_config_reload_failed", collector_id=str(cid), error=str(exc))
+        collector_ids = list(result.scalars().all())
+        ws_notified = await ws_manager.notify_config_reload(collector_ids)
     except Exception as exc:
         logger.warning("ws_notify_collectors_failed", error=str(exc))
 
