@@ -26,6 +26,7 @@ from monctl_collector.cache.local_cache import LocalCache
 from monctl_collector.central.api_client import CentralAPIClient
 from monctl_collector.config import SchedulingConfig
 from monctl_collector.jobs.models import (
+    ConnectorBinding,
     JobDefinition,
     JobProfile,
     NodeLoadInfo,
@@ -350,6 +351,22 @@ class JobScheduler:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _dict_to_job(d: dict) -> JobDefinition:
+    # Reconstruct connector_bindings — dropping them here meant that every
+    # worker restart would load jobs from SQLite cache without connectors,
+    # and all SNMP/SSH apps reported "No ... connector bound" until the
+    # next central delta-sync round-tripped fresh bindings (which in turn
+    # only fires when assignments bump `updated_at`).
+    bindings = [
+        ConnectorBinding(
+            connector_type=b["connector_type"],
+            connector_id=b["connector_id"],
+            connector_version_id=b["connector_version_id"],
+            credential_name=b.get("credential_name"),
+            settings=b.get("settings", {}),
+            connector_checksum=b.get("connector_checksum", ""),
+        )
+        for b in d.get("connector_bindings", [])
+    ]
     return JobDefinition(
         job_id=d["job_id"],
         device_id=d.get("device_id"),
@@ -363,6 +380,8 @@ def _dict_to_job(d: dict) -> JobDefinition:
         max_execution_time=d.get("max_execution_time", 120),
         enabled=d.get("enabled", True),
         updated_at=d.get("updated_at", ""),
+        app_checksum=d.get("app_checksum", ""),
+        connector_bindings=bindings,
     )
 
 
