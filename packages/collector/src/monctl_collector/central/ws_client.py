@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import uuid
 from datetime import datetime, timezone
 from typing import Callable, Awaitable
@@ -19,6 +20,10 @@ import structlog
 logger = structlog.get_logger()
 
 _BACKOFF_STEPS = [1, 2, 3, 5]
+# Fleet-wide reconnect storms are the concern — when central drops, every worker
+# tries to reconnect on the same cadence. Spread each step by ±30% so 4 workers
+# don't pile onto central at the same second.
+_BACKOFF_JITTER_FRACTION = 0.3
 
 
 class WebSocketClient:
@@ -96,8 +101,10 @@ class WebSocketClient:
             if not self._running:
                 break
 
-            delay = _BACKOFF_STEPS[min(attempt, len(_BACKOFF_STEPS) - 1)]
-            logger.info("ws_reconnecting", delay=delay, attempt=attempt)
+            base_delay = _BACKOFF_STEPS[min(attempt, len(_BACKOFF_STEPS) - 1)]
+            jitter = random.uniform(-_BACKOFF_JITTER_FRACTION, _BACKOFF_JITTER_FRACTION)
+            delay = max(0.1, base_delay * (1.0 + jitter))
+            logger.info("ws_reconnecting", delay=round(delay, 2), attempt=attempt)
             await asyncio.sleep(delay)
             attempt += 1
 
@@ -131,17 +138,27 @@ class WebSocketClient:
             return
 
         try:
-            result_payload = await handler(payload)
+            # Cap every handler at 30s — a hung SNMP probe or wedged sidecar call
+            # must not block the WS reader loop from processing other commands.
+            result_payload = await asyncio.wait_for(handler(payload), timeout=30.0)
             if msg_type in ("config_reload", "module_update"):
                 response_type = f"{msg_type}_ack"
             else:
                 response_type = f"{msg_type}_result"
             await self._send_response(message_id, response_type, result_payload)
+        except asyncio.TimeoutError:
+            logger.error("ws_handler_timeout", type=msg_type)
+            await self._send_response(message_id, "error", {
+                "code": "HANDLER_TIMEOUT",
+                "detail": "TimeoutError",
+            })
         except Exception as exc:
+            # Log the full error locally, but only return the exception class name
+            # over the WS so we don't leak internal detail (paths, creds) to central.
             logger.error("ws_handler_error", type=msg_type, error=str(exc))
             await self._send_response(message_id, "error", {
                 "code": "HANDLER_ERROR",
-                "detail": str(exc),
+                "detail": type(exc).__name__,
             })
 
     async def _send_response(self, in_reply_to: str, msg_type: str, payload: dict):

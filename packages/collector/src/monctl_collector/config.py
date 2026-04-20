@@ -182,4 +182,15 @@ def load_config(yaml_path: str = "/etc/collector/config.yaml") -> CollectorConfi
         central_base = cfg.central.url.rstrip("/")
         cfg.apps.pip_index_url = f"{central_base}/api/v1/pypi/simple/"
 
+    # Fail fast on missing required config rather than silently talking to the
+    # empty-string URL and waiting 30s for the first request to error.
+    if not cfg.central.url:
+        raise RuntimeError(
+            "central.url is required — set MONCTL_CENTRAL_URL or central.url in config.yaml"
+        )
+    if not cfg.central.api_key:
+        raise RuntimeError(
+            "central.api_key is required — set MONCTL_CENTRAL_API_KEY or central.api_key in config.yaml"
+        )
+
     return cfg
