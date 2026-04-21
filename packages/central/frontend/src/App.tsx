@@ -166,6 +166,14 @@ export function App() {
           }
         />
         <Route
+          path="devices/:id/:tab"
+          element={
+            <RouteSuspense>
+              <DeviceDetailPage />
+            </RouteSuspense>
+          }
+        />
+        <Route
           path="apps"
           element={
             <RouteSuspense>
