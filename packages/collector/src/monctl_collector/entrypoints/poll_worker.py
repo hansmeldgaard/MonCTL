@@ -47,7 +47,7 @@ async def run(cfg: CollectorConfig) -> None:
     channel_pool = PeerChannelPool()
     central_client = CentralAPIClient(
         cfg.central.url,
-        api_key=cfg.central.api_key,
+        api_key=cfg.effective_auth_token(),
         timeout=cfg.central.timeout,
         verify_ssl=cfg.central.verify_ssl,
         collector_id=cfg.collector_id or None,

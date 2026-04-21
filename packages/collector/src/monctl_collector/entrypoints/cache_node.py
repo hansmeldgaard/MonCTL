@@ -67,7 +67,7 @@ async def run(cfg: CollectorConfig) -> None:
 
     central_client = CentralAPIClient(
         cfg.central.url,
-        api_key=cfg.central.api_key,
+        api_key=cfg.effective_auth_token(),
         timeout=cfg.central.timeout,
         verify_ssl=cfg.central.verify_ssl,
         collector_id=cfg.collector_id or None,
@@ -132,7 +132,7 @@ async def run(cfg: CollectorConfig) -> None:
     # Upgrade agent (polls central for available upgrades)
     upgrade_agent = UpgradeAgent(
         central_url=cfg.central.url,
-        api_key=cfg.central.api_key,
+        api_key=cfg.effective_auth_token(),
         collector_id=cfg.collector_id or "",
         verify_ssl=cfg.central.verify_ssl,
         check_interval=60,
@@ -142,7 +142,7 @@ async def run(cfg: CollectorConfig) -> None:
     # OS update agent (polls central for pending OS install tasks)
     os_update_agent = OsUpdateAgent(
         central_url=cfg.central.url,
-        api_key=cfg.central.api_key,
+        api_key=cfg.effective_auth_token(),
         hostname=node_id,
         verify_ssl=cfg.central.verify_ssl,
         poll_interval=30,
@@ -153,7 +153,7 @@ async def run(cfg: CollectorConfig) -> None:
     sidecar_url = os.environ.get("MONCTL_DOCKER_STATS_URL", "http://monctl-docker-stats:9100")
     ws_client = WebSocketClient(
         central_url=cfg.central.url,
-        api_key=cfg.central.api_key,
+        api_key=cfg.effective_auth_token(),
         node_id=node_id,
         verify_ssl=cfg.central.verify_ssl,
         collector_id=cfg.collector_id or "",

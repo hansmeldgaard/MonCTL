@@ -413,18 +413,40 @@ async def require_collector_auth(
     """Auth for the /api/v1/ collector endpoints.
 
     Accepts (in priority order):
-      1. Shared secret:  Authorization: Bearer <MONCTL_COLLECTOR_API_KEY env var>
-      2. HTTP Basic Auth with password = shared secret (for pip/PyPI)
-      3. Management API key (from DB, as per require_auth)
-      4. JWT cookie (admin session)
-
-    Configure on central: MONCTL_COLLECTOR_API_KEY=<some secret>
-    Configure on collector: CENTRAL_API_KEY=<same secret>
+      1. Per-collector API key (from `api_keys` table, key_type="collector") —
+         returned `auth["collector_id"]` identifies the caller for F-CEN-014/015/016
+         scope enforcement (Phase 3).
+      2. Shared secret:  Authorization: Bearer <MONCTL_COLLECTOR_API_KEY env var>
+         — legacy fleet-wide secret. Retained as bootstrap fallback until every
+         collector has re-registered and stored its own key.
+      3. HTTP Basic Auth with password = shared secret (for pip/PyPI).
+      4. Management API key (from DB, as per require_auth).
+      5. JWT cookie (admin session).
     """
     import base64
     import os
 
+    # 1. Per-collector API key — try DB lookup before shared-secret compare.
+    #    _validate_api_key raises 401 on unknown tokens, so only call it when
+    #    the token doesn't match the shared secret (otherwise first-register
+    #    bootstrap and Basic-auth pip would fail before falling through).
     shared_secret = os.environ.get("MONCTL_COLLECTOR_API_KEY", "")
+
+    if credentials:
+        token = credentials.credentials
+        matches_shared = bool(shared_secret) and hmac.compare_digest(token, shared_secret)
+        if not matches_shared:
+            try:
+                api_key = await _validate_api_key(token)
+            except HTTPException:
+                api_key = None
+            if api_key is not None and api_key.get("key_type") == "collector":
+                return {
+                    "auth_type": "collector_api_key",
+                    "collector_id": api_key.get("collector_id"),
+                    "scopes": api_key.get("scopes"),
+                    "tenant_ids": None,
+                }
 
     if (
         credentials
