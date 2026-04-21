@@ -8,11 +8,20 @@ import {
   apiDelete,
   apiGet,
   apiGetRaw,
+  apiGetSafe,
   apiPatch,
   apiPost,
   apiPostFormData,
   apiPut,
 } from "@/api/client.ts";
+import {
+  AlertDefinitionListSchema,
+  AlertEntityListSchema,
+  AlertLogListSchema,
+  CollectorListSchema,
+  DashboardSummarySchema,
+  DeviceListSchema,
+} from "@/api/schemas.ts";
 import { useAuth } from "@/hooks/useAuth.tsx";
 import type {
   AlertInstance,
@@ -175,7 +184,8 @@ export function useDevices(params: DeviceListParams = {}) {
   const qs = queryString.toString();
   return useQuery({
     queryKey: ["devices", params],
-    queryFn: () => apiGet<Device[]>(`/devices${qs ? `?${qs}` : ""}`),
+    queryFn: () =>
+      apiGetSafe<Device[]>(`/devices${qs ? `?${qs}` : ""}`, DeviceListSchema),
     placeholderData: keepPreviousData,
     refetchInterval: POLL_LIST,
   });
@@ -273,7 +283,8 @@ export function useCollectors(params?: { group_id?: string }) {
   const qp = params?.group_id ? `?group_id=${params.group_id}` : "";
   return useQuery({
     queryKey: ["collectors", params?.group_id ?? null],
-    queryFn: () => apiGet<Collector[]>(`/collectors${qp}`),
+    queryFn: () =>
+      apiGetSafe<Collector[]>(`/collectors${qp}`, CollectorListSchema),
     select: (res) => res.data,
     refetchInterval: POLL_LIST,
   });
@@ -364,7 +375,10 @@ export function useAlertRules(params: ListParams = {}) {
   return useQuery({
     queryKey: ["alert-definitions", params],
     queryFn: () =>
-      apiGet<AppAlertDefinition[]>(`/alerts/definitions${buildListQs(params)}`),
+      apiGetSafe<AppAlertDefinition[]>(
+        `/alerts/definitions${buildListQs(params)}`,
+        AlertDefinitionListSchema,
+      ),
     placeholderData: keepPreviousData,
     refetchInterval: POLL_LIST,
   });
@@ -489,7 +503,10 @@ export function useAlertInstances(params?: {
   return useQuery({
     queryKey: ["alert-instances", params ?? {}],
     queryFn: () =>
-      apiGet<AlertInstance[]>(`/alerts/instances${qs ? `?${qs}` : ""}`),
+      apiGetSafe<AlertInstance[]>(
+        `/alerts/instances${qs ? `?${qs}` : ""}`,
+        AlertEntityListSchema,
+      ),
     placeholderData: keepPreviousData,
     refetchInterval: POLL_LIST,
   });
@@ -534,7 +551,10 @@ export function useAlertLog(
       for (const [key, val] of Object.entries(params)) {
         if (val !== undefined && val !== "") search.set(key, String(val));
       }
-      return apiGet<AlertLogEntry[]>(`/alerts/log?${search.toString()}`);
+      return apiGetSafe<AlertLogEntry[]>(
+        `/alerts/log?${search.toString()}`,
+        AlertLogListSchema,
+      );
     },
     placeholderData: keepPreviousData,
   });
@@ -4109,7 +4129,11 @@ export function useUpgradeBadge() {
 export function useDashboardSummary() {
   return useQuery({
     queryKey: ["dashboard-summary"],
-    queryFn: () => apiGet<DashboardSummary>("/dashboard/summary"),
+    queryFn: () =>
+      apiGetSafe<DashboardSummary>(
+        "/dashboard/summary",
+        DashboardSummarySchema,
+      ),
     select: (res) => res.data,
     refetchInterval: 15_000,
   });

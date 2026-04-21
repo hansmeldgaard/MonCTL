@@ -73,7 +73,7 @@
 - [x] **F-WEB-025** Lazy-load every route via `React.lazy` + `<Suspense>` (#123) — deployed; verified chunked output: `DevicesPage`, `SystemHealthPage`, `DeviceDetailPage` each load on-demand
 - [ ] **F-WEB-026** Split `DeviceDetailPage.tsx` (8025 lines) by tab into routed sub-pages
 - [x] **F-WEB-027** Remove `any`/`as any` casts — all 29 in DeviceDetailPage/SettingsPage/AlertsPage removed; added `role` to `CheckResult`, typed `pollNow` response shape, introduced local union aliases for iface prefs. Deployed + verified.
-- [ ] **F-X-005** Zod schemas on the 10-15 most-used frontend responses (Option A) — or OpenAPI codegen (Option B)
+- [x] **F-X-005** Zod schemas on the 6 highest-traffic responses (Device, Collector, AlertEntity, AlertDefinition, AlertLogEntry, DashboardSummary). New `apiGetSafe()` helper runs `safeParse` and logs drift as a `console.warn` without blocking the UI. Verified against live prod data — zero drift warnings. Adding more schemas is a mechanical extension.
 - [ ] **F-X-007** E2E harness: docker-compose central + ClickHouse + stub collector; nightly CI
 - [ ] **F-WEB-030** Vitest + RTL on shared primitives
 - [ ] **F-X-002** Central observability (ingestion rate, DB size trends, per-node metrics)
