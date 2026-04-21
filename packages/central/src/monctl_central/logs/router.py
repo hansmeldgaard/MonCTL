@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
 from datetime import datetime, timezone
 
@@ -61,11 +62,14 @@ async def ingest_logs(
         })
 
     try:
-        ch.insert("logs", rows, column_names=[
-            "timestamp", "collector_id", "collector_name", "host_label",
-            "source_type", "container_name", "image_name",
-            "level", "stream", "message",
-        ])
+        await asyncio.to_thread(
+            ch.insert, "logs", rows,
+            column_names=[
+                "timestamp", "collector_id", "collector_name", "host_label",
+                "source_type", "container_name", "image_name",
+                "level", "stream", "message",
+            ],
+        )
     except Exception as exc:
         logger.error("log_ingest_error", error=str(exc), count=len(rows))
         raise HTTPException(status_code=500, detail=str(exc))
@@ -135,9 +139,6 @@ async def query_logs(
         sort_dir = "desc"
 
     count_sql = f"SELECT count() FROM logs WHERE {where}"
-    count_result = ch.query(count_sql, parameters=params)
-    total = count_result.result_rows[0][0] if count_result.result_rows else 0
-
     offset = (page - 1) * page_size
     data_sql = f"""
         SELECT timestamp, collector_id, collector_name, host_label,
@@ -148,10 +149,15 @@ async def query_logs(
         ORDER BY {sort_field} {sort_dir}
         LIMIT %(limit)s OFFSET %(offset)s
     """
-    params["limit"] = page_size
-    params["offset"] = offset
+    # Build per-call parameter dicts — count has no limit/offset keys.
+    count_params = dict(params)
+    data_params = {**params, "limit": page_size, "offset": offset}
 
-    result = ch.query(data_sql, parameters=params)
+    count_result, result = await asyncio.gather(
+        asyncio.to_thread(ch.query, count_sql, parameters=count_params),
+        asyncio.to_thread(ch.query, data_sql, parameters=data_params),
+    )
+    total = count_result.result_rows[0][0] if count_result.result_rows else 0
 
     entries = []
     for row in result.result_rows:
@@ -187,17 +193,22 @@ async def get_log_filters(
     """Return distinct values for filter dropdowns."""
     ch = get_clickhouse()
 
-    collectors = ch.query(
-        "SELECT DISTINCT collector_name FROM logs WHERE collector_name != '' "
-        "ORDER BY collector_name"
-    )
-    containers = ch.query(
-        "SELECT DISTINCT container_name FROM logs WHERE container_name != '' "
-        "ORDER BY container_name"
-    )
-    hosts = ch.query(
-        "SELECT DISTINCT host_label FROM logs WHERE host_label != '' "
-        "ORDER BY host_label"
+    collectors, containers, hosts = await asyncio.gather(
+        asyncio.to_thread(
+            ch.query,
+            "SELECT DISTINCT collector_name FROM logs WHERE collector_name != '' "
+            "ORDER BY collector_name",
+        ),
+        asyncio.to_thread(
+            ch.query,
+            "SELECT DISTINCT container_name FROM logs WHERE container_name != '' "
+            "ORDER BY container_name",
+        ),
+        asyncio.to_thread(
+            ch.query,
+            "SELECT DISTINCT host_label FROM logs WHERE host_label != '' "
+            "ORDER BY host_label",
+        ),
     )
 
     return {

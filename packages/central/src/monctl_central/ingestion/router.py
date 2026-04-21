@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -92,7 +93,7 @@ async def ingest(
                 tt = row.pop("_target_table", "availability_latency")
                 by_table.setdefault(tt, []).append(row)
             for table, rows in by_table.items():
-                ch.insert_by_table(table, rows)
+                await asyncio.to_thread(ch.insert_by_table, table, rows)
     except Exception:
         logger.exception("clickhouse_insert_error")
 

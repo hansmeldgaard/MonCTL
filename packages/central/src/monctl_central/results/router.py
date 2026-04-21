@@ -7,6 +7,7 @@ tenant_id are stored in each ClickHouse row).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import datetime, timedelta
@@ -133,28 +134,32 @@ async def list_results(
     if to_ts:
         to_dt = datetime.fromisoformat(to_ts.replace("Z", "+00:00"))
 
+    async def _fetch(t: str):
+        return t, await asyncio.to_thread(
+            ch.query_history,
+            table=t,
+            device_id=device_id,
+            collector_id=collector_id,
+            app_id=app_id,
+            state=state,
+            tenant_id=tenant_id,
+            from_ts=from_dt,
+            to_ts=to_dt,
+            limit=limit,
+            offset=offset,
+        )
+
     all_rows: list[dict] = []
-    for t in tables:
-        try:
-            rows = ch.query_history(
-                table=t,
-                device_id=device_id,
-                collector_id=collector_id,
-                app_id=app_id,
-                state=state,
-                tenant_id=tenant_id,
-                from_ts=from_dt,
-                to_ts=to_dt,
-                limit=limit,
-                offset=offset,
-            )
-            all_rows.extend(rows)
-        except Exception as exc:
-            if ch._is_table_missing_error(exc):
+    results = await asyncio.gather(*(_fetch(t) for t in tables), return_exceptions=True)
+    for t, outcome in zip(tables, results, strict=True):
+        if isinstance(outcome, BaseException):
+            if ch._is_table_missing_error(outcome):
                 logger.debug("Table %s does not exist yet, skipping", t)
-            else:
-                logger.error("ClickHouse query failed for table %s: %s", t, exc)
-                raise
+                continue
+            logger.error("ClickHouse query failed for table %s: %s", t, outcome)
+            raise outcome
+        _, rows = outcome
+        all_rows.extend(rows)
 
     # Multi-tenant filter for users with multiple tenant assignments
     if tenant_ids is not None and len(tenant_ids) > 1:
@@ -211,22 +216,26 @@ async def latest_results(
         if len(tenant_ids) == 1:
             tenant_id = tenant_ids[0]
 
+    async def _fetch_latest(t: str):
+        return t, await asyncio.to_thread(
+            ch.query_latest,
+            table=t,
+            tenant_id=tenant_id,
+            device_id=device_id,
+            collector_id=collector_id,
+        )
+
     all_rows: list[dict] = []
-    for t in tables:
-        try:
-            rows = ch.query_latest(
-                table=t,
-                tenant_id=tenant_id,
-                device_id=device_id,
-                collector_id=collector_id,
-            )
-            all_rows.extend(rows)
-        except Exception as exc:
-            if ch._is_table_missing_error(exc):
+    results = await asyncio.gather(*(_fetch_latest(t) for t in tables), return_exceptions=True)
+    for t, outcome in zip(tables, results, strict=True):
+        if isinstance(outcome, BaseException):
+            if ch._is_table_missing_error(outcome):
                 logger.debug("Table %s_latest does not exist yet, skipping", t)
-            else:
-                logger.error("ClickHouse query failed for table %s: %s", t, exc)
-                raise
+                continue
+            logger.error("ClickHouse query failed for table %s: %s", t, outcome)
+            raise outcome
+        _, rows = outcome
+        all_rows.extend(rows)
 
     if tenant_ids is not None and len(tenant_ids) > 1:
         tid_set = set(tenant_ids)
@@ -391,8 +400,9 @@ async def device_interfaces(
         sql += f" ORDER BY interface_id, {time_col} DESC LIMIT {{limit:UInt32}}"
         params["limit"] = limit
 
-        client = ch._get_client()
-        result = client.query(sql, parameters=params)
+        result = await asyncio.to_thread(
+            ch._get_client().query, sql, parameters=params
+        )
         rows = list(result.named_results())
     except Exception as exc:
         if ch._is_table_missing_error(exc):
@@ -434,7 +444,7 @@ async def device_interfaces_latest(
 
     ch = get_clickhouse()
     try:
-        rows = ch.query_latest(table="interface", device_id=device_id)
+        rows = await asyncio.to_thread(ch.query_latest, table="interface", device_id=device_id)
     except Exception as exc:
         if ch._is_table_missing_error(exc):
             rows = []
@@ -514,13 +524,12 @@ async def device_checks_summary(
     ORDER BY assignment_id, ts_ms
     """
     try:
-        client = ch._get_client()
-        rows = list(
-            client.query(
-                sql,
-                parameters={"device_id": device_id, "hours": hours},
-            ).named_results()
+        result = await asyncio.to_thread(
+            ch._get_client().query,
+            sql,
+            parameters={"device_id": device_id, "hours": hours},
         )
+        rows = list(result.named_results())
     except Exception as exc:
         if ch._is_table_missing_error(exc):
             rows = []
@@ -566,7 +575,7 @@ async def device_status(
 
     ch = get_clickhouse()
     try:
-        rows = ch.query_by_device(device_id)
+        rows = await asyncio.to_thread(ch.query_by_device, device_id)
     except Exception:
         logger.exception("query_by_device failed for device %s", device_id)
         rows = []
@@ -580,35 +589,42 @@ async def device_status(
     # with current received_at/executed_at but the data itself is stale.
     last_success_by_aid: dict[str, str] = {}
     try:
-        client = ch._get_client()
-        for t in ("availability_latency", "performance", "interface", "config"):
-            try:
-                # Interface table has no error_category column. All other
-                # tables (including config, as of the config-error-columns
-                # addition) filter by error_category='' to find real
-                # successes.
-                err_filter = "" if t == "interface" else "  AND error_category = '' "
-                res = client.query(
-                    f"SELECT toString(assignment_id) AS aid, "
-                    f"       max(executed_at) AS last_ok "
-                    f"FROM {t} "
-                    f"WHERE device_id = {{device_id:UUID}} "
-                    f"{err_filter}"
-                    f"GROUP BY assignment_id",
-                    parameters={"device_id": device_id},
-                )
-                for row in res.named_results():
-                    aid = row.get("aid")
-                    last_ok = row.get("last_ok")
-                    if not aid or last_ok is None:
-                        continue
-                    iso = _ensure_utc_iso(last_ok) or ""
-                    prev = last_success_by_aid.get(aid)
-                    if prev is None or iso > prev:
-                        last_success_by_aid[aid] = iso
-            except Exception as exc:
-                if not ch._is_table_missing_error(exc):
-                    logger.debug("last_success query failed for %s: %s", t, exc)
+        async def _last_success(t: str):
+            # Interface table has no error_category column. All other
+            # tables (including config, as of the config-error-columns
+            # addition) filter by error_category='' to find real
+            # successes.
+            err_filter = "" if t == "interface" else "  AND error_category = '' "
+            sql = (
+                f"SELECT toString(assignment_id) AS aid, "
+                f"       max(executed_at) AS last_ok "
+                f"FROM {t} "
+                f"WHERE device_id = {{device_id:UUID}} "
+                f"{err_filter}"
+                f"GROUP BY assignment_id"
+            )
+            return await asyncio.to_thread(
+                ch._get_client().query, sql, parameters={"device_id": device_id}
+            )
+
+        tbls = ("availability_latency", "performance", "interface", "config")
+        results = await asyncio.gather(
+            *(_last_success(t) for t in tbls), return_exceptions=True
+        )
+        for t, outcome in zip(tbls, results, strict=True):
+            if isinstance(outcome, BaseException):
+                if not ch._is_table_missing_error(outcome):
+                    logger.debug("last_success query failed for %s: %s", t, outcome)
+                continue
+            for row in outcome.named_results():
+                aid = row.get("aid")
+                last_ok = row.get("last_ok")
+                if not aid or last_ok is None:
+                    continue
+                iso = _ensure_utc_iso(last_ok) or ""
+                prev = last_success_by_aid.get(aid)
+                if prev is None or iso > prev:
+                    last_success_by_aid[aid] = iso
     except Exception:
         logger.exception("last_success lookup failed for device %s", device_id)
 
@@ -710,8 +726,9 @@ async def device_performance_summary(
     params = {"device_id": device_id}
 
     try:
-        client = ch._get_client()
-        result = client.query(sql, parameters=params)
+        result = await asyncio.to_thread(
+            ch._get_client().query, sql, parameters=params
+        )
         rows = list(result.named_results())
     except Exception as exc:
         if ch._is_table_missing_error(exc):
@@ -858,8 +875,9 @@ async def device_performance(
         params["limit"] = limit
 
         try:
-            client = ch._get_client()
-            result = client.query(sql, parameters=params)
+            result = await asyncio.to_thread(
+                ch._get_client().query, sql, parameters=params
+            )
             rows = list(result.named_results())
         except Exception as exc:
             if ch._is_table_missing_error(exc):
@@ -900,8 +918,9 @@ async def device_performance(
         params["limit"] = limit
 
         try:
-            client = ch._get_client()
-            result = client.query(sql, parameters=params)
+            result = await asyncio.to_thread(
+                ch._get_client().query, sql, parameters=params
+            )
             raw_rows = list(result.named_results())
         except Exception as exc:
             if ch._is_table_missing_error(exc):
@@ -1048,8 +1067,9 @@ async def device_availability(
     params["limit"] = limit
 
     try:
-        client = ch._get_client()
-        result = client.query(sql, parameters=params)
+        result = await asyncio.to_thread(
+            ch._get_client().query, sql, parameters=params
+        )
         rows = list(result.named_results())
     except Exception as exc:
         if ch._is_table_missing_error(exc):

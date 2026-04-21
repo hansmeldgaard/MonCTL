@@ -663,7 +663,7 @@ class SchedulerRunner:
           AND executed_at < toStartOfHour(now())
         GROUP BY device_id, interface_id, hour
         """
-        self._ch.execute_rollup(sql)
+        await asyncio.to_thread(self._ch.execute_rollup, sql)
         logger.info("hourly_rollup_complete")
 
         from monctl_central.cache import _redis
@@ -710,7 +710,7 @@ class SchedulerRunner:
         )
         GROUP BY device_id, app_id, component_type, component, mn, mt, hour
         """
-        self._ch.execute_rollup(sql)
+        await asyncio.to_thread(self._ch.execute_rollup, sql)
         logger.info("perf_hourly_rollup_complete")
 
         from monctl_central.cache import _redis
@@ -759,7 +759,7 @@ class SchedulerRunner:
           AND hour < toStartOfDay(now())
         GROUP BY device_id, interface_id, day
         """
-        self._ch.execute_rollup(sql)
+        await asyncio.to_thread(self._ch.execute_rollup, sql)
         logger.info("daily_rollup_complete")
 
         from monctl_central.cache import _redis
@@ -796,7 +796,7 @@ class SchedulerRunner:
           AND hour < toStartOfDay(now())
         GROUP BY device_id, app_id, component_type, component, metric_name, metric_type, day
         """
-        self._ch.execute_rollup(sql)
+        await asyncio.to_thread(self._ch.execute_rollup, sql)
         logger.info("perf_daily_rollup_complete")
 
         from monctl_central.cache import _redis
@@ -835,7 +835,7 @@ class SchedulerRunner:
           AND executed_at < toStartOfHour(now())
         GROUP BY device_id, assignment_id, app_id, hour
         """
-        self._ch.execute_rollup(sql)
+        await asyncio.to_thread(self._ch.execute_rollup, sql)
         logger.info("avail_hourly_rollup_complete")
 
         from monctl_central.cache import _redis
@@ -874,7 +874,7 @@ class SchedulerRunner:
           AND hour < toStartOfDay(now())
         GROUP BY device_id, assignment_id, app_id, day
         """
-        self._ch.execute_rollup(sql)
+        await asyncio.to_thread(self._ch.execute_rollup, sql)
         logger.info("avail_daily_rollup_complete")
 
         from monctl_central.cache import _redis
@@ -1051,10 +1051,11 @@ class SchedulerRunner:
             )
             cutoff = _day_cutoff(override.retention_days) if ts_col in ("hour", "day") else _ts_cutoff(override.retention_days)
             try:
-                self._ch.execute_cleanup(
+                await asyncio.to_thread(
+                    self._ch.execute_cleanup,
                     f"ALTER TABLE {table} DELETE WHERE "
                     f"device_id = '{override.device_id}' AND app_id = '{override.app_id}' "
-                    f"AND {ts_col} < '{cutoff}'"
+                    f"AND {ts_col} < '{cutoff}'",
                 )
             except Exception:
                 logger.debug("Override cleanup failed: %s/%s", override.device_id, override.app_id)
@@ -1082,7 +1083,7 @@ class SchedulerRunner:
 
         for sql in cleanup_sqls:
             try:
-                self._ch.execute_cleanup(sql)
+                await asyncio.to_thread(self._ch.execute_cleanup, sql)
             except Exception:
                 logger.debug("Cleanup query failed: %s", sql, exc_info=True)
 
@@ -1647,9 +1648,11 @@ class SchedulerRunner:
         """Check running eligibility runs and finalize if all devices have reported."""
         if not self._ch:
             return
-        try:
-            # Find running runs
-            from monctl_central.storage.clickhouse import ClickHouseClient
+
+        def _run_sync() -> None:
+            """Do all CH work in a single thread — the loop of per-run count
+            queries + update writes would otherwise thrash to_thread context
+            switches on every iteration."""
             client = self._ch._get_client()
             sql = "SELECT run_id, app_id, app_name, total_devices, started_at, triggered_by FROM eligibility_runs FINAL WHERE status = 'running'"
             result = client.query(sql)
@@ -1665,7 +1668,6 @@ class SchedulerRunner:
                     continue
                 done, elig, inelig, pending = cr.result_rows[0]
 
-                # Update progress
                 from datetime import datetime, timezone
                 now = datetime.now(timezone.utc)
                 is_complete = done >= total_devices or (
@@ -1687,6 +1689,9 @@ class SchedulerRunner:
                     "unreachable": pending if is_complete else 0,
                     "triggered_by": triggered_by,
                 })
+
+        try:
+            await asyncio.to_thread(_run_sync)
         except Exception:
             logger.exception("finalize_eligibility_runs_error")
 

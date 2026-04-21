@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timezone
 
@@ -789,34 +790,39 @@ async def query_alert_log(
 ):
     """Query the alert fire/clear log from ClickHouse."""
     tenant_id = auth.get("tenant_id")
-    rows = _ensure_utc(ch.query_alert_log(
-        definition_id=definition_id,
-        entity_key=entity_key,
-        device_id=device_id,
-        action=action,
-        definition_name=definition_name,
-        device_name=device_name,
-        message=message,
-        tenant_id=tenant_id,
-        from_ts=from_ts,
-        to_ts=to_ts,
-        sort_by=sort_by,
-        sort_dir=sort_dir,
-        limit=limit,
-        offset=offset,
-    ))
-    total = ch.count_alert_log(
-        definition_id=definition_id,
-        entity_key=entity_key,
-        device_id=device_id,
-        action=action,
-        definition_name=definition_name,
-        device_name=device_name,
-        message=message,
-        tenant_id=tenant_id,
-        from_ts=from_ts,
-        to_ts=to_ts,
+    rows_raw, total = await asyncio.gather(
+        asyncio.to_thread(
+            ch.query_alert_log,
+            definition_id=definition_id,
+            entity_key=entity_key,
+            device_id=device_id,
+            action=action,
+            definition_name=definition_name,
+            device_name=device_name,
+            message=message,
+            tenant_id=tenant_id,
+            from_ts=from_ts,
+            to_ts=to_ts,
+            sort_by=sort_by,
+            sort_dir=sort_dir,
+            limit=limit,
+            offset=offset,
+        ),
+        asyncio.to_thread(
+            ch.count_alert_log,
+            definition_id=definition_id,
+            entity_key=entity_key,
+            device_id=device_id,
+            action=action,
+            definition_name=definition_name,
+            device_name=device_name,
+            message=message,
+            tenant_id=tenant_id,
+            from_ts=from_ts,
+            to_ts=to_ts,
+        ),
     )
+    rows = _ensure_utc(rows_raw)
     return {
         "status": "success",
         "data": rows,
