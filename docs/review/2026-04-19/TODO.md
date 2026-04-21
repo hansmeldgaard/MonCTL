@@ -67,7 +67,7 @@
 
 ## Wave 3 — Large initiatives (L)
 
-- [ ] **F-X-001** Per-collector API keys (umbrella: fixes F-CEN-014/015/016 + F-COL-026). **Single biggest return on investment.**
+- [~] **F-X-001** Per-collector API keys — **Phase 1+2 shipped (#120)**: central accepts per-collector keys on `/api/v1/*` and returns `auth["collector_id"]`; collector prefers per-collector key over shared secret on all REST + WS calls. Shared secret kept as bootstrap fallback. **Phase 3 still open**: ownership enforcement on `/jobs`, `/results`, `/credentials`, `/cache/push` — the PR that actually closes F-CEN-014/015/016. Phase 4 (peer gRPC auth) subsumes F-COL-026.
 - [ ] **F-CEN-024 + F-CEN-025** Migrate to async ClickHouse client (or pooled sync); remove `_LockedClient` global lock
 - [ ] **F-CEN-037** Add `tenant_id` to ClickHouse `logs` table + backfill + ingest path update
 - [ ] **F-WEB-025** Add `React.lazy` to 6+ detail pages
