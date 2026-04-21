@@ -54,12 +54,12 @@ export function AlertsPage() {
     isLoading: alertsLoading,
     isFetching: activeFetching,
   } = useAlertInstances({ state: "firing", ...activeListState.params });
-  const activeAlerts: AlertEntity[] = (activeResponse as any)?.data ?? [];
-  const activeMeta = (activeResponse as any)?.meta ?? {
-    limit: activeListState.pageSize,
-    offset: 0,
-    count: 0,
-    total: 0,
+  const activeAlerts: AlertEntity[] = activeResponse?.data ?? [];
+  const activeMeta = {
+    limit: activeResponse?.meta?.limit ?? activeListState.pageSize,
+    offset: activeResponse?.meta?.offset ?? 0,
+    count: activeResponse?.meta?.count ?? 0,
+    total: activeResponse?.meta?.total ?? 0,
   };
 
   const defsListState = useListState({
@@ -78,11 +78,11 @@ export function AlertsPage() {
     isFetching: defsFetching,
   } = useAlertRules(defsListState.params);
   const definitions = defsResponse?.data ?? [];
-  const defsMeta = (defsResponse as any)?.meta ?? {
-    limit: 50,
-    offset: 0,
-    count: 0,
-    total: 0,
+  const defsMeta = {
+    limit: defsResponse?.meta?.limit ?? 50,
+    offset: defsResponse?.meta?.offset ?? 0,
+    count: defsResponse?.meta?.count ?? 0,
+    total: defsResponse?.meta?.total ?? 0,
   };
 
   const logListState = useListState({
@@ -107,11 +107,11 @@ export function AlertsPage() {
     ...logListState.params,
   });
   const logEntries = logResponse?.data ?? [];
-  const logMeta = (logResponse as any)?.meta ?? {
-    limit: logListState.pageSize,
-    offset: 0,
-    count: 0,
-    total: 0,
+  const logMeta = {
+    limit: logResponse?.meta?.limit ?? logListState.pageSize,
+    offset: logResponse?.meta?.offset ?? 0,
+    count: logResponse?.meta?.count ?? 0,
+    total: logResponse?.meta?.total ?? 0,
   };
 
   const isLoading =

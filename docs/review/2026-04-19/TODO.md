@@ -72,7 +72,7 @@
 - [ ] **F-CEN-037** Add `tenant_id` to ClickHouse `logs` table + backfill + ingest path update
 - [x] **F-WEB-025** Lazy-load every route via `React.lazy` + `<Suspense>` (#123) — deployed; verified chunked output: `DevicesPage`, `SystemHealthPage`, `DeviceDetailPage` each load on-demand
 - [ ] **F-WEB-026** Split `DeviceDetailPage.tsx` (8025 lines) by tab into routed sub-pages
-- [ ] **F-WEB-027** Remove `any`/`as any` casts; prioritise DeviceDetailPage (19), SettingsPage (6), AlertsPage (4)
+- [x] **F-WEB-027** Remove `any`/`as any` casts — all 29 in DeviceDetailPage/SettingsPage/AlertsPage removed; added `role` to `CheckResult`, typed `pollNow` response shape, introduced local union aliases for iface prefs. Deployed + verified.
 - [ ] **F-X-005** Zod schemas on the 10-15 most-used frontend responses (Option A) — or OpenAPI codegen (Option B)
 - [ ] **F-X-007** E2E harness: docker-compose central + ClickHouse + stub collector; nightly CI
 - [ ] **F-WEB-030** Vitest + RTL on shared primitives

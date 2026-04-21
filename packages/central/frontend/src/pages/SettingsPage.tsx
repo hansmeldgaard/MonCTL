@@ -401,8 +401,8 @@ function ChangePasswordCard() {
       setConfirmPw("");
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
-    } catch (e: any) {
-      setError(e?.message ?? "Failed to change password");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to change password");
     }
   }
 
@@ -467,9 +467,13 @@ function InterfaceDefaultsCard() {
   const updateIfacePrefs = useUpdateInterfacePreferences();
   const [saved, setSaved] = useState(false);
 
-  const handleChange = (
-    data: Parameters<typeof updateIfacePrefs.mutate>[0],
-  ) => {
+  type IfacePrefs = Parameters<typeof updateIfacePrefs.mutate>[0];
+  type IfaceStatusFilter = NonNullable<IfacePrefs["iface_status_filter"]>;
+  type IfaceTrafficUnit = NonNullable<IfacePrefs["iface_traffic_unit"]>;
+  type IfaceChartMetric = NonNullable<IfacePrefs["iface_chart_metric"]>;
+  type IfaceTimeRange = NonNullable<IfacePrefs["iface_time_range"]>;
+
+  const handleChange = (data: IfacePrefs) => {
     updateIfacePrefs.mutate(data, {
       onSuccess: () => {
         setSaved(true);
@@ -501,7 +505,9 @@ function InterfaceDefaultsCard() {
             <Select
               value={user?.iface_status_filter ?? "all"}
               onChange={(e) =>
-                handleChange({ iface_status_filter: e.target.value as any })
+                handleChange({
+                  iface_status_filter: e.target.value as IfaceStatusFilter,
+                })
               }
               className="w-full"
             >
@@ -518,7 +524,9 @@ function InterfaceDefaultsCard() {
             <Select
               value={user?.iface_traffic_unit ?? "auto"}
               onChange={(e) =>
-                handleChange({ iface_traffic_unit: e.target.value as any })
+                handleChange({
+                  iface_traffic_unit: e.target.value as IfaceTrafficUnit,
+                })
               }
               className="w-full"
             >
@@ -536,7 +544,9 @@ function InterfaceDefaultsCard() {
             <Select
               value={user?.iface_chart_metric ?? "traffic"}
               onChange={(e) =>
-                handleChange({ iface_chart_metric: e.target.value as any })
+                handleChange({
+                  iface_chart_metric: e.target.value as IfaceChartMetric,
+                })
               }
               className="w-full"
             >
@@ -550,7 +560,9 @@ function InterfaceDefaultsCard() {
             <Select
               value={user?.iface_time_range ?? "24h"}
               onChange={(e) =>
-                handleChange({ iface_time_range: e.target.value as any })
+                handleChange({
+                  iface_time_range: e.target.value as IfaceTimeRange,
+                })
               }
               className="w-full"
             >
