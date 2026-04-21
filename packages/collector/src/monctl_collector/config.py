@@ -60,6 +60,16 @@ class CollectorConfig:
     scheduling: SchedulingConfig = field(default_factory=SchedulingConfig)
     apps: AppsConfig = field(default_factory=AppsConfig)
 
+    def effective_auth_token(self) -> str:
+        """Token to send on `/api/v1/*` requests and the WS command channel.
+
+        Prefers the per-collector API key (issued at registration, one-per-collector
+        so central can scope ownership — F-CEN-014/015/016). Falls back to the
+        fleet-wide shared secret (`central.api_key`) for bootstrap and for
+        collectors that haven't re-registered yet.
+        """
+        return self.collector_api_key or self.central.api_key or ""
+
 
 def load_config(yaml_path: str = "/etc/collector/config.yaml") -> CollectorConfig:
     """Load config from YAML file, then override with environment variables.
@@ -188,9 +198,10 @@ def load_config(yaml_path: str = "/etc/collector/config.yaml") -> CollectorConfi
         raise RuntimeError(
             "central.url is required — set MONCTL_CENTRAL_URL or central.url in config.yaml"
         )
-    if not cfg.central.api_key:
+    if not cfg.effective_auth_token():
         raise RuntimeError(
-            "central.api_key is required — set MONCTL_CENTRAL_API_KEY or central.api_key in config.yaml"
+            "no auth token configured — set MONCTL_CENTRAL_API_KEY (bootstrap/shared) "
+            "or provision a per-collector api_key via registration (setup.yaml)"
         )
 
     return cfg
