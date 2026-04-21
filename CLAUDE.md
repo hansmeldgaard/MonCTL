@@ -319,6 +319,36 @@ SSH user: `monctl` for all servers.
 
 ---
 
+## Known pitfalls
+
+These have each bitten the project at least once. Read them before touching the named subsystem.
+
+**Nullable DB fields in API responses** — Use `meta.get("key") or default`, NOT `meta.get("key", default)`. If the column is nullable and the row has `NULL`, the key _exists_ with value `None` and the second form returns `None`. This broke `snmp_check` v2.0.0 fleet-wide when `entry_class` was null.
+
+**Collector delta-sync** — `/api/v1/jobs` filters `AppAssignment.updated_at > since`. Raw-SQL updates to `app_assignments` (or any delta-sync-served table) MUST `SET updated_at=now()` in the same statement, or collectors keep serving the cached definition. SQLAlchemy ORM does this automatically via `onupdate`; raw SQL does not.
+
+**ClickHouse materialized view schema changes** — MVs created with `AS SELECT * FROM base` freeze their column list. `ALTER TABLE base ADD COLUMN` won't propagate to the MV; `ALTER MATERIALIZED VIEW … MODIFY ORDER BY` doesn't exist. Changes to a `*_latest` MV's columns or sort key require a guarded DROP+CREATE in the startup migration (compare live `system.tables.sorting_key` to expected, drop+recreate only if drifted).
+
+**Poller apps — timing and error categorisation** — `start = time.time()` must be the **first** statement of `poll()`. Every `PollResult` return must compute `execution_time_ms = int((time.time() - start) * 1000)` immediately before the return. Every error `PollResult` must set `error_category` to `"device"` (unreachable/timeout), `"config"` (missing connector/credential), or `"app"` (bug/crash); empty string = no error.
+
+**Poller debug logging** — Use stdlib `logging.getLogger(__name__)` and printf-style formatting only: `logger.debug("event key=%s", val)`. The central packs/service.py already had this bug twice: structlog-style kwargs (`logger.warning("x", key=v)`) raise `TypeError` at runtime and silently fail pack imports. In pollers, dense `logger.debug(...)` calls (~20–40 per poll) are free in prod (no-op) and essential for the Assignment Debug Run feature; add them by default.
+
+**Connector rewrites — preserve every credential-key name** — Built-in connectors (esp. SNMP/SSH) read credentials via `credential.get(...)`. Prod credential templates may supply different key names than the "canonical" one in code. Before bumping a connector, enumerate every template's `fields[].name` and keep `get(canonical) or get(legacy, default)` fallbacks for all of them. Dropping one broke SNMPv3 fleet-wide in minutes (2026-04-20).
+
+**Batch freshness queries must filter per-entity** — Never `WHERE timestamp > min(per_entity_cutoff)` across heterogeneous entities. The global-min answers "newer than the _oldest_ cutoff", not "newer than each entity's own cutoff". Use `GROUP BY entity_id` + per-entity comparison in code. This fired alerts every 30s instead of once per datapoint through 3 debug iterations before it was identified.
+
+**Frontend `node_modules` shadows container install** — `Dockerfile.central` COPYs `packages/central/frontend/` into the image. Any host `node_modules` (from a local type-check, playwright install, etc.) overlays the container's fresh `npm install`, causing `tsc: not found` at `npm run build`. Before `./deploy.sh central`, delete it: `find packages/central/frontend/node_modules -depth -delete`.
+
+**Regenerated gRPC stub needs relative import** — `protoc` emits `import collector_pb2 as collector__pb2` (absolute) in `collector_pb2_grpc.py`. That fails inside the installed wheel (`ModuleNotFoundError`). After any regeneration, change it to `from . import collector_pb2 as collector__pb2`.
+
+**Frontend zod schemas are telemetry, not gates** — `apiGetSafe(..., Schema)` runs `safeParse` and logs drift via `console.warn("[schema-drift] …")`; it never throws. TypeScript stays the source of truth for types. Schemas only list fields the UI reads. Don't try to make `z.infer<typeof Schema>` match the TS type — the generic is loosened on purpose so schemas can lag types without breaking tsc.
+
+**Alembic migrations and rebases** — When rebasing a long-lived branch onto main, check for duplicate revision IDs and carry any unmerged migrations forward. Deploying from a branch missing migrations the DB already ran will fail at startup with "Can't locate revision". Always `git log --oneline main..HEAD -- '*/alembic/versions/'` before `./deploy.sh`.
+
+**PAT lacks `workflow` scope** — Pushes that touch `.github/workflows/*.yml` are rejected with `refusing to allow a Personal Access Token…`. Before composing a commit, `git diff --stat -- .github/workflows/` and split the change if non-empty. The user commits workflow changes via web UI or a locally-scoped token.
+
+---
+
 ## Playwright MCP (Browser Automation)
 
 **Target URL**: `https://10.145.210.40` (HAProxy VIP)

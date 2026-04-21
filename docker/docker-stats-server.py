@@ -33,7 +33,9 @@ COLLECT_INTERVAL = int(os.environ.get("COLLECT_INTERVAL", "15"))
 PUSH_URL = os.environ.get("MONCTL_PUSH_URL", "")
 PUSH_API_KEY = os.environ.get("MONCTL_PUSH_API_KEY", "")
 PUSH_INTERVAL = int(os.environ.get("MONCTL_PUSH_INTERVAL", "15"))
-PUSH_VERIFY_SSL = os.environ.get("MONCTL_PUSH_VERIFY_SSL", "false").lower() in ("true", "1", "yes")
+# Default to verified TLS; compose files explicitly set "false" on deployments
+# that push to the self-signed HAProxy VIP (F-X-010 — no silent TLS disabling).
+PUSH_VERIFY_SSL = os.environ.get("MONCTL_PUSH_VERIFY_SSL", "true").lower() in ("true", "1", "yes")
 
 _cached_stats: dict = {}
 _cached_stats_lock = threading.Lock()
