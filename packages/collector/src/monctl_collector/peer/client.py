@@ -15,6 +15,7 @@ import json
 import grpc
 import structlog
 
+from monctl_collector.peer.auth import PeerAuthClientInterceptor, get_peer_token
 from monctl_collector.proto import collector_pb2 as pb
 from monctl_collector.proto import collector_pb2_grpc as pb_grpc
 
@@ -38,7 +39,11 @@ class PeerClient:
         self._stub: pb_grpc.CollectorPeerStub | None = None
 
     async def connect(self) -> None:
-        self._channel = grpc.aio.insecure_channel(self._address, options=_CHANNEL_OPTIONS)
+        token = get_peer_token()
+        interceptors = [PeerAuthClientInterceptor(token)] if token else []
+        self._channel = grpc.aio.insecure_channel(
+            self._address, options=_CHANNEL_OPTIONS, interceptors=interceptors,
+        )
         self._stub = pb_grpc.CollectorPeerStub(self._channel)
 
     async def close(self) -> None:
