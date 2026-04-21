@@ -53,7 +53,7 @@
 - [x] **F-CEN-022** DSL compiler hardening + adversarial test corpus (#114)
 - [x] **F-COL-030** Move pip API key out of `PIP_INDEX_URL` env → temp `pip.conf` with 0o600
 - [x] **F-COL-031** Validate pip requirement strings; `--require-hashes`, `--no-build-isolation` (#110 — allowlist + argv flag rejection; hash enforcement deferred until packs supply hashes)
-- [ ] **F-COL-026** Add auth on the peer gRPC channel (UDS or shared bearer)
+- [x] **F-COL-026** Add auth on the peer gRPC channel (#122) — `MONCTL_PEER_TOKEN` env var + gRPC interceptors on both ends; deployed and enforcing on all 4 worker hosts as of 2026-04-21
 - [x] **F-COL-036** Enforce max-rows on forwarder SQLite + FIFO drop
 - [x] **F-COL-038** Batch-id + server-side dedup for idempotent forwarder retries (#113)
 - [x] **F-COL-044** Regex filter + rate limiting in log shipper
@@ -67,7 +67,7 @@
 
 ## Wave 3 — Large initiatives (L)
 
-- [~] **F-X-001** Per-collector API keys — **Phase 1+2 (#120) + Phase 3 (#121) shipped**. Central accepts per-collector keys on `/api/v1/*`; collector prefers its per-collector key over the shared secret on all REST + WS calls. Ownership is enforced: `/results`, `/credentials/{name}`, `/app-cache/push` already wired up in #107 (now reading the cryptographically-bound `auth["collector_id"]` instead of an `X-Collector-Id` header hint); `/jobs` in #121 rejects cross-collector queries under per-collector auth. Shared secret kept as bootstrap fallback. **Remaining**: Phase 4 (peer gRPC auth, subsumes F-COL-026) + sunset the shared secret once every collector has migrated.
+- [x] **F-X-001** Per-collector API keys — **Phase 1+2 (#120), Phase 3 (#121), Phase 4 (#122) all shipped**. Central accepts per-collector keys on `/api/v1/*`; collector prefers its per-collector key over the shared secret on all REST + WS calls; ownership enforced on `/jobs`, `/results`, `/credentials`, `/app-cache/push`; peer gRPC channel now authenticated via shared token (F-COL-026). **Remaining**: sunset the `/api/v1/*` shared secret once fleet has fully migrated.
 - [ ] **F-CEN-024 + F-CEN-025** Migrate to async ClickHouse client (or pooled sync); remove `_LockedClient` global lock
 - [ ] **F-CEN-037** Add `tenant_id` to ClickHouse `logs` table + backfill + ingest path update
 - [ ] **F-WEB-025** Add `React.lazy` to 6+ detail pages
