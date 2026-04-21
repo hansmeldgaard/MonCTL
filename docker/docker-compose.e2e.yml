@@ -1,0 +1,83 @@
+services:
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_USER: monctl
+      POSTGRES_PASSWORD: monctl
+      POSTGRES_DB: monctl
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U monctl"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.3-alpine
+    environment:
+      CLICKHOUSE_DB: monctl
+      CLICKHOUSE_USER: monctl
+      CLICKHOUSE_PASSWORD: monctl
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "clickhouse-client",
+          "-u",
+          "monctl",
+          "--password",
+          "monctl",
+          "--query",
+          "SELECT 1",
+        ]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  central:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.central
+    ports:
+      - "127.0.0.1:18443:8443"
+    environment:
+      MONCTL_DATABASE_URL: postgresql+asyncpg://monctl:monctl@postgres:5432/monctl
+      MONCTL_REDIS_URL: redis://redis:6379/0
+      MONCTL_CLICKHOUSE_HOSTS: clickhouse
+      MONCTL_CLICKHOUSE_PORT: 8123
+      MONCTL_CLICKHOUSE_DATABASE: monctl
+      MONCTL_CLICKHOUSE_USER: monctl
+      MONCTL_CLICKHOUSE_PASSWORD: monctl
+      MONCTL_CLICKHOUSE_SECURE: "false"
+      MONCTL_CLICKHOUSE_CLUSTER: ""
+      MONCTL_HOST: 0.0.0.0
+      MONCTL_PORT: 8443
+      MONCTL_DEBUG: "true"
+      MONCTL_COOKIE_SECURE: "false"
+      MONCTL_ENCRYPTION_KEY: "528e5bc0e961f2e5ab7a531e02e6067cc661f4367f033398fe4e84284565f94e"
+      MONCTL_JWT_SECRET_KEY: "7f3a9c1d8e4b2f6a0d5c7e3b9a1f4d6c8e2b5a7d0f3c6e9b1a4d7f2c5e8b0a3"
+      MONCTL_ADMIN_USERNAME: "admin"
+      MONCTL_ADMIN_PASSWORD: "e2e-test-password"
+      MONCTL_COLLECTOR_API_KEY: "e2e-collector-shared-secret"
+      MONCTL_NODE_NAME: "e2e-central"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8443/v1/health"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 15s
