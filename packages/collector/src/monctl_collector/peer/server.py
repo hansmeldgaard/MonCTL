@@ -16,6 +16,7 @@ import json
 import grpc
 import structlog
 
+from monctl_collector.peer.auth import PeerAuthServerInterceptor, get_peer_token
 from monctl_collector.proto import collector_pb2 as pb
 from monctl_collector.proto import collector_pb2_grpc as pb_grpc
 
@@ -224,9 +225,24 @@ async def start_server(
 
     The caller is responsible for calling server.wait_for_termination().
     """
-    server = grpc.aio.server()
+    interceptors: list = []
+    token = get_peer_token()
+    if token:
+        interceptors.append(PeerAuthServerInterceptor(token))
+        logger.info("peer_auth_enabled")
+    else:
+        # Grandfathered path — deployments that haven't provisioned the token
+        # yet stay wide-open but surface a boot warning that audit can pick
+        # up. Plan is to drop this branch once the fleet has rolled.
+        logger.warning(
+            "peer_auth_disabled",
+            reason="MONCTL_PEER_TOKEN unset; gRPC channel is unauthenticated",
+            finding="F-COL-026",
+        )
+
+    server = grpc.aio.server(interceptors=interceptors) if interceptors else grpc.aio.server()
     pb_grpc.add_CollectorPeerServicer_to_server(servicer, server)
     server.add_insecure_port(address)
     await server.start()
-    logger.info("grpc_server_started", address=address)
+    logger.info("grpc_server_started", address=address, authenticated=bool(token))
     return server

@@ -21,6 +21,11 @@ services:
       MONCTL_COLLECTOR_ID: ${MONCTL_COLLECTOR_ID:-}
       MONCTL_COLLECTOR_API_KEY: ${CENTRAL_API_KEY}
       MONCTL_SETUP_YAML: /etc/monctl/setup.yaml
+      # F-COL-026: shared secret for the peer gRPC channel between cache-node
+      # and poll-worker-1. Blank value stays in the grandfathered "no auth"
+      # mode — fine for code-first rollout; generate a random value per host
+      # in .env and redeploy to enforce.
+      MONCTL_PEER_TOKEN: ${PEER_TOKEN:-}
       # Reuse the same app/venv store as the poll-worker so Debug Run can
       # execute apps inline without re-installing their dependencies.
       MONCTL_APPS_DIR: /shared/apps
@@ -57,6 +62,7 @@ services:
       MONCTL_CENTRAL_URL: ${CENTRAL_URL}
       MONCTL_CENTRAL_API_KEY: ${CENTRAL_API_KEY}
       MONCTL_VERIFY_SSL: ${VERIFY_SSL:-true}
+      MONCTL_PEER_TOKEN: ${PEER_TOKEN:-}
       MONCTL_APPS_DIR: /data/apps
       MONCTL_VENVS_DIR: /data/venvs
       MONCTL_DB_PATH: /data/worker.db
