@@ -70,7 +70,7 @@
 - [x] **F-X-001** Per-collector API keys — **Phase 1+2 (#120), Phase 3 (#121), Phase 4 (#122) all shipped**. Central accepts per-collector keys on `/api/v1/*`; collector prefers its per-collector key over the shared secret on all REST + WS calls; ownership enforced on `/jobs`, `/results`, `/credentials`, `/app-cache/push`; peer gRPC channel now authenticated via shared token (F-COL-026). **Remaining**: sunset the `/api/v1/*` shared secret once fleet has fully migrated.
 - [ ] **F-CEN-024 + F-CEN-025** Migrate to async ClickHouse client (or pooled sync); remove `_LockedClient` global lock
 - [ ] **F-CEN-037** Add `tenant_id` to ClickHouse `logs` table + backfill + ingest path update
-- [ ] **F-WEB-025** Add `React.lazy` to 6+ detail pages
+- [x] **F-WEB-025** Lazy-load every route via `React.lazy` + `<Suspense>` (#123) — deployed; verified chunked output: `DevicesPage`, `SystemHealthPage`, `DeviceDetailPage` each load on-demand
 - [ ] **F-WEB-026** Split `DeviceDetailPage.tsx` (8025 lines) by tab into routed sub-pages
 - [ ] **F-WEB-027** Remove `any`/`as any` casts; prioritise DeviceDetailPage (19), SettingsPage (6), AlertsPage (4)
 - [ ] **F-X-005** Zod schemas on the 10-15 most-used frontend responses (Option A) — or OpenAPI codegen (Option B)
