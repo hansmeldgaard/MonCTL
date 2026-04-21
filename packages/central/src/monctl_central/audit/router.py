@@ -7,6 +7,7 @@ permission; admins and management API keys bypass as usual.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -101,7 +102,8 @@ async def list_mutations(
 ):
     """Query mutation audit events from ClickHouse."""
     ch = get_clickhouse()
-    rows, total = ch.query_audit_mutations(
+    rows, total = await asyncio.to_thread(
+        ch.query_audit_mutations,
         user_id=user_id,
         username=username,
         resource_type=resource_type,
@@ -142,7 +144,8 @@ async def latest_mutations_by_resource(
     if len(ids) > 500:
         raise HTTPException(400, "too many resource_ids (max 500)")
     ch = get_clickhouse()
-    rows = ch.query_latest_mutation_per_resource(
+    rows = await asyncio.to_thread(
+        ch.query_latest_mutation_per_resource,
         resource_type=resource_type,
         resource_ids=ids,
     )
@@ -165,7 +168,8 @@ async def resource_history(
 ):
     """All mutations on a specific resource, newest first."""
     ch = get_clickhouse()
-    rows, total = ch.query_audit_mutations(
+    rows, total = await asyncio.to_thread(
+        ch.query_audit_mutations,
         resource_type=resource_type,
         resource_id=resource_id,
         limit=limit,
@@ -201,7 +205,9 @@ async def user_activity(
 
     # Mutations
     ch = get_clickhouse()
-    mut_rows, _ = ch.query_audit_mutations(user_id=user_id, limit=limit)
+    mut_rows, _ = await asyncio.to_thread(
+        ch.query_audit_mutations, user_id=user_id, limit=limit
+    )
     for r in mut_rows:
         ts = r.get("timestamp")
         if hasattr(ts, "isoformat"):

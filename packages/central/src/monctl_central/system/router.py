@@ -2263,21 +2263,45 @@ async def get_collector_errors(
     # Category counts
     category_counts: dict[str, int] = {}
 
-    for table in tables:
-        # Top error messages with category
-        try:
-            rows = ch.query(
-                f"SELECT error_message, error_category, count() AS cnt"
-                f" FROM {table}"
-                f" WHERE collector_name = %(cn)s"
-                f"   AND executed_at >= '{cutoff}'"
-                f"   AND error_message != ''"
-                f" GROUP BY error_message, error_category"
-                f" ORDER BY cnt DESC"
-                f" LIMIT 20",
-                {"cn": collector_name},
-            )
-            for r in rows.result_rows:
+    async def _top_errors_for(table: str):
+        return await asyncio.to_thread(
+            ch.query,
+            f"SELECT error_message, error_category, count() AS cnt"
+            f" FROM {table}"
+            f" WHERE collector_name = %(cn)s"
+            f"   AND executed_at >= '{cutoff}'"
+            f"   AND error_message != ''"
+            f" GROUP BY error_message, error_category"
+            f" ORDER BY cnt DESC"
+            f" LIMIT 20",
+            {"cn": collector_name},
+        )
+
+    async def _per_app_for(table: str):
+        return await asyncio.to_thread(
+            ch.query,
+            f"SELECT app_name,"
+            f"   countIf(error_message != '') AS errors,"
+            f"   count() AS total"
+            f" FROM {table}"
+            f" WHERE collector_name = %(cn)s"
+            f"   AND executed_at >= '{cutoff}'"
+            f" GROUP BY app_name",
+            {"cn": collector_name},
+        )
+
+    coros = []
+    for t in tables:
+        coros.append(_top_errors_for(t))
+        coros.append(_per_app_for(t))
+    results = await asyncio.gather(*coros, return_exceptions=True)
+
+    for idx, outcome in enumerate(results):
+        if isinstance(outcome, BaseException):
+            continue
+        if idx % 2 == 0:
+            # top-errors query
+            for r in outcome.result_rows:
                 msg = r[0][:200]
                 cat = r[1] or ""
                 cnt = r[2]
@@ -2286,27 +2310,12 @@ async def get_collector_errors(
                 else:
                     top_errors[msg] = {"message": msg, "category": cat, "count": cnt}
                 category_counts[cat] = category_counts.get(cat, 0) + cnt
-        except Exception:
-            pass
-
-        # Per-app error/total counts
-        try:
-            rows = ch.query(
-                f"SELECT app_name,"
-                f"   countIf(error_message != '') AS errors,"
-                f"   count() AS total"
-                f" FROM {table}"
-                f" WHERE collector_name = %(cn)s"
-                f"   AND executed_at >= '{cutoff}'"
-                f" GROUP BY app_name",
-                {"cn": collector_name},
-            )
-            for r in rows.result_rows:
+        else:
+            # per-app query
+            for r in outcome.result_rows:
                 name = r[0] or "unknown"
                 app_errors[name] = app_errors.get(name, 0) + r[1]
                 app_totals[name] = app_totals.get(name, 0) + r[2]
-        except Exception:
-            pass
 
     # Sort and limit
     sorted_errors = sorted(top_errors.values(), key=lambda x: -x["count"])[:15]

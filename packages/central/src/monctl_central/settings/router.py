@@ -76,12 +76,14 @@ async def update_settings(
     # Update ClickHouse logs TTL when retention changes
     if "log_retention_days" in request.settings:
         try:
+            import asyncio as _aio
             from monctl_central.dependencies import get_clickhouse
             days = int(request.settings["log_retention_days"])
             if 1 <= days <= 365:
                 ch = get_clickhouse()
-                ch._get_client().command(
-                    f"ALTER TABLE logs MODIFY TTL timestamp + INTERVAL {days} DAY"
+                await _aio.to_thread(
+                    ch._get_client().command,
+                    f"ALTER TABLE logs MODIFY TTL timestamp + INTERVAL {days} DAY",
                 )
         except Exception:
             pass  # Non-critical — TTL update is best-effort

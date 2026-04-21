@@ -8,6 +8,7 @@ Logs are also written to ClickHouse for centralized log collection.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import datetime, timezone
 
@@ -182,7 +183,7 @@ async def push_docker_stats(
             rows = _container_metric_rows(label, payload)
             if rows:
                 ch = get_clickhouse()
-                ch.insert_container_metrics(rows)
+                await asyncio.to_thread(ch.insert_container_metrics, rows)
         except Exception:
             logger.debug("docker_push_container_metrics_ch_failed", label=label)
 
@@ -192,7 +193,9 @@ async def push_docker_stats(
         # "was this node saturated at T?" queries. One row per push.
         try:
             ch = get_clickhouse()
-            ch.insert_host_metrics([_host_metrics_row(label, payload)])
+            await asyncio.to_thread(
+                ch.insert_host_metrics, [_host_metrics_row(label, payload)]
+            )
         except Exception:
             logger.debug("docker_push_host_metrics_ch_failed", label=label)
 
@@ -225,11 +228,14 @@ async def push_docker_stats(
                         "message": msg,
                     })
             if rows:
-                ch.insert("logs", rows, column_names=[
-                    "timestamp", "collector_id", "collector_name", "host_label",
-                    "source_type", "container_name", "image_name",
-                    "level", "stream", "message",
-                ])
+                await asyncio.to_thread(
+                    ch.insert, "logs", rows,
+                    column_names=[
+                        "timestamp", "collector_id", "collector_name", "host_label",
+                        "source_type", "container_name", "image_name",
+                        "level", "stream", "message",
+                    ],
+                )
         except Exception:
             logger.debug("docker_push_logs_ch_failed", label=label)
 

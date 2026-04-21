@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 import uuid
 
@@ -2168,7 +2169,8 @@ async def get_app_config_keys(
         from monctl_central.dependencies import get_clickhouse
 
         ch = get_clickhouse()
-        rows = ch._get_client().query(
+        rows = await asyncio.to_thread(
+            ch._get_client().query,
             "SELECT DISTINCT config_key FROM config WHERE app_id = %(app_id)s ORDER BY config_key",
             parameters={"app_id": str(app_id)},
         )
@@ -2640,7 +2642,7 @@ async def test_eligibility(
             "oid_results": "{}", "reason": "Already assigned", "probed_at": now,
         })
 
-    ch.insert_eligibility_run({
+    await asyncio.to_thread(ch.insert_eligibility_run, {
         "run_id": run_id, "app_id": str(app.id), "app_name": app.name,
         "status": "completed", "started_at": now, "finished_at": now,
         "duration_ms": 0, "total_devices": len(devices), "tested": len(devices),
@@ -2648,7 +2650,7 @@ async def test_eligibility(
         "triggered_by": triggered_by,
     })
     if device_records:
-        ch.insert_eligibility_results(device_records)
+        await asyncio.to_thread(ch.insert_eligibility_results, device_records)
 
     return {"status": "success", "data": {
         "run_id": run_id, "total_devices": len(devices),
@@ -2691,7 +2693,7 @@ async def _test_eligibility_probe(
     total_devices = len(not_assigned) + len(already)
 
     # Create run with status=running
-    ch.insert_eligibility_run({
+    await asyncio.to_thread(ch.insert_eligibility_run, {
         "run_id": run_id, "app_id": str(app.id), "app_name": app.name,
         "status": "running", "started_at": now, "finished_at": now,
         "duration_ms": 0, "total_devices": total_devices, "tested": len(already),
@@ -2708,7 +2710,7 @@ async def _test_eligibility_probe(
             "oid_results": "{}", "reason": "Already assigned", "probed_at": now,
         })
     if already_records:
-        ch.insert_eligibility_results(already_records)
+        await asyncio.to_thread(ch.insert_eligibility_results, already_records)
 
     # Set discovery flags + OID keys for devices to probe
     flagged = 0
@@ -2761,7 +2763,9 @@ async def auto_assign_eligible(
         raise HTTPException(400, detail="No latest version")
 
     # Get eligible devices from the run
-    eligible_rows, _ = ch.query_eligibility_results(run_id, eligible_filter=1, limit=10000, offset=0)
+    eligible_rows, _ = await asyncio.to_thread(
+        ch.query_eligibility_results, run_id, eligible_filter=1, limit=10000, offset=0
+    )
 
     # Filter to selected devices if specified
     selected_ids = set(body.device_ids) if body and body.device_ids else None
@@ -2812,7 +2816,9 @@ async def list_eligibility_runs(
     ch=Depends(get_clickhouse),
     auth: dict = Depends(require_permission("app", "view")),
 ):
-    rows, total = ch.query_eligibility_runs(app_id, limit=limit, offset=offset)
+    rows, total = await asyncio.to_thread(
+        ch.query_eligibility_runs, app_id, limit=limit, offset=offset
+    )
     for r in rows:
         for k in ("started_at", "finished_at"):
             if r.get(k) and hasattr(r[k], "isoformat"):
@@ -2833,7 +2839,9 @@ async def get_eligibility_run_detail(
     auth: dict = Depends(require_permission("app", "view")),
 ):
     # Get run summary
-    runs, _ = ch.query_eligibility_runs(app_id, limit=1, offset=0)
+    runs, _ = await asyncio.to_thread(
+        ch.query_eligibility_runs, app_id, limit=1, offset=0
+    )
     run = None
     for r in runs:
         if str(r.get("run_id")) == run_id:
@@ -2841,7 +2849,9 @@ async def get_eligibility_run_detail(
             break
     if not run:
         # Direct lookup
-        all_runs, _ = ch.query_eligibility_runs(app_id, limit=100, offset=0)
+        all_runs, _ = await asyncio.to_thread(
+            ch.query_eligibility_runs, app_id, limit=100, offset=0
+        )
         for r in all_runs:
             if str(r.get("run_id")) == run_id:
                 run = r
@@ -2856,7 +2866,8 @@ async def get_eligibility_run_detail(
         run[k] = str(run[k])
 
     # Get per-device results
-    device_rows, device_total = ch.query_eligibility_results(
+    device_rows, device_total = await asyncio.to_thread(
+        ch.query_eligibility_results,
         run_id, eligible_filter=eligible_filter, limit=limit, offset=offset,
     )
     for dr in device_rows:

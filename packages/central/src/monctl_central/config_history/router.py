@@ -6,6 +6,7 @@ for tracking configuration changes per device.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import datetime
@@ -79,25 +80,29 @@ async def config_changelog(
     from_dt = datetime.fromisoformat(from_ts.replace("Z", "+00:00")) if from_ts else None
     to_dt = datetime.fromisoformat(to_ts.replace("Z", "+00:00")) if to_ts else None
 
-    rows = ch.query_config_changelog(
-        device_id,
-        app_id=app_id,
-        config_key=config_key,
-        component=component,
-        value=value,
-        from_ts=from_dt,
-        to_ts=to_dt,
-        limit=limit,
-        offset=offset,
-    )
-    total = ch.count_config_changelog(
-        device_id,
-        app_id=app_id,
-        config_key=config_key,
-        component=component,
-        value=value,
-        from_ts=from_dt,
-        to_ts=to_dt,
+    rows, total = await asyncio.gather(
+        asyncio.to_thread(
+            ch.query_config_changelog,
+            device_id,
+            app_id=app_id,
+            config_key=config_key,
+            component=component,
+            value=value,
+            from_ts=from_dt,
+            to_ts=to_dt,
+            limit=limit,
+            offset=offset,
+        ),
+        asyncio.to_thread(
+            ch.count_config_changelog,
+            device_id,
+            app_id=app_id,
+            config_key=config_key,
+            component=component,
+            value=value,
+            from_ts=from_dt,
+            to_ts=to_dt,
+        ),
     )
 
     data = [_fmt_config_row(r) for r in rows]
@@ -119,7 +124,7 @@ async def config_snapshot(
     await _get_device_with_access(device_id, db, auth)
     ch = get_clickhouse()
 
-    rows = ch.query_config_snapshot(device_id, app_id=app_id)
+    rows = await asyncio.to_thread(ch.query_config_snapshot, device_id, app_id=app_id)
     data = [_fmt_config_row(r) for r in rows]
     return {
         "status": "success",
@@ -145,7 +150,9 @@ async def config_diff(
     await _get_device_with_access(device_id, db, auth)
     ch = get_clickhouse()
 
-    rows = ch.query_config_diff(device_id, config_key, app_id=app_id, limit=limit)
+    rows = await asyncio.to_thread(
+        ch.query_config_diff, device_id, config_key, app_id=app_id, limit=limit
+    )
     data = [_fmt_config_row(r) for r in rows]
     return {
         "status": "success",
@@ -166,7 +173,9 @@ async def config_snapshot_at_time(
     await _get_device_with_access(device_id, db, auth)
     ch = get_clickhouse()
 
-    rows = ch.query_config_snapshot_at_time(device_id, at_time, app_id=app_id)
+    rows = await asyncio.to_thread(
+        ch.query_config_snapshot_at_time, device_id, at_time, app_id=app_id
+    )
     data = [_fmt_config_row(r) for r in rows]
     return {
         "status": "success",
@@ -200,8 +209,14 @@ async def config_compare(
         except Exception:
             return ts
 
-    snapshot_a = ch.query_config_snapshot_at_time(device_id, _normalize_ts(time_a), app_id=app_id)
-    snapshot_b = ch.query_config_snapshot_at_time(device_id, _normalize_ts(time_b), app_id=app_id)
+    snapshot_a, snapshot_b = await asyncio.gather(
+        asyncio.to_thread(
+            ch.query_config_snapshot_at_time, device_id, _normalize_ts(time_a), app_id=app_id
+        ),
+        asyncio.to_thread(
+            ch.query_config_snapshot_at_time, device_id, _normalize_ts(time_b), app_id=app_id
+        ),
+    )
 
     map_a = {
         (r.get("component_type", ""), r.get("component", ""), r.get("config_key", "")): r.get("config_value", "")
@@ -267,8 +282,9 @@ async def config_change_timestamps(
     from_dt = datetime.fromisoformat(from_ts.replace("Z", "+00:00")) if from_ts else None
     to_dt = datetime.fromisoformat(to_ts.replace("Z", "+00:00")) if to_ts else None
 
-    rows = ch.query_config_change_timestamps(
-        device_id, app_id=app_id, from_ts=from_dt, to_ts=to_dt
+    rows = await asyncio.to_thread(
+        ch.query_config_change_timestamps,
+        device_id, app_id=app_id, from_ts=from_dt, to_ts=to_dt,
     )
     data = [
         {

@@ -7,6 +7,7 @@ updates the device with category, metadata, and icon.
 
 from __future__ import annotations
 
+import asyncio
 import re
 import uuid as _uuid
 from dataclasses import dataclass
@@ -231,7 +232,7 @@ async def process_discovery_result(
                                     reason = f"OID {check['oid']}: got {val}"
                                     break
 
-                        ch.insert_eligibility_results([{
+                        await asyncio.to_thread(ch.insert_eligibility_results, [{
                             "run_id": run_info["run_id"],
                             "device_id": device_id,
                             "device_name": device.name,
@@ -245,7 +246,7 @@ async def process_discovery_result(
                         changes["eligibility_result"] = "eligible" if is_eligible else "ineligible"
                 elif eligibility_error:
                     # Device was unreachable or probe failed
-                    ch.insert_eligibility_results([{
+                    await asyncio.to_thread(ch.insert_eligibility_results, [{
                         "run_id": run_info["run_id"],
                         "device_id": device_id,
                         "device_name": device.name,
@@ -260,7 +261,9 @@ async def process_discovery_result(
 
                 # Update run progress counters if we inserted a result
                 if "eligibility_result" in changes:
-                    _update_eligibility_run_progress(ch, run_info["run_id"])
+                    await asyncio.to_thread(
+                        _update_eligibility_run_progress, ch, run_info["run_id"]
+                    )
     except Exception:
         logger.exception("eligibility_tracking_failed", device_id=device_id)
 
