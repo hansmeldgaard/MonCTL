@@ -1352,7 +1352,7 @@ async def delete_device(
     if not check_tenant_access(auth, device.tenant_id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     await db.delete(device)
-    ch.delete_devices_data([device_id])
+    await asyncio.to_thread(ch.delete_devices_data, [device_id])
 
 
 class BulkDeleteRequest(BaseModel):
@@ -1374,7 +1374,7 @@ async def bulk_delete_devices(
             await db.delete(device)
             deleted_ids.append(did)
     if deleted_ids:
-        ch.delete_devices_data(deleted_ids)
+        await asyncio.to_thread(ch.delete_devices_data, deleted_ids)
     return {"status": "success", "data": {"deleted": len(deleted_ids)}}
 
 

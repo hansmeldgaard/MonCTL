@@ -10,6 +10,7 @@ Authentication: Bearer token (API key) in Authorization header — same as exist
 
 from __future__ import annotations
 
+import asyncio
 import bisect
 import hashlib
 import json
@@ -2064,7 +2065,7 @@ async def submit_results(
                 await buf.append(table, rows)
             else:
                 try:
-                    ch.insert_by_table(table, rows)
+                    await asyncio.to_thread(ch.insert_by_table, table, rows)
                 except Exception:
                     logger.exception("clickhouse_insert_error", node=request.collector_node, table=table)
 

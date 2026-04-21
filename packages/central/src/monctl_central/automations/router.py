@@ -619,7 +619,7 @@ async def get_run(
         LIMIT 1
     """
     result = await asyncio.to_thread(
-        lambda: ch._client.query(sql, parameters={"run_id": run_id})
+        ch._get_client().query, sql, parameters={"run_id": run_id}
     )
     if not result.result_rows:
         raise HTTPException(status_code=404, detail="Run not found")
