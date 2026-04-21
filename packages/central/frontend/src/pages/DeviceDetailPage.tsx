@@ -1,5 +1,5 @@
-import { useState, useMemo } from "react";
-import { useParams, Link } from "react-router-dom";
+import { lazy, Suspense, useMemo, useState } from "react";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   Activity,
   AlertTriangle,
@@ -41,17 +41,65 @@ import type {
 } from "@/types/api.ts";
 import { formatUptime } from "@/lib/utils.ts";
 
-import { OverviewTab } from "./devices/tabs/OverviewTab.tsx";
-import { PerformanceTab } from "./devices/tabs/PerformanceTab.tsx";
-import { ConfigurationTab } from "./devices/tabs/ConfigurationTab.tsx";
-import { RetentionTab } from "./devices/tabs/RetentionTab.tsx";
-import { InterfacesTab } from "./devices/tabs/InterfacesTab.tsx";
-import { AssignmentsTab } from "./devices/tabs/AssignmentsTab.tsx";
-import { SettingsTab } from "./devices/tabs/SettingsTab.tsx";
-import { ChecksTab } from "./devices/tabs/ChecksTab.tsx";
-import { AlertsTab } from "./devices/tabs/AlertsTab.tsx";
-import { IncidentsTab } from "./devices/tabs/IncidentsTab.tsx";
-import { ThresholdsTab } from "./devices/tabs/ThresholdsTab.tsx";
+// Each tab is its own chunk. Inactive tabs never mount (see TabsContent in
+// components/ui/tabs.tsx), so only the current tab triggers a chunk load.
+const _named =
+  <T extends string>(name: T) =>
+  async (mod: Record<string, unknown>) => ({
+    default: mod[name] as React.ComponentType<{ deviceId: string }>,
+  });
+
+const OverviewTab = lazy(() =>
+  import("./devices/tabs/OverviewTab.tsx").then(_named("OverviewTab")),
+);
+const PerformanceTab = lazy(() =>
+  import("./devices/tabs/PerformanceTab.tsx").then(_named("PerformanceTab")),
+);
+const ConfigurationTab = lazy(() =>
+  import("./devices/tabs/ConfigurationTab.tsx").then(
+    _named("ConfigurationTab"),
+  ),
+);
+const RetentionTab = lazy(() =>
+  import("./devices/tabs/RetentionTab.tsx").then(_named("RetentionTab")),
+);
+const InterfacesTab = lazy(() =>
+  import("./devices/tabs/InterfacesTab.tsx").then(_named("InterfacesTab")),
+);
+const AssignmentsTab = lazy(() =>
+  import("./devices/tabs/AssignmentsTab.tsx").then(_named("AssignmentsTab")),
+);
+const SettingsTab = lazy(() =>
+  import("./devices/tabs/SettingsTab.tsx").then(_named("SettingsTab")),
+);
+const ChecksTab = lazy(() =>
+  import("./devices/tabs/ChecksTab.tsx").then(_named("ChecksTab")),
+);
+const AlertsTab = lazy(() =>
+  import("./devices/tabs/AlertsTab.tsx").then(_named("AlertsTab")),
+);
+const IncidentsTab = lazy(() =>
+  import("./devices/tabs/IncidentsTab.tsx").then(_named("IncidentsTab")),
+);
+const ThresholdsTab = lazy(() =>
+  import("./devices/tabs/ThresholdsTab.tsx").then(_named("ThresholdsTab")),
+);
+
+const VALID_TABS = [
+  "overview",
+  "interfaces",
+  "performance",
+  "configuration",
+  "assignments",
+  "alerts",
+  "incidents",
+  "thresholds",
+  "retention",
+  "settings",
+  "checks",
+] as const;
+type TabKey = (typeof VALID_TABS)[number];
+const DEFAULT_TAB: TabKey = "overview";
 
 function DuplicateBanner({ device }: { device: DeviceModel | undefined }) {
   const meta = (device?.metadata ?? {}) as Record<string, unknown>;
@@ -95,12 +143,20 @@ function DuplicateBanner({ device }: { device: DeviceModel | undefined }) {
 }
 
 export function DeviceDetailPage() {
-  const { id } = useParams<{ id: string }>();
+  const { id, tab } = useParams<{ id: string; tab?: string }>();
+  const navigate = useNavigate();
   const { data: deviceResults, isLoading: resultsLoading } =
     useDeviceResults(id);
   const { data: device, isLoading: deviceLoading } = useDevice(id);
   const { data: allCategories } = useDeviceCategories();
-  const [activeTab, setActiveTab] = useState("overview");
+  const activeTab: TabKey = (VALID_TABS as readonly string[]).includes(
+    tab ?? "",
+  )
+    ? (tab as TabKey)
+    : DEFAULT_TAB;
+  const handleTabChange = (next: string) => {
+    navigate(`/devices/${id}/${next}`, { replace: false });
+  };
 
   const resolveTemplates = useResolveTemplates();
   const autoApplyTemplates = useAutoApplyTemplates();
@@ -336,7 +392,7 @@ export function DeviceDetailPage() {
         )}
       </Dialog>
 
-      <Tabs value={activeTab} onChange={setActiveTab}>
+      <Tabs value={activeTab} onChange={handleTabChange}>
         <TabsList>
           <TabTrigger value="overview">
             <span className="flex items-center gap-1.5">
@@ -406,39 +462,47 @@ export function DeviceDetailPage() {
           </TabTrigger>
         </TabsList>
 
-        <TabsContent value="overview">
-          <OverviewTab deviceId={deviceId} />
-        </TabsContent>
-        <TabsContent value="interfaces">
-          <InterfacesTab deviceId={deviceId} />
-        </TabsContent>
-        <TabsContent value="performance">
-          <PerformanceTab deviceId={deviceId} />
-        </TabsContent>
-        <TabsContent value="configuration">
-          <ConfigurationTab deviceId={deviceId} />
-        </TabsContent>
-        <TabsContent value="assignments">
-          <AssignmentsTab deviceId={deviceId} />
-        </TabsContent>
-        <TabsContent value="alerts">
-          <AlertsTab deviceId={deviceId} />
-        </TabsContent>
-        <TabsContent value="incidents">
-          <IncidentsTab deviceId={deviceId} />
-        </TabsContent>
-        <TabsContent value="thresholds">
-          <ThresholdsTab deviceId={deviceId} />
-        </TabsContent>
-        <TabsContent value="retention">
-          <RetentionTab deviceId={deviceId} />
-        </TabsContent>
-        <TabsContent value="settings">
-          <SettingsTab deviceId={deviceId} />
-        </TabsContent>
-        <TabsContent value="checks">
-          <ChecksTab deviceId={deviceId} />
-        </TabsContent>
+        <Suspense
+          fallback={
+            <div className="flex h-48 items-center justify-center">
+              <Loader2 className="h-6 w-6 animate-spin text-brand-500" />
+            </div>
+          }
+        >
+          <TabsContent value="overview">
+            <OverviewTab deviceId={deviceId} />
+          </TabsContent>
+          <TabsContent value="interfaces">
+            <InterfacesTab deviceId={deviceId} />
+          </TabsContent>
+          <TabsContent value="performance">
+            <PerformanceTab deviceId={deviceId} />
+          </TabsContent>
+          <TabsContent value="configuration">
+            <ConfigurationTab deviceId={deviceId} />
+          </TabsContent>
+          <TabsContent value="assignments">
+            <AssignmentsTab deviceId={deviceId} />
+          </TabsContent>
+          <TabsContent value="alerts">
+            <AlertsTab deviceId={deviceId} />
+          </TabsContent>
+          <TabsContent value="incidents">
+            <IncidentsTab deviceId={deviceId} />
+          </TabsContent>
+          <TabsContent value="thresholds">
+            <ThresholdsTab deviceId={deviceId} />
+          </TabsContent>
+          <TabsContent value="retention">
+            <RetentionTab deviceId={deviceId} />
+          </TabsContent>
+          <TabsContent value="settings">
+            <SettingsTab deviceId={deviceId} />
+          </TabsContent>
+          <TabsContent value="checks">
+            <ChecksTab deviceId={deviceId} />
+          </TabsContent>
+        </Suspense>
       </Tabs>
     </div>
   );
