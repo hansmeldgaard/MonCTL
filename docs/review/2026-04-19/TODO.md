@@ -72,7 +72,7 @@
 - [x] **F-CEN-037** `/v1/logs` + `/v1/logs/filters` gated to `require_admin` — logs are infrastructure (docker stdout + app logs from collectors) with no natural tenant attribution; admin-only matches actual use (`SystemHealthPage`, `DockerInfraPage`) and closes the leak without needing a partition column. `tenant_id` DDL column left as default-zero for future use.
 - [x] **F-WEB-025** Lazy-load every route via `React.lazy` + `<Suspense>` (#123) — deployed; verified chunked output: `DevicesPage`, `SystemHealthPage`, `DeviceDetailPage` each load on-demand
 - [ ] **F-WEB-026** Split `DeviceDetailPage.tsx` (8025 lines) by tab into routed sub-pages
-- [ ] **F-WEB-027** Remove `any`/`as any` casts; prioritise DeviceDetailPage (19), SettingsPage (6), AlertsPage (4)
+- [x] **F-WEB-027** Remove `any`/`as any` casts — all 29 in DeviceDetailPage/SettingsPage/AlertsPage removed; added `role` to `CheckResult`, typed `pollNow` response shape, introduced local union aliases for iface prefs. Deployed + verified.
 - [ ] **F-X-005** Zod schemas on the 10-15 most-used frontend responses (Option A) — or OpenAPI codegen (Option B)
 - [ ] **F-X-007** E2E harness: docker-compose central + ClickHouse + stub collector; nightly CI
 - [ ] **F-WEB-030** Vitest + RTL on shared primitives

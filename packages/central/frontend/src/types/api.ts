@@ -299,6 +299,7 @@ export interface CheckResult {
   assignment_id: string;
   collector_id: string | null;
   app_name: string;
+  role?: string | null;
   state: number;
   state_name: string;
   output: string;

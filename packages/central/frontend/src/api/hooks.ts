@@ -1350,7 +1350,10 @@ export function usePollConfigNow() {
       deviceId: string;
       assignmentId: string;
     }) =>
-      apiPost(`/devices/${deviceId}/poll-now`, { assignment_id: assignmentId }),
+      apiPost<{ ws_notified: number; poll_triggered: number }>(
+        `/devices/${deviceId}/poll-now`,
+        { assignment_id: assignmentId },
+      ),
     onSuccess: (_res, { deviceId }) => {
       setTimeout(() => {
         qc.invalidateQueries({ queryKey: ["device-config-data", deviceId] });

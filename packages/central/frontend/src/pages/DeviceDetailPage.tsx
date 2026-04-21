@@ -1065,12 +1065,12 @@ function OverviewTab({ deviceId }: { deviceId: string }) {
     // Only consider availability/latency checks for staleness — other apps
     // (config, performance) have their own tabs and should not drive this indicator.
     const monitoringChecks = deviceResults.checks.filter(
-      (c: any) => c.role === "availability" || c.role === "latency",
+      (c) => c.role === "availability" || c.role === "latency",
     );
     if (!monitoringChecks.length) return null;
     // Use last *successful* timestamp — a run of timeouts writes rows
     // with a current executed_at but is not evidence of fresh data.
-    const latest = monitoringChecks.reduce((newest: number, check: any) => {
+    const latest = monitoringChecks.reduce((newest: number, check) => {
       const okTs =
         check.last_success_at ||
         (check.error_category ? null : check.executed_at);
@@ -1862,7 +1862,7 @@ function ConfigurationTab({ deviceId }: { deviceId: string }) {
                                     assignmentId: selectedAssignment.id,
                                   },
                                   {
-                                    onSuccess: (res: any) => {
+                                    onSuccess: (res) => {
                                       if (!res?.data?.poll_triggered) {
                                         setPollStatus("error");
                                         setPollRequestedAt(null);
@@ -3193,7 +3193,7 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
   };
   const handleTrafficUnit = (next: TrafficUnit) => {
     setTrafficUnit(next);
-    updateIfacePrefs.mutate({ iface_traffic_unit: next as any });
+    updateIfacePrefs.mutate({ iface_traffic_unit: next });
   };
   const handleChartMetric = (next: ChartMetric) => {
     setChartMetric(next);
@@ -3207,7 +3207,9 @@ function InterfacesTab({ deviceId }: { deviceId: string }) {
       next.type === "preset" &&
       ["1h", "6h", "24h", "7d", "30d"].includes(next.preset)
     ) {
-      updateIfacePrefs.mutate({ iface_time_range: next.preset as any });
+      updateIfacePrefs.mutate({
+        iface_time_range: next.preset as "1h" | "6h" | "24h" | "7d" | "30d",
+      });
     }
   };
   return (
@@ -6644,12 +6646,12 @@ function DeviceActiveAlerts({ deviceId }: { deviceId: string }) {
     state: "firing",
     ...listState.params,
   });
-  const instances = (response as any)?.data ?? response ?? [];
-  const meta = (response as any)?.meta ?? {
-    limit: 50,
-    offset: 0,
-    count: instances.length,
-    total: instances.length,
+  const instances = response?.data ?? [];
+  const meta = {
+    limit: response?.meta?.limit ?? 50,
+    offset: response?.meta?.offset ?? 0,
+    count: response?.meta?.count ?? instances.length,
+    total: response?.meta?.total ?? instances.length,
   };
   const updateInstance = useUpdateAlertInstance();
 
@@ -6767,7 +6769,7 @@ function DeviceActiveAlerts({ deviceId }: { deviceId: string }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {instances.map((inst: any) => {
+            {instances.map((inst) => {
               const sev: string | null = inst.severity ?? null;
               const rowClass =
                 sev === "critical"
@@ -6901,12 +6903,12 @@ function DeviceAlertHistory({ deviceId }: { deviceId: string }) {
     isLoading,
     isFetching,
   } = useDeviceAlertLog(deviceId, listState.params, {});
-  const logEntries = (response as any)?.data ?? [];
-  const meta = (response as any)?.meta ?? {
-    limit: 50,
-    offset: 0,
-    count: 0,
-    total: 0,
+  const logEntries = response?.data ?? [];
+  const meta = {
+    limit: response?.meta?.limit ?? 50,
+    offset: response?.meta?.offset ?? 0,
+    count: response?.meta?.count ?? 0,
+    total: response?.meta?.total ?? 0,
   };
 
   return (
@@ -7097,12 +7099,12 @@ function DeviceActiveIncidents({ deviceId }: { deviceId: string }) {
     isLoading,
     isFetching,
   } = useDeviceActiveIncidents(deviceId, listState.params);
-  const incidents = (response as any)?.data ?? [];
-  const meta = (response as any)?.meta ?? {
-    limit: 50,
-    offset: 0,
-    count: 0,
-    total: 0,
+  const incidents = response?.data ?? [];
+  const meta = {
+    limit: response?.meta?.limit ?? 50,
+    offset: response?.meta?.offset ?? 0,
+    count: response?.meta?.count ?? 0,
+    total: response?.meta?.total ?? 0,
   };
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const clearMut = useClearIncidents();
@@ -7274,12 +7276,12 @@ function DeviceClearedIncidents({ deviceId }: { deviceId: string }) {
     isLoading,
     isFetching,
   } = useDeviceClearedIncidents(deviceId, listState.params);
-  const incidents = (response as any)?.data ?? [];
-  const meta = (response as any)?.meta ?? {
-    limit: 50,
-    offset: 0,
-    count: 0,
-    total: 0,
+  const incidents = response?.data ?? [];
+  const meta = {
+    limit: response?.meta?.limit ?? 50,
+    offset: response?.meta?.offset ?? 0,
+    count: response?.meta?.count ?? 0,
+    total: response?.meta?.total ?? 0,
   };
 
   if (isLoading)
