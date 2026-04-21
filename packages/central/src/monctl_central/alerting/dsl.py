@@ -460,6 +460,14 @@ def _auto_threshold_name(left_ast: ArithNode, index: int) -> str:
     return f"_expr_{index}_threshold"
 
 
+def _number_literal(value: float) -> str:
+    """Format a numeric value as a SQL literal. Integers stay integers so
+    `reachable == 1` compiles to `... = 1`, not `... = 1.0`."""
+    if value == int(value):
+        return str(int(value))
+    return repr(value)
+
+
 def parse_expression(expression: str) -> ASTNode:
     """Parse a DSL expression string into an AST."""
     expression = expression.strip()
@@ -664,20 +672,31 @@ def validate_expression(
             else:
                 # ArithNode (AggCall, ArithOp, NumericLiteral)
                 _walk_arith(node.left)
+                # Equality comparisons against an inline value are boolean
+                # state checks, not tunable thresholds — don't register a
+                # threshold param/ref for them. Named refs still count.
+                is_equality_inline = node.op in ("==", "!=")
                 if isinstance(node.right, ThresholdRef):
                     ref = node.right
-                    threshold_ref_infos.append(ThresholdRefInfo(
-                        name=ref.name,
-                        is_named=ref.is_named,
-                        inline_value=ref.inline_value,
-                    ))
                     if ref.is_named:
-                        # Named reference — param key is the name
+                        threshold_ref_infos.append(ThresholdRefInfo(
+                            name=ref.name,
+                            is_named=True,
+                            inline_value=None,
+                        ))
                         thresholds.append(ThresholdParam(
                             name=ref.name, default_value=0.0, param_key=ref.name,
                         ))
+                    elif is_equality_inline:
+                        # Inline value used in == / != — skip threshold registration.
+                        pass
                     else:
                         # Inline value — auto-generated param key
+                        threshold_ref_infos.append(ThresholdRefInfo(
+                            name=ref.name,
+                            is_named=False,
+                            inline_value=ref.inline_value,
+                        ))
                         key = f"_threshold_{_counter[0]}"
                         thresholds.append(ThresholdParam(
                             name=ref.name,
@@ -685,7 +704,7 @@ def validate_expression(
                             param_key=key,
                         ))
                         _counter[0] += 1
-                elif isinstance(node.right, (int, float)):
+                elif isinstance(node.right, (int, float)) and not is_equality_inline:
                     # Backward compat: plain float from _parse_value (ident conditions)
                     key = f"_threshold_{_counter[0]}"
                     agg_calls = _collect_agg_calls(node.left) if not isinstance(node.left, str) else []
@@ -976,6 +995,13 @@ class _Compiler:
                 raise ParseError(f"Invalid comparison operator: {node.op!r}")
             ch_op = "=" if node.op == "==" else node.op
 
+            # Equality operators against an inline numeric value are boolean
+            # state checks, not tunable thresholds. Emit the value as a SQL
+            # literal so healthy/fire tiers that pair `x == 1` with `x == 0`
+            # don't collide on a single shared auto-named threshold variable.
+            # Named refs (`x == some_var`) still go through the param path.
+            is_equality = ch_op in ("=", "!=")
+
             if isinstance(node.right, ThresholdRef):
                 ref = node.right
                 if ref.is_named:
@@ -990,6 +1016,11 @@ class _Compiler:
                         default_value=0.0,
                         param_key=safe_name,
                     ))
+                elif is_equality:
+                    # Inline boolean/enum equality — emit as SQL literal.
+                    self._having_parts.append(
+                        f"{arith_alias} {ch_op} {_number_literal(ref.inline_value)}"
+                    )
                 else:
                     # Inline value — auto-generated param key
                     param_key = f"_threshold_{self._threshold_idx}"
@@ -1004,26 +1035,32 @@ class _Compiler:
                     ))
                     self._threshold_idx += 1
             elif isinstance(node.right, (int, float)):
-                # Backward compat: plain float from ident conditions
-                param_key = f"_threshold_{self._threshold_idx}"
-                self._having_parts.append(
-                    f"{arith_alias} {ch_op} {{{param_key}:Float64}}"
-                )
-                threshold_val = float(node.right)
-                self.params[param_key] = threshold_val
-
-                agg_calls = _collect_agg_calls(node.left)
-                if agg_calls:
-                    first = agg_calls[0]
-                    tname = f"{first.metric}_{first.func}_threshold"
+                if is_equality:
+                    # Inline equality — emit literal, skip threshold param.
+                    self._having_parts.append(
+                        f"{arith_alias} {ch_op} {_number_literal(float(node.right))}"
+                    )
                 else:
-                    tname = f"threshold_{self._threshold_idx}"
-                self.threshold_params.append(ThresholdParam(
-                    name=tname,
-                    default_value=threshold_val,
-                    param_key=param_key,
-                ))
-                self._threshold_idx += 1
+                    # Backward compat: plain float from ident conditions
+                    param_key = f"_threshold_{self._threshold_idx}"
+                    self._having_parts.append(
+                        f"{arith_alias} {ch_op} {{{param_key}:Float64}}"
+                    )
+                    threshold_val = float(node.right)
+                    self.params[param_key] = threshold_val
+
+                    agg_calls = _collect_agg_calls(node.left)
+                    if agg_calls:
+                        first = agg_calls[0]
+                        tname = f"{first.metric}_{first.func}_threshold"
+                    else:
+                        tname = f"threshold_{self._threshold_idx}"
+                    self.threshold_params.append(ThresholdParam(
+                        name=tname,
+                        default_value=threshold_val,
+                        param_key=param_key,
+                    ))
+                    self._threshold_idx += 1
 
         elif isinstance(node, BoolOp):
             self._build_query_parts(node.left)
