@@ -49,7 +49,7 @@
 - [x] **F-CEN-016** Ownership check in app-cache push/pull (#107)
 - [x] **F-CEN-018** WS token header-auth (not URL query param); central + collector coordination (#115)
 - [x] **F-CEN-050** Unit test enumerates mutating routers; fail if touched table missing from `audit/resource_map.py` (#108)
-- [ ] **F-CEN-026** Column allow-list per results endpoint (no more `SELECT *`) — _deferred: raw-tier arrays (`metric_names`/`metric_values`) are the main payload so the `SELECT *` there is justified; rollup tiers are already narrow. A genuine win requires per-call-site column trimming with frontend changes to match_
+- [x] **F-CEN-026** Column allow-list per results endpoint (no more `SELECT *`) — **closed, won't fix**. Re-audited 2026-04-21: `availability_latency`, `performance`, `interface`, `config` tables contain no secret-bearing columns — just IDs, timestamps, metric values, and denormalised `device_name`/`app_name`/`tenant_id/name` for join-free reads. `metric_names`/`metric_values` arrays on raw tiers are the actual payload so `SELECT *` is correct there; rollup tiers are already narrow. No data-leak vector identified. Allow-listing would be churn with no security gain and would force frontend changes every time a column is added.
 - [x] **F-CEN-022** DSL compiler hardening + adversarial test corpus (#114)
 - [x] **F-COL-030** Move pip API key out of `PIP_INDEX_URL` env → temp `pip.conf` with 0o600
 - [x] **F-COL-031** Validate pip requirement strings; `--require-hashes`, `--no-build-isolation` (#110 — allowlist + argv flag rejection; hash enforcement deferred until packs supply hashes)
@@ -68,10 +68,10 @@
 ## Wave 3 — Large initiatives (L)
 
 - [x] **F-X-001** Per-collector API keys — **Phase 1+2 (#120), Phase 3 (#121), Phase 4 (#122) all shipped**. Central accepts per-collector keys on `/api/v1/*`; collector prefers its per-collector key over the shared secret on all REST + WS calls; ownership enforced on `/jobs`, `/results`, `/credentials`, `/app-cache/push`; peer gRPC channel now authenticated via shared token (F-COL-026). **Remaining**: sunset the `/api/v1/*` shared secret once fleet has fully migrated.
-- [ ] **F-CEN-024 + F-CEN-025** Migrate to async ClickHouse client (or pooled sync); remove `_LockedClient` global lock
+- [x] **F-CEN-024 + F-CEN-025** Migrate to async ClickHouse client (or pooled sync); remove `_LockedClient` global lock — **F-CEN-024** shipped in #128 (connection pool replaces `_LockedClient`); **F-CEN-025** shipped in #130 (`asyncio.to_thread` wrap on the sync call sites)
 - [x] **F-CEN-037** `/v1/logs` + `/v1/logs/filters` gated to `require_admin` — logs are infrastructure (docker stdout + app logs from collectors) with no natural tenant attribution; admin-only matches actual use (`SystemHealthPage`, `DockerInfraPage`) and closes the leak without needing a partition column. `tenant_id` DDL column left as default-zero for future use.
 - [x] **F-WEB-025** Lazy-load every route via `React.lazy` + `<Suspense>` (#123) — deployed; verified chunked output: `DevicesPage`, `SystemHealthPage`, `DeviceDetailPage` each load on-demand
-- [ ] **F-WEB-026** Split `DeviceDetailPage.tsx` (8025 lines) by tab into routed sub-pages
+- [x] **F-WEB-026** Split `DeviceDetailPage.tsx` (8025 lines) by tab into routed sub-pages — **phase 1** (#132) split into per-file modules under `pages/devices/`; **phase 2** (#133) wired React Router tab routes + `React.lazy` per tab so each chunk loads on demand. `DeviceDetailPage.tsx` is now a 509-line shell.
 - [x] **F-WEB-027** Remove `any`/`as any` casts — all 29 in DeviceDetailPage/SettingsPage/AlertsPage removed; added `role` to `CheckResult`, typed `pollNow` response shape, introduced local union aliases for iface prefs. Deployed + verified.
 - [x] **F-X-005** Zod schemas on the 6 highest-traffic responses (Device, Collector, AlertEntity, AlertDefinition, AlertLogEntry, DashboardSummary). New `apiGetSafe()` helper runs `safeParse` and logs drift as a `console.warn` without blocking the UI. Verified against live prod data — zero drift warnings. Adding more schemas is a mechanical extension.
 - [x] **F-X-007** E2E harness — phase 1: `docker/docker-compose.e2e.yml` boots postgres + redis + clickhouse + central on isolated ports, `scripts/run_e2e.sh` orchestrates build → `up --wait` → pytest → `down -v`. 3 seed tests in `tests/integration/test_e2e_smoke.py` (unauth /v1/health, admin login + /auth/me, device CRUD roundtrip) run in <1s against the fresh stack. Found + worked around a real yield-dependency race: FastAPI commits sessions AFTER the response returns, so DELETE → list can see stale state; test polls /devices/{id} for 404 instead. Phase 2 (stub collector + job dispatch round-trip + nightly CI wiring) deferred.
@@ -80,24 +80,37 @@
 
 ## Manual / "not code" follow-ups
 
-- [ ] **Crypto review** `packages/central/src/monctl_central/credentials/crypto.py` — permission-restricted from this session. Verify cipher (AES-GCM vs Fernet), nonce uniqueness, key source, rotation path.
-- [ ] **Crypto review** `packages/collector/src/monctl_collector/central/credentials.py` — same.
-- [ ] **F-X-008** Add `pip-audit` + `npm audit` to CI
-- [ ] **F-X-010** Audit every TLS/SSL call site; gate any `verify=False` behind `MONCTL_INSECURE_TLS=1`
-- [ ] **F-X-011** Promote evergreen memory files into `CLAUDE.md` "Known pitfalls" section
-- [ ] **Smoke-test the review** — pick 3 random HIGH findings, confirm the file:line refs still point at the described code; re-audit any drift.
+- [ ] **Crypto review** `packages/central/src/monctl_central/credentials/crypto.py` — re-attempted 2026-04-21, still permission-gated. User must lift the path restriction in `.claude/settings.local.json` before this can proceed. Verify cipher (AES-GCM vs Fernet), nonce uniqueness, key source, rotation path.
+- [ ] **Crypto review** `packages/collector/src/monctl_collector/central/credentials.py` — same status.
+- [x] **F-X-008** Add `pip-audit` + `npm audit` to CI — `.github/workflows/security-audit.yml` runs nightly + on dep-file PRs. `pip-audit` installs all four local packages and fails on HIGH/CRITICAL only (all findings listed). `npm audit --audit-level=high --omit=dev` on the frontend. **Needs user to commit** — PAT lacks `workflow` scope.
+- [x] **F-X-010** Audit every TLS/SSL call site; gate any `verify=False` behind `MONCTL_INSECURE_TLS=1` — audit doc at `tls-audit.md`. No silent disabling in prod runtime; every call site gated by a named env var with safe default. Flipped `docker-stats-server.py` code-level default `PUSH_VERIFY_SSL=false → true` (compose files already set the env explicitly, so no fleet behaviour change). Warning comment added in `docs/action-development-guide.md:193`.
+- [x] **F-X-011** Promote evergreen memory files into `CLAUDE.md` "Known pitfalls" section — added 12 entries covering: nullable DB-field reads, collector delta-sync `updated_at`, ClickHouse MV schema changes, poller timing + error categorisation, poller debug logging, connector credential-key fallbacks, per-entity batch freshness filtering, frontend `node_modules` shadow, gRPC stub relative imports, zod-as-telemetry, alembic rebase hygiene, PAT workflow scope.
+- [x] **Smoke-test the review** — picked 3 HIGH findings marked fixed and verified in current code (2026-04-21):
+  - **F-CEN-001** cookies: `auth/router.py:267,272,443,448` all now `httponly=True, samesite="strict", secure=settings.cookie_secure`. Verified.
+  - **F-CEN-014** collector job ownership: `collector_api/router.py:208,277,285,491` enforce `AppAssignment.collector_id == caller.id` on `/jobs` and `/results` paths. Verified.
+  - **F-CEN-037** logs admin gate: `logs/router.py:99,191` on `query_logs` + `get_filters` both use `Depends(require_admin)`. Verified.
 
 ---
 
 ## Progress
 
-Wave 1 complete. Wave 2 nearly complete (6 merged/open of 8 actionable items; F-CEN-026 column allow-list deferred, F-COL-026 peer gRPC auth subsumed by F-X-001 umbrella).
+Wave 1 complete. Wave 2 complete (F-CEN-026 formally closed as won't-fix after re-audit).
 
 Related side-fixes landed alongside Wave 2:
 
 - Connector built-in seed is now create-only + warns on drift (closes a latent footgun that could silently downgrade prod connectors on restart). Shipped in #112.
 - Collector structlog is now routed through stdlib, so Debug Run captures connector debug lines uniformly in the `logs` panel. Shipped in #112.
 
-Still open from Wave 2: none that are easy. Wave 3 is the next natural batch once deploys land.
+Wave 3 complete (2026-04-21): F-X-001 (per-collector keys), F-X-002 (central observability), F-X-005 (zod schemas), F-X-007 phase 1 (E2E harness), F-WEB-025 (lazy routes), F-WEB-026 (DeviceDetailPage split phase 1+2), F-WEB-027 (strip `any`), F-WEB-030 (Vitest harness), F-CEN-024/025 (async ClickHouse), F-CEN-037 (logs admin-only) all shipped.
 
-Wave 3 update (2026-04-21): F-X-002 verified already shipped. F-X-007 phase 1 landed (compose + seed tests). Only F-WEB-026 (DeviceDetailPage split) remains in Wave 3.
+Manual follow-ups (2026-04-21):
+
+- F-X-010 TLS audit → `tls-audit.md`; no silent disabling, `docker-stats-server.py` default flipped to `verify=true`.
+- F-X-011 memory promotion → "Known pitfalls" section in `CLAUDE.md` with 12 entries.
+- F-X-008 `pip-audit` + `npm audit` workflow → `.github/workflows/security-audit.yml`. Needs user to commit (PAT lacks `workflow` scope).
+- Smoke-test → 3 HIGH findings re-verified in-tree, no drift.
+
+Still open:
+
+- Crypto review (both `credentials/crypto.py` files) — blocked on lifting path restriction in `.claude/settings.local.json`.
+- F-X-007 phase 2 (stub collector + job dispatch round-trip + nightly CI wiring) — explicitly deferred in phase 1 landing.

@@ -190,7 +190,7 @@ import requests
 url = f"http://{context.device_ip}:8080/api/status"
 headers = {"Authorization": f"Bearer {context.credential.get('api_key', '')}"}
 
-resp = requests.get(url, headers=headers, timeout=10, verify=False)
+resp = requests.get(url, headers=headers, timeout=10, verify=False)  # verify=False only if device has self-signed cert — prefer verify=True + CA bundle
 resp.raise_for_status()
 
 data = resp.json()
