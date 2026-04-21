@@ -1,0 +1,81 @@
+name: Security Audit
+
+on:
+  schedule:
+    # Nightly 04:15 UTC — after most daytime commits land
+    - cron: "15 4 * * *"
+  pull_request:
+    paths:
+      - "packages/*/pyproject.toml"
+      - "packages/central/frontend/package.json"
+      - "packages/central/frontend/package-lock.json"
+      - ".github/workflows/security-audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pip-audit:
+    name: pip-audit (all Python packages)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install packages + pip-audit
+        run: |
+          python -m pip install --upgrade pip pip-audit
+          # Install the four local packages into the venv so pip-audit can
+          # resolve their dependency graphs. Order matters: sdk/common have
+          # no local deps; central/collector depend on them.
+          pip install -e packages/common
+          pip install -e packages/sdk
+          pip install -e packages/central
+          pip install -e packages/collector
+
+      - name: Run pip-audit
+        run: |
+          # Fail only on HIGH/CRITICAL to avoid CI noise from unfixable low-severity
+          # advisories; all findings are listed for triage.
+          pip-audit --format json > audit.json || true
+          pip-audit --format columns || true
+          python - <<'PY'
+          import json, sys
+          data = json.load(open("audit.json"))
+          bad = []
+          for dep in data.get("dependencies", []):
+              for v in dep.get("vulns", []):
+                  sev = (v.get("severity") or "").upper()
+                  if sev in {"HIGH", "CRITICAL"}:
+                      bad.append(
+                          f"{dep['name']} {dep.get('version','?')} :: {v.get('id')} ({sev})"
+                      )
+          if bad:
+              print("::error::pip-audit found HIGH/CRITICAL vulnerabilities:")
+              for line in bad:
+                  print(f"::error::  {line}")
+              sys.exit(1)
+          print("No HIGH/CRITICAL vulnerabilities.")
+          PY
+
+  npm-audit:
+    name: npm audit (frontend)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install deps
+        working-directory: packages/central/frontend
+        run: npm install --no-audit --no-fund
+
+      - name: Run npm audit (high+)
+        working-directory: packages/central/frontend
+        run: npm audit --audit-level=high --omit=dev
