@@ -75,7 +75,7 @@
 - [x] **F-WEB-027** Remove `any`/`as any` casts — all 29 in DeviceDetailPage/SettingsPage/AlertsPage removed; added `role` to `CheckResult`, typed `pollNow` response shape, introduced local union aliases for iface prefs. Deployed + verified.
 - [x] **F-X-005** Zod schemas on the 6 highest-traffic responses (Device, Collector, AlertEntity, AlertDefinition, AlertLogEntry, DashboardSummary). New `apiGetSafe()` helper runs `safeParse` and logs drift as a `console.warn` without blocking the UI. Verified against live prod data — zero drift warnings. Adding more schemas is a mechanical extension.
 - [ ] **F-X-007** E2E harness: docker-compose central + ClickHouse + stub collector; nightly CI
-- [ ] **F-WEB-030** Vitest + RTL on shared primitives
+- [x] **F-WEB-030** Vitest + RTL harness in place. 21 tests across `formatBytes`/`formatUptime`/`timeAgo`, `useListState` (5 scenarios), and `ClearableInput` (4 scenarios incl. the focus-preservation regression anchor). `npm test` / `test:watch` scripts; test files excluded from prod tsc build via `tsconfig.app.json` exclude + dedicated `tsconfig.vitest.json`. Schema tests deferred — they live in the F-X-005 branch and will land once #126 merges.
 - [ ] **F-X-002** Central observability (ingestion rate, DB size trends, per-node metrics)
 
 ## Manual / "not code" follow-ups
