@@ -1,3 +1,4 @@
+import type { z } from "zod";
 import type { ApiResponse } from "@/types/api.ts";
 
 const BASE_URL = "/v1";
@@ -171,6 +172,36 @@ async function request<T>(
 
 export function apiGet<T>(endpoint: string): Promise<ApiResponse<T>> {
   return request<ApiResponse<T>>(endpoint);
+}
+
+/**
+ * Same as `apiGet` but additionally runs the response through a zod schema and
+ * logs drift to the console. Returns the original response either way — this
+ * is a non-blocking telemetry layer, not a gate. The point is to surface
+ * backend contract drift during development / staging, not to break prod UI
+ * on a rename the user couldn't possibly fix themselves.
+ */
+export async function apiGetSafe<T>(
+  endpoint: string,
+  schema: z.ZodTypeAny,
+): Promise<ApiResponse<T>> {
+  const res = await request<ApiResponse<T>>(endpoint);
+  const parsed = schema.safeParse(res);
+  if (!parsed.success) {
+    // Log the first few issues — a full pretty-print on a big list response
+    // would flood the console.
+    const issues = parsed.error.issues.slice(0, 5).map((i) => ({
+      path: i.path.join("."),
+      code: i.code,
+      message: i.message,
+    }));
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[schema-drift] ${endpoint}: ${parsed.error.issues.length} issue(s)`,
+      issues,
+    );
+  }
+  return res;
 }
 
 export function apiPost<T>(
