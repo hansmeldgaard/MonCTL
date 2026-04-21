@@ -53,6 +53,11 @@ class CredentialManager:
                 raise ValueError("ENCRYPTION_KEY must be 64 hex chars (32 bytes)")
             import base64
             return base64.urlsafe_b64encode(raw)
+        logger.warning(
+            "encryption_key_unset_generating_ephemeral",
+            hint="set MONCTL_ENCRYPTION_KEY to a persistent 64-hex-char value or the "
+            "local credential cache will be invalidated on every collector restart",
+        )
         return Fernet.generate_key()
 
     # ── Public API ────────────────────────────────────────────────────────────
