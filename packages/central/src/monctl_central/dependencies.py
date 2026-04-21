@@ -80,6 +80,7 @@ def get_clickhouse():
             async_insert=settings.clickhouse_async_insert,
             username=settings.clickhouse_user,
             password=settings.clickhouse_password,
+            pool_size=settings.clickhouse_pool_size,
         )
     return _ch_client
 

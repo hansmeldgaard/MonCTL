@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     clickhouse_user: str = "default"
     clickhouse_password: str = ""
     clickhouse_async_insert: bool = True
+    clickhouse_pool_size: int = 8  # concurrent client connections per central node
 
     # Docker stats sidecars (central tier only): "label:ip:port,label:ip:port,..."
     docker_stats_hosts: str = ""
