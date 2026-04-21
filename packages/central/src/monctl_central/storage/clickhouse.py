@@ -10,44 +10,100 @@ Handles 4 domain-specific tables:
 from __future__ import annotations
 
 import logging
+import queue
 import re
-import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 import clickhouse_connect
 from clickhouse_connect.driver.client import Client
 
 
-class _LockedClient:
-    """Proxy around clickhouse_connect.Client that serializes every call.
+def _is_conn_error(exc: Exception) -> bool:
+    if isinstance(exc, (OSError, ConnectionError, TimeoutError)):
+        return True
+    msg = str(exc).lower()
+    return any(s in msg for s in ("broken pipe", "connection refused", "timed out", "reset by peer"))
 
-    clickhouse_connect's Client is not safe for concurrent use — two
-    coroutines / threads hitting the same instance trip an internal guard
-    and raise "Attempt to execute concurrent queries within the same
-    session." Rather than plumb a per-request client pool through every
-    ingestion and dashboard path, we wrap the singleton and acquire a
-    reentrant lock around every method call. CH ops are typically fast,
-    so the serialisation is cheap; the important property is correctness.
+
+class _ClientPool:
+    """Bounded pool of clickhouse_connect.Client instances.
+
+    Replaces the prior single-client + global RLock design. Each `acquire()`
+    pulls a slot (creating a Client lazily on first use); connection errors
+    discard the slot so the next acquire builds a fresh one. clickhouse_connect
+    Client is not safe for concurrent use — the pool gives each caller its own
+    client while bounding total connections to `size`.
     """
 
-    __slots__ = ("_c", "_lock")
+    def __init__(self, factory: Callable[[], Client], size: int):
+        if size < 1:
+            size = 1
+        self._factory = factory
+        # LIFO: sequential callers reuse the hottest slot instead of rotating
+        # through every pool position and forcing every slot to materialise a
+        # client. Parallel callers still spread across slots naturally.
+        self._q: queue.LifoQueue[Client | None] = queue.LifoQueue(maxsize=size)
+        for _ in range(size):
+            self._q.put(None)
 
-    def __init__(self, client: Client, lock: threading.RLock):
-        # Use object.__setattr__ to avoid triggering __getattr__ below,
-        # which would look up "_c" and recurse forever.
-        object.__setattr__(self, "_c", client)
-        object.__setattr__(self, "_lock", lock)
+    @contextmanager
+    def acquire(self, timeout: float = 30.0):
+        client = self._q.get(timeout=timeout)
+        try:
+            if client is None:
+                client = self._factory()
+            yield client
+        except Exception as exc:
+            if _is_conn_error(exc) and client is not None:
+                try:
+                    client.close()
+                except Exception:
+                    pass
+                client = None
+            raise
+        finally:
+            self._q.put(client)
+
+    def close_all(self) -> None:
+        drained: list[Client | None] = []
+        while True:
+            try:
+                drained.append(self._q.get_nowait())
+            except queue.Empty:
+                break
+        for c in drained:
+            if c is not None:
+                try:
+                    c.close()
+                except Exception:
+                    pass
+            self._q.put(None)
+
+
+class _PooledClient:
+    """Client-shaped proxy that acquires a pool slot per method call.
+
+    Callers use it like a `clickhouse_connect.Client`
+    (``client.query(...)``, ``client.command(...)``, ``client.insert(...)``
+    etc.); each invocation borrows a pool slot for the duration of that one
+    call and releases it on return. Non-callable attributes (properties) are
+    not currently accessed anywhere in the codebase, so the proxy treats
+    every attribute as a method.
+    """
+
+    __slots__ = ("_pool",)
+
+    def __init__(self, pool: _ClientPool):
+        object.__setattr__(self, "_pool", pool)
 
     def __getattr__(self, name: str):
-        attr = getattr(self._c, name)
-        if not callable(attr):
-            return attr
-        lock = self._lock
+        pool = self._pool
 
         def wrapped(*args, **kwargs):
-            with lock:
-                return attr(*args, **kwargs)
+            with pool.acquire() as client:
+                return getattr(client, name)(*args, **kwargs)
 
         return wrapped
 
@@ -1458,6 +1514,7 @@ class ClickHouseClient:
         async_insert: bool = True,
         username: str = "default",
         password: str = "",
+        pool_size: int = 8,
     ):
         self._hosts = hosts
         self._port = port
@@ -1466,61 +1523,44 @@ class ClickHouseClient:
         self._async_insert = async_insert
         self._username = username
         self._password = password
-        # Raw underlying client — never handed directly to callers.
-        self._raw_client: Client | None = None
-        # Reentrant lock: serialises access to the underlying client so
-        # concurrent FastAPI coroutines don't trip clickhouse_connect's
-        # "concurrent queries within the same session" guard.
-        self._lock = threading.RLock()
+        self._pool = _ClientPool(self._make_client, pool_size)
 
-    def _get_client(self) -> Client:
-        if self._raw_client is None:
-            with self._lock:
-                if self._raw_client is None:  # double-checked init
-                    settings: dict[str, Any] = {}
-                    if self._async_insert:
-                        settings["async_insert"] = 1
-                        settings["wait_for_async_insert"] = 1
-                    self._raw_client = clickhouse_connect.get_client(
-                        host=self._hosts[0],
-                        port=self._port,
-                        username=self._username,
-                        password=self._password,
-                        database=self._database,
-                        settings=settings,
-                        connect_timeout=10,
-                        send_receive_timeout=60,
-                    )
-        return _LockedClient(self._raw_client, self._lock)
+    def _make_client(self) -> Client:
+        settings: dict[str, Any] = {}
+        if self._async_insert:
+            settings["async_insert"] = 1
+            settings["wait_for_async_insert"] = 1
+        return clickhouse_connect.get_client(
+            host=self._hosts[0],
+            port=self._port,
+            username=self._username,
+            password=self._password,
+            database=self._database,
+            settings=settings,
+            connect_timeout=10,
+            send_receive_timeout=60,
+        )
 
-    def _reconnect(self) -> Client:
-        """Drop cached client and create a fresh connection."""
-        logger.warning("ClickHouse reconnecting to %s", self._hosts[0])
-        with self._lock:
-            if self._raw_client is not None:
-                try:
-                    self._raw_client.close()
-                except Exception:
-                    pass
-                self._raw_client = None
+    def _get_client(self) -> _PooledClient:
+        """Return a pool-backed client proxy. Each method call on the proxy
+        borrows a pool slot for the duration of that one call.
+        """
+        return _PooledClient(self._pool)
+
+    def _reconnect(self) -> _PooledClient:
+        """Legacy reconnect hook. Pool slots auto-recycle on connection errors,
+        so this is effectively a no-op — we just return a fresh proxy for
+        callers that kept the old retry-with-reconnect shape.
+        """
+        logger.warning("ClickHouse reconnect requested; pool will rebuild broken slot lazily")
         return self._get_client()
 
     def _is_connection_error(self, exc: Exception) -> bool:
         """Check if an exception is a connection/transport error worth retrying."""
-        # Connection refused, broken pipe, timeout, etc.
-        if isinstance(exc, (OSError, ConnectionError, TimeoutError)):
-            return True
-        # clickhouse-connect wraps some errors as DatabaseError
-        msg = str(exc).lower()
-        if any(s in msg for s in ("broken pipe", "connection refused", "timed out", "reset by peer")):
-            return True
-        return False
+        return _is_conn_error(exc)
 
     def close(self) -> None:
-        with self._lock:
-            if self._raw_client is not None:
-                self._raw_client.close()
-                self._raw_client = None
+        self._pool.close_all()
 
     def _drop_old_tables(self, has_cluster: bool) -> None:
         """Drop legacy check_results / events tables (only test data)."""
