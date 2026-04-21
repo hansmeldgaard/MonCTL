@@ -108,6 +108,91 @@ async def test_unknown_token_falls_through_to_require_auth(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_jobs_rejects_collector_id_mismatch(monkeypatch):
+    """F-CEN-014 /jobs: authed per-collector key cannot enumerate another
+    collector's group by passing a different `collector_id=...`."""
+    from monctl_central.collector_api import router as jobs_router
+
+    async def _noop(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(jobs_router, "_require_active_collector", _noop)
+
+    auth = {
+        "auth_type": "collector_api_key",
+        "collector_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "tenant_ids": None,
+    }
+    with pytest.raises(HTTPException) as excinfo:
+        await jobs_router.get_jobs(
+            since=None,
+            collector_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+            db=None,
+            auth=auth,
+        )
+    assert excinfo.value.status_code == 403
+    assert "collector_id query does not match" in excinfo.value.detail
+
+
+class _SentinelDB:
+    """Minimal async-DB stub that raises on any access. Used to prove the
+    auth branch of `get_jobs` runs to completion without depending on a
+    real Postgres fixture."""
+
+    async def get(self, *args, **kwargs):
+        raise RuntimeError("SENTINEL: reached DB")
+
+    async def execute(self, *args, **kwargs):
+        raise RuntimeError("SENTINEL: reached DB")
+
+
+@pytest.mark.asyncio
+async def test_jobs_accepts_missing_collector_id_for_per_collector_auth(monkeypatch):
+    """Caller authed with per-collector key doesn't need to repeat their ID
+    in the query — we fill it in from `auth`."""
+    from monctl_central.collector_api import router as jobs_router
+
+    async def _noop(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(jobs_router, "_require_active_collector", _noop)
+
+    auth = {
+        "auth_type": "collector_api_key",
+        "collector_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "tenant_ids": None,
+    }
+    with pytest.raises(RuntimeError, match="SENTINEL"):
+        await jobs_router.get_jobs(
+            since=None,
+            collector_id=None,
+            db=_SentinelDB(),
+            auth=auth,
+        )
+
+
+@pytest.mark.asyncio
+async def test_jobs_shared_secret_allows_any_collector_id(monkeypatch):
+    """Legacy shared-secret callers keep the permissive behaviour until the
+    fleet has fully migrated off the fleet-wide key."""
+    from monctl_central.collector_api import router as jobs_router
+
+    async def _noop(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(jobs_router, "_require_active_collector", _noop)
+
+    auth = {"auth_type": "collector_shared_secret", "tenant_ids": None}
+    with pytest.raises(RuntimeError, match="SENTINEL"):
+        await jobs_router.get_jobs(
+            since=None,
+            collector_id="cccccccc-cccc-cccc-cccc-cccccccccccc",
+            db=_SentinelDB(),
+            auth=auth,
+        )
+
+
+@pytest.mark.asyncio
 async def test_management_key_rejected_on_collector_endpoints(monkeypatch):
     """Management keys must not masquerade as collectors on /api/v1/*.
 

@@ -428,6 +428,21 @@ async def get_jobs(
     """
     await _require_active_collector(auth, db)
 
+    # Per-collector ownership (F-CEN-014 extension for /jobs). When the caller
+    # authenticated with their own API key we trust `auth["collector_id"]` and
+    # require the query arg to match — prevents a compromised per-collector
+    # key from enumerating another collector's group's assignments by passing
+    # a different `collector_id=...`. Shared-secret callers are unchanged.
+    if auth.get("auth_type") == "collector_api_key":
+        auth_cid = auth.get("collector_id")
+        if collector_id is None:
+            collector_id = auth_cid
+        elif auth_cid and collector_id != auth_cid:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="collector_id query does not match authenticated collector",
+            )
+
     since_dt: datetime | None = None
     if since:
         try:
