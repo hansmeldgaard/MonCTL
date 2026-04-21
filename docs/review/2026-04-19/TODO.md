@@ -67,7 +67,7 @@
 
 ## Wave 3 — Large initiatives (L)
 
-- [~] **F-X-001** Per-collector API keys — **Phase 1+2 shipped (#120)**: central accepts per-collector keys on `/api/v1/*` and returns `auth["collector_id"]`; collector prefers per-collector key over shared secret on all REST + WS calls. Shared secret kept as bootstrap fallback. **Phase 3 still open**: ownership enforcement on `/jobs`, `/results`, `/credentials`, `/cache/push` — the PR that actually closes F-CEN-014/015/016. Phase 4 (peer gRPC auth) subsumes F-COL-026.
+- [~] **F-X-001** Per-collector API keys — **Phase 1+2 (#120) + Phase 3 (#121) shipped**. Central accepts per-collector keys on `/api/v1/*`; collector prefers its per-collector key over the shared secret on all REST + WS calls. Ownership is enforced: `/results`, `/credentials/{name}`, `/app-cache/push` already wired up in #107 (now reading the cryptographically-bound `auth["collector_id"]` instead of an `X-Collector-Id` header hint); `/jobs` in #121 rejects cross-collector queries under per-collector auth. Shared secret kept as bootstrap fallback. **Remaining**: Phase 4 (peer gRPC auth, subsumes F-COL-026) + sunset the shared secret once every collector has migrated.
 - [ ] **F-CEN-024 + F-CEN-025** Migrate to async ClickHouse client (or pooled sync); remove `_LockedClient` global lock
 - [ ] **F-CEN-037** Add `tenant_id` to ClickHouse `logs` table + backfill + ingest path update
 - [ ] **F-WEB-025** Add `React.lazy` to 6+ detail pages
