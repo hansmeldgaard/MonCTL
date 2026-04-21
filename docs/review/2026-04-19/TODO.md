@@ -76,7 +76,7 @@
 - [x] **F-X-005** Zod schemas on the 6 highest-traffic responses (Device, Collector, AlertEntity, AlertDefinition, AlertLogEntry, DashboardSummary). New `apiGetSafe()` helper runs `safeParse` and logs drift as a `console.warn` without blocking the UI. Verified against live prod data — zero drift warnings. Adding more schemas is a mechanical extension.
 - [ ] **F-X-007** E2E harness: docker-compose central + ClickHouse + stub collector; nightly CI
 - [x] **F-WEB-030** Vitest + RTL harness in place. 21 tests across `formatBytes`/`formatUptime`/`timeAgo`, `useListState` (5 scenarios), and `ClearableInput` (4 scenarios incl. the focus-preservation regression anchor). `npm test` / `test:watch` scripts; test files excluded from prod tsc build via `tsconfig.app.json` exclude + dedicated `tsconfig.vitest.json`. Schema tests deferred — they live in the F-X-005 branch and will land once #126 merges.
-- [ ] **F-X-002** Central observability (ingestion rate, DB size trends, per-node metrics)
+- [x] **F-X-002** Central observability — verified already shipped (backlog memory was stale). `ingestion_rate_history`, `db_size_history`, `host_metrics_history`, and `container_metrics_history` tables exist; leader-only samplers `_sample_ingestion_rates` (5 min) + `_sample_db_sizes` (15 min) run, and the docker-stats sidecars on central1-4 push to `/api/v1/docker-stats/push` every ~15s (22k+ rows per central since 2026-04-17). `IngestionRateChart`, `DbSizeHistoryChart`, and `HostMetricsChart` render all series on System Health. Attempted a redundant central-sidecar puller during this session and rolled back after CH showed central1-4 already sampled via the push path. Remaining F-X-002-adjacent: durable counters for Wave 1 failure sites (scheduler task failures, WS bare-except count, forwarder drops) — deferred; failures log today but don't count.
 
 ## Manual / "not code" follow-ups
 
@@ -99,3 +99,5 @@ Related side-fixes landed alongside Wave 2:
 - Collector structlog is now routed through stdlib, so Debug Run captures connector debug lines uniformly in the `logs` panel. Shipped in #112.
 
 Still open from Wave 2: none that are easy. Wave 3 is the next natural batch once deploys land.
+
+Wave 3 update (2026-04-21): F-X-002 verified already shipped. Remaining Wave 3 items are F-WEB-026 (DeviceDetailPage split) and F-X-007 (E2E harness) — both L-effort, standalone.
