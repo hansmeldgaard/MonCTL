@@ -2798,9 +2798,16 @@ class ClickHouseClient:
         table_name: str | None = None,
         from_ts: datetime | None = None,
         to_ts: datetime | None = None,
+        step_seconds: int | None = None,
         limit: int = 10000,
     ) -> list[dict]:
-        """Return DB size samples filtered by optional source/scope/table/time."""
+        """Return DB size samples filtered by optional source/scope/table/time.
+
+        When ``step_seconds`` is provided, samples are bucketed server-side
+        (``toStartOfInterval`` + GROUP BY) so wide ranges stay well under
+        ``limit``. Without bucketing the sampler's per-table rows quickly
+        exceed 10k at 7d+ ranges and the tail truncates silently.
+        """
         wheres: list[str] = []
         params: dict[str, Any] = {}
         if source:
@@ -2822,13 +2829,27 @@ class ClickHouseClient:
             wheres.append("timestamp <= {to_ts:DateTime}")
             params["to_ts"] = to_ts.strftime("%Y-%m-%d %H:%M:%S")
         where_sql = ("WHERE " + " AND ".join(wheres)) if wheres else ""
-        sql = (
-            "SELECT timestamp, source, scope, database_name, table_name, "
-            "       bytes, rows, parts "
-            f"FROM db_size_history {where_sql} "
-            "ORDER BY timestamp ASC, source, database_name, table_name "
-            f"LIMIT {int(limit)}"
-        )
+
+        if step_seconds and step_seconds > 0:
+            params["step"] = int(step_seconds)
+            sql = (
+                "SELECT "
+                "toStartOfInterval(timestamp, INTERVAL {step:UInt32} SECOND) AS timestamp, "
+                "source, scope, database_name, table_name, "
+                "avg(bytes) AS bytes, max(rows) AS rows, max(parts) AS parts "
+                f"FROM db_size_history {where_sql} "
+                "GROUP BY timestamp, source, scope, database_name, table_name "
+                "ORDER BY timestamp ASC, source, database_name, table_name "
+                f"LIMIT {int(limit)}"
+            )
+        else:
+            sql = (
+                "SELECT timestamp, source, scope, database_name, table_name, "
+                "       bytes, rows, parts "
+                f"FROM db_size_history {where_sql} "
+                "ORDER BY timestamp ASC, source, database_name, table_name "
+                f"LIMIT {int(limit)}"
+            )
         client = self._get_client()
         result = client.query(sql, parameters=params)
         return list(result.named_results())
