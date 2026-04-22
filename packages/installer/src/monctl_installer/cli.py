@@ -193,5 +193,125 @@ def deploy(inventory: Path, dry_run: bool) -> None:
         sys.exit(1)
 
 
+@main.command()
+@click.option(
+    "--inventory",
+    "-i",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("./inventory.yaml"),
+    show_default=True,
+)
+def status(inventory: Path) -> None:
+    """Probe each host and print cluster health summary."""
+    from monctl_installer.commands.status import print_table, run_status
+    from monctl_installer.inventory.loader import (
+        InventoryValidationError,
+        load_inventory,
+    )
+    from monctl_installer.inventory.planner import plan_cluster
+    from monctl_installer.remote.ssh import SSHRunner
+
+    try:
+        inv = load_inventory(inventory)
+        plan = plan_cluster(inv)
+    except InventoryValidationError as exc:
+        err_console.print(f"[red]inventory validation failed:[/red] {exc}")
+        sys.exit(1)
+    summary = run_status(plan, SSHRunner())
+    print_table(summary, console)
+    if summary.has_down:
+        sys.exit(1)
+
+
+@main.command()
+@click.argument("version")
+@click.option(
+    "--inventory",
+    "-i",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("./inventory.yaml"),
+    show_default=True,
+)
+@click.option(
+    "--canary",
+    default=None,
+    help="Name of the central host to upgrade first (default: first central)",
+)
+def upgrade(version: str, inventory: Path, canary: str | None) -> None:
+    """Rolling upgrade to <version>: canary → remaining centrals → collectors."""
+    from monctl_installer.commands.upgrade import UpgradeAborted, upgrade as run_upgrade
+    from monctl_installer.inventory.loader import InventoryValidationError
+    from monctl_installer.secrets.store import SecretsFileError
+
+    try:
+        steps = run_upgrade(inventory, version, canary=canary)
+    except (InventoryValidationError, SecretsFileError, ValueError) as exc:
+        err_console.print(f"[red]upgrade precondition failed:[/red] {exc}")
+        sys.exit(1)
+    except UpgradeAborted as exc:
+        err_console.print(f"[red]upgrade aborted:[/red] {exc}")
+        sys.exit(1)
+
+    for s in steps:
+        colour = {"upgraded": "green", "unchanged": "dim", "failed": "red"}[s.status]
+        console.print(
+            f"[{colour}]{s.status:9}[/{colour}] [cyan]{s.host}[/cyan] "
+            f"({s.phase}) — {s.detail}"
+        )
+
+
+@main.command()
+@click.argument("host")
+@click.option(
+    "--inventory",
+    "-i",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("./inventory.yaml"),
+    show_default=True,
+)
+@click.option("--project", "-p", default="central", show_default=True)
+@click.option("--service", "-s", default=None, help="Filter to a single service")
+@click.option("--tail", "-n", default=200, show_default=True, type=int)
+@click.option("--follow", "-f", is_flag=True, help="Stream new log lines")
+def logs(
+    host: str,
+    inventory: Path,
+    project: str,
+    service: str | None,
+    tail: int,
+    follow: bool,
+) -> None:
+    """Tail `docker compose logs` for a project on a host."""
+    from monctl_installer.commands.diagnostics import find_host, logs_exec
+
+    try:
+        h = find_host(inventory, host)
+    except ValueError as exc:
+        err_console.print(f"[red]{exc}[/red]")
+        sys.exit(1)
+    logs_exec(h, project=project, service=service, tail=tail, follow=follow)
+
+
+@main.command(name="ssh")
+@click.argument("host")
+@click.option(
+    "--inventory",
+    "-i",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("./inventory.yaml"),
+    show_default=True,
+)
+def ssh_cmd(host: str, inventory: Path) -> None:
+    """Open an interactive SSH session to a host from the inventory."""
+    from monctl_installer.commands.diagnostics import find_host, ssh_exec
+
+    try:
+        h = find_host(inventory, host)
+    except ValueError as exc:
+        err_console.print(f"[red]{exc}[/red]")
+        sys.exit(1)
+    ssh_exec(h)
+
+
 if __name__ == "__main__":  # pragma: no cover
     main()

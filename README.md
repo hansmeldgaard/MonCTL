@@ -90,6 +90,10 @@ Each collector node runs three services:
 
 ## Deployment
 
+**Customers:** use the `monctl_ctl` CLI. See [`INSTALL.md`](INSTALL.md), [`UPGRADE.md`](UPGRADE.md), and [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md). The CLI renders per-host compose bundles from a declarative `inventory.yaml` and handles SSH distribution + rolling upgrades. Example inventories at repo root: `inventory.example.{micro,small,large}.yaml`.
+
+**Developers:** the instructions below describe the manual `deploy.sh` path used during development. Customer installs no longer use it.
+
 ### Prerequisites
 
 - Docker and Docker Compose on all nodes
