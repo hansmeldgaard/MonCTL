@@ -1,0 +1,10 @@
+# Redis Sentinel — rendered by monctl_ctl for {{ host.name }}
+# announce-ip is critical in Docker bridge mode; set to the host's real IP.
+port 26379
+bind 0.0.0.0
+sentinel announce-ip {{ host.address }}
+sentinel announce-port 26379
+sentinel monitor monctl-redis {{ plan.redis[0].host.address }} 6379 2
+sentinel down-after-milliseconds monctl-redis 5000
+sentinel parallel-syncs monctl-redis 1
+sentinel failover-timeout monctl-redis 10000

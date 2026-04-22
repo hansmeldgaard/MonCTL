@@ -1,0 +1,36 @@
+# Three-host small cluster — PG HA + single CH + one central.
+# Use case: production for small/medium fleets (up to ~500 devices).
+version: 1
+
+cluster:
+  name: acme
+  domain: monctl.acme.local
+
+hosts:
+  - name: mon1
+    address: 10.0.0.11
+    ssh:
+      user: monctl
+    roles: [postgres, etcd, redis, central, clickhouse, collector, docker_stats]
+
+  - name: mon2
+    address: 10.0.0.12
+    ssh:
+      user: monctl
+    roles: [postgres, etcd, docker_stats]
+
+  - name: mon3
+    address: 10.0.0.13
+    ssh:
+      user: monctl
+    roles: [etcd, docker_stats] # quorum voter only
+
+sizing:
+  postgres: { mode: ha }
+  clickhouse: { shards: 1, replicas: 1, keeper: embedded }
+  redis: { mode: single }
+  central: { tls_behind_haproxy: false }
+
+secrets:
+  mode: auto_generate
+  file: ./secrets.env

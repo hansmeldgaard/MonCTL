@@ -1,0 +1,64 @@
+<!-- ClickHouse cluster config — rendered by monctl_ctl for {{ host.name }} -->
+<clickhouse>
+    <interserver_http_host from_env="INTERSERVER_HTTP_HOST" />
+
+    <remote_servers>
+        <monctl_cluster>
+{% for s in range(1, sizing.clickhouse.shards + 1) %}
+            <shard>
+                <internal_replication>true</internal_replication>
+{% for r in range(1, sizing.clickhouse.replicas + 1) %}
+{% set ns = namespace(node=None) %}
+{% for n in plan.clickhouse %}
+{% if n.shard == s and n.replica == r %}{% set ns.node = n %}{% endif %}
+{% endfor %}
+                <replica>
+                    <host>{{ ns.node.host.address }}</host>
+                    <port>9000</port>
+                    <user>monctl</user>
+                    <password from_env="CLICKHOUSE_PASSWORD" />
+                </replica>
+{% endfor %}
+            </shard>
+{% endfor %}
+        </monctl_cluster>
+    </remote_servers>
+
+    <macros>
+        <cluster>monctl_cluster</cluster>
+        <shard>{{ ch_node.shard }}</shard>
+        <replica from_env="CLICKHOUSE_REPLICA" />
+    </macros>
+
+    <zookeeper>
+{% for k in plan.clickhouse_keepers %}
+        <node>
+            <host>{{ k.address }}</host>
+            <port>9181</port>
+        </node>
+{% endfor %}
+    </zookeeper>
+
+{% if ch_node.embedded_keeper %}
+    <keeper_server>
+        <tcp_port>9181</tcp_port>
+        <server_id from_env="KEEPER_SERVER_ID" />
+        <log_storage_path>/var/lib/clickhouse/coordination/log</log_storage_path>
+        <snapshot_storage_path>/var/lib/clickhouse/coordination/snapshots</snapshot_storage_path>
+        <coordination_settings>
+            <operation_timeout_ms>10000</operation_timeout_ms>
+            <session_timeout_ms>30000</session_timeout_ms>
+            <raft_logs_level>warning</raft_logs_level>
+        </coordination_settings>
+        <raft_configuration>
+{% for n in plan.clickhouse if n.embedded_keeper %}
+            <server>
+                <id>{{ n.keeper_id }}</id>
+                <hostname>{{ n.host.address }}</hostname>
+                <port>9234</port>
+            </server>
+{% endfor %}
+        </raft_configuration>
+    </keeper_server>
+{% endif %}
+</clickhouse>

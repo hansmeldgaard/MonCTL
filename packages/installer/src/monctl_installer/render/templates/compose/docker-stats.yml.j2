@@ -1,0 +1,27 @@
+# MonCTL docker-stats sidecar — rendered by monctl_ctl for host {{ host.name }}
+services:
+  docker-stats:
+    image: ghcr.io/hansmeldgaard/monctl-docker-stats:{{ image_tag | default('latest') }}
+    container_name: monctl-docker-stats
+    network_mode: host
+    pid: host
+    privileged: true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /:/host_root:rw
+    environment:
+      MONCTL_HOST_LABEL: ${MONCTL_HOST_LABEL}
+      MONCTL_PUSH_URL: ${MONCTL_PUSH_URL}
+      MONCTL_PUSH_API_KEY: ${MONCTL_PUSH_API_KEY}
+      MONCTL_PUSH_VERIFY_SSL: "false"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9100/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.25"

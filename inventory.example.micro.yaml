@@ -1,0 +1,30 @@
+# Single-host appliance — everything on one box.
+# Use case: demo, lab, SMB pilot. No HA. No VIP.
+version: 1
+
+cluster:
+  name: demo
+  domain: monctl.local
+
+hosts:
+  - name: box
+    address: 127.0.0.1
+    ssh:
+      user: monctl
+    roles:
+      - postgres
+      - redis
+      - clickhouse
+      - central
+      - collector
+      - docker_stats
+
+sizing:
+  postgres: { mode: standalone }
+  clickhouse: { shards: 1, replicas: 1, keeper: embedded }
+  redis: { mode: single }
+  central: { tls_behind_haproxy: false }
+
+secrets:
+  mode: auto_generate
+  file: ./secrets.env
