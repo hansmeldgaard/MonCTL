@@ -1,0 +1,51 @@
+# MonCTL central app on {{ host.name }} — rendered by monctl_ctl
+services:
+  central:
+    image: ghcr.io/hansmeldgaard/monctl-central:{{ image_tag | default('latest') }}
+    container_name: central
+    ports:
+      - "8443:8443"
+    environment:
+      MONCTL_DATABASE_URL: postgresql+asyncpg://monctl:${PG_PASSWORD}@{{ pg_host_for_central }}:5432/monctl
+      MONCTL_REDIS_URL: redis://{{ redis_host_for_central }}:6379/0
+      MONCTL_HOST: 0.0.0.0
+      MONCTL_PORT: 8443
+      MONCTL_ROLE: {{ central_role }}
+      MONCTL_ENCRYPTION_KEY: ${MONCTL_ENCRYPTION_KEY}
+      MONCTL_JWT_SECRET_KEY: ${MONCTL_JWT_SECRET_KEY}
+      MONCTL_ADMIN_USERNAME: admin
+      MONCTL_ADMIN_PASSWORD: ${MONCTL_ADMIN_PASSWORD}
+      MONCTL_COLLECTOR_API_KEY: ${MONCTL_COLLECTOR_API_KEY}
+      MONCTL_CLICKHOUSE_HOSTS: {{ clickhouse_hosts_csv }}
+      MONCTL_CLICKHOUSE_USER: monctl
+      MONCTL_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+{% if plan.redis_sentinel %}
+      MONCTL_REDIS_SENTINEL_HOSTS: {{ redis_sentinel_hosts_csv }}
+      MONCTL_REDIS_SENTINEL_MASTER: monctl-redis
+{% endif %}
+{% if plan.pg_ha %}
+      MONCTL_PATRONI_NODES: {{ patroni_nodes_csv }}
+      MONCTL_ETCD_NODES: {{ etcd_nodes_csv }}
+{% endif %}
+      MONCTL_NODE_NAME: {{ host.name }}
+      MONCTL_NODE_IP: {{ host.address }}
+      MONCTL_DOCKER_STATS_HOSTS: {{ docker_stats_hosts_csv }}
+{% if cluster.vip %}
+      MONCTL_TLS_SAN_IPS: {{ cluster.vip }}
+{% endif %}
+    volumes:
+      - upgrades_data:/data/upgrades
+      - tls_certs:/etc/haproxy/certs
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8443/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+volumes:
+  upgrades_data:
+  tls_certs:
+    name: monctl_tls_certs

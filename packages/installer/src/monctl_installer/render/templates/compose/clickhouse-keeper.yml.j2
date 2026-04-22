@@ -1,0 +1,13 @@
+# Dedicated ClickHouse Keeper on {{ host.name }} — rendered by monctl_ctl
+services:
+  keeper:
+    image: clickhouse/clickhouse-keeper:24.3-alpine
+    container_name: clickhouse-keeper
+    network_mode: host
+    volumes:
+      - keeper_data:/var/lib/clickhouse-keeper
+      - ./clickhouse-keeper-config.xml:/etc/clickhouse-keeper/config.xml:ro
+    restart: unless-stopped
+
+volumes:
+  keeper_data:

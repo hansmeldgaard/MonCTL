@@ -1,0 +1,16 @@
+# Keepalived VRRP — rendered by monctl_ctl for {{ host.name }}
+# __INTERFACE__, __PRIORITY__, __VIP__ substituted at container entrypoint time.
+vrrp_instance monctl_vip {
+    state BACKUP
+    interface __INTERFACE__
+    virtual_router_id 51
+    priority __PRIORITY__
+    advert_int 1
+    authentication {
+        auth_type PASS
+        auth_pass monctlvrrp
+    }
+    virtual_ipaddress {
+        __VIP__
+    }
+}

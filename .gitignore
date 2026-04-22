@@ -12,6 +12,8 @@ build/
 .venv/
 venv/
 env/
+# monctl_ctl .env.j2 templates live under an "env/" dir; keep them tracked.
+!packages/installer/src/monctl_installer/render/templates/env/
 
 # IDE
 .idea/
@@ -65,3 +67,8 @@ docker/certs/
 
 # e2e smoke baseline snapshots (scripts/e2e_smoke.py)
 .monctl-smoke/
+
+# monctl_ctl installer output + customer secrets
+/out/
+/secrets.env
+/inventory.yaml

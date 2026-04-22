@@ -1,0 +1,61 @@
+# Patroni — rendered by monctl_ctl for {{ host.name }}
+scope: monctl
+name: {{ host.name }}
+
+restapi:
+  listen: 0.0.0.0:8008
+  connect_address: {{ host.address }}:8008
+
+etcd3:
+  hosts: {{ etcd_hosts_csv }}
+
+bootstrap:
+  dcs:
+    ttl: 30
+    loop_wait: 10
+    retry_timeout: 10
+    maximum_lag_on_failover: 1048576
+    synchronous_mode: true
+    postgresql:
+      use_pg_rewind: true
+      use_slots: true
+      parameters:
+        max_connections: 200
+        shared_buffers: 512MB
+        effective_cache_size: 1536MB
+        work_mem: 4MB
+        wal_level: replica
+        max_wal_senders: 5
+        max_replication_slots: 5
+        hot_standby: "on"
+        synchronous_commit: "on"
+  initdb:
+    - encoding: UTF8
+    - data-checksums
+  pg_hba:
+{% for h in plan.postgres %}
+    - host replication replicator {{ h.host.address }}/32 md5
+    - host all all {{ h.host.address }}/32 md5
+{% endfor %}
+{% for h in plan.central_hosts %}
+    - host all all {{ h.address }}/32 md5
+{% endfor %}
+    - host all all 0.0.0.0/0 md5
+  users:
+    monctl:
+      password: ${PG_PASSWORD}
+      options:
+        - createrole
+        - createdb
+
+postgresql:
+  listen: 0.0.0.0:5432
+  connect_address: {{ host.address }}:5432
+  data_dir: /var/lib/postgresql/data/patroni
+  authentication:
+    superuser:
+      username: postgres
+      password: ${PG_PASSWORD}
+    replication:
+      username: replicator
+      password: ${PG_REPL_PASSWORD}

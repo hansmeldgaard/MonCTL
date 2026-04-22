@@ -1,0 +1,79 @@
+# MonCTL Collector on {{ host.name }} — rendered by monctl_ctl
+services:
+  cache-node:
+    image: ghcr.io/hansmeldgaard/monctl-collector:{{ image_tag | default('latest') }}
+    command: monctl-cache-node
+    container_name: cache-node
+    hostname: {{ host.name }}
+    ports:
+      - "127.0.0.1:50052:50052"
+    environment:
+      MONCTL_NODE_ID: {{ host.name }}
+      MONCTL_CENTRAL_URL: {{ central_api_url }}
+      MONCTL_CENTRAL_API_KEY: ${MONCTL_COLLECTOR_API_KEY}
+      MONCTL_VERIFY_SSL: "false"
+      MONCTL_GRPC_ADDRESS: 0.0.0.0:50051
+      MONCTL_DB_PATH: /data/cache.db
+      MONCTL_COLLECTOR_API_KEY: ${MONCTL_COLLECTOR_API_KEY}
+      MONCTL_SETUP_YAML: /etc/monctl/setup.yaml
+      MONCTL_PEER_TOKEN: ${PEER_TOKEN}
+      MONCTL_APPS_DIR: /shared/apps
+      MONCTL_VENVS_DIR: /shared/venvs
+    volumes:
+      - cache_data:/data
+      - app_data:/shared
+      - /etc/monctl/setup.yaml:/etc/monctl/setup.yaml:rw
+      - /etc/machine-id:/etc/machine-id:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket,sys; s=socket.socket(); s.settimeout(1); r=s.connect_ex(('127.0.0.1',50051)); s.close(); sys.exit(r)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  poll-worker-1:
+    image: ghcr.io/hansmeldgaard/monctl-collector:{{ image_tag | default('latest') }}
+    command: monctl-poll-worker
+    container_name: poll-worker-1
+    mem_limit: 1g
+    environment:
+      MONCTL_CACHE_NODE: cache-node:50051
+      MONCTL_WORKER_ID: {{ host.name }}-worker-1
+      MONCTL_CENTRAL_URL: {{ central_api_url }}
+      MONCTL_CENTRAL_API_KEY: ${MONCTL_COLLECTOR_API_KEY}
+      MONCTL_VERIFY_SSL: "false"
+      MONCTL_PEER_TOKEN: ${PEER_TOKEN}
+      MONCTL_APPS_DIR: /data/apps
+      MONCTL_VENVS_DIR: /data/venvs
+      MONCTL_DB_PATH: /data/worker.db
+      MALLOC_ARENA_MAX: "2"
+      PYTHONMALLOC: malloc
+    volumes:
+      - app_data:/data
+    depends_on:
+      cache-node:
+        condition: service_healthy
+    restart: unless-stopped
+
+  forwarder:
+    image: ghcr.io/hansmeldgaard/monctl-collector:{{ image_tag | default('latest') }}
+    command: monctl-forwarder
+    container_name: forwarder
+    environment:
+      MONCTL_NODE_ID: {{ host.name }}
+      MONCTL_CENTRAL_URL: {{ central_api_url }}
+      MONCTL_CENTRAL_API_KEY: ${MONCTL_COLLECTOR_API_KEY}
+      MONCTL_VERIFY_SSL: "false"
+      MONCTL_DB_PATH: /data/cache.db
+    volumes:
+      - cache_data:/data
+    depends_on:
+      cache-node:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  cache_data:
+  app_data:

@@ -1,0 +1,52 @@
+# Redis on {{ host.name }} ({{ redis_node.role }}) — rendered by monctl_ctl
+services:
+{% if redis_node.role == "primary" or redis_node.role == "standalone" %}
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    network_mode: host
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+{% else %}
+  redis-replica:
+    image: redis:7-alpine
+    container_name: redis
+    network_mode: host
+    command: redis-server --replicaof {{ plan.redis[0].host.address }} 6379
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+{% endif %}
+
+{% if redis_node.sentinel %}
+  redis-sentinel:
+    image: redis:7-alpine
+    container_name: redis-sentinel
+    network_mode: host
+    entrypoint: []
+    command: >
+      sh -c "cp /etc/redis/sentinel-template.conf /tmp/sentinel.conf &&
+             redis-sentinel /tmp/sentinel.conf"
+    volumes:
+      - ./sentinel.conf:/etc/redis/sentinel-template.conf:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "26379", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+{% endif %}
+
+volumes:
+  redisdata:

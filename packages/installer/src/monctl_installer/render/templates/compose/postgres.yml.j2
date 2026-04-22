@@ -1,0 +1,61 @@
+# PostgreSQL — rendered by monctl_ctl for host {{ host.name }} ({{ pg_node.role }})
+services:
+{% if plan.pg_ha %}
+  patroni:
+    image: timescale/timescaledb:latest-pg16
+    container_name: patroni
+    network_mode: host
+    entrypoint: []
+    command: >
+      sh -c "
+        apk add --no-cache python3 py3-pip py3-psycopg2 su-exec &&
+        pip install --break-system-packages patroni[etcd3] &&
+        chown -R postgres:postgres /var/lib/postgresql/data &&
+        exec su-exec postgres patroni /etc/patroni/patroni.yml
+      "
+    environment:
+      PATRONI_NAME: {{ host.name }}
+      PATRONI_SCOPE: monctl
+      PATRONI_RESTAPI_CONNECT_ADDRESS: {{ host.address }}:8008
+      PATRONI_RESTAPI_LISTEN: 0.0.0.0:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: {{ host.address }}:5433
+      PATRONI_POSTGRESQL_LISTEN: 0.0.0.0:5433
+      PATRONI_POSTGRESQL_DATA_DIR: /var/lib/postgresql/data/patroni
+      PATRONI_ETCD3_HOSTS: {{ etcd_hosts_csv }}
+      PATRONI_SUPERUSER_USERNAME: postgres
+      PATRONI_SUPERUSER_PASSWORD: ${PG_PASSWORD}
+      PATRONI_REPLICATION_USERNAME: replicator
+      PATRONI_REPLICATION_PASSWORD: ${PG_REPL_PASSWORD}
+      PATRONI_POSTGRESQL_AUTHENTICATION__SUPERUSER__PASSWORD: ${PG_PASSWORD}
+      PATRONI_POSTGRESQL_AUTHENTICATION__REPLICATION__PASSWORD: ${PG_REPL_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./patroni.yml:/etc/patroni/patroni.yml:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8008/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+{% else %}
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    network_mode: host
+    environment:
+      POSTGRES_DB: monctl
+      POSTGRES_USER: monctl
+      POSTGRES_PASSWORD: ${PG_PASSWORD}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "monctl"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+{% endif %}
+
+volumes:
+  pgdata:

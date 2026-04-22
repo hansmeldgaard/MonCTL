@@ -1,0 +1,50 @@
+# Large HA cluster — 3 central (Patroni + VIP), 8 CH (4 shards × 2 replicas), 4 collectors.
+# Use case: enterprise, 1000+ devices, high-retention ClickHouse.
+version: 1
+
+cluster:
+  name: acme-prod
+  domain: monctl.acme.com
+  vip: 10.0.0.40
+  vip_interface: eth0
+
+hosts:
+  - {
+      name: mon1,
+      address: 10.0.0.11,
+      roles: [postgres, etcd, redis, central, haproxy, docker_stats],
+    }
+  - {
+      name: mon2,
+      address: 10.0.0.12,
+      roles: [postgres, etcd, redis, central, haproxy, docker_stats],
+    }
+  - {
+      name: mon3,
+      address: 10.0.0.13,
+      roles: [postgres, etcd, central, haproxy, docker_stats],
+    }
+
+  - { name: ch1, address: 10.0.0.21, roles: [clickhouse, docker_stats] }
+  - { name: ch2, address: 10.0.0.22, roles: [clickhouse, docker_stats] }
+  - { name: ch3, address: 10.0.0.23, roles: [clickhouse, docker_stats] }
+  - { name: ch4, address: 10.0.0.24, roles: [clickhouse, docker_stats] }
+  - { name: ch5, address: 10.0.0.25, roles: [clickhouse, docker_stats] }
+  - { name: ch6, address: 10.0.0.26, roles: [clickhouse, docker_stats] }
+  - { name: ch7, address: 10.0.0.27, roles: [clickhouse, docker_stats] }
+  - { name: ch8, address: 10.0.0.28, roles: [clickhouse, docker_stats] }
+
+  - { name: col1, address: 10.0.0.31, roles: [collector, docker_stats] }
+  - { name: col2, address: 10.0.0.32, roles: [collector, docker_stats] }
+  - { name: col3, address: 10.0.0.33, roles: [collector, docker_stats] }
+  - { name: col4, address: 10.0.0.34, roles: [collector, docker_stats] }
+
+sizing:
+  postgres: { mode: ha }
+  clickhouse: { shards: 4, replicas: 2, keeper: embedded }
+  redis: { mode: auto } # → sentinel (>=2 central)
+  central: { tls_behind_haproxy: true }
+
+secrets:
+  mode: auto_generate
+  file: ./secrets.env

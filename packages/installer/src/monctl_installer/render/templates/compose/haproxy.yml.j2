@@ -1,0 +1,49 @@
+# HAProxy + keepalived on {{ host.name }} — rendered by monctl_ctl
+services:
+  haproxy:
+    image: haproxy:2.9-alpine
+    container_name: haproxy
+    network_mode: host
+    user: root
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - tls_certs:/etc/haproxy/certs:ro
+    restart: always
+    healthcheck:
+      test: ["CMD", "haproxy", "-c", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  keepalived:
+    image: osixia/keepalived:2.0.20
+    container_name: keepalived
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_BROADCAST
+      - NET_RAW
+    environment:
+      KEEPALIVED_INTERFACE: ${KEEPALIVED_INTERFACE}
+      KEEPALIVED_PRIORITY: ${KEEPALIVED_PRIORITY}
+      KEEPALIVED_VIP: {{ cluster.vip }}
+    volumes:
+      - ./keepalived.conf:/tmp/keepalived-template.conf:ro
+    entrypoint:
+      - sh
+      - -c
+      - |
+        sed -e "s/__INTERFACE__/$$KEEPALIVED_INTERFACE/g" \
+            -e "s/__PRIORITY__/$$KEEPALIVED_PRIORITY/g" \
+            -e "s|__VIP__|$$KEEPALIVED_VIP|g" \
+          /tmp/keepalived-template.conf > /container/service/keepalived/assets/keepalived.conf
+        exec /container/tool/run --copy-service
+    restart: always
+    depends_on:
+      haproxy:
+        condition: service_healthy
+
+volumes:
+  tls_certs:
+    name: monctl_tls_certs
+    external: true
