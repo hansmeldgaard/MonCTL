@@ -1475,16 +1475,23 @@ async def get_device_thresholds(
         if a.app:
             app_name_map[str(a.app_id)] = a.app.name
 
-    # Build variable usage: which definitions reference each variable
+    # Build variable usage: which definitions reference each variable.
+    # Post PR #38 definitions carry `severity_tiers` (list of {severity,
+    # expression, message_template}) instead of a flat `expression` column.
     var_usage: dict[str, list] = {}
     import re as _re
     for var in threshold_vars:
         refs = []
+        pattern = _re.compile(rf"(?:>|<|>=|<=|==|!=)\s*{_re.escape(var.name)}\b")
         for d in alert_defs:
-            if d.expression and str(d.app_id) == str(var.app_id):
-                pattern = _re.compile(rf"(?:>|<|>=|<=|==|!=)\s*{_re.escape(var.name)}\b")
-                if pattern.search(d.expression):
-                    refs.append({"definition_id": str(d.id), "definition_name": d.name})
+            if str(d.app_id) != str(var.app_id):
+                continue
+            tiers = d.severity_tiers or []
+            if any(
+                t.get("expression") and pattern.search(t["expression"])
+                for t in tiers
+            ):
+                refs.append({"definition_id": str(d.id), "definition_name": d.name})
         var_usage[str(var.id)] = refs
 
     # Build flat rows

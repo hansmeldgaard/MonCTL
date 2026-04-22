@@ -853,17 +853,24 @@ async def cleanup_orphan_threshold_variables(
 
         referenced = False
         for d in defs:
-            validation = validate_expression(d.expression, "")
-            # Check threshold_refs (named refs) and threshold_params (inline auto-created)
-            for ref in validation.threshold_refs:
-                if ref.name == var.name:
-                    referenced = True
-                    break
-            if not referenced:
-                for tp in validation.threshold_params:
-                    if tp.name == var.name:
+            # Post PR #38 alert defs carry severity_tiers instead of a flat
+            # expression. Check every tier's expression for the variable.
+            for tier in (d.severity_tiers or []):
+                expr = tier.get("expression") if isinstance(tier, dict) else None
+                if not expr:
+                    continue
+                validation = validate_expression(expr, "")
+                for ref in validation.threshold_refs:
+                    if ref.name == var.name:
                         referenced = True
                         break
+                if not referenced:
+                    for tp in validation.threshold_params:
+                        if tp.name == var.name:
+                            referenced = True
+                            break
+                if referenced:
+                    break
             if referenced:
                 break
 
