@@ -2440,21 +2440,25 @@ async def delete_app_threshold(
         select(AlertDefinition).where(AlertDefinition.app_id == uuid.UUID(app_id))
     )).scalars().all()
     for ad in alert_defs:
-        validation = validate_expression(ad.expression, app.target_table)
-        for ref in validation.threshold_refs:
-            if ref.name == variable.name:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Cannot delete: alert definition '{ad.name}' references "
-                           f"'{variable.name}' in its expression",
-                )
-        for tp in validation.threshold_params:
-            if tp.name == variable.name:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Cannot delete: alert definition '{ad.name}' references "
-                           f"'{variable.name}' in its expression",
-                )
+        for tier in (ad.severity_tiers or []):
+            expr = tier.get("expression") if isinstance(tier, dict) else None
+            if not expr:
+                continue
+            validation = validate_expression(expr, app.target_table)
+            for ref in validation.threshold_refs:
+                if ref.name == variable.name:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Cannot delete: alert definition '{ad.name}' references "
+                               f"'{variable.name}' in its expression",
+                    )
+            for tp in validation.threshold_params:
+                if tp.name == variable.name:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Cannot delete: alert definition '{ad.name}' references "
+                               f"'{variable.name}' in its expression",
+                    )
 
     await db.delete(variable)
     await db.flush()

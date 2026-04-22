@@ -2,10 +2,10 @@
   "monctl_pack": "1.0",
   "pack_uid": "basic-checks",
   "name": "Basic Checks (Ping, Port, HTTP)",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Fundamental reachability checks: ICMP ping, TCP port, and HTTP/HTTPS endpoint monitoring.",
   "author": "MonCTL",
-  "changelog": "v2.1.0 - Pack version realigned with max contained app version (ping_check 2.1.0). No functional changes vs v1.3.0; audit trail only (F-APP-011).\nv1.3.0 - Per-tier message_template + healthy tier for recovery messages",
+  "changelog": "v2.2.0 - port_check and http_check: promote inline latency thresholds to named threshold variables (rtt_ms_warn) so they appear on the device Thresholds tab and are per-device overridable.\nv2.1.0 - Pack version realigned with max contained app version (ping_check 2.1.0). No functional changes vs v1.3.0; audit trail only (F-APP-011).\nv1.3.0 - Per-tier message_template + healthy tier for recovery messages",
   "exported_at": null,
   "contents": {
     "apps": [
@@ -168,6 +168,15 @@
             "is_latest": true
           }
         ],
+        "threshold_variables": [
+          {
+            "name": "rtt_ms_warn",
+            "display_name": "Connect Time Warning",
+            "default_value": 1000.0,
+            "unit": "ms",
+            "description": "Average TCP connect time (ms) above which Port - Slow Connect fires"
+          }
+        ],
         "alert_definitions": [
           {
             "name": "Port - Unreachable",
@@ -189,19 +198,19 @@
           },
           {
             "name": "Port - Slow Connect",
-            "description": "TCP connect time is high",
+            "description": "TCP connect time above the warning threshold",
             "window": "5m",
             "enabled": true,
             "severity_tiers": [
               {
                 "severity": "healthy",
-                "expression": "avg(rtt_ms) < 1000",
+                "expression": "avg(rtt_ms) < rtt_ms_warn",
                 "message_template": "TCP connect time to {device_name} recovered ({value}ms)"
               },
               {
                 "severity": "warning",
-                "expression": "avg(rtt_ms) > 1000",
-                "message_template": "Slow TCP connect to {device_name}: {value}ms"
+                "expression": "avg(rtt_ms) > rtt_ms_warn",
+                "message_template": "Slow TCP connect to {device_name}: {value}ms (> {rtt_ms_warn}ms)"
               }
             ]
           }
@@ -249,6 +258,15 @@
             "is_latest": true
           }
         ],
+        "threshold_variables": [
+          {
+            "name": "rtt_ms_warn",
+            "display_name": "Response Time Warning",
+            "default_value": 2000.0,
+            "unit": "ms",
+            "description": "Average HTTP response time (ms) above which HTTP - Slow Response fires"
+          }
+        ],
         "alert_definitions": [
           {
             "name": "HTTP - Unreachable",
@@ -270,19 +288,19 @@
           },
           {
             "name": "HTTP - Slow Response",
-            "description": "HTTP response time exceeds 2s on average",
+            "description": "HTTP response time above the warning threshold",
             "window": "5m",
             "enabled": true,
             "severity_tiers": [
               {
                 "severity": "healthy",
-                "expression": "avg(rtt_ms) < 2000",
+                "expression": "avg(rtt_ms) < rtt_ms_warn",
                 "message_template": "HTTP response time from {device_name} recovered ({value}ms)"
               },
               {
                 "severity": "warning",
-                "expression": "avg(rtt_ms) > 2000",
-                "message_template": "Slow HTTP response from {device_name}: {value}ms"
+                "expression": "avg(rtt_ms) > rtt_ms_warn",
+                "message_template": "Slow HTTP response from {device_name}: {value}ms (> {rtt_ms_warn}ms)"
               }
             ]
           }

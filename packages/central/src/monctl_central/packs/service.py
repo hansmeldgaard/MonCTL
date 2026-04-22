@@ -479,9 +479,10 @@ async def preview_import(data: dict, db: AsyncSession) -> dict:
                     )
                 )).scalar_one_or_none()
                 if existing_ad:
-                    # Compare expression, window, enabled
+                    # Compare severity_tiers, window, enabled (post PR #38
+                    # alert defs use severity_tiers, not a flat expression).
                     changed = (
-                        existing_ad.expression != ad.get("expression")
+                        (existing_ad.severity_tiers or []) != (ad.get("severity_tiers") or [])
                         or existing_ad.window != ad.get("window")
                         or existing_ad.enabled != ad.get("enabled", True)
                     )
