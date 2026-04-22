@@ -2013,6 +2013,8 @@ async def get_db_size_history(
         except ValueError:
             return None
 
+    from_parsed = _parse(from_ts)
+    to_parsed = _parse(to_ts)
     try:
         rows = await asyncio.to_thread(
             ch.query_db_size_history,
@@ -2020,8 +2022,9 @@ async def get_db_size_history(
             scope=scope,
             database_name=database_name,
             table_name=table_name,
-            from_ts=_parse(from_ts),
-            to_ts=_parse(to_ts),
+            from_ts=from_parsed,
+            to_ts=to_parsed,
+            step_seconds=_db_size_bucket_step(from_parsed, to_parsed),
             limit=min(max(int(limit), 1), 50000),
         )
     except Exception:
@@ -2038,6 +2041,25 @@ async def get_db_size_history(
                 r[col] = int(r[col])
 
     return {"status": "success", "data": rows, "meta": {"count": len(rows)}}
+
+
+def _db_size_bucket_step(from_ts, to_ts) -> int:
+    """Bucket step for db_size_history.
+
+    The sampler already writes at 15-min cadence, so no compression is
+    needed at <=24h. Beyond that the per-table row-count multiplier
+    dominates — with ~40 tables, 7d has ~27k raw rows and blows the
+    default LIMIT. Hourly buckets at 7d and 6-hour buckets at 30d keep
+    payloads in the few-thousand-rows range.
+    """
+    if from_ts is None or to_ts is None:
+        return 0
+    span_s = max(int((to_ts - from_ts).total_seconds()), 1)
+    if span_s <= 24 * 3600:
+        return 0  # native 15-min cadence
+    if span_s <= 7 * 24 * 3600:
+        return 3600  # 1h
+    return 21600  # 6h
 
 
 def _bucket_step_for_range(from_ts, to_ts) -> int:
