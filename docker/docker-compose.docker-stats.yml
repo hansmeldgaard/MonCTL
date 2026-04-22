@@ -10,6 +10,9 @@ services:
       - /:/host_root:rw
     environment:
       MONCTL_HOST_LABEL: ${MONCTL_HOST_LABEL:-unknown}
+      MONCTL_PUSH_URL: ${MONCTL_PUSH_URL:-}
+      MONCTL_PUSH_API_KEY: ${MONCTL_PUSH_API_KEY:-}
+      MONCTL_PUSH_VERIFY_SSL: ${MONCTL_PUSH_VERIFY_SSL:-false}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9100/health"]
