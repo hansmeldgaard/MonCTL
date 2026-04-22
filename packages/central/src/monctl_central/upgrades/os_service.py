@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import socket
+import time
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -43,13 +44,116 @@ async def check_node_updates(node_ip: str) -> list[dict]:
     return data.get("updates", [])
 
 
-async def install_packages_on_node(node_ip: str, package_names: list[str]) -> dict:
-    """Tell a node's sidecar to install packages via apt-get."""
-    url = f"http://{node_ip}:{SIDECAR_PORT}/os/install"
-    async with httpx.AsyncClient(timeout=600) as client:
-        resp = await client.post(url, json={"packages": package_names})
-        resp.raise_for_status()
-        return resp.json()
+async def install_packages_on_node(
+    node_ip: str,
+    package_names: list[str],
+    resume_job_id: str | None = None,
+    on_launch=None,
+) -> dict:
+    """Launch an apt install on a node and poll until completion.
+
+    The sidecar executes `apt-get install` under a transient `systemd-run`
+    unit so the install survives the sidecar dying mid-stream — which is
+    exactly what happens when the install upgrades docker-ce (restarts
+    dockerd, which kills every container on the host) or anything that
+    restarts the sidecar. Without this pattern the HTTP response is severed
+    and the operator sees "Server disconnected".
+
+    Flow:
+      POST /os/install -> { job_id }
+      GET  /os/install/status?job_id=... -> state in {running, completed, failed}
+
+    If `resume_job_id` is provided, the POST is skipped and polling starts
+    directly against that existing sidecar job. Used when a newly elected
+    leader takes over a running step whose prior leader died mid-poll.
+
+    `on_launch(job_id)` is an optional async callback fired right after a
+    new POST succeeds — callers use it to persist the job_id so a future
+    restart can resume.
+
+    Polling tolerates ConnectError/ReadError (sidecar restarting) with a
+    short backoff; timeout is generous (30 min) because large installs can
+    be slow and the caller is a background job step.
+    """
+    launch_url = f"http://{node_ip}:{SIDECAR_PORT}/os/install"
+    status_url = f"http://{node_ip}:{SIDECAR_PORT}/os/install/status"
+
+    if resume_job_id:
+        job_id = resume_job_id
+        logger.info(
+            "os_install_resumed",
+            node_ip=node_ip,
+            job_id=job_id,
+        )
+    else:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(launch_url, json={"packages": package_names})
+            resp.raise_for_status()
+            launch = resp.json()
+        job_id = launch.get("job_id")
+        if not job_id:
+            # Older sidecar returned the result inline (pre-async contract).
+            # Keep working against it until every node is redeployed.
+            return launch
+        logger.info(
+            "os_install_launched",
+            node_ip=node_ip,
+            job_id=job_id,
+            packages=len(package_names),
+        )
+        if on_launch is not None:
+            try:
+                await on_launch(job_id)
+            except Exception:
+                logger.warning(
+                    "os_install_on_launch_callback_failed",
+                    node_ip=node_ip,
+                    job_id=job_id,
+                    exc_info=True,
+                )
+
+    deadline = time.monotonic() + 1800  # 30 min hard cap
+    poll_interval = 5.0
+    last_output = ""
+    while time.monotonic() < deadline:
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                r = await client.get(status_url, params={"job_id": job_id})
+                r.raise_for_status()
+                data = r.json()
+        except (
+            httpx.ConnectError,
+            httpx.ReadError,
+            httpx.RemoteProtocolError,
+            httpx.ReadTimeout,
+        ) as exc:
+            # Sidecar likely restarting — keep waiting, don't give up.
+            logger.debug(
+                "os_install_poll_disconnect",
+                node_ip=node_ip,
+                job_id=job_id,
+                exc=type(exc).__name__,
+            )
+            await asyncio.sleep(poll_interval)
+            continue
+
+        state = data.get("state")
+        if state in ("completed", "failed"):
+            return {
+                "output": data.get("output", ""),
+                "returncode": data.get("returncode", 1),
+                "success": bool(data.get("success")),
+                "warnings": data.get("warnings", []),
+            }
+        last_output = data.get("output", last_output)
+        await asyncio.sleep(poll_interval)
+
+    return {
+        "output": last_output + "\n[central] timeout waiting for install to finish",
+        "returncode": 124,
+        "success": False,
+        "warnings": [],
+    }
 
 
 async def reboot_node(node_ip: str) -> dict:
@@ -246,33 +350,146 @@ async def create_os_install_job(
 # OS Install Job: executor (background task)
 # ---------------------------------------------------------------------------
 
+DRIVER_LEASE_PREFIX = "monctl:os_install_job:"
+DRIVER_LEASE_TTL = 60  # seconds
+DRIVER_LEASE_REFRESH = 20  # seconds
+
+
+async def _acquire_driver_lease(redis, job_id: UUID, instance_id: str) -> bool:
+    """Try to claim exclusive driver ownership of this job.
+
+    Returns True if we got the lease; False means another central is
+    already driving. Expires in DRIVER_LEASE_TTL if the holder dies.
+    """
+    key = f"{DRIVER_LEASE_PREFIX}{job_id}:driver"
+    result = await redis.set(key, instance_id, ex=DRIVER_LEASE_TTL, nx=True)
+    return bool(result)
+
+
+async def _refresh_driver_lease(redis, job_id: UUID, instance_id: str) -> None:
+    """Refresh loop while actively driving. Stops when the process dies."""
+    key = f"{DRIVER_LEASE_PREFIX}{job_id}:driver"
+    # Lua: only refresh if we still hold the lease.
+    script = (
+        "if redis.call('get', KEYS[1]) == ARGV[1] then "
+        "  return redis.call('expire', KEYS[1], ARGV[2]) "
+        "else return 0 end"
+    )
+    while True:
+        try:
+            await asyncio.sleep(DRIVER_LEASE_REFRESH)
+            ok = await redis.eval(script, 1, key, instance_id, str(DRIVER_LEASE_TTL))
+            if not ok:
+                logger.warning(
+                    "os_install_driver_lease_lost",
+                    job_id=str(job_id),
+                    instance_id=instance_id,
+                )
+                return
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "os_install_driver_lease_refresh_failed",
+                job_id=str(job_id),
+                exc_info=True,
+            )
+
+
+async def _release_driver_lease(redis, job_id: UUID, instance_id: str) -> None:
+    key = f"{DRIVER_LEASE_PREFIX}{job_id}:driver"
+    script = (
+        "if redis.call('get', KEYS[1]) == ARGV[1] then "
+        "  return redis.call('del', KEYS[1]) "
+        "else return 0 end"
+    )
+    try:
+        await redis.eval(script, 1, key, instance_id)
+    except Exception:
+        logger.warning("os_install_driver_lease_release_failed", job_id=str(job_id), exc_info=True)
+
+
 async def execute_os_install_job(session_factory, job_id: UUID) -> None:
-    """Execute an OS install job as a background task."""
-    async with session_factory() as db:
-        job = await db.get(OsInstallJob, job_id, options=[selectinload(OsInstallJob.steps)])
-        if not job:
-            logger.error("os_install_job_not_found", job_id=str(job_id))
+    """Execute an OS install job as a background task.
+
+    Multiple entry points can spawn this (API handlers on any central, +
+    the scheduler's orphan-resume tick on the leader). To keep only one
+    driver at a time we gate the body on a Redis lease keyed by job_id.
+    Losing contention is normal and cheap — second caller returns without
+    touching state.
+
+    Lease auto-expires in DRIVER_LEASE_TTL so if the driver dies (e.g. its
+    own dockerd was upgraded mid-poll) another instance can take over
+    within a minute.
+    """
+    from monctl_central.cache import _redis
+    from monctl_central.config import settings
+
+    instance_id = getattr(settings, "instance_id", "?")
+
+    if _redis is not None:
+        try:
+            got = await _acquire_driver_lease(_redis, job_id, instance_id)
+        except Exception:
+            logger.warning(
+                "os_install_driver_lease_acquire_failed — running without lease",
+                job_id=str(job_id),
+                exc_info=True,
+            )
+            got = True
+        if not got:
+            logger.info(
+                "os_install_job_another_driver_holds_lease",
+                job_id=str(job_id),
+                instance_id=instance_id,
+            )
             return
 
-        job.status = "running"
-        job.started_at = datetime.now(timezone.utc)
-        await db.commit()
+    refresher: asyncio.Task | None = None
+    if _redis is not None:
+        refresher = asyncio.create_task(
+            _refresh_driver_lease(_redis, job_id, instance_id),
+            name=f"os_install_lease_refresh_{job_id}",
+        )
 
-        try:
-            await _run_steps(db, job)
-        except Exception as exc:
-            job.status = "failed"
-            job.error_message = str(exc)
-            job.completed_at = datetime.now(timezone.utc)
-            await db.commit()
-            logger.error("os_install_job_failed", job_id=str(job_id), error=str(exc))
+    try:
+        async with session_factory() as db:
+            job = await db.get(OsInstallJob, job_id, options=[selectinload(OsInstallJob.steps)])
+            if not job:
+                logger.error("os_install_job_not_found", job_id=str(job_id))
+                return
 
-        # Refresh inventory after job completes to update progress counts
-        try:
-            from monctl_central.upgrades.os_inventory import collect_all_inventory
-            await collect_all_inventory(session_factory)
-        except Exception:
-            logger.warning("post_install_inventory_collection_failed", exc_info=True)
+            if job.status != "running":
+                job.status = "running"
+                job.started_at = datetime.now(timezone.utc)
+                await db.commit()
+
+            try:
+                await _run_steps(db, job)
+            except Exception as exc:
+                job.status = "failed"
+                job.error_message = str(exc)
+                job.completed_at = datetime.now(timezone.utc)
+                await db.commit()
+                logger.error("os_install_job_failed", job_id=str(job_id), error=str(exc))
+
+            # Refresh inventory after job completes to update progress counts
+            try:
+                from monctl_central.upgrades.os_inventory import collect_all_inventory
+                await collect_all_inventory(session_factory)
+            except Exception:
+                logger.warning("post_install_inventory_collection_failed", exc_info=True)
+    finally:
+        if refresher is not None:
+            refresher.cancel()
+            try:
+                await refresher
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
+        if _redis is not None:
+            await _release_driver_lease(_redis, job_id, instance_id)
 
 
 async def _run_steps(db: AsyncSession, job: OsInstallJob) -> None:
@@ -292,19 +509,33 @@ async def _run_steps(db: AsyncSession, job: OsInstallJob) -> None:
     # (HAProxy routes via source hash), this ensures we process all OTHER nodes
     # first and only reboot self as the final step.
     def _pick_next_pending(steps_list: list, current_host: str, i_start: int) -> int | None:
-        """Return index of next pending step, preferring non-current nodes."""
+        """Return index of next pending (or orphaned-running-install) step.
+
+        Also picks up central `install` steps already marked `running` —
+        these are orphans from a prior leader that died mid-poll. They get
+        resumed via `sidecar_job_id` if set, re-launched otherwise (apt
+        install is idempotent after `dpkg --configure -a`).
+        """
+        def _is_actionable(s):
+            if s.status == "pending":
+                return True
+            if (s.status == "running"
+                and s.node_role == "central"
+                and s.action == "install"):
+                return True
+            return False
+
         # First pass: skip current node's reboot/health_check steps
         for j in range(i_start, len(steps_list)):
             s = steps_list[j]
-            if s.status != "pending":
+            if not _is_actionable(s):
                 continue
             if s.action in ("reboot", "health_check") and s.node_hostname == current_host:
                 continue
             return j
         # Second pass: only current node steps left
         for j in range(i_start, len(steps_list)):
-            s = steps_list[j]
-            if s.status == "pending":
+            if _is_actionable(steps_list[j]):
                 return j
         return None
 
@@ -344,15 +575,38 @@ async def _run_steps(db: AsyncSession, job: OsInstallJob) -> None:
             continue
 
         # ── Central steps: execute directly via sidecar ───────────────
-        step.status = "running"
-        step.started_at = datetime.now(timezone.utc)
-        await db.commit()
+        # Don't re-stamp started_at / status when resuming an orphaned step.
+        resume_job_id = step.sidecar_job_id if step.status == "running" else None
+        if step.status != "running":
+            step.status = "running"
+            step.started_at = datetime.now(timezone.utc)
+            await db.commit()
+        else:
+            logger.info(
+                "os_step_resuming",
+                step_id=str(step.id),
+                node=step.node_hostname,
+                action=step.action,
+                sidecar_job_id=resume_job_id,
+            )
 
         try:
             if step.action == "install":
                 # apt-get install via local sidecar — dependencies resolved via
-                # central apt-cache proxy (see nginx-apt-cache on central:18080)
-                result = await install_packages_on_node(step.node_ip, job.package_names)
+                # central apt-cache proxy (see nginx-apt-cache on central:18080).
+                # Persist the sidecar's job_id as soon as /os/install returns
+                # it — a crash before install completion can then be recovered
+                # by a new leader via resume_job_id.
+                async def _persist_job_id(jid: str) -> None:
+                    step.sidecar_job_id = jid
+                    await db.commit()
+
+                result = await install_packages_on_node(
+                    step.node_ip,
+                    job.package_names,
+                    resume_job_id=resume_job_id,
+                    on_launch=_persist_job_id,
+                )
                 step.output_log = result.get("output", "")
                 # Treat partial success (some installed, some failed) as success
                 # Only fail if nothing was installed at all and there were real errors

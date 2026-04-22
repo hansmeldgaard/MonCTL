@@ -197,31 +197,85 @@ class OsUpdateAgent:
         ssl_ctx,
         package_names: list[str],
     ) -> str:
-        """Install packages via local sidecar — apt-get fetches via central apt-proxy."""
+        """Install packages via local sidecar.
+
+        Launches under the sidecar's systemd-run-backed job API so the
+        install survives the sidecar dying mid-upgrade (dockerd restart
+        from docker-ce, etc.). We poll until terminal, tolerating brief
+        ConnectError windows while the sidecar restarts.
+
+        Blind spot: if the collector itself is on the host being upgraded
+        and docker-ce is in the package list, *this process* dies when
+        dockerd restarts. The install still completes under systemd, but
+        the step result isn't reported. Central's step stays
+        `awaiting_collector` until the operator retries or times it out.
+        Fixing that needs persistent collector-side job state — out of
+        scope here.
+        """
         async with aiohttp.ClientSession() as sidecar:
             async with sidecar.post(
                 f"{SIDECAR_URL}/os/install",
                 json={"packages": package_names},
-                timeout=aiohttp.ClientTimeout(total=900),
+                timeout=aiohttp.ClientTimeout(total=30),
             ) as resp:
-                result = await resp.json()
+                launch = await resp.json()
 
+        job_id = launch.get("job_id")
+        if not job_id:
+            # Old sidecar (pre-async) — fall back to the inline shape.
+            return self._format_inline_install(launch)
+
+        deadline = asyncio.get_event_loop().time() + 1800  # 30 min
+        last_output = ""
+        while asyncio.get_event_loop().time() < deadline:
+            try:
+                async with aiohttp.ClientSession() as sidecar:
+                    async with sidecar.get(
+                        f"{SIDECAR_URL}/os/install/status",
+                        params={"job_id": job_id},
+                        timeout=aiohttp.ClientTimeout(total=15),
+                    ) as resp:
+                        data = await resp.json()
+            except (aiohttp.ClientConnectionError, asyncio.TimeoutError):
+                # Sidecar restarting — hold and retry.
+                await asyncio.sleep(5)
+                continue
+
+            state = data.get("state")
+            if state in ("completed", "failed"):
+                output = data.get("output", "")
+                warnings = data.get("warnings") or []
+                if warnings:
+                    output += "\n[postinst warnings]"
+                    for w in warnings:
+                        output += f"\n  {w}"
+                if not data.get("success"):
+                    raise RuntimeError(f"Install failed: {output[:500]}")
+                return output or "Installed"
+            last_output = data.get("output", last_output)
+            await asyncio.sleep(5)
+
+        raise RuntimeError(
+            f"Install timeout after 30 min. Partial output:\n{last_output[:500]}"
+        )
+
+    def _format_inline_install(self, result: dict) -> str:
         output = result.get("output", "")
         installed = result.get("installed", [])
         skipped = result.get("skipped", [])
         failed = result.get("failed", [])
         warnings = result.get("warnings") or []
-        # Append postinst warnings detected by the sidecar (e.g. apparmor
-        # reload failures, DBus errors) so they reach central's job log.
         if warnings:
             output += "\n[postinst warnings]"
             for w in warnings:
                 output += f"\n  {w}"
         if not result.get("success", False):
-            # Treat partial success or "already newest" as OK
             if installed or skipped or "is already the newest version" in output:
                 if failed:
-                    output += f"\nWarning: {len(failed)} package(s) failed: {', '.join(failed)}"
+                    output += (
+                        f"\nWarning: {len(failed)} package(s) failed: "
+                        f"{', '.join(failed)}"
+                    )
                 return output
             raise RuntimeError(f"Install failed: {output[:500]}")
         return output or "Installed"

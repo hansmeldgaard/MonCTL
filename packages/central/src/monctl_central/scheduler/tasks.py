@@ -51,6 +51,9 @@ class SchedulerRunner:
         self._last_eligibility_scan: datetime | None = None
         self._last_template_auto_apply: datetime | None = None
         self._alert_cycle_lock = asyncio.Lock()
+        # Track OS install jobs this instance is currently driving, so the
+        # resume-orphaned-jobs scan doesn't double-spawn them.
+        self._active_os_jobs: set[str] = set()
 
     async def start(self) -> asyncio.Task:
         self._task = asyncio.create_task(self._run())
@@ -125,6 +128,11 @@ class SchedulerRunner:
                 await self._run_eligibility_scan()
                 # Finalize completed eligibility runs (every cycle)
                 await self._finalize_eligibility_runs()
+                # Resume orphaned OS install jobs — a prior leader that died
+                # mid-poll (e.g. its own dockerd was upgraded) leaves
+                # os_install_jobs.status='running' with no driver. Any new
+                # leader picks them up here.
+                await self._resume_orphaned_os_jobs()
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -1184,6 +1192,56 @@ class SchedulerRunner:
                                    output=(result.get("output") or "")[:500])
         except Exception:
             logger.exception("central_apt_source_setup_error")
+
+    async def _resume_orphaned_os_jobs(self) -> None:
+        """Find OS install jobs the leader isn't actively driving and take over.
+
+        A job is considered orphaned when its row is still
+        `status='running'` but its ID isn't in `self._active_os_jobs` — i.e.
+        no background task on this instance is polling for it. This happens
+        after the previous leader died mid-poll (e.g. its own dockerd was
+        being upgraded). We re-spawn `execute_os_install_job`; its
+        `_run_steps` path resumes orphaned running-install steps via the
+        persisted `sidecar_job_id`.
+
+        Idempotent: if we're already running a job (ID in set), skip. If a
+        re-spawn races another instance, the FK-protected step transitions
+        will serialise via PG row locking; one of them wins.
+        """
+        from sqlalchemy import select
+        from monctl_central.storage.models import OsInstallJob
+        from monctl_central.upgrades.os_service import execute_os_install_job
+
+        try:
+            async with self._session_factory() as session:
+                stmt = select(OsInstallJob.id).where(OsInstallJob.status == "running")
+                orphans = (await session.execute(stmt)).scalars().all()
+        except Exception:
+            logger.warning("resume_orphaned_os_jobs_query_failed", exc_info=True)
+            return
+
+        for job_id in orphans:
+            job_id_s = str(job_id)
+            if job_id_s in self._active_os_jobs:
+                continue
+            logger.info("os_install_job_resuming_as_orphan job_id=%s", job_id_s)
+            self._active_os_jobs.add(job_id_s)
+
+            def _clear_tracking(t: asyncio.Task, jid: str = job_id_s) -> None:
+                self._active_os_jobs.discard(jid)
+                if t.cancelled():
+                    logger.warning("os_install_job_resume_cancelled job_id=%s", jid)
+                elif t.exception() is not None:
+                    logger.warning(
+                        "os_install_job_resume_ended_badly job_id=%s exc=%s",
+                        jid, t.exception(),
+                    )
+
+            task = asyncio.create_task(
+                execute_os_install_job(self._session_factory, job_id),
+                name=f"os_install_resume_{job_id_s}",
+            )
+            task.add_done_callback(_clear_tracking)
 
     async def _check_os_updates(self) -> None:
         """Check all nodes for OS updates via sidecars (runs daily)."""

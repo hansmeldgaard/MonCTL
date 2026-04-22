@@ -1495,6 +1495,9 @@ class OsInstallJobStep(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     output_log: Mapped[str | None] = mapped_column(Text)
     error_message: Mapped[str | None] = mapped_column(Text)
+    # Sidecar /os/install job_id (hex). Persisted on launch so a newly
+    # elected leader can resume polling if the prior one died mid-poll.
+    sidecar_job_id: Mapped[str | None] = mapped_column(String(16))
 
     job: Mapped["OsInstallJob"] = relationship(back_populates="steps")
 

@@ -8,6 +8,8 @@ Also provides /logs, /events, /images, /system endpoints.
 import json
 import os
 import re
+import secrets
+import shlex
 import shutil
 import socket
 import subprocess
@@ -333,6 +335,32 @@ POSTINST_FAILURE_MARKERS = (
 )
 
 
+def _gc_apt_job_files(max_age_seconds: int = 3600) -> int:
+    """Delete stale /var/run/monctl-apt-*.{log,rc} files older than max_age.
+
+    Status reads are idempotent — files live on so that callers can re-poll
+    after a crash without losing the result. A lightweight sweep keeps
+    /var/run from growing without bound. Reset-failed cleans the transient
+    systemd unit record (no-op on active or already-cleaned).
+    """
+    script = (
+        "for f in /var/run/monctl-apt-*.log /var/run/monctl-apt-*.rc; do "
+        "  [ -e \"$f\" ] || continue; "
+        f"  if [ $(($(date +%s) - $(stat -c %Y \"$f\"))) -gt {max_age_seconds} ]; then "
+        "    rm -f \"$f\"; "
+        "  fi; "
+        "done; "
+        "for u in $(systemctl list-units 'monctl-apt-*' --state=inactive,failed --no-legend -o cat 2>/dev/null | awk '{print $1}'); do "
+        "  systemctl reset-failed \"$u\" 2>/dev/null; "
+        "done; true"
+    )
+    try:
+        _host_exec(script, timeout=30)
+        return 0
+    except Exception:
+        return -1
+
+
 def _scan_postinst_failures(output: str) -> list[str]:
     """Return a deduplicated list of warning lines from an apt/dpkg output."""
     seen: set[str] = set()
@@ -625,6 +653,70 @@ class StatsHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._json_response(500, {"packages": [], "error": str(e)})
 
+        elif path == "/os/install/status":
+            # Polled by central to get status of a /os/install job launched
+            # earlier. Caller retries across sidecar restarts — this endpoint
+            # is idempotent. Cleans up state files once the job reaches a
+            # terminal state and the caller has seen it.
+            params = _parse_qs_single(self.path)
+            job_id = params.get("job_id", "")
+            if not re.match(r"^[a-f0-9]{12}$", job_id):
+                self._json_response(400, {"error": "invalid job_id"})
+                return
+            log_path = f"/var/run/monctl-apt-{job_id}.log"
+            rc_path = f"/var/run/monctl-apt-{job_id}.rc"
+            unit = f"monctl-apt-{job_id}"
+            # Read log (may be partial while running).
+            log_res = _host_exec(
+                f"cat {shlex.quote(log_path)} 2>/dev/null; true",
+                timeout=15,
+            )
+            rc_res = _host_exec(
+                f"cat {shlex.quote(rc_path)} 2>/dev/null; true",
+                timeout=10,
+            )
+            output = log_res.stdout
+            rc_raw = rc_res.stdout.strip()
+            if rc_raw.isdigit():
+                rc = int(rc_raw)
+                state = "completed" if rc == 0 else "failed"
+                warnings = _scan_postinst_failures(output)
+                # Idempotent: files are NOT deleted here so callers can safely
+                # re-poll after a crash/restart without losing the result.
+                # Stale files are GC'd by _gc_apt_job_files (1h TTL).
+                self._json_response(200, {
+                    "state": state,
+                    "returncode": rc,
+                    "success": rc == 0,
+                    "output": output,
+                    "warnings": warnings,
+                })
+                return
+            # No rc file yet — job still running OR died without writing rc.
+            active = _host_exec(
+                f"systemctl is-active {shlex.quote(unit)} 2>&1; true",
+                timeout=10,
+            )
+            state_word = active.stdout.strip().splitlines()[-1] if active.stdout else ""
+            if state_word == "active" or state_word == "activating":
+                self._json_response(200, {
+                    "state": "running",
+                    "output": output,
+                })
+            else:
+                # Unit is inactive/failed/unknown and no rc was ever written.
+                # Either the unit was cleaned up cleanly (edge case) or
+                # systemd killed it. Report failed so caller can move on.
+                self._json_response(200, {
+                    "state": "failed",
+                    "returncode": -1,
+                    "success": False,
+                    "output": output
+                        + f"\n[status] systemd unit '{unit}' ended without writing rc"
+                          f" (state={state_word or 'unknown'})",
+                    "warnings": _scan_postinst_failures(output),
+                })
+
         else:
             self.send_response(404)
             self.end_headers()
@@ -708,79 +800,48 @@ apt-get update 2>&1
                     self._json_response(400, {"error": f"invalid package name: {pkg}"})
                     return
 
-            # Try all packages at once first (fastest path)
-            pkg_str = " ".join(packages)
-            try:
-                result = _host_exec(
-                    f"DEBIAN_FRONTEND=noninteractive apt-get install -y {pkg_str} 2>&1",
-                    timeout=600,
-                )
-                if result.returncode == 0:
-                    # apt may return 0 even when postinst scripts / triggers
-                    # failed — scan stdout for known failure markers so they
-                    # surface as warnings instead of silent success.
-                    warnings = _scan_postinst_failures(result.stdout)
-                    self._json_response(200, {
-                        "output": result.stdout,
-                        "returncode": 0,
-                        "success": True,
-                        "warnings": warnings,
-                    })
-                    return
-            except subprocess.TimeoutExpired:
-                pass
-
-            # Batch failed — fall back to installing one by one
-            outputs: list[str] = []
-            installed: list[str] = []
-            failed: list[str] = []
-            skipped: list[str] = []
-            all_output_chunks: list[str] = []
-            for pkg in packages:
-                try:
-                    r = _host_exec(
-                        f"DEBIAN_FRONTEND=noninteractive apt-get install -y {pkg} 2>&1",
-                        timeout=300,
-                    )
-                    all_output_chunks.append(r.stdout)
-                    if r.returncode == 0:
-                        # Check if it was actually upgraded or already newest
-                        if "is already the newest version" in r.stdout:
-                            skipped.append(pkg)
-                        else:
-                            installed.append(pkg)
-                    else:
-                        failed.append(pkg)
-                        outputs.append(f"FAILED {pkg}: {r.stdout[-200:]}")
-                except subprocess.TimeoutExpired:
-                    failed.append(pkg)
-                    outputs.append(f"TIMEOUT {pkg}")
-
-            summary = (
-                f"Installed: {len(installed)}, "
-                f"Already current: {len(skipped)}, "
-                f"Failed: {len(failed)}\n"
+            # Launch apt under systemd-run so the install survives the sidecar
+            # dying mid-stream. Critical for packages that restart dockerd
+            # (docker-ce) or the sidecar's own Python base — without this,
+            # dockerd restart kills this container, which kills the nsenter
+            # child, leaving apt half-way through postinsts.
+            #
+            # Pipeline per job:
+            #   1. dpkg --configure -a (heals prior interrupted state).
+            #   2. apt-get install -y <packages>.
+            #   3. Write exit code to /var/run/monctl-apt-<id>.rc.
+            #
+            # Caller polls /os/install/status?job_id=<id> and survives any
+            # sidecar restart in between.
+            job_id = secrets.token_hex(6)
+            log_path = f"/var/run/monctl-apt-{job_id}.log"
+            rc_path = f"/var/run/monctl-apt-{job_id}.rc"
+            pkg_str = " ".join(shlex.quote(p) for p in packages)
+            inner = (
+                f"( DEBIAN_FRONTEND=noninteractive dpkg --configure -a 2>&1; "
+                f"  DEBIAN_FRONTEND=noninteractive apt-get install -y {pkg_str} 2>&1 ) "
+                f"> {log_path} 2>&1; echo $? > {rc_path}"
             )
-            if installed:
-                summary += f"Upgraded: {', '.join(installed)}\n"
-            if failed:
-                summary += f"Failed: {', '.join(failed)}\n"
-            summary += "\n".join(outputs)
-
-            # Scan per-package output for postinst failures (works even when
-            # the individual apt exit code was 0)
-            warnings = _scan_postinst_failures("\n".join(all_output_chunks))
-
-            # Consider success if at least some packages were installed
-            # and no critical failures (or all failures are just conflicts)
-            self._json_response(200, {
-                "output": summary,
-                "returncode": 0 if not failed else 1,
-                "success": len(failed) == 0,
-                "installed": installed,
-                "skipped": skipped,
-                "failed": failed,
-                "warnings": warnings,
+            # --collect removes the transient unit on failure. --no-block
+            # returns immediately. Unit name is unique per job.
+            launch_cmd = (
+                f"systemd-run --unit=monctl-apt-{job_id} --collect --no-block "
+                f"--property=Type=oneshot "
+                f"bash -c {shlex.quote(inner)}"
+            )
+            launch = _host_exec(launch_cmd, timeout=30)
+            if launch.returncode != 0:
+                self._json_response(500, {
+                    "error": "failed to launch systemd-run",
+                    "stderr": launch.stderr,
+                    "stdout": launch.stdout,
+                })
+                return
+            self._json_response(202, {
+                "job_id": job_id,
+                "unit": f"monctl-apt-{job_id}",
+                "log_path": log_path,
+                "rc_path": rc_path,
             })
 
         elif path == "/os/reboot":
@@ -1005,14 +1066,25 @@ def _push_loop():
             print(f"Push error: {e}")
 
 
+def _apt_gc_loop():
+    """Hourly sweep of stale /var/run/monctl-apt-* files."""
+    while True:
+        _gc_apt_job_files()
+        time.sleep(3600)
+
+
 if __name__ == "__main__":
     print(f"Docker stats sidecar starting (host={HOSTNAME}, interval={COLLECT_INTERVAL}s)")
     _cached_stats = _collect_stats()
     print(f"Initial collection done: {_cached_stats['container_count']} running containers")
 
+    # Startup sweep — don't keep apt job files from previous boots.
+    _gc_apt_job_files()
+
     threading.Thread(target=_background_collector, daemon=True).start()
     threading.Thread(target=_log_collector, daemon=True).start()
     threading.Thread(target=_event_listener, daemon=True).start()
+    threading.Thread(target=_apt_gc_loop, daemon=True).start()
     if PUSH_URL:
         threading.Thread(target=_push_loop, daemon=True).start()
 
