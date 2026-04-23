@@ -1,0 +1,195 @@
+{
+  "monctl_pack": "1.0",
+  "pack_uid": "docker-container-stats",
+  "name": "Docker Container Stats",
+  "version": "1.0.0",
+  "description": "Container-level metrics from a Docker host via the monctl-docker-stats sidecar. Captures CPU, memory, network I/O, and container state.",
+  "author": "MonCTL",
+  "changelog": "v1.0.0 - Bundles docker_stats 1.0.0 plus the docker_host device category, the Docker Host monitoring template, and the host_role label key.",
+  "exported_at": null,
+  "contents": {
+    "apps": [
+      {
+        "name": "docker_stats",
+        "description": "Docker container resource monitoring via local monctl-docker-stats sidecar. Collects per-container CPU %, memory working set, network I/O, health status, and restart counts. Each container becomes a separate component (component_type=docker_container) in the performance table.",
+        "app_type": "script",
+        "config_schema": {
+          "type": "object",
+          "properties": {
+            "timeout": {
+              "type": "integer",
+              "default": 5,
+              "description": "HTTP request timeout in seconds"
+            },
+            "stats_url": {
+              "type": "string",
+              "default": "http://localhost:9100/stats",
+              "description": "HTTP endpoint of the monctl-docker-stats sidecar"
+            }
+          }
+        },
+        "target_table": "performance",
+        "vendor_oid_prefix": null,
+        "connector_bindings": [],
+        "versions": [
+          {
+            "version": "1.0.0",
+            "source_code": "\"\"\"Docker container stats monitoring app.\n\nPolls the local monctl-docker-stats sidecar and reports per-container\nresource metrics through the standard ingestion pipeline.\n\nConfig keys:\n    stats_url   str  Sidecar URL (default: \"http://localhost:9100/stats\")\n    timeout     int  HTTP timeout in seconds (default: 5)\n\nTarget table: performance\nEach container becomes a separate component with component_type = \"docker_container\".\nHost disk metrics are reported as component_type = \"docker_host\".\n\nMetrics per container:\n    cpu_pct            CPU usage percentage\n    mem_usage_bytes    Memory working set (usage minus cache)\n    mem_limit_bytes    Container memory limit\n    mem_pct            Memory usage as percentage of limit\n    net_rx_bytes       Total bytes received\n    net_tx_bytes       Total bytes transmitted\n    block_read_bytes   Total bytes read from disk\n    block_write_bytes  Total bytes written to disk\n    pids               Number of running processes\n    running            1.0 if container is running, 0.0 otherwise\n    health             1.0 = healthy, 0.0 = unhealthy, -1.0 = no healthcheck\n    restart_count      Number of container restarts\n\"\"\"\n\nfrom __future__ import annotations\n\nimport json\nimport time\nimport urllib.request\n\nfrom monctl_collector.jobs.models import PollContext, PollResult\nfrom monctl_collector.polling.base import BasePoller\n\n\nclass Poller(BasePoller):\n    \"\"\"Docker stats poller \u2014 queries local sidecar for container metrics.\"\"\"\n\n    async def poll(self, context: PollContext) -> PollResult:\n        config = context.job.parameters or {}\n        stats_url = config.get(\"stats_url\", \"http://localhost:9100/stats\")\n        timeout = int(config.get(\"timeout\", 5))\n\n        t0 = time.time()\n        try:\n            req = urllib.request.Request(stats_url)\n            with urllib.request.urlopen(req, timeout=timeout) as resp:\n                data = json.loads(resp.read())\n        except Exception as exc:\n            return PollResult(\n                job_id=context.job.job_id,\n                device_id=context.job.device_id,\n                collector_node=context.node_id,\n                timestamp=time.time(),\n                metrics=[],\n                config_data=None,\n                status=\"error\",\n                reachable=False,\n                error_message=f\"Sidecar unreachable: {exc}\",\n                execution_time_ms=int((time.time() - t0) * 1000),\n            )\n\n        execution_time_ms = int((time.time() - t0) * 1000)\n\n        # Build per-container metrics as separate components\n        metrics = []\n        for container in data.get(\"containers\", []):\n            name = container.get(\"name\", \"unknown\")\n            m = {\n                \"component\": name,\n                \"component_type\": \"docker_container\",\n                \"metric_names\": [],\n                \"metric_values\": [],\n            }\n\n            # Numeric resource metrics\n            for key in [\n                \"cpu_pct\", \"mem_usage_bytes\", \"mem_limit_bytes\",\n                \"mem_pct\", \"net_rx_bytes\", \"net_tx_bytes\",\n                \"block_read_bytes\", \"block_write_bytes\", \"pids\",\n            ]:\n                val = container.get(key)\n                if val is not None:\n                    m[\"metric_names\"].append(key)\n                    m[\"metric_values\"].append(float(val))\n\n            # Status as numeric (1 = running, 0 = not running)\n            m[\"metric_names\"].append(\"running\")\n            m[\"metric_values\"].append(\n                1.0 if container.get(\"status\") == \"running\" else 0.0\n            )\n\n            # Health as numeric (1 = healthy, 0 = unhealthy, -1 = no healthcheck)\n            health = container.get(\"health\")\n            health_val = (\n                1.0 if health == \"healthy\"\n                else 0.0 if health == \"unhealthy\"\n                else -1.0\n            )\n            m[\"metric_names\"].append(\"health\")\n            m[\"metric_values\"].append(health_val)\n\n            # Restart count\n            m[\"metric_names\"].append(\"restart_count\")\n            m[\"metric_values\"].append(\n                float(container.get(\"restart_count\", 0))\n            )\n\n            metrics.append(m)\n\n        # Host-level disk metrics (if sidecar reports them)\n        host_info = data.get(\"host\", {})\n        if host_info and host_info.get(\"disk_total_bytes\"):\n            metrics.append({\n                \"component\": \"host_disk\",\n                \"component_type\": \"docker_host\",\n                \"metric_names\": [\n                    \"disk_total_bytes\",\n                    \"disk_used_bytes\",\n                    \"disk_free_bytes\",\n                ],\n                \"metric_values\": [\n                    float(host_info.get(\"disk_total_bytes\", 0)),\n                    float(host_info.get(\"disk_used_bytes\", 0)),\n                    float(host_info.get(\"disk_free_bytes\", 0)),\n                ],\n            })\n\n        return PollResult(\n            job_id=context.job.job_id,\n            device_id=context.job.device_id,\n            collector_node=context.node_id,\n            timestamp=time.time(),\n            metrics=metrics,\n            config_data=None,\n            status=\"ok\",\n            reachable=True,\n            error_message=None,\n            execution_time_ms=execution_time_ms,\n        )\n",
+            "requirements": [],
+            "entry_class": "Poller",
+            "is_latest": true,
+            "display_template": null,
+            "eligibility_oids": [],
+            "volatile_keys": []
+          }
+        ],
+        "alert_definitions": [
+          {
+            "name": "Container high CPU (>80%)",
+            "severity_tiers": [
+              {
+                "severity": "healthy",
+                "expression": null,
+                "fire_count": 1
+              },
+              {
+                "severity": "warning",
+                "expression": "avg(cpu_pct) > 80",
+                "fire_count": 1
+              }
+            ],
+            "window": "5m",
+            "enabled": true,
+            "description": "Fires when a container exceeds 80% CPU usage"
+          },
+          {
+            "name": "Container high memory (>90%)",
+            "severity_tiers": [
+              {
+                "severity": "healthy",
+                "expression": null,
+                "fire_count": 1
+              },
+              {
+                "severity": "warning",
+                "expression": "avg(mem_pct) > 90",
+                "fire_count": 1
+              }
+            ],
+            "window": "5m",
+            "enabled": true,
+            "description": "Fires when a container uses more than 90% of its memory limit"
+          },
+          {
+            "name": "Container restart loop",
+            "severity_tiers": [
+              {
+                "severity": "healthy",
+                "expression": null,
+                "fire_count": 1
+              },
+              {
+                "severity": "warning",
+                "expression": "last(restart_count) > 3",
+                "fire_count": 1
+              }
+            ],
+            "window": "5m",
+            "enabled": true,
+            "description": "Fires when a container has restarted more than 3 times"
+          },
+          {
+            "name": "Container stopped",
+            "severity_tiers": [
+              {
+                "severity": "healthy",
+                "expression": null,
+                "fire_count": 1
+              },
+              {
+                "severity": "warning",
+                "expression": "last(running) == 0",
+                "fire_count": 1
+              }
+            ],
+            "window": "5m",
+            "enabled": true,
+            "description": "Fires when a Docker container stops running"
+          },
+          {
+            "name": "Container unhealthy",
+            "severity_tiers": [
+              {
+                "severity": "healthy",
+                "expression": null,
+                "fire_count": 1
+              },
+              {
+                "severity": "warning",
+                "expression": "last(health) == 0",
+                "fire_count": 1
+              }
+            ],
+            "window": "5m",
+            "enabled": true,
+            "description": "Fires when a Docker container health check reports unhealthy"
+          },
+          {
+            "name": "Host disk >90%",
+            "severity_tiers": [
+              {
+                "severity": "healthy",
+                "expression": null,
+                "fire_count": 1
+              },
+              {
+                "severity": "warning",
+                "expression": "avg(disk_used_pct) > 90",
+                "fire_count": 1
+              }
+            ],
+            "window": "5m",
+            "enabled": true,
+            "description": "Fires when host disk usage exceeds 90%"
+          }
+        ]
+      }
+    ],
+    "device_categories": [
+      {
+        "name": "docker_host",
+        "description": "Server running Docker containers monitored by monctl-docker-stats sidecar",
+        "category": "infrastructure"
+      }
+    ],
+    "device_templates": [
+      {
+        "name": "Docker Host \u2014 Container Monitoring",
+        "description": "Monitors all Docker containers on a host via the monctl-docker-stats sidecar. Assign to a device representing the host, or directly to a collector with stats_url pointing to localhost:9100.",
+        "config": {
+          "apps": [
+            {
+              "role": "performance",
+              "config": {
+                "timeout": 5,
+                "stats_url": "http://localhost:9100/stats"
+              },
+              "app_name": "docker_stats",
+              "schedule_type": "interval",
+              "schedule_value": "30"
+            }
+          ]
+        }
+      }
+    ],
+    "label_keys": [
+      {
+        "key": "host_role",
+        "description": "Role of the host in the MonCTL infrastructure",
+        "color": "#3b82f6",
+        "show_description": false,
+        "predefined_values": ["central", "worker", "clickhouse", "database"]
+      }
+    ]
+  }
+}

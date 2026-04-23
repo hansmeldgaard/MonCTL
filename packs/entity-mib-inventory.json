@@ -1,0 +1,98 @@
+{
+  "monctl_pack": "1.0",
+  "pack_uid": "entity-mib-inventory",
+  "name": "ENTITY-MIB Hardware Inventory",
+  "version": "1.0.5",
+  "description": "ENTITY-MIB hardware inventory collector. Walks entPhysicalTable to capture chassis, modules, ports, transceivers, fans, and PSUs across any standards-compliant SNMP device.",
+  "author": "MonCTL",
+  "changelog": "v1.0.0 - Bundles entity_mib_inventory 1.0.5 plus the 8 ENTITY-MIB OIDs (entPhysicalDescr, entPhysicalClass, entPhysicalName, entPhysicalHardwareRev, etc.). Requires built-in SNMP connector.",
+  "exported_at": null,
+  "contents": {
+    "apps": [
+      {
+        "name": "entity_mib_inventory",
+        "description": "ENTITY-MIB hardware inventory collector \u2014 discovers chassis components, modules, PSUs, fans, and optics via SNMP. Requires SNMP connector bound with alias 'snmp'.",
+        "app_type": "script",
+        "config_schema": {
+          "type": "object",
+          "properties": {
+            "include_ports": {
+              "type": "boolean",
+              "title": "Include Ports",
+              "default": false,
+              "description": "Include physical port entries in inventory"
+            },
+            "include_sensors": {
+              "type": "boolean",
+              "title": "Include Sensors",
+              "default": false,
+              "description": "Include temperature, voltage, current, and power sensors in inventory"
+            }
+          }
+        },
+        "target_table": "config",
+        "vendor_oid_prefix": null,
+        "connector_bindings": [
+          {
+            "connector_name": "snmp",
+            "connector_type": "snmp"
+          }
+        ],
+        "versions": [
+          {
+            "version": "1.0.5",
+            "source_code": "\"\"\"ENTITY-MIB hardware inventory collector.\n\nWalks ENTITY-MIB entPhysicalTable to discover chassis components, modules,\npower supplies, fans, and pluggable optics. Stores structured inventory data\nin the config table.\n\nWorks with any device supporting ENTITY-MIB (RFC 6933): Cisco IOS-XR/IOS-XE/NX-OS,\nJuniper, Arista, Nokia, etc.\n\nv1.0.3: Use snmp.walk_multi() to fetch all 8 columns in a single GETBULK\n        request stream instead of 8 sequential single-column walks. Same\n        load on the agent (one in-flight request at a time) but ~8\u00d7 fewer\n        round-trips, which prevents 30s timeouts on large chassis.\n        Requires SNMP connector \u2265 1.4.0.\nv1.0.4: Emit config_data keys in the `{type}::{component}::{attr}` form\n        expected by the pack's display_template and by the frontend's\n        ConfigDataRenderer fallback (both group by splitting on `::`).\n        Summary keys are underscore-prefixed (`_entity_mib_supported`,\n        `_component_count`) so the template's grouping loop treats them\n        as metadata instead of component rows. v1.0.3 was silently\n        rendering as empty in the UI because the previous flat\n        `{component}.attr` format didn't match the template's parser.\nv1.0.5: Drop the AttributeError fallback to sequential walks \u2014 SNMP\n        connector v1.4.2 (is_latest in prod 2026-04-20) now ships a real\n        walk_multi. The fallback path was silently hot-running on every\n        poll because v1.4.1 was byte-identical to the 1.3.0 seed and\n        never had walk_multi. Also add dense logger.debug tracing around\n        walk_multi for Debug Run visibility.\n\nConnector binding required:\n    alias \"snmp\" -> SNMP connector with credential providing auth parameters\n\nConfig options:\n    include_sensors  bool   Include sensor entries (default: false)\n    include_ports    bool   Include port entries (default: false)\n\nOutput config_data keys per component (colon-colon separated):\n    {type}::{component}::model              - model / part number\n    {type}::{component}::serial_number      - serial number\n    {type}::{component}::manufacturer       - manufacturer name\n    {type}::{component}::description        - human-readable description\n    {type}::{component}::hardware_revision  - hardware revision\n    {type}::{component}::firmware_revision  - firmware revision\n\nSummary keys (underscore-prefixed):\n    _entity_mib_supported  - \"true\" if entPhysicalTable returned rows\n    _component_count       - total components after filtering\n\"\"\"\n\nimport logging\nimport time\n\nfrom monctl_collector.polling.base import BasePoller\nfrom monctl_collector.jobs.models import PollContext, PollResult\n\nlogger = logging.getLogger(__name__)\n\n\n# ENTITY-MIB OIDs (entPhysicalTable)\n_ENT_PHYSICAL_BASE = \"1.3.6.1.2.1.47.1.1.1.1\"\n_OIDS = {\n    \"descr\":        f\"{_ENT_PHYSICAL_BASE}.2\",\n    \"class\":        f\"{_ENT_PHYSICAL_BASE}.5\",\n    \"name\":         f\"{_ENT_PHYSICAL_BASE}.7\",\n    \"hardware_rev\": f\"{_ENT_PHYSICAL_BASE}.8\",\n    \"firmware_rev\": f\"{_ENT_PHYSICAL_BASE}.9\",\n    \"serial\":       f\"{_ENT_PHYSICAL_BASE}.11\",\n    \"manufacturer\": f\"{_ENT_PHYSICAL_BASE}.12\",\n    \"model\":        f\"{_ENT_PHYSICAL_BASE}.13\",\n}\n\n# entPhysicalClass -> component_type mapping\n_CLASS_MAP = {\n    1: \"other\",\n    3: \"chassis\",\n    6: \"psu\",\n    7: \"fan\",\n    8: \"sensor\",\n    9: \"module\",\n    10: \"port\",\n    11: \"chassis\",\n    12: \"module\",\n}\n\n# Classes to always skip\n_SKIP_CLASSES = {2, 4, 5}  # unknown, backplane, container\n\n# Description patterns indicating non-physical sub-components\n_SKIP_DESCR_PATTERNS = [\n    \"FPD Module\",\n]\n\n\ndef _clean_str(val):\n    \"\"\"Strip and normalize SNMP string values.\"\"\"\n    if not val:\n        return \"\"\n    s = str(val).strip().strip('\"').strip()\n    if s in (\"\", \"N/A\",\n             \"No Such Instance currently exists at this OID\",\n             \"No Such Object available on this agent at this OID\"):\n        return \"\"\n    return s\n\n\ndef _extract_index(full_oid, base_oid):\n    \"\"\"Extract the entPhysicalIndex from the full OID.\"\"\"\n    suffix = full_oid[len(base_oid):]\n    if suffix.startswith(\".\"):\n        suffix = suffix[1:]\n    try:\n        return int(suffix)\n    except (ValueError, TypeError):\n        return None\n\n\ndef _safe_key(name):\n    \"\"\"Make a component name safe for use as a config_key segment.\n\n    The display template placeholder regex allows: [a-zA-Z_][a-zA-Z0-9_.-]*\n    So we replace slashes and spaces, and ensure it starts with a letter.\n    \"\"\"\n    s = name.replace(\"/\", \"_\").replace(\" \", \"_\").replace(\"::\", \"_\")\n    # Remove any chars that aren't alphanumeric, underscore, dot, or hyphen\n    s = \"\".join(c for c in s if c.isalnum() or c in \"_.-\")\n    # Ensure starts with a letter (prefix with 'c.' if starts with digit)\n    if s and not s[0].isalpha() and s[0] != \"_\":\n        s = \"c.\" + s\n    return s\n\n\nclass Poller(BasePoller):\n    \"\"\"ENTITY-MIB hardware inventory poller.\"\"\"\n\n    async def poll(self, context: PollContext) -> PollResult:\n        start = time.time()\n        include_sensors = context.parameters.get(\"include_sensors\", False)\n        include_ports = context.parameters.get(\"include_ports\", False)\n\n        snmp = context.connectors.get(\"snmp\")\n        if snmp is None:\n            return PollResult(\n                job_id=context.job.job_id,\n                device_id=context.job.device_id,\n                collector_node=context.node_id,\n                timestamp=time.time(),\n                metrics=[], config_data=None,\n                status=\"error\", reachable=False,\n                error_message=\"No SNMP connector bound (expected alias 'snmp'). \"\n                              \"Go to Apps -> entity_mib_inventory and bind the SNMP connector with alias 'snmp'.\",\n                error_category=\"config\",\n                execution_time_ms=0,\n            )\n\n        try:\n            # Walk all 8 columns in a single correlated GETBULK stream.\n            # SNMP connector v1.4.2+ exposes walk_multi \u2014 required.\n            logger.debug(\"entity_mib_inventory: walk_multi over %d columns\",\n                         len(_OIDS))\n            per_oid = await snmp.walk_multi(list(_OIDS.values()))\n            for base_oid, rows in per_oid.items():\n                logger.debug(\"  %s: %d rows\", base_oid, len(rows))\n\n            raw = {col_name: {} for col_name in _OIDS}\n            for col_name, base_oid in _OIDS.items():\n                col_data = {}\n                for full_oid, val in per_oid.get(base_oid, []):\n                    idx = _extract_index(full_oid, base_oid)\n                    if idx is not None:\n                        col_data[idx] = str(val) if val is not None else \"\"\n                raw[col_name] = col_data\n\n            # Get all discovered entity indices\n            all_indices = set()\n            for col_data in raw.values():\n                all_indices.update(col_data.keys())\n\n            if not all_indices:\n                # Device is reachable via SNMP but entPhysicalTable is empty\n                # or unsupported. Signal this as an app-level error so the\n                # Checks tab shows a DEVICE chip and a clear message, not a\n                # silent CRITICAL row with no output.\n                execution_ms = int((time.time() - start) * 1000)\n                return PollResult(\n                    job_id=context.job.job_id,\n                    device_id=context.job.device_id,\n                    collector_node=context.node_id,\n                    timestamp=time.time(),\n                    metrics=[{\"name\": \"entity_count\", \"value\": 0}],\n                    config_data={\"_entity_mib_supported\": \"false\"},\n                    status=\"error\",\n                    reachable=True,\n                    error_message=(\n                        \"ENTITY-MIB not supported on this device \"\n                        \"(entPhysicalTable walk returned no rows).\"\n                    ),\n                    error_category=\"device\",\n                    execution_time_ms=execution_ms,\n                )\n\n            # Build entity records, filter, and produce config_data\n            config_data = {}\n            seen_serials = {}  # serial -> lowest entPhysicalIndex\n            component_count = 0\n\n            for idx in sorted(all_indices):\n                ent_class = 0\n                try:\n                    ent_class = int(raw.get(\"class\", {}).get(idx, 0) or 0)\n                except (ValueError, TypeError):\n                    pass\n\n                descr = _clean_str(raw.get(\"descr\", {}).get(idx, \"\"))\n                name = _clean_str(raw.get(\"name\", {}).get(idx, \"\"))\n                serial = _clean_str(raw.get(\"serial\", {}).get(idx, \"\"))\n                model = _clean_str(raw.get(\"model\", {}).get(idx, \"\"))\n                manufacturer = _clean_str(raw.get(\"manufacturer\", {}).get(idx, \"\"))\n                hw_rev = _clean_str(raw.get(\"hardware_rev\", {}).get(idx, \"\"))\n                fw_rev = _clean_str(raw.get(\"firmware_rev\", {}).get(idx, \"\"))\n\n                # Skip unwanted classes\n                if ent_class in _SKIP_CLASSES:\n                    continue\n\n                # Map class to component_type\n                component_type = _CLASS_MAP.get(ent_class, \"other\")\n\n                # Skip sensors unless explicitly included\n                if component_type == \"sensor\" and not include_sensors:\n                    continue\n\n                # Skip ports unless explicitly included\n                if component_type == \"port\" and not include_ports:\n                    continue\n\n                # Skip FPD and similar non-physical sub-components\n                skip = False\n                for pattern in _SKIP_DESCR_PATTERNS:\n                    if pattern in descr:\n                        skip = True\n                        break\n                if skip:\n                    continue\n\n                # Skip entries with no serial AND no model\n                if not serial and not model:\n                    continue\n\n                # Deduplicate by serial (keep lowest index = primary entity)\n                if serial:\n                    if serial in seen_serials:\n                        continue\n                    seen_serials[serial] = idx\n\n                # Build component key from name\n                component = name or descr or f\"entity-{idx}\"\n                key_prefix = _safe_key(component)\n\n                component_count += 1\n\n                # Emit keys in the `{component_type}::{component}::{attr}`\n                # format expected by both the pack's display_template and\n                # the frontend's ConfigDataRenderer fallback (which groups\n                # by splitting on `::`). Component type is encoded in the\n                # key prefix, so no separate `.type` field is needed.\n                # Attribute names match the template's attrOrder.\n                base = f\"{component_type}::{key_prefix}\"\n                if model:\n                    config_data[f\"{base}::model\"] = model\n                if serial:\n                    config_data[f\"{base}::serial_number\"] = serial\n                if manufacturer:\n                    config_data[f\"{base}::manufacturer\"] = manufacturer\n                if descr:\n                    config_data[f\"{base}::description\"] = descr\n                if hw_rev:\n                    config_data[f\"{base}::hardware_revision\"] = hw_rev\n                if fw_rev:\n                    config_data[f\"{base}::firmware_revision\"] = fw_rev\n\n            # Summary keys \u2014 underscore-prefixed so the template's\n            # grouping loop recognises them as non-component metadata.\n            config_data[\"_entity_mib_supported\"] = \"true\"\n            config_data[\"_component_count\"] = str(component_count)\n\n            execution_ms = int((time.time() - start) * 1000)\n\n            return PollResult(\n                job_id=context.job.job_id,\n                device_id=context.job.device_id,\n                collector_node=context.node_id,\n                timestamp=time.time(),\n                metrics=[\n                    {\"name\": \"entity_count\", \"value\": float(component_count)},\n                ],\n                config_data=config_data,\n                status=\"ok\",\n                reachable=True,\n                error_message=None,\n                execution_time_ms=execution_ms,\n            )\n\n        except Exception as exc:\n            execution_ms = int((time.time() - start) * 1000)\n            return PollResult(\n                job_id=context.job.job_id,\n                device_id=context.job.device_id,\n                collector_node=context.node_id,\n                timestamp=time.time(),\n                metrics=[], config_data=None,\n                status=\"critical\", reachable=False,\n                error_message=f\"{type(exc).__name__}: {exc}\",\n                error_category=\"device\",\n                execution_time_ms=execution_ms,\n            )\n",
+            "requirements": [],
+            "entry_class": "Poller",
+            "is_latest": true,
+            "display_template": null,
+            "eligibility_oids": [],
+            "volatile_keys": []
+          }
+        ]
+      }
+    ],
+    "snmp_oids": [
+      {
+        "name": "entPhysicalDescr",
+        "oid": "1.3.6.1.2.1.47.1.1.1.1.2",
+        "description": "ENTITY-MIB: Human-readable description of the physical entity"
+      },
+      {
+        "name": "entPhysicalClass",
+        "oid": "1.3.6.1.2.1.47.1.1.1.1.5",
+        "description": "ENTITY-MIB: Physical class (3=chassis, 6=psu, 7=fan, 9=module, 10=port)"
+      },
+      {
+        "name": "entPhysicalName",
+        "oid": "1.3.6.1.2.1.47.1.1.1.1.7",
+        "description": "ENTITY-MIB: Vendor-assigned name (e.g. 0/RP0, TenGigE0/0/0/7)"
+      },
+      {
+        "name": "entPhysicalHardwareRev",
+        "oid": "1.3.6.1.2.1.47.1.1.1.1.8",
+        "description": "ENTITY-MIB: Hardware revision string"
+      },
+      {
+        "name": "entPhysicalFirmwareRev",
+        "oid": "1.3.6.1.2.1.47.1.1.1.1.9",
+        "description": "ENTITY-MIB: Firmware revision string"
+      },
+      {
+        "name": "entPhysicalSerialNum",
+        "oid": "1.3.6.1.2.1.47.1.1.1.1.11",
+        "description": "ENTITY-MIB: Serial number of the physical entity"
+      },
+      {
+        "name": "entPhysicalMfgName",
+        "oid": "1.3.6.1.2.1.47.1.1.1.1.12",
+        "description": "ENTITY-MIB: Manufacturer name"
+      },
+      {
+        "name": "entPhysicalModelName",
+        "oid": "1.3.6.1.2.1.47.1.1.1.1.13",
+        "description": "ENTITY-MIB: Model/part number (e.g. NCS-55A2-MOD-S, SFP-10G-LR)"
+      }
+    ]
+  }
+}

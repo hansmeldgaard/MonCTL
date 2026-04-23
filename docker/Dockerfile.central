@@ -50,6 +50,9 @@ COPY packages/central/alembic/ /app/alembic/
 # Copy built-in packs (auto-imported at startup)
 COPY packs/ /app/packs/
 
+# Copy built-in connector source (read by the connector seed at startup)
+COPY connectors/ /app/connectors/
+
 # Copy entrypoint
 COPY docker/central-entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh

@@ -118,20 +118,22 @@ async def lifespan(app: FastAPI):
         from pathlib import Path
         import json as _json
 
-        _BUILTIN_PACKS = ["snmp-core-v1.0.0.json", "basic-checks-v1.0.0.json"]
         _pack_dirs = [
             Path("/app/packs"),
             Path(__file__).resolve().parents[4] / "packs",
         ]
-        for pack_file in _BUILTIN_PACKS:
-            pack_path = None
-            for d in _pack_dirs:
-                candidate = d / pack_file
-                if candidate.exists():
-                    pack_path = candidate
-                    break
-            if pack_path is None:
+        _pack_files: list[Path] = []
+        _seen_names: set[str] = set()
+        for d in _pack_dirs:
+            if not d.is_dir():
                 continue
+            for p in sorted(d.glob("*.json")):
+                if p.name in _seen_names:
+                    continue
+                _seen_names.add(p.name)
+                _pack_files.append(p)
+        for pack_path in _pack_files:
+            pack_file = pack_path.name
             try:
                 raw_bytes = pack_path.read_bytes()
                 on_disk_hash = hashlib.sha256(raw_bytes).hexdigest()
@@ -292,305 +294,43 @@ async def lifespan(app: FastAPI):
     import hashlib
     from monctl_central.storage.models import Connector, ConnectorVersion
 
+    # Source for built-in connectors lives in <repo>/connectors/*.py.
+    # Mounted into the container image at /app/connectors. The seed runs only
+    # on fresh installs; existing prod installs upload new versions via the
+    # admin API (see _parse_semver guard below — newer seed versions log but
+    # never auto-promote).
+    _connector_dirs = [
+        Path("/app/connectors"),
+        Path(__file__).resolve().parents[4] / "connectors",
+    ]
+    def _read_connector_source(filename: str) -> str:
+        for d in _connector_dirs:
+            p = d / filename
+            if p.is_file():
+                return p.read_text()
+        raise FileNotFoundError(f"built-in connector source missing: {filename}")
+
     _BUILTIN_CONNECTORS = [
         {
             "name": "snmp",
-            "description": "SNMP v2c/v3 connector — polls OIDs via PySNMP",
+            "description": "SNMP v1/v2c/v3 connector \u2014 polls OIDs via PySNMP",
             "connector_type": "snmp",
-            "version": "1.3.0",
+            "version": "1.4.4",
             "entry_class": "SnmpConnector",
             "requirements": ["pysnmp>=7.1"],
-            "source_code": '''\
-"""Built-in SNMP connector for MonCTL.
-
-Supports SNMP v1, v2c, and v3 via pysnmp 7.x async API.
-
-v1.3.0: Fix UDP socket leak — reuse SnmpEngine + UdpTransportTarget across
-        all operations within a single connect/close lifecycle instead of
-        creating new ones per get/walk call.
-
-Credential keys (v1/v2c):
-    snmp_version   "1" or "2c" (default "2c")
-    community      Community string (default "public")
-
-Credential keys (v3):
-    snmp_version    "3"
-    username        USM username
-    auth_protocol   "MD5", "SHA", "SHA224", "SHA256", "SHA384", "SHA512", or ""
-    auth_password   Auth passphrase
-    priv_protocol   "DES", "3DES", "AES", "AES192", "AES256", or ""
-    priv_password   Privacy passphrase
-    security_level  "noauthnopriv", "authnopriv", or "authpriv" (default "authpriv")
-
-Settings keys:
-    port      SNMP port (default 161)
-    timeout   Timeout in seconds (default 5)
-    retries   Retry count (default 2)
-"""
-
-from __future__ import annotations
-
-import logging
-from typing import Any
-
-logger = logging.getLogger(__name__)
-
-_AUTH_PROTOCOLS = {
-    "MD5": "usmHMACMD5AuthProtocol",
-    "SHA": "usmHMACSHAAuthProtocol",
-    "SHA224": "usmHMAC128SHA224AuthProtocol",
-    "SHA256": "usmHMAC192SHA256AuthProtocol",
-    "SHA384": "usmHMAC256SHA384AuthProtocol",
-    "SHA512": "usmHMAC384SHA512AuthProtocol",
-}
-
-_PRIV_PROTOCOLS = {
-    "DES": "usmDESPrivProtocol",
-    "3DES": "usm3DESEDEPrivProtocol",
-    "AES": "usmAesCfb128Protocol",
-    "AES192": "usmAesCfb192Protocol",
-    "AES256": "usmAesCfb256Protocol",
-}
-
-
-class SnmpConnector:
-    """SNMP v1/v2c/v3 connector that polls OIDs from a target device."""
-
-    def __init__(self, settings: dict[str, Any], credential: dict[str, Any] | None = None):
-        self.settings = settings
-        self.credential = credential or {}
-        self.version = str(self.credential.get("snmp_version", "2c")).lower()
-        self.port = int(self.settings.get("port", 161))
-        self.timeout = int(self.settings.get("timeout", 5))
-        self.retries = int(self.settings.get("retries", 2))
-        self._host: str = ""
-        self._engine = None
-        self._transport = None
-        self._auth = None
-
-    def _build_auth(self):
-        """Build the appropriate pysnmp auth object for the configured version."""
-        if self.version == "3":
-            return self._build_v3_auth()
-        return self._build_v1v2c_auth()
-
-    def _build_v1v2c_auth(self):
-        from pysnmp.hlapi.v3arch.asyncio import CommunityData
-        community = self.credential.get("community", "public")
-        mp_model = 0 if self.version == "1" else 1
-        return CommunityData(community, mpModel=mp_model)
-
-    def _build_v3_auth(self):
-        from pysnmp.hlapi.v3arch.asyncio import UsmUserData
-        import pysnmp.hlapi.v3arch.asyncio as hlapi
-
-        username = self.credential.get("username", "")
-        auth_proto_name = (self.credential.get("auth_protocol") or "").upper()
-        auth_key = self.credential.get("auth_password", "")
-        priv_proto_name = (self.credential.get("priv_protocol") or "").upper()
-        priv_key = self.credential.get("priv_password", "")
-        security_level = (self.credential.get("security_level") or "authpriv").lower()
-
-        auth_proto = None
-        if auth_proto_name in _AUTH_PROTOCOLS:
-            auth_proto = getattr(hlapi, _AUTH_PROTOCOLS[auth_proto_name], None)
-
-        priv_proto = None
-        if priv_proto_name in _PRIV_PROTOCOLS:
-            priv_proto = getattr(hlapi, _PRIV_PROTOCOLS[priv_proto_name], None)
-
-        kwargs: dict[str, Any] = {"userName": username}
-
-        if security_level == "noauthnopriv":
-            return UsmUserData(**kwargs)
-
-        if auth_proto and auth_key:
-            kwargs["authKey"] = auth_key
-            kwargs["authProtocol"] = auth_proto
-
-        if security_level == "authpriv" and priv_proto and priv_key and auth_proto:
-            kwargs["privKey"] = priv_key
-            kwargs["privProtocol"] = priv_proto
-
-        return UsmUserData(**kwargs)
-
-    async def connect(self, host: str) -> None:
-        """Create SNMP engine + transport — reused for all operations until close()."""
-        # Idempotent: if already connected to same host, reuse. If different host
-        # or called again (e.g. by apps that predate engine-managed lifecycle),
-        # close the previous engine first to prevent memory leaks.
-        if self._engine is not None:
-            if self._host == host:
-                return  # Already connected to this host
-            await self.close()
-        from pysnmp.hlapi.v3arch.asyncio import SnmpEngine, UdpTransportTarget
-        self._host = host
-        self._engine = SnmpEngine()
-        self._transport = await UdpTransportTarget.create(
-            (host, self.port), timeout=self.timeout, retries=self.retries,
-        )
-        self._auth = self._build_auth()
-        logger.debug("snmp_connect host=%s port=%s version=%s", host, self.port, self.version)
-
-    async def get(self, oids: list[str]) -> dict[str, Any]:
-        """Perform SNMP GET for a list of OID strings."""
-        from pysnmp.hlapi.v3arch.asyncio import (
-            ContextData, ObjectIdentity, ObjectType, get_cmd,
-        )
-        obj_types = [ObjectType(ObjectIdentity(oid)) for oid in oids]
-        error_indication, error_status, error_index, var_binds = await get_cmd(
-            self._engine, self._auth, self._transport, ContextData(), *obj_types,
-        )
-        if error_indication:
-            raise RuntimeError(f"SNMP error: {error_indication}")
-        if error_status:
-            raise RuntimeError(f"SNMP error at {error_index}: {error_status.prettyPrint()}")
-        result: dict[str, Any] = {}
-        for oid_val, val in var_binds:
-            result[str(oid_val)] = val.prettyPrint()
-        return result
-
-    async def get_many(self, oid_batches: list[list[str]]) -> dict[str, Any]:
-        """Execute multiple SNMP GET batches reusing the same session."""
-        from pysnmp.hlapi.v3arch.asyncio import (
-            ContextData, ObjectIdentity, ObjectType, get_cmd,
-        )
-        result: dict[str, Any] = {}
-        for batch in oid_batches:
-            try:
-                obj_types = [ObjectType(ObjectIdentity(oid)) for oid in batch]
-                err_ind, err_st, err_idx, var_binds = await get_cmd(
-                    self._engine, self._auth, self._transport, ContextData(), *obj_types,
-                )
-                if not err_ind and not err_st:
-                    for oid_val, val in var_binds:
-                        result[str(oid_val)] = val.prettyPrint()
-            except Exception:
-                continue
-        return result
-
-    async def walk(self, oid: str) -> list[tuple[str, Any]]:
-        """Perform SNMP WALK (GETBULK) with numeric OID boundary checking."""
-        from pysnmp.hlapi.v3arch.asyncio import (
-            ContextData, ObjectIdentity, ObjectType, bulk_cmd,
-        )
-        rows: list[tuple[str, Any]] = []
-        current_oid = oid
-        base_tuple = tuple(int(x) for x in oid.split("."))
-        base_len = len(base_tuple)
-
-        while len(rows) < 10000:
-            error_indication, error_status, error_index, var_bind_table = await bulk_cmd(
-                self._engine, self._auth, self._transport, ContextData(), 0, 25,
-                ObjectType(ObjectIdentity(current_oid)),
-            )
-            if error_indication or error_status:
-                break
-            if not var_bind_table:
-                break
-            out_of_tree = False
-            last_oid = None
-            for name, val in var_bind_table:
-                oid_tuple = tuple(name)
-                if oid_tuple[:base_len] != base_tuple:
-                    out_of_tree = True
-                    break
-                name_str = str(name)
-                rows.append((name_str, val.prettyPrint()))
-                last_oid = name_str
-            if out_of_tree or last_oid is None or last_oid == current_oid:
-                break
-            current_oid = last_oid
-        return rows
-
-    async def close(self) -> None:
-        """Close SNMP engine and release all internal pysnmp state."""
-        if self._engine is not None:
-            try:
-                self._engine.close_dispatcher()
-            except Exception:
-                pass
-            # Clear internal MIB/security registrations that accumulate
-            try:
-                mib = self._engine.get_mib_builder()
-                mib.clean()
-            except Exception:
-                pass
-            self._engine = None
-        self._transport = None
-        self._auth = None
-''',
+            "source_code": _read_connector_source("snmp.py"),
         },
         {
             "name": "ssh",
-            "description": "SSH connector — executes commands via asyncssh",
+            "description": "SSH connector \u2014 executes commands via asyncssh",
             "connector_type": "ssh",
             "version": "1.0.0",
             "entry_class": "SshConnector",
             "requirements": ["asyncssh>=2.14"],
-            "source_code": '''\
-"""Built-in SSH connector for MonCTL."""
-
-from __future__ import annotations
-
-import logging
-from typing import Any
-
-logger = logging.getLogger(__name__)
-
-
-class SshConnector:
-    """SSH connector that executes commands on a remote host."""
-
-    def __init__(self, settings: dict[str, Any], credential: dict[str, Any] | None = None):
-        self.settings = settings
-        self.credential = credential or {}
-        self.username = self.credential.get("username", "root")
-        self.password = self.credential.get("password")
-        self.private_key = self.credential.get("private_key")
-        self.port = int(self.settings.get("port", 22))
-        self.timeout = int(self.settings.get("timeout", 10))
-        self._conn = None
-
-    async def connect(self, host: str) -> None:
-        """Open an SSH connection to the given host."""
-        import asyncssh
-
-        kwargs: dict[str, Any] = {
-            "host": host,
-            "port": self.port,
-            "username": self.username,
-            "known_hosts": None,
-            "login_timeout": self.timeout,
-        }
-        if self.private_key:
-            kwargs["client_keys"] = [asyncssh.import_private_key(self.private_key)]
-        elif self.password:
-            kwargs["password"] = self.password
-
-        self._conn = await asyncssh.connect(**kwargs)
-        logger.debug("ssh_connected", host=host, port=self.port, user=self.username)
-
-    async def run(self, command: str) -> dict[str, Any]:
-        """Execute a command and return stdout, stderr, and exit_status."""
-        if self._conn is None:
-            raise RuntimeError("Not connected — call connect() first")
-        result = await self._conn.run(command, timeout=self.timeout)
-        return {
-            "stdout": result.stdout or "",
-            "stderr": result.stderr or "",
-            "exit_status": result.exit_status,
-        }
-
-    async def close(self) -> None:
-        """Close the SSH connection."""
-        if self._conn is not None:
-            self._conn.close()
-            await self._conn.wait_closed()
-            self._conn = None
-''',
+            "source_code": _read_connector_source("ssh.py"),
         },
     ]
+
 
     def _parse_semver(v: str | None) -> tuple[int, ...]:
         import re as _re

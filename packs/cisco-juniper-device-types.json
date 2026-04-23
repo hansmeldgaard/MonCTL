@@ -1,0 +1,770 @@
+{
+  "monctl_pack": "1.0",
+  "pack_uid": "cisco-juniper-device-types",
+  "name": "Cisco & Juniper Device Types",
+  "version": "1.0.0",
+  "description": "sysObjectID \u2192 vendor/model catalog for common Cisco and Juniper devices. Used by snmp_discovery to auto-categorise devices on first poll.",
+  "author": "MonCTL",
+  "changelog": "v1.0.0 - 8 device categories + 71 device types covering Catalyst, Nexus, ASR/ISR, ASA/Firepower, Aironet, EX/MX/QFX/SRX, etc.",
+  "exported_at": null,
+  "contents": {
+    "device_categories": [
+      {
+        "name": "cisco-nexus",
+        "description": "Cisco Nexus data center switch (3000, 5000, 7000, 9000 series, NX-OS)",
+        "category": "network"
+      },
+      {
+        "name": "cisco-wireless",
+        "description": "Cisco wireless LAN controller (WLC) or access point",
+        "category": "network"
+      },
+      {
+        "name": "juniper-router",
+        "description": "Juniper MX / M / T / PTX series router (Junos OS)",
+        "category": "network"
+      },
+      {
+        "name": "juniper-firewall",
+        "description": "Juniper SRX series services gateway / firewall (Junos OS)",
+        "category": "network"
+      },
+      {
+        "name": "cisco-firewall",
+        "description": "Cisco ASA / Firepower firewall appliance",
+        "category": "network",
+        "icon": "firewall"
+      },
+      {
+        "name": "cisco-router",
+        "description": "Cisco IOS/IOS-XE/IOS-XR router (ISR, ASR, CSR series)",
+        "category": "network",
+        "icon": "router"
+      },
+      {
+        "name": "cisco-switch",
+        "description": "Cisco Catalyst switch (2960, 3560, 3650, 3850, 9200, 9300, 9500 series)",
+        "category": "network",
+        "icon": "switch"
+      },
+      {
+        "name": "juniper-switch",
+        "description": "Juniper EX / QFX series Ethernet switch (Junos OS)",
+        "category": "network",
+        "icon": "switch"
+      }
+    ],
+    "device_types": [
+      {
+        "name": "Cisco Catalyst 9200CX-12T",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.3078",
+        "device_category_name": "cisco-switch",
+        "vendor": "Cisco",
+        "model": "Catalyst 9200CX-12T-2X2G",
+        "os_family": "IOS-XE",
+        "description": "Cisco Catalyst 9200CX compact switch",
+        "priority": 10
+      },
+      {
+        "name": "Cisco Catalyst 9200CX-12P",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.3079",
+        "device_category_name": "cisco-switch",
+        "vendor": "Cisco",
+        "model": "Catalyst 9200CX-12P-2X2G",
+        "os_family": "IOS-XE",
+        "description": "Cisco Catalyst 9200CX compact PoE switch",
+        "priority": 10
+      },
+      {
+        "name": "Cisco Catalyst 9500",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.2593",
+        "device_category_name": "cisco-switch",
+        "vendor": "Cisco",
+        "model": "Catalyst 9500",
+        "os_family": "IOS-XE",
+        "description": "Cisco Catalyst 9500 core/aggregation switch",
+        "priority": 10
+      },
+      {
+        "name": "Cisco Catalyst 9500-48Y4C",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.2568",
+        "device_category_name": "cisco-switch",
+        "vendor": "Cisco",
+        "model": "Catalyst 9500-48Y4C",
+        "os_family": "IOS-XE",
+        "description": "Cisco Catalyst 9500 48-port 25G switch",
+        "priority": 10
+      },
+      {
+        "name": "Cisco Catalyst 9400",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.2664",
+        "device_category_name": "cisco-switch",
+        "vendor": "Cisco",
+        "model": "Catalyst 9400",
+        "os_family": "IOS-XE",
+        "description": "Cisco Catalyst 9400 modular chassis switch",
+        "priority": 10
+      },
+      {
+        "name": "Cisco Catalyst 3850-24T",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.1745",
+        "device_category_name": "cisco-switch",
+        "vendor": "Cisco",
+        "model": "Catalyst 3850-24T",
+        "os_family": "IOS-XE",
+        "description": "Cisco Catalyst 3850 24-port switch",
+        "priority": 10
+      },
+      {
+        "name": "Cisco Catalyst 3850-48T",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.1746",
+        "device_category_name": "cisco-switch",
+        "vendor": "Cisco",
+        "model": "Catalyst 3850-48T",
+        "os_family": "IOS-XE",
+        "description": "Cisco Catalyst 3850 48-port switch",
+        "priority": 10
+      },
+      {
+        "name": "Cisco Catalyst 3650-24T",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.1858",
+        "device_category_name": "cisco-switch",
+        "vendor": "Cisco",
+        "model": "Catalyst 3650-24T",
+        "os_family": "IOS-XE",
+        "description": "Cisco Catalyst 3650 24-port switch",
+        "priority": 10
+      },
+      {
+        "name": "Cisco Catalyst 3650-48T",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.1859",
+        "device_category_name": "cisco-switch",
+        "vendor": "Cisco",
+        "model": "Catalyst 3650-48T",
+        "os_family": "IOS-XE",
+        "description": "Cisco Catalyst 3650 48-port switch",
+        "priority": 10
+      },
+      {
+        "name": "Cisco Catalyst 2960-48TT-S",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.1005",
+        "device_category_name": "cisco-switch",
+        "vendor": "Cisco",
+        "model": "Catalyst 2960-48TT-S",
+        "os_family": "IOS",
+        "description": "Cisco Catalyst 2960 48-port switch",
+        "priority": 10
+      },
+      {
+        "name": "Cisco Catalyst 2960-24LC-S",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.1146",
+        "device_category_name": "cisco-switch",
+        "vendor": "Cisco",
+        "model": "Catalyst 2960-24LC-S",
+        "os_family": "IOS",
+        "description": "Cisco Catalyst 2960 24-port LAN Lite",
+        "priority": 10
+      },
+      {
+        "name": "Cisco Catalyst 2960-X 48-port",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.1882",
+        "device_category_name": "cisco-switch",
+        "vendor": "Cisco",
+        "model": "Catalyst 2960-X-48FPD",
+        "os_family": "IOS",
+        "description": "Cisco Catalyst 2960-X 48-port PoE switch",
+        "priority": 10
+      },
+      {
+        "name": "Cisco Catalyst 1000-48T",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.2897",
+        "device_category_name": "cisco-switch",
+        "vendor": "Cisco",
+        "model": "Catalyst 1000-48T-4X-L",
+        "os_family": "IOS-XE",
+        "description": "Cisco Catalyst 1000 48-port switch",
+        "priority": 10
+      },
+      {
+        "name": "Cisco Catalyst 1000-24T",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.2959",
+        "device_category_name": "cisco-switch",
+        "vendor": "Cisco",
+        "model": "Catalyst 1000-24T-4G-L",
+        "os_family": "IOS-XE",
+        "description": "Cisco Catalyst 1000 24-port switch",
+        "priority": 10
+      },
+      {
+        "name": "Cisco ISR 2901",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.1046",
+        "device_category_name": "cisco-router",
+        "vendor": "Cisco",
+        "model": "ISR 2901",
+        "os_family": "IOS",
+        "description": "Cisco ISR G2 2901 router",
+        "priority": 10
+      },
+      {
+        "name": "Cisco ISR 2911",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.1045",
+        "device_category_name": "cisco-router",
+        "vendor": "Cisco",
+        "model": "ISR 2911",
+        "os_family": "IOS",
+        "description": "Cisco ISR G2 2911 router",
+        "priority": 10
+      },
+      {
+        "name": "Cisco ISR 2921",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.1044",
+        "device_category_name": "cisco-router",
+        "vendor": "Cisco",
+        "model": "ISR 2921",
+        "os_family": "IOS",
+        "description": "Cisco ISR G2 2921 router",
+        "priority": 10
+      },
+      {
+        "name": "Cisco ISR 2951",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.1043",
+        "device_category_name": "cisco-router",
+        "vendor": "Cisco",
+        "model": "ISR 2951",
+        "os_family": "IOS",
+        "description": "Cisco ISR G2 2951 router",
+        "priority": 10
+      },
+      {
+        "name": "Cisco ISR 3925",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.1042",
+        "device_category_name": "cisco-router",
+        "vendor": "Cisco",
+        "model": "ISR 3925",
+        "os_family": "IOS",
+        "description": "Cisco ISR G2 3925 router",
+        "priority": 10
+      },
+      {
+        "name": "Cisco ISR 3945",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.1041",
+        "device_category_name": "cisco-router",
+        "vendor": "Cisco",
+        "model": "ISR 3945",
+        "os_family": "IOS",
+        "description": "Cisco ISR G2 3945 router",
+        "priority": 10
+      },
+      {
+        "name": "Cisco ISR 1941",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.1047",
+        "device_category_name": "cisco-router",
+        "vendor": "Cisco",
+        "model": "ISR 1941",
+        "os_family": "IOS",
+        "description": "Cisco ISR G2 1941 router",
+        "priority": 10
+      },
+      {
+        "name": "Cisco ISR 4321",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.2238",
+        "device_category_name": "cisco-router",
+        "vendor": "Cisco",
+        "model": "ISR 4321",
+        "os_family": "IOS-XE",
+        "description": "Cisco ISR 4321 router",
+        "priority": 10
+      },
+      {
+        "name": "Cisco ISR 4331",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.2239",
+        "device_category_name": "cisco-router",
+        "vendor": "Cisco",
+        "model": "ISR 4331",
+        "os_family": "IOS-XE",
+        "description": "Cisco ISR 4331 router",
+        "priority": 10
+      },
+      {
+        "name": "Cisco ISR 4351",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.2240",
+        "device_category_name": "cisco-router",
+        "vendor": "Cisco",
+        "model": "ISR 4351",
+        "os_family": "IOS-XE",
+        "description": "Cisco ISR 4351 router",
+        "priority": 10
+      },
+      {
+        "name": "Cisco ISR 4431",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.2241",
+        "device_category_name": "cisco-router",
+        "vendor": "Cisco",
+        "model": "ISR 4431",
+        "os_family": "IOS-XE",
+        "description": "Cisco ISR 4431 router",
+        "priority": 10
+      },
+      {
+        "name": "Cisco ISR 4451-X",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.2242",
+        "device_category_name": "cisco-router",
+        "vendor": "Cisco",
+        "model": "ISR 4451-X",
+        "os_family": "IOS-XE",
+        "description": "Cisco ISR 4451-X router",
+        "priority": 10
+      },
+      {
+        "name": "Cisco ASR 1001-X",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.1860",
+        "device_category_name": "cisco-router",
+        "vendor": "Cisco",
+        "model": "ASR 1001-X",
+        "os_family": "IOS-XE",
+        "description": "Cisco ASR 1001-X aggregation router",
+        "priority": 10
+      },
+      {
+        "name": "Cisco ASR 1002-X",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.1861",
+        "device_category_name": "cisco-router",
+        "vendor": "Cisco",
+        "model": "ASR 1002-X",
+        "os_family": "IOS-XE",
+        "description": "Cisco ASR 1002-X aggregation router",
+        "priority": 10
+      },
+      {
+        "name": "Cisco ASR 1002-F",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.1116",
+        "device_category_name": "cisco-router",
+        "vendor": "Cisco",
+        "model": "ASR 1002-F",
+        "os_family": "IOS-XE",
+        "description": "Cisco ASR 1002-F fixed aggregation router",
+        "priority": 10
+      },
+      {
+        "name": "Cisco ASR 9010",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.1017",
+        "device_category_name": "cisco-router",
+        "vendor": "Cisco",
+        "model": "ASR 9010",
+        "os_family": "IOS-XR",
+        "description": "Cisco ASR 9010 core router",
+        "priority": 10
+      },
+      {
+        "name": "Cisco ASR 9006",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.1018",
+        "device_category_name": "cisco-router",
+        "vendor": "Cisco",
+        "model": "ASR 9006",
+        "os_family": "IOS-XR",
+        "description": "Cisco ASR 9006 core router",
+        "priority": 10
+      },
+      {
+        "name": "Cisco Catalyst 8500-20X6C",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.3085",
+        "device_category_name": "cisco-router",
+        "vendor": "Cisco",
+        "model": "Catalyst 8500-20X6C",
+        "os_family": "IOS-XE",
+        "description": "Cisco Catalyst 8500 edge platform",
+        "priority": 10
+      },
+      {
+        "name": "Cisco ASA 5505",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.745",
+        "device_category_name": "cisco-firewall",
+        "vendor": "Cisco",
+        "model": "ASA 5505",
+        "os_family": "ASA",
+        "description": "Cisco ASA 5505 adaptive security appliance",
+        "priority": 10
+      },
+      {
+        "name": "Cisco ASA 5510",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.669",
+        "device_category_name": "cisco-firewall",
+        "vendor": "Cisco",
+        "model": "ASA 5510",
+        "os_family": "ASA",
+        "description": "Cisco ASA 5510 adaptive security appliance",
+        "priority": 10
+      },
+      {
+        "name": "Cisco ASA 5520",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.670",
+        "device_category_name": "cisco-firewall",
+        "vendor": "Cisco",
+        "model": "ASA 5520",
+        "os_family": "ASA",
+        "description": "Cisco ASA 5520 adaptive security appliance",
+        "priority": 10
+      },
+      {
+        "name": "Cisco ASA 5540",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.671",
+        "device_category_name": "cisco-firewall",
+        "vendor": "Cisco",
+        "model": "ASA 5540",
+        "os_family": "ASA",
+        "description": "Cisco ASA 5540 adaptive security appliance",
+        "priority": 10
+      },
+      {
+        "name": "Cisco Catalyst 9300 (24-port)",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.2494",
+        "device_category_name": "cisco-switch",
+        "vendor": "Cisco",
+        "model": "Catalyst 9300-24T",
+        "os_family": "IOS-XE",
+        "description": "Cisco Catalyst 9300 24-port switch",
+        "priority": 10
+      },
+      {
+        "name": "Cisco Catalyst 9300 (48-port)",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.2496",
+        "device_category_name": "cisco-switch",
+        "vendor": "Cisco",
+        "model": "Catalyst 9300-48T",
+        "os_family": "IOS-XE",
+        "description": "Cisco Catalyst 9300 48-port switch",
+        "priority": 10
+      },
+      {
+        "name": "Cisco Catalyst 9300 (48-port UPoE)",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.2497",
+        "device_category_name": "cisco-switch",
+        "vendor": "Cisco",
+        "model": "Catalyst 9300-48U",
+        "os_family": "IOS-XE",
+        "description": "Cisco Catalyst 9300 48-port UPoE switch",
+        "priority": 10
+      },
+      {
+        "name": "Cisco Catalyst 9300 (48-port PoE+)",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.2498",
+        "device_category_name": "cisco-switch",
+        "vendor": "Cisco",
+        "model": "Catalyst 9300-48P",
+        "os_family": "IOS-XE",
+        "description": "Cisco Catalyst 9300 48-port PoE+ switch",
+        "priority": 10
+      },
+      {
+        "name": "Cisco Catalyst 9300-48UN",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.2564",
+        "device_category_name": "cisco-switch",
+        "vendor": "Cisco",
+        "model": "Catalyst 9300-48UN",
+        "os_family": "IOS-XE",
+        "description": "Cisco Catalyst 9300 48-port UPOE Network Advantage",
+        "priority": 10
+      },
+      {
+        "name": "Cisco Catalyst 9300L Stack",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.2804",
+        "device_category_name": "cisco-switch",
+        "vendor": "Cisco",
+        "model": "Catalyst 9300L",
+        "os_family": "IOS-XE",
+        "description": "Cisco Catalyst 9300L stack",
+        "priority": 10
+      },
+      {
+        "name": "Cisco Catalyst 9200",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.2694",
+        "device_category_name": "cisco-switch",
+        "vendor": "Cisco",
+        "model": "Catalyst 9200",
+        "os_family": "IOS-XE",
+        "description": "Cisco Catalyst 9200 series switch",
+        "priority": 10
+      },
+      {
+        "name": "Cisco Catalyst 9200R",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.2695",
+        "device_category_name": "cisco-switch",
+        "vendor": "Cisco",
+        "model": "Catalyst 9200R",
+        "os_family": "IOS-XE",
+        "description": "Cisco Catalyst 9200R series switch",
+        "priority": 10
+      },
+      {
+        "name": "Cisco ASA 5550",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.753",
+        "device_category_name": "cisco-firewall",
+        "vendor": "Cisco",
+        "model": "ASA 5550",
+        "os_family": "ASA",
+        "description": "Cisco ASA 5550 adaptive security appliance",
+        "priority": 10
+      },
+      {
+        "name": "Cisco Nexus 9000 (generic prefix)",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.12.3.1.3.1812",
+        "device_category_name": "cisco-nexus",
+        "vendor": "Cisco",
+        "model": "Nexus 9000",
+        "os_family": "NX-OS",
+        "description": "Cisco Nexus 9000 series data center switch",
+        "priority": 5
+      },
+      {
+        "name": "Cisco Nexus 7000",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.12.3.1.3.932",
+        "device_category_name": "cisco-nexus",
+        "vendor": "Cisco",
+        "model": "Nexus 7000",
+        "os_family": "NX-OS",
+        "description": "Cisco Nexus 7000 series modular switch",
+        "priority": 5
+      },
+      {
+        "name": "Cisco Nexus 5000",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.12.3.1.3.780",
+        "device_category_name": "cisco-nexus",
+        "vendor": "Cisco",
+        "model": "Nexus 5000",
+        "os_family": "NX-OS",
+        "description": "Cisco Nexus 5000 series switch",
+        "priority": 5
+      },
+      {
+        "name": "Cisco Nexus 3000",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.12.3.1.3.1299",
+        "device_category_name": "cisco-nexus",
+        "vendor": "Cisco",
+        "model": "Nexus 3000",
+        "os_family": "NX-OS",
+        "description": "Cisco Nexus 3000 series top-of-rack switch",
+        "priority": 5
+      },
+      {
+        "name": "Cisco WLC 5500",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9.1.1069",
+        "device_category_name": "cisco-wireless",
+        "vendor": "Cisco",
+        "model": "WLC 5500",
+        "os_family": "AireOS",
+        "description": "Cisco 5500 Series Wireless LAN Controller",
+        "priority": 10
+      },
+      {
+        "name": "Cisco Devices",
+        "sys_object_id_pattern": "1.3.6.1.4.1.9",
+        "device_category_name": "cisco-router",
+        "vendor": "Cisco",
+        "model": null,
+        "os_family": null,
+        "description": "Generic Cisco device \u2014 matches any unclassified Cisco enterprise OID. Low priority so specific rules win.",
+        "priority": 0
+      },
+      {
+        "name": "Juniper EX2300",
+        "sys_object_id_pattern": "1.3.6.1.4.1.2636.1.1.1.2.129",
+        "device_category_name": "juniper-switch",
+        "vendor": "Juniper",
+        "model": "EX2300",
+        "os_family": "Junos",
+        "description": "Juniper EX2300 access switch",
+        "priority": 10
+      },
+      {
+        "name": "Juniper EX3400",
+        "sys_object_id_pattern": "1.3.6.1.4.1.2636.1.1.1.2.131",
+        "device_category_name": "juniper-switch",
+        "vendor": "Juniper",
+        "model": "EX3400",
+        "os_family": "Junos",
+        "description": "Juniper EX3400 access/distribution switch",
+        "priority": 10
+      },
+      {
+        "name": "Juniper Devices",
+        "sys_object_id_pattern": "1.3.6.1.4.1.2636",
+        "device_category_name": "juniper-router",
+        "vendor": "Juniper",
+        "model": null,
+        "os_family": "Junos",
+        "description": "Generic Juniper device \u2014 matches any unclassified Juniper enterprise OID. Low priority so specific rules win.",
+        "priority": 0
+      },
+      {
+        "name": "Juniper EX4300",
+        "sys_object_id_pattern": "1.3.6.1.4.1.2636.1.1.1.2.101",
+        "device_category_name": "juniper-switch",
+        "vendor": "Juniper",
+        "model": "EX4300",
+        "os_family": "Junos",
+        "description": "Juniper EX4300 campus switch",
+        "priority": 10
+      },
+      {
+        "name": "Juniper EX4600",
+        "sys_object_id_pattern": "1.3.6.1.4.1.2636.1.1.1.2.113",
+        "device_category_name": "juniper-switch",
+        "vendor": "Juniper",
+        "model": "EX4600",
+        "os_family": "Junos",
+        "description": "Juniper EX4600 high-performance switch",
+        "priority": 10
+      },
+      {
+        "name": "Juniper QFX5100-24Q",
+        "sys_object_id_pattern": "1.3.6.1.4.1.2636.1.1.1.4.82.4",
+        "device_category_name": "juniper-switch",
+        "vendor": "Juniper",
+        "model": "QFX5100-24Q",
+        "os_family": "Junos",
+        "description": "Juniper QFX5100 24-port 40G switch",
+        "priority": 10
+      },
+      {
+        "name": "Juniper QFX5100-48S",
+        "sys_object_id_pattern": "1.3.6.1.4.1.2636.1.1.1.4.82.5",
+        "device_category_name": "juniper-switch",
+        "vendor": "Juniper",
+        "model": "QFX5100-48S-6Q",
+        "os_family": "Junos",
+        "description": "Juniper QFX5100 48-port 10G switch",
+        "priority": 10
+      },
+      {
+        "name": "Juniper QFX5200",
+        "sys_object_id_pattern": "1.3.6.1.4.1.2636.1.1.1.2.134",
+        "device_category_name": "juniper-switch",
+        "vendor": "Juniper",
+        "model": "QFX5200",
+        "os_family": "Junos",
+        "description": "Juniper QFX5200 spine switch",
+        "priority": 10
+      },
+      {
+        "name": "Juniper QFX (generic)",
+        "sys_object_id_pattern": "1.3.6.1.4.1.2636.1.1.1.4.82",
+        "device_category_name": "juniper-switch",
+        "vendor": "Juniper",
+        "model": "QFX",
+        "os_family": "Junos",
+        "description": "Generic Juniper QFX series switch",
+        "priority": 5
+      },
+      {
+        "name": "Juniper SRX340",
+        "sys_object_id_pattern": "1.3.6.1.4.1.2636.1.1.1.2.86",
+        "device_category_name": "juniper-firewall",
+        "vendor": "Juniper",
+        "model": "SRX340",
+        "os_family": "Junos",
+        "description": "Juniper SRX340 services gateway",
+        "priority": 10
+      },
+      {
+        "name": "Juniper SRX345",
+        "sys_object_id_pattern": "1.3.6.1.4.1.2636.1.1.1.2.87",
+        "device_category_name": "juniper-firewall",
+        "vendor": "Juniper",
+        "model": "SRX345",
+        "os_family": "Junos",
+        "description": "Juniper SRX345 services gateway",
+        "priority": 10
+      },
+      {
+        "name": "Juniper SRX1500",
+        "sys_object_id_pattern": "1.3.6.1.4.1.2636.1.1.1.2.137",
+        "device_category_name": "juniper-firewall",
+        "vendor": "Juniper",
+        "model": "SRX1500",
+        "os_family": "Junos",
+        "description": "Juniper SRX1500 services gateway",
+        "priority": 10
+      },
+      {
+        "name": "Juniper SRX5800",
+        "sys_object_id_pattern": "1.3.6.1.4.1.2636.1.1.1.2.26",
+        "device_category_name": "juniper-firewall",
+        "vendor": "Juniper",
+        "model": "SRX5800",
+        "os_family": "Junos",
+        "description": "Juniper SRX5800 high-end firewall",
+        "priority": 10
+      },
+      {
+        "name": "Juniper SRX5600",
+        "sys_object_id_pattern": "1.3.6.1.4.1.2636.1.1.1.2.28",
+        "device_category_name": "juniper-firewall",
+        "vendor": "Juniper",
+        "model": "SRX5600",
+        "os_family": "Junos",
+        "description": "Juniper SRX5600 services gateway",
+        "priority": 10
+      },
+      {
+        "name": "Juniper MX240",
+        "sys_object_id_pattern": "1.3.6.1.4.1.2636.1.1.1.2.29",
+        "device_category_name": "juniper-router",
+        "vendor": "Juniper",
+        "model": "MX240",
+        "os_family": "Junos",
+        "description": "Juniper MX240 3D Universal Edge Router",
+        "priority": 10
+      },
+      {
+        "name": "Juniper MX480",
+        "sys_object_id_pattern": "1.3.6.1.4.1.2636.1.1.1.2.25",
+        "device_category_name": "juniper-router",
+        "vendor": "Juniper",
+        "model": "MX480",
+        "os_family": "Junos",
+        "description": "Juniper MX480 3D Universal Edge Router",
+        "priority": 10
+      },
+      {
+        "name": "Juniper MX960",
+        "sys_object_id_pattern": "1.3.6.1.4.1.2636.1.1.1.2.21",
+        "device_category_name": "juniper-router",
+        "vendor": "Juniper",
+        "model": "MX960",
+        "os_family": "Junos",
+        "description": "Juniper MX960 3D Universal Edge Router",
+        "priority": 10
+      },
+      {
+        "name": "Juniper MX204",
+        "sys_object_id_pattern": "1.3.6.1.4.1.2636.1.1.1.2.143",
+        "device_category_name": "juniper-router",
+        "vendor": "Juniper",
+        "model": "MX204",
+        "os_family": "Junos",
+        "description": "Juniper MX204 fixed-config router",
+        "priority": 10
+      },
+      {
+        "name": "Juniper MX80",
+        "sys_object_id_pattern": "1.3.6.1.4.1.2636.1.1.1.2.57",
+        "device_category_name": "juniper-router",
+        "vendor": "Juniper",
+        "model": "MX80",
+        "os_family": "Junos",
+        "description": "Juniper MX80 3D Universal Edge Router",
+        "priority": 10
+      },
+      {
+        "name": "Juniper MX10003",
+        "sys_object_id_pattern": "1.3.6.1.4.1.2636.1.1.1.2.149",
+        "device_category_name": "juniper-router",
+        "vendor": "Juniper",
+        "model": "MX10003",
+        "os_family": "Junos",
+        "description": "Juniper MX10003 compact core router",
+        "priority": 10
+      }
+    ]
+  }
+}
