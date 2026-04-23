@@ -30,11 +30,11 @@ If you are curious how much of a real system one person plus Claude can ship in 
 
 **Collector node** — three services:
 
-| Service       | Purpose                                                                       |
-| ------------- | ----------------------------------------------------------------------------- |
-| `cache-node`  | Cluster brain — gossip membership, distributed cache, gRPC peer communication |
-| `poll-worker` | Pulls job assignments, executes checks, manages app virtualenvs               |
-| `forwarder`   | Batches and ships results to central                                          |
+| Service       | Purpose                                                                 |
+| ------------- | ----------------------------------------------------------------------- |
+| `cache-node`  | Local cache + gRPC peer endpoint for the poll-worker (shared-host only) |
+| `poll-worker` | Pulls job assignments, executes checks, manages app virtualenvs         |
+| `forwarder`   | Batches and ships results to central                                    |
 
 **Storage split** — PostgreSQL for relational state (devices, assignments, credentials), ClickHouse for time-series (ping latency, interface counters, alert history, config changes, events). Each time-series table has a `*_latest` materialized view for instant latest-per-entity queries.
 
@@ -54,12 +54,11 @@ If you are curious how much of a real system one person plus Claude can ship in 
     ├── ClickHouse (replicated cluster)
     └── Redis (sentinel)
 
- Collectors (worker1..N)  ─── gossip ───  Collectors
-    │                                       │
-    └── poll jobs → execute → forward ──────┘
-                         │
-                         ▼
-                      central
+ Collectors (worker1..N)   independent — no inter-collector comms
+    │
+    └── poll jobs → execute → forward ──► central
+
+ Central owns all assignment routing (consistent-hashing by group weight)
 ```
 
 ## Tech stack
