@@ -35,25 +35,6 @@ class AppAssignmentConfig(BaseModel):
     resource_limits: ResourceLimits = Field(default_factory=ResourceLimits)
 
 
-class ClusterPeer(BaseModel):
-    """A peer in a collector cluster."""
-
-    collector_id: str = Field(description="Peer collector UUID")
-    address: str = Field(description="Peer IP or hostname")
-    port: int = Field(default=9901, description="Peer gossip port")
-
-
-class ClusterConfig(BaseModel):
-    """Cluster configuration for a collector."""
-
-    cluster_id: str = Field(description="Cluster UUID")
-    cluster_name: str = Field(description="Cluster name")
-    replication_factor: int = Field(default=2)
-    peers: list[ClusterPeer] = Field(default_factory=list)
-    gossip_interval: float = Field(default=3.0, description="Gossip interval in seconds")
-    suspect_timeout: float = Field(default=15.0, description="Seconds before SUSPECT → DEAD")
-
-
 class CollectorSettings(BaseModel):
     """Global settings for the collector daemon."""
 
@@ -68,6 +49,3 @@ class CollectorConfig(BaseModel):
     config_version: int = Field(description="Incrementing config version number")
     settings: CollectorSettings = Field(default_factory=CollectorSettings)
     assignments: list[AppAssignmentConfig] = Field(default_factory=list)
-    cluster: ClusterConfig | None = Field(
-        default=None, description="Cluster config; None if standalone"
-    )
