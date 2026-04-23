@@ -292,6 +292,140 @@ def logs(
     logs_exec(h, project=project, service=service, tail=tail, follow=follow)
 
 
+@main.command(name="add-host")
+@click.argument("name")
+@click.option("--address", required=True, help="IP address of the new host")
+@click.option(
+    "--roles",
+    required=True,
+    help="Comma-separated roles (leaf only today: collector, docker_stats)",
+)
+@click.option("--ssh-user", default="monctl", show_default=True)
+@click.option(
+    "--inventory",
+    "-i",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("./inventory.yaml"),
+    show_default=True,
+)
+def add_host_cmd(
+    name: str, address: str, roles: str, ssh_user: str, inventory: Path
+) -> None:
+    """Append a host to the inventory and deploy to it (collectors only)."""
+    from monctl_installer.commands.topology import TopologyError, add_host
+    from monctl_installer.secrets.store import SecretsFileError
+
+    try:
+        changes = add_host(
+            inventory,
+            name=name,
+            address=address,
+            roles=[r.strip() for r in roles.split(",") if r.strip()],
+            ssh_user=ssh_user,
+        )
+    except (TopologyError, SecretsFileError) as exc:
+        err_console.print(f"[red]add-host failed:[/red] {exc}")
+        sys.exit(1)
+    for c in changes:
+        colour = {"added": "green", "removed": "yellow", "failed": "red"}[c.action]
+        console.print(f"[{colour}]{c.action}[/{colour}] [cyan]{c.host}[/cyan] — {c.detail}")
+    if any(c.action == "failed" for c in changes):
+        sys.exit(1)
+
+
+@main.command(name="remove-host")
+@click.argument("name")
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Allow removing hosts that carry non-leaf roles "
+    "(you must have deregistered from Patroni/etcd/CH first)",
+)
+@click.option(
+    "--inventory",
+    "-i",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("./inventory.yaml"),
+    show_default=True,
+)
+def remove_host_cmd(name: str, force: bool, inventory: Path) -> None:
+    """Stop + strip a host from the inventory."""
+    from monctl_installer.commands.topology import TopologyError, remove_host
+
+    try:
+        changes = remove_host(inventory, name=name, force=force)
+    except TopologyError as exc:
+        err_console.print(f"[red]remove-host failed:[/red] {exc}")
+        sys.exit(1)
+    for c in changes:
+        colour = {"added": "green", "removed": "yellow", "failed": "red"}[c.action]
+        console.print(f"[{colour}]{c.action}[/{colour}] [cyan]{c.host}[/cyan] — {c.detail}")
+
+
+@main.group()
+def bundle() -> None:
+    """Air-gapped install bundle: `create` on internet-connected host, `load` on target."""
+
+
+@bundle.command("create")
+@click.option("--version", required=True, help="Image tag to snapshot (e.g. v1.0.0)")
+@click.option(
+    "--out",
+    "out_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    required=True,
+    help="Path to write the tarball (e.g. monctl-airgap-v1.0.0.tar.gz)",
+)
+@click.option(
+    "--namespace",
+    default="hansmeldgaard",
+    show_default=True,
+    help="GHCR owner/org namespace",
+)
+@click.option(
+    "--registry", default="ghcr.io", show_default=True, help="Image registry host"
+)
+def bundle_create(version: str, out_path: Path, namespace: str, registry: str) -> None:
+    """Pull + save images + docs + inventory examples into a self-contained tarball."""
+    from monctl_installer.commands.bundle import BundleError, create_bundle
+
+    repo_root = Path(__file__).resolve().parents[4]
+    try:
+        result = create_bundle(
+            version=version,
+            out_path=out_path,
+            namespace=namespace,
+            registry=registry,
+            extras={"docs": repo_root, "inventory_examples": repo_root},
+        )
+    except BundleError as exc:
+        err_console.print(f"[red]bundle create failed:[/red] {exc}")
+        sys.exit(1)
+    size_mb = result.size_bytes / (1024 * 1024)
+    console.print(
+        f"[green]bundle created[/green] → {result.path} ({size_mb:.1f} MB, "
+        f"{len(result.components)} images)"
+    )
+
+
+@bundle.command("load")
+@click.argument(
+    "path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+)
+def bundle_load(path: Path) -> None:
+    """Extract a bundle and `docker load` its images on this machine."""
+    from monctl_installer.commands.bundle import BundleError, load_bundle
+
+    try:
+        loaded = load_bundle(path)
+    except BundleError as exc:
+        err_console.print(f"[red]bundle load failed:[/red] {exc}")
+        sys.exit(1)
+    for ref in loaded:
+        console.print(f"[green]loaded[/green] {ref}")
+
+
 @main.command(name="ssh")
 @click.argument("host")
 @click.option(
