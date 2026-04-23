@@ -19,6 +19,7 @@ import {
   Copy,
   Layout,
   Loader2,
+  Package,
   Pencil,
   Plug,
   Plus,
@@ -452,6 +453,30 @@ export function AppDetailPage() {
           >
             <Pencil className="h-4 w-4" />
           </button>
+        </div>
+        <div className="flex items-center gap-3 text-sm text-zinc-500">
+          {app.pack_id ? (
+            <Link
+              to={`/packs/${app.pack_id}`}
+              className="inline-flex"
+              title={app.pack_uid ?? undefined}
+            >
+              <Badge variant="info" className="gap-1">
+                <Package className="h-3 w-3" />
+                From pack: {app.pack_name ?? app.pack_uid ?? "pack"}
+              </Badge>
+            </Link>
+          ) : (
+            <span className="text-zinc-600">Manually created</span>
+          )}
+          <span className="text-zinc-700">·</span>
+          <span>
+            Used by{" "}
+            <span className="font-mono text-zinc-300">
+              {app.device_count ?? 0}
+            </span>{" "}
+            {(app.device_count ?? 0) === 1 ? "device" : "devices"}
+          </span>
         </div>
         {app.description && (
           <p className="text-sm text-zinc-400">{app.description}</p>

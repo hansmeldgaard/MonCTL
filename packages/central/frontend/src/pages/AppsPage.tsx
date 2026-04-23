@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { AppWindow, Loader2, Plug, Plus, Trash2 } from "lucide-react";
+import { AppWindow, Loader2, Package, Plug, Plus, Trash2 } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -40,6 +40,13 @@ export function AppsPage() {
       { key: "name", label: "Name" },
       { key: "app_type", label: "Type" },
       { key: "target_table", label: "Target Table" },
+      { key: "pack_name", label: "Pack", sortable: false },
+      {
+        key: "device_count",
+        label: "Devices",
+        sortable: false,
+        filterable: false,
+      },
       { key: "description", label: "Description", sortable: false },
       { key: "created_at", label: "Created", filterable: false },
       { key: "updated_at", label: "Updated", filterable: false },
@@ -174,6 +181,43 @@ export function AppsPage() {
           ) : (
             <span className="text-zinc-600 text-xs">{"\u2014"}</span>
           ),
+      },
+      {
+        key: "pack_name",
+        label: "Pack",
+        sortable: false,
+        defaultWidth: 160,
+        cell: (app) =>
+          app.pack_id ? (
+            <Link
+              to={`/packs/${app.pack_id}`}
+              className="inline-flex"
+              title={app.pack_uid ?? undefined}
+            >
+              <Badge variant="info" className="text-xs gap-1">
+                <Package className="h-2.5 w-2.5" />
+                {app.pack_name ?? app.pack_uid ?? "pack"}
+              </Badge>
+            </Link>
+          ) : (
+            <span className="text-zinc-600 text-xs">{"—"}</span>
+          ),
+      },
+      {
+        key: "device_count",
+        label: "Devices",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 90,
+        cellClassName: "text-right font-mono text-xs",
+        cell: (app) => {
+          const n = app.device_count ?? 0;
+          return n > 0 ? (
+            <span className="text-zinc-300">{n}</span>
+          ) : (
+            <span className="text-zinc-600">0</span>
+          );
+        },
       },
       {
         key: "description",
