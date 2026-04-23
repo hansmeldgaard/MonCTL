@@ -284,7 +284,7 @@ async def list_apps(
 ):
     """List all apps with connector bindings."""
     from sqlalchemy.orm import selectinload
-    from monctl_central.storage.models import AppConnectorBinding
+    from monctl_central.storage.models import AppAssignment, AppConnectorBinding, Pack
 
     stmt = select(App).options(selectinload(App.connector_bindings))
 
@@ -327,6 +327,27 @@ async def list_apps(
         )).all()
         connector_names = {r.id: r.name for r in cn_rows}
 
+    # Batch-fetch pack provenance (only for apps that have a pack_id)
+    pack_ids = {a.pack_id for a in apps if a.pack_id is not None}
+    pack_info: dict[uuid.UUID, tuple[str, str]] = {}
+    if pack_ids:
+        pk_rows = (await db.execute(
+            select(Pack.id, Pack.pack_uid, Pack.name).where(Pack.id.in_(pack_ids))
+        )).all()
+        pack_info = {r.id: (r.pack_uid, r.name) for r in pk_rows}
+
+    # Batch-fetch per-app distinct device counts (excludes group-level routing where device_id IS NULL)
+    app_ids = [a.id for a in apps]
+    device_counts: dict[uuid.UUID, int] = {}
+    if app_ids:
+        dc_rows = (await db.execute(
+            select(AppAssignment.app_id, sa.func.count(sa.func.distinct(AppAssignment.device_id)))
+            .where(AppAssignment.app_id.in_(app_ids))
+            .where(AppAssignment.device_id.is_not(None))
+            .group_by(AppAssignment.app_id)
+        )).all()
+        device_counts = {row[0]: row[1] for row in dc_rows}
+
     apps_list = [
         {
             "id": str(a.id),
@@ -337,6 +358,10 @@ async def list_apps(
             "vendor_oid_prefix": a.vendor_oid_prefix,
             "created_at": a.created_at.isoformat() if a.created_at else None,
             "updated_at": a.updated_at.isoformat() if a.updated_at else None,
+            "pack_id": str(a.pack_id) if a.pack_id else None,
+            "pack_uid": pack_info.get(a.pack_id, (None, None))[0] if a.pack_id else None,
+            "pack_name": pack_info.get(a.pack_id, (None, None))[1] if a.pack_id else None,
+            "device_count": device_counts.get(a.id, 0),
             "connector_bindings": [
                 {
                     "connector_type": b.connector_type,
@@ -975,6 +1000,7 @@ async def get_app(
 ):
     """Get app details including all versions (sorted newest first)."""
     from sqlalchemy.orm import selectinload
+    from monctl_central.storage.models import AppAssignment, Pack
     stmt = (
         select(App)
         .options(selectinload(App.versions), selectinload(App.connector_bindings))
@@ -995,6 +1021,22 @@ async def get_app(
         )).all()
         connector_names = {r.id: r.name for r in cn_rows}
 
+    pack_uid: str | None = None
+    pack_name: str | None = None
+    if app.pack_id is not None:
+        pk_row = (await db.execute(
+            select(Pack.pack_uid, Pack.name).where(Pack.id == app.pack_id)
+        )).first()
+        if pk_row is not None:
+            pack_uid = pk_row.pack_uid
+            pack_name = pk_row.name
+
+    device_count = (await db.execute(
+        select(sa.func.count(sa.func.distinct(AppAssignment.device_id)))
+        .where(AppAssignment.app_id == app.id)
+        .where(AppAssignment.device_id.is_not(None))
+    )).scalar() or 0
+
     return {
         "status": "success",
         "data": {
@@ -1007,6 +1049,10 @@ async def get_app(
             "config_schema": app.config_schema,
             "created_at": app.created_at.isoformat() if app.created_at else None,
             "updated_at": app.updated_at.isoformat() if app.updated_at else None,
+            "pack_id": str(app.pack_id) if app.pack_id else None,
+            "pack_uid": pack_uid,
+            "pack_name": pack_name,
+            "device_count": device_count,
             "versions": [
                 {
                     "id": str(v.id),

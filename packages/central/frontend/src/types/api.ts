@@ -485,6 +485,10 @@ export interface AppSummary {
   vendor_oid_prefix?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+  pack_id?: string | null;
+  pack_uid?: string | null;
+  pack_name?: string | null;
+  device_count?: number;
   connector_bindings?: {
     connector_type: string;
     connector_id: string | null;
