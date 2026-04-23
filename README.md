@@ -135,4 +135,4 @@ Production in use. APIs and schemas are stabilising but not yet versioned for ex
 
 ## License
 
-**TBD.** This repo is being prepared for public release; a permissive license (MIT or Apache-2.0) will be added before the `public` switch is flipped. Until then, all rights reserved. File an issue if you want to use this in the meantime.
+[MIT](LICENSE) — use it, fork it, ship it. **No warranty, no liability, use at your own risk.** If something breaks your monitoring stack at 3 a.m., that's on you. Pull requests welcome.
