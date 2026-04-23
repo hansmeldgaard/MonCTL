@@ -116,7 +116,27 @@ Per-host table with docker container count, central `/v1/health`, Patroni role +
 - **Upgrade** to a new version: `monctl_ctl upgrade v1.1.0` (canary first, then rolling).
 - **Logs**: `monctl_ctl logs <host> --project central --service central --tail 500 --follow`
 - **SSH in**: `monctl_ctl ssh <host>` (passthrough to system `ssh`).
-- **Onboard collectors** on more hosts: add them to `inventory.yaml` with `roles: [collector]` and re-run `validate` + `deploy`. Existing hosts aren't touched.
+- **Add a collector host**: `monctl_ctl add-host col5 --address 10.0.0.35 --roles collector,docker_stats`. Appends to `inventory.yaml`, runs a targeted deploy on just the new host — existing hosts untouched (idempotent). Only leaf roles (`collector`, `docker_stats`) supported; adding postgres/etcd/CH nodes needs manual quorum-member registration first.
+- **Remove a host**: `monctl_ctl remove-host col5`. Stops containers in reverse dependency order and strips from inventory. Use `--force` for hosts carrying non-leaf roles (after you've deregistered from Patroni/etcd/CH).
+
+### Air-gapped installs
+
+For customers who can't reach ghcr.io from their production network:
+
+```bash
+# On a jump host with internet access + Docker:
+monctl_ctl bundle create --version v1.0.0 --out monctl-airgap-v1.0.0.tar.gz
+
+# Transfer the tarball to the operator machine (scp / USB / approved channel).
+
+# On the air-gapped operator machine, after pipx-installing monctl_ctl:
+monctl_ctl bundle load monctl-airgap-v1.0.0.tar.gz
+# → images are now in the local Docker daemon
+monctl_ctl init       # as normal
+monctl_ctl deploy     # as normal; will pull from GHCR unless you side-load per host
+```
+
+Pre-shipping images to every target host (so `monctl_ctl deploy` doesn't try to pull) currently requires manually scp-ing `images/*.tar` from the extracted bundle and running `docker load` on each host. A `deploy --image-source bundle` mode that automates this is planned.
 
 ## Firewall / ports
 
