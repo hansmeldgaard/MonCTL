@@ -60,7 +60,7 @@ class PollContext:
     device_host: str         # Resolved device IP or hostname
     parameters: dict         # App config — all $credential: refs already substituted
     connectors: dict         # alias → connector instance (e.g. {"snmp": <SNMPConnector>})
-    cache: AppCacheAccessor | None  # Shared KV store (rarely needed)
+    cache: AppCacheAccessor | None  # Per-app/per-device KV store, shared across collectors (see App Data Cache)
 ```
 
 **Commonly used fields:**
@@ -177,6 +177,108 @@ result = await snmp.get_many(list_of_oid_lists)   # Batched GET (falls back to i
 ```
 
 Always guard with `if snmp is None` before using the connector.
+
+---
+
+## App Data Cache
+
+`context.cache` is a small JSON KV store scoped to **(app, device)**, replicated
+across all collectors in the same collector group via central. Use it to:
+
+- **Persist state between polls** on the same device (previous counter for delta
+  math, last-seen fingerprint, backoff state).
+- **Share data across apps** on the same device — one app writes, another reads
+  via `get_from_app(source_app_id, key)`. This is the primary cross-app
+  data-sharing primitive.
+
+`context.cache` may be `None` (cache-node not available). Always guard.
+
+### API
+
+```python
+# Read your own app's entry for this device
+value = await context.cache.get(key)                      # dict | None
+
+# Write an entry for this device (replicated to the group within ~10s)
+await context.cache.set(key, value_dict, ttl=3600)        # ttl in seconds; omit or 0 = no TTL
+
+# Delete an entry locally
+await context.cache.delete(key)
+
+# Read an entry written by a DIFFERENT app for the same device
+value = await context.cache.get_from_app(source_app_id, key)
+```
+
+All values must be JSON-serialisable dicts. `source_app_id` is the UUID of the
+producing app (a config parameter or a pack-author convention — the consuming
+app does not introspect it).
+
+### Scope and semantics
+
+| Property     | Value                                                                                         |
+| ------------ | --------------------------------------------------------------------------------------------- |
+| Key scope    | `(app_id, device_id, cache_key)` — one namespace per app per device                           |
+| Replication  | Shared with every collector in the same `collector_group`                                     |
+| Transport    | Local gRPC to the cache-node; cache-node syncs with central every **~10 s**                   |
+| Consistency  | Eventual (last-write-wins on `updated_at`). Do not rely on read-after-write across collectors |
+| TTL          | Central expires rows based on `ttl_seconds` (0 / `None` = never)                              |
+| Failure mode | `context.cache` is `None` when the cache-node is unreachable — degrade gracefully             |
+
+### Pattern 1 — delta / previous-value cache
+
+Compute a per-poll delta without relying on central's rate engine:
+
+```python
+if context.cache is not None:
+    prev = await context.cache.get("last_octets")
+    if prev is not None:
+        delta = current_octets - prev["value"]
+        # ... emit rate metric ...
+    await context.cache.set("last_octets", {"value": current_octets}, ttl=3600)
+```
+
+### Pattern 2 — cross-app data sharing
+
+Producer app (e.g. a discovery poller) writes a table of entity names once an hour:
+
+```python
+await context.cache.set(
+    "entity_names",
+    {"names": {idx: name for idx, name in discovered}},
+    ttl=3600,
+)
+```
+
+Consumer app on the same device reads it to enrich its own metrics:
+
+```python
+SOURCE_APP_ID = context.parameters.get("entity_source_app_id")  # configured per assignment
+if context.cache is not None and SOURCE_APP_ID:
+    cached = await context.cache.get_from_app(SOURCE_APP_ID, "entity_names")
+    if cached:
+        label_for = cached.get("names", {})
+```
+
+The consumer must know the producer's `app_id` — expose it as a config-schema
+parameter so the operator binds it at assignment time, rather than hard-coding
+UUIDs in source.
+
+### Rules
+
+- Always `if context.cache is not None:` before any call.
+- Keep values small — the cache is replicated and stored in PostgreSQL as JSONB,
+  not a blob store.
+- Pick a TTL. A fresh write is cheaper than stale data outliving the app that
+  produced it.
+- Do not use the cache for PollResult data — return metrics through `PollResult`.
+  Cache is for state between polls and cross-app hand-offs, not telemetry.
+
+### Reference pack usage
+
+| App                                                 | Pattern                                                     |
+| --------------------------------------------------- | ----------------------------------------------------------- |
+| `cisco_cpu_memory` in `packs/cisco-monitoring.json` | Reads `entity_names` written by the Cisco env-health poller |
+| `linux_*` in `packs/linux-server.json`              | Stores previous counter value for delta computation         |
 
 ---
 
