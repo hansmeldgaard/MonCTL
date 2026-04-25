@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import hmac
 import uuid
 from typing import AsyncGenerator
@@ -20,6 +21,56 @@ _session_factory = None
 
 # ClickHouse client singleton
 _ch_client = None
+
+
+# ---------------------------------------------------------------------------
+# Layer 3 — tenant scope context for ClickHouse row policies
+# ---------------------------------------------------------------------------
+#
+# Every CH query auto-injects `settings={"monctl_tenant_scope": <value>}`
+# (see ClickHouseClient._get_client()), and ClickHouse row policies on every
+# tenant-scoped table check `getSetting('monctl_tenant_scope')` to decide
+# which rows are visible.
+#
+# Encoding:
+#   ""                       → admin / system pass-through (sees all rows)
+#   "uuid1,uuid2,..."        → scoped to those tenant UUIDs
+#   "ffffffff-ffff-ffff-ffff-ffffffffffff" (sentinel) → see-nothing
+#                              (used when the user has zero tenants assigned)
+#
+# Default is "" — that means a request that bypasses every auth dep, and any
+# background task / scheduler / startup code, runs unrestricted. The plan's
+# trade-off: Layer 2's per-endpoint apply_tenant_filter is the primary gate;
+# the row policy is the backstop for endpoints that forget Layer 2. System
+# code that connects directly to CH (rollup workers, alert engine) is
+# trusted.
+_NULL_TENANT_SENTINEL = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+tenant_scope_var: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "monctl_tenant_scope", default=""
+)
+
+
+def _set_tenant_scope_from_auth(auth: dict) -> None:
+    """Populate tenant_scope_var from an auth dict's tenant_ids field.
+
+    Idempotent — safe to call multiple times per request.
+    """
+    tenant_ids = auth.get("tenant_ids")
+    if tenant_ids is None:
+        # admin / API key / collector / system → unrestricted
+        tenant_scope_var.set("")
+        return
+    if not tenant_ids:
+        # User has no tenants assigned → see nothing.
+        tenant_scope_var.set(_NULL_TENANT_SENTINEL)
+        return
+    # Filter to syntactically-valid UUIDs to keep the row policy's
+    # arrayMap(toUUID, ...) from crashing on garbage values.
+    safe = [
+        t for t in tenant_ids
+        if all(c in "0123456789abcdefABCDEF-" for c in t)
+    ]
+    tenant_scope_var.set(",".join(safe) if safe else _NULL_TENANT_SENTINEL)
 
 
 def get_engine():
@@ -290,6 +341,7 @@ async def require_auth(
     user = await _get_user_from_cookie(request, db)
     if user:
         _populate_audit_context(user)
+        _set_tenant_scope_from_auth(user)
         return user
 
     # 2. Try Bearer API key
@@ -298,6 +350,7 @@ async def require_auth(
             api_key = await _validate_api_key(credentials.credentials)
             if api_key["key_type"] in ("management", "user"):
                 _populate_audit_context(api_key)
+                _set_tenant_scope_from_auth(api_key)
                 return api_key
         except HTTPException:
             pass  # Fall through to the 401 below
@@ -442,19 +495,23 @@ async def require_collector_auth(
             except HTTPException:
                 api_key = None
             if api_key is not None and api_key.get("key_type") == "collector":
-                return {
+                result = {
                     "auth_type": "collector_api_key",
                     "collector_id": api_key.get("collector_id"),
                     "scopes": api_key.get("scopes"),
                     "tenant_ids": None,
                 }
+                _set_tenant_scope_from_auth(result)
+                return result
 
     if (
         credentials
         and shared_secret
         and hmac.compare_digest(credentials.credentials, shared_secret)
     ):
-        return {"auth_type": "collector_shared_secret", "tenant_ids": None}
+        result = {"auth_type": "collector_shared_secret", "tenant_ids": None}
+        _set_tenant_scope_from_auth(result)
+        return result
 
     # Check HTTP Basic Auth (pip sends credentials this way)
     if shared_secret:
@@ -464,7 +521,9 @@ async def require_collector_auth(
                 decoded = base64.b64decode(auth_header[6:]).decode()
                 _, password = decoded.split(":", 1)
                 if hmac.compare_digest(password, shared_secret):
-                    return {"auth_type": "collector_shared_secret", "tenant_ids": None}
+                    result = {"auth_type": "collector_shared_secret", "tenant_ids": None}
+                    _set_tenant_scope_from_auth(result)
+                    return result
             except Exception:
                 pass
 

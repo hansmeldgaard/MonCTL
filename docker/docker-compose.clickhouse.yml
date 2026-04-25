@@ -13,10 +13,18 @@ services:
       CLICKHOUSE_REPLICA: ${CLICKHOUSE_REPLICA}
       KEEPER_SERVER_ID: ${KEEPER_SERVER_ID}
       INTERSERVER_HTTP_HOST: ${INTERSERVER_HTTP_HOST}
+      # Layer 3 — let monctl manage row policies (access management).
+      # The CH image entrypoint writes <access_management>${var}</> into
+      # users.d/default-user.xml on every boot.
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
     volumes:
       - ch_data:/var/lib/clickhouse
       - ch_logs:/var/log/clickhouse-server
       - ./clickhouse-config.xml:/etc/clickhouse-server/config.d/cluster.xml:ro
+      # Layer 3 — profile default for monctl_tenant_scope. Mount a single
+      # file in users.d (not the whole dir, which would hide the entrypoint-
+      # generated default-user.xml).
+      - ./clickhouse-monctl-tenant-scope.xml:/etc/clickhouse-server/users.d/zz-monctl-tenant-scope.xml:ro
     ulimits:
       nofile:
         soft: 262144

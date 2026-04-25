@@ -1,0 +1,29 @@
+<clickhouse>
+  <!-- Layer 3 — register monctl_tenant_scope on the default profile so
+       getSetting() in row policies always resolves, even on queries that
+       didn't explicitly pass the setting. We can't use an empty-string
+       default here (CH 24.3's Field deserializer fails on `''` in the
+       profile XML), so use a sentinel ('*') and recognise it in the row
+       policy as admin pass-through.
+
+       Quick reference of what monctl_tenant_scope values mean:
+         '*'                 → admin pass-through (default for any path
+                               that didn't explicitly set the value:
+                               clickhouse-client, third-party tools,
+                               MV trigger fallbacks)
+         ''                  → admin pass-through (set by the central
+                               pool wrapper for admin / api_key / system
+                               code that has tenant_ids=None)
+         'uuid1,uuid2,...'   → scoped to those tenant UUIDs
+         'ffff...ffff'       → see-nothing sentinel (user with no
+                               tenants assigned) -->
+  <profiles>
+    <default>
+      <!-- CH 24.3 deserializes profile values via Field::restoreFromDump(),
+           which requires the type-tagged form for strings (`'value'`, with
+           the surrounding single quotes literally in the XML). Plain `*`
+           or empty string crashes startup with CANNOT_RESTORE_FROM_FIELD_DUMP. -->
+      <monctl_tenant_scope>'*'</monctl_tenant_scope>
+    </default>
+  </profiles>
+</clickhouse>

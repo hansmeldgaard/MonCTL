@@ -25,8 +25,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from monctl_central.common.filters import ilike_filter
-from monctl_central.dependencies import get_db, require_permission
-from monctl_central.storage.models import AlertEntity, Incident, IncidentRule
+from monctl_central.dependencies import (
+    apply_tenant_filter,
+    check_tenant_access,
+    get_db,
+    require_permission,
+)
+from monctl_central.storage.models import AlertEntity, Device, Incident, IncidentRule
 
 router = APIRouter()
 
@@ -143,7 +148,16 @@ async def list_incidents(
     db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_permission("event", "view")),
 ):
-    stmt = select(Incident).options(selectinload(Incident.rule))
+    # Outer-join Device so non-admin users only see incidents whose
+    # device falls in one of their tenants. Global (device_id IS NULL)
+    # incidents are admin-only by design — there's no way to tenant-scope
+    # them.
+    stmt = (
+        select(Incident)
+        .options(selectinload(Incident.rule))
+        .outerjoin(Device, Incident.device_id == Device.id)
+    )
+    stmt = apply_tenant_filter(stmt, auth, Device.tenant_id)
 
     if state is not None and state != "":
         if state not in ("open", "cleared"):
@@ -240,6 +254,15 @@ async def get_incident(
     ).scalar_one_or_none()
     if incident is None:
         raise HTTPException(status_code=404, detail="Not found")
+    device_tenant = None
+    if incident.device_id is not None:
+        device_tenant = (
+            await db.execute(
+                select(Device.tenant_id).where(Device.id == incident.device_id)
+            )
+        ).scalar_one_or_none()
+    if not check_tenant_access(auth, device_tenant):
+        raise HTTPException(status_code=404, detail="Not found")
     live_by_key = await _load_live_by_key(db, [incident])
     return {"status": "success", "data": _fmt_incident(incident, live_by_key)}
 
@@ -267,10 +290,22 @@ async def clear_incidents(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid incident_id")
 
+    # Restrict the bulk-clear to incidents whose device falls in one of
+    # the user's tenants. Admins bypass via apply_tenant_filter (no-op).
+    visible_stmt = (
+        select(Incident.id)
+        .outerjoin(Device, Incident.device_id == Device.id)
+        .where(Incident.id.in_(ids))
+    )
+    visible_stmt = apply_tenant_filter(visible_stmt, auth, Device.tenant_id)
+    visible_ids = (await db.execute(visible_stmt)).scalars().all()
+    if not visible_ids:
+        return {"status": "success", "data": {"cleared": 0}}
+
     now = datetime.now(timezone.utc)
     result = await db.execute(
         update(Incident)
-        .where(Incident.id.in_(ids), Incident.state == "open")
+        .where(Incident.id.in_(visible_ids), Incident.state == "open")
         .values(state="cleared", cleared_at=now, cleared_reason="manual")
     )
     return {
