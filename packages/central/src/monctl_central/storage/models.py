@@ -666,6 +666,13 @@ class User(Base):
     )
     # If True, user can see all devices regardless of tenant (like an admin but non-privileged)
     all_tenants: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Superset BI feature tier — orthogonal to `role` (which gates MonCTL itself).
+    # Values: none | viewer | analyst | admin. NULL ⇒ derived in OAuth userinfo
+    # from `role` (admin → 'admin', else → 'viewer'). See /v1/oauth/userinfo.
+    superset_access: Mapped[str | None] = mapped_column(
+        String(20), nullable=True,
+        comment="Superset BI access tier: none | viewer | analyst | admin",
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default="now()"

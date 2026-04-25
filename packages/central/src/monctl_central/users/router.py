@@ -34,12 +34,29 @@ def _fmt_user(u: User, role_name: str | None = None) -> dict:
         "role_id": str(u.role_id) if u.role_id else None,
         "role_name": rn,
         "all_tenants": u.all_tenants,
+        # Stored value, not the OAuth-derived effective tier — admin UI
+        # needs to distinguish "explicitly set" from "derived from role".
+        "superset_access": u.superset_access,
         "is_active": u.is_active,
         "created_at": u.created_at.isoformat() if u.created_at else None,
     }
 
 
 # ── Request models ───────────────────────────────────────────────────────────
+
+_VALID_SUPERSET_ACCESS = {"none", "viewer", "analyst", "admin"}
+
+
+def _check_superset_access(v: str | None) -> str | None:
+    if v is None or v == "":
+        return None
+    v = v.strip().lower()
+    if v not in _VALID_SUPERSET_ACCESS:
+        raise ValueError(
+            f"superset_access must be one of {sorted(_VALID_SUPERSET_ACCESS)}"
+        )
+    return v
+
 
 class CreateUserRequest(BaseModel):
     username: str = Field(min_length=2, max_length=150)
@@ -49,6 +66,7 @@ class CreateUserRequest(BaseModel):
     display_name: str | None = Field(default=None, max_length=255)
     email: str | None = Field(default=None, max_length=255)
     all_tenants: bool = False
+    superset_access: str | None = None
 
     @field_validator("role")
     @classmethod
@@ -56,6 +74,11 @@ class CreateUserRequest(BaseModel):
         if v not in {"admin", "user"}:
             raise ValueError("role must be 'admin' or 'user'")
         return v
+
+    @field_validator("superset_access")
+    @classmethod
+    def _check_superset_access(cls, v: str | None) -> str | None:
+        return _check_superset_access(v)
 
     @field_validator("email")
     @classmethod
@@ -81,6 +104,7 @@ class UpdateUserRequest(BaseModel):
     all_tenants: bool | None = None
     is_active: bool | None = None
     timezone: str | None = Field(default=None, max_length=50)
+    superset_access: str | None = None
 
     @field_validator("role")
     @classmethod
@@ -88,6 +112,11 @@ class UpdateUserRequest(BaseModel):
         if v is not None and v not in {"admin", "user"}:
             raise ValueError("role must be 'admin' or 'user'")
         return v
+
+    @field_validator("superset_access")
+    @classmethod
+    def _check_superset_access(cls, v: str | None) -> str | None:
+        return _check_superset_access(v)
 
     @field_validator("email")
     @classmethod
@@ -465,6 +494,7 @@ async def create_user(
         display_name=request.display_name,
         email=request.email,
         all_tenants=request.all_tenants,
+        superset_access=request.superset_access,
     )
     if request.role_id:
         user.role_id = uuid.UUID(request.role_id)
@@ -541,6 +571,11 @@ async def update_user(
         user.is_active = request.is_active
     if request.timezone is not None:
         user.timezone = request.timezone
+    if request.superset_access is not None:
+        # Doesn't affect MonCTL auth, only the BI tier mapped at next OAuth
+        # login. No token_version bump — Superset's before_request hook
+        # re-syncs roles via AUTH_ROLES_SYNC_AT_LOGIN on next sign-in.
+        user.superset_access = request.superset_access
     if auth_changed:
         # Revoke every outstanding JWT for this user — they'll need to
         # re-auth to pick up the new role/tenants/active state.

@@ -926,6 +926,9 @@ export interface User {
   role_id: string | null;
   role_name: string | null;
   all_tenants: boolean;
+  // Superset BI tier — null means "derive from role" on the backend.
+  // Values: 'none' | 'viewer' | 'analyst' | 'admin'.
+  superset_access: string | null;
   is_active: boolean;
   created_at: string;
   tenant_count?: number;

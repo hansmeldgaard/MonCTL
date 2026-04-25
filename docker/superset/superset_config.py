@@ -316,13 +316,19 @@ if _MONCTL_OAUTH_CLIENT_ID and _MONCTL_OAUTH_CLIENT_SECRET:
     # needing manual intervention in Superset.
     AUTH_ROLES_SYNC_AT_LOGIN = True
     AUTH_ROLES_MAPPING = {
-        # MonCTL role claim → list of Superset FAB role names.
-        # MonCTLViewer is a Superset role seeded by init.sh — it has
-        # `all_datasource_access` (read everything) without SQL Lab. The RLS
-        # filter on every MonCTL CH dataset then scopes visible rows to the
-        # user's tenant_ids. SQL Lab is reserved for Admin because raw SQL
-        # bypasses dataset-level RLS.
+        # `superset_access` claim → list of Superset FAB role names.
+        # MonCTLViewer  (Gamma + all_datasource_access − sql_lab) — read only.
+        # MonCTLAnalyst (Alpha + all_datasource_access + sql_lab)  — chart
+        #               creation + raw SQL. Layer 3 row policies still scope
+        #               rows server-side, so SQL Lab is safe.
+        # Admin         — full Superset admin.
+        # 'none' is rejected upstream at /v1/oauth/authorize.
         "admin": ["Admin"],
+        "analyst": ["MonCTLAnalyst"],
+        "viewer": ["MonCTLViewer"],
+        # Backward-compat aliases for OAuth servers that still emit the
+        # legacy `role` claim ("admin" or "user"). Once every client is on
+        # the new `superset_access` claim these can be removed.
         "user": ["MonCTLViewer"],
     }
 
@@ -371,13 +377,19 @@ if _MONCTL_OAUTH_CLIENT_ID and _MONCTL_OAUTH_CLIENT_SECRET:
             _g._monctl_all_tenants = bool(data.get("all_tenants"))
             _g._monctl_tenant_ids = list(data.get("tenant_ids") or [])
 
+            # Prefer the new `superset_access` tier claim (none|viewer|
+            # analyst|admin) over the legacy MonCTL `role` (admin|user).
+            # Accept either so older central deployments without the
+            # superset_access column keep working — AUTH_ROLES_MAPPING has
+            # a fallback for "user".
+            tier = data.get("superset_access") or data.get("role") or "viewer"
             return {
                 "username": data.get("username") or data.get("preferred_username") or "",
                 "email": data.get("email") or "",
                 "first_name": first or data.get("username") or "",
                 "last_name": last,
                 # AUTH_ROLES_MAPPING matches on these keys.
-                "role_keys": [data.get("role", "user")],
+                "role_keys": [tier],
             }
 
         def auth_user_oauth(self, userinfo):

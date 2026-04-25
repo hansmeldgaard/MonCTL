@@ -1659,6 +1659,7 @@ export function useCreateUser() {
       display_name?: string;
       email?: string;
       all_tenants?: boolean;
+      superset_access?: string;
     }) => apiPost<User>("/users", data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["users"] });
@@ -1681,6 +1682,7 @@ export function useUpdateUser() {
         email: string | null;
         all_tenants: boolean;
         is_active: boolean;
+        superset_access: string;
       }>;
     }) => apiPut<User>(`/users/${id}`, data),
     onSuccess: (_res, { id }) => {
