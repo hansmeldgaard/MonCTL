@@ -76,6 +76,9 @@ function AddUserDialog({ open, onClose }: AddUserDialogProps) {
   const [role, setRole] = useState("user");
   const [roleId, setRoleId] = useState("");
   const [allTenants, setAllTenants] = useState(false);
+  // Default new non-admin users to viewer; admins are short-circuited to
+  // 'admin' on submit so the field can stay hidden when role===admin.
+  const [supersetAccess, setSupersetAccess] = useState("viewer");
   const [selectedTenantIds, setSelectedTenantIds] = useState<Set<string>>(
     new Set(),
   );
@@ -89,6 +92,7 @@ function AddUserDialog({ open, onClose }: AddUserDialogProps) {
     setRole("user");
     setRoleId("");
     setAllTenants(false);
+    setSupersetAccess("viewer");
     setSelectedTenantIds(new Set());
     setFormError(null);
   }
@@ -122,6 +126,8 @@ function AddUserDialog({ open, onClose }: AddUserDialogProps) {
         display_name: displayName.trim() || undefined,
         email: emailField.value.trim() || undefined,
         all_tenants: allTenants,
+        // Admins always get full Superset Admin; non-admins choose a tier.
+        superset_access: role === "admin" ? "admin" : supersetAccess,
       });
       // Assign selected tenants after user creation
       if (!allTenants && selectedTenantIds.size > 0 && result.data) {
@@ -255,6 +261,28 @@ function AddUserDialog({ open, onClose }: AddUserDialogProps) {
           </div>
         )}
 
+        {role !== "admin" && (
+          <div className="space-y-1.5">
+            <Label htmlFor="nu-superset-access">Superset access</Label>
+            <Select
+              id="nu-superset-access"
+              value={supersetAccess}
+              onChange={(e) => setSupersetAccess(e.target.value)}
+            >
+              <option value="none">None — block sign-in to Superset</option>
+              <option value="viewer">Viewer — read dashboards/charts</option>
+              <option value="analyst">
+                Analyst — viewer + create + SQL Lab
+              </option>
+              <option value="admin">Admin — full Superset admin</option>
+            </Select>
+            <p className="text-xs text-zinc-500">
+              Tenant scope still applies — a Superset Admin / Analyst still only
+              sees rows from the tenants you assign above.
+            </p>
+          </div>
+        )}
+
         {!allTenants && allTenantsList && allTenantsList.length > 0 && (
           <div className="space-y-1.5">
             <Label>Assign Tenants</Label>
@@ -329,6 +357,11 @@ function EditUserDialog({ user, onClose }: EditUserDialogProps) {
   const editEmailField = useField(user?.email ?? "", validateEmail);
   const [allTenants, setAllTenants] = useState(user?.all_tenants ?? false);
   const [isActive, setIsActive] = useState(user?.is_active ?? true);
+  // Stored value preferred; if NULL fall back to the same default the
+  // backend's _effective_superset_access uses (admin → admin, else → viewer).
+  const [supersetAccess, setSupersetAccess] = useState<string>(
+    user?.superset_access ?? (user?.role === "admin" ? "admin" : "viewer"),
+  );
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [selectedTenantId, setSelectedTenantId] = useState("");
@@ -344,6 +377,9 @@ function EditUserDialog({ user, onClose }: EditUserDialogProps) {
       editEmailField.reset(user.email ?? "");
       setAllTenants(user.all_tenants ?? false);
       setIsActive(user.is_active ?? true);
+      setSupersetAccess(
+        user.superset_access ?? (user.role === "admin" ? "admin" : "viewer"),
+      );
     }
   }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -363,6 +399,7 @@ function EditUserDialog({ user, onClose }: EditUserDialogProps) {
           email: editEmailField.value.trim() || null,
           all_tenants: allTenants,
           is_active: isActive,
+          superset_access: role === "admin" ? "admin" : supersetAccess,
         },
       });
       setSaveSuccess(true);
@@ -494,6 +531,28 @@ function EditUserDialog({ user, onClose }: EditUserDialogProps) {
               <span className="text-sm text-zinc-300">Active</span>
             </label>
           </div>
+
+          {role !== "admin" && (
+            <div className="space-y-1.5">
+              <Label htmlFor="eu-superset-access">Superset access</Label>
+              <Select
+                id="eu-superset-access"
+                value={supersetAccess}
+                onChange={(e) => setSupersetAccess(e.target.value)}
+              >
+                <option value="none">None — block sign-in to Superset</option>
+                <option value="viewer">Viewer — read dashboards/charts</option>
+                <option value="analyst">
+                  Analyst — viewer + create + SQL Lab
+                </option>
+                <option value="admin">Admin — full Superset admin</option>
+              </Select>
+              <p className="text-xs text-zinc-500">
+                Tenant scope still applies — even Superset Admin / Analyst only
+                see rows from their assigned tenants.
+              </p>
+            </div>
+          )}
 
           {saveError && <p className="text-sm text-red-400">{saveError}</p>}
           {saveSuccess && <p className="text-sm text-emerald-400">Saved.</p>}

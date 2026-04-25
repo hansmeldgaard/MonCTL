@@ -115,6 +115,49 @@ with app.app_context():
         "(Gamma + all_datasource_access - sql)"
     )
 
+    # -- Seed a custom role "MonCTLAnalyst" ------------------------------------
+    # Mid-tier between Viewer (read-only) and Admin. Permissions are the
+    # union of three built-in Superset roles + one explicit grant:
+    #
+    #   Alpha               — chart / dashboard / dataset CRUD (NOT SQL Lab)
+    #   sql_lab             — can_execute_sql_query, can_sqllab, etc.
+    #                         (Alpha alone doesn't include these — Superset
+    #                         splits SQL Lab into its own role on purpose)
+    #   all_datasource_access  — read every dataset on every database
+    #
+    # Layer 3 row policies still scope rows server-side via the
+    # SQL_QUERY_MUTATOR, so SQL Lab is safe from cross-tenant leaks.
+    ANALYST = "MonCTLAnalyst"
+    analyst = db.session.query(Role).filter_by(name=ANALYST).one_or_none()
+    alpha = db.session.query(Role).filter_by(name="Alpha").one_or_none()
+    sql_lab_role = db.session.query(Role).filter_by(name="sql_lab").one_or_none()
+    if analyst is None:
+        analyst = Role(name=ANALYST)
+        db.session.add(analyst)
+        db.session.flush()
+        print(f"[superset-init] created role '{ANALYST}'")
+    # Union of Alpha + sql_lab, deduped by PermissionView.id (idempotent —
+    # replaces wholesale each run, so removing a perm from Alpha/sql_lab
+    # propagates here on next init).
+    seen: set = set()
+    analyst_perms: list = []
+    for p in list(alpha.permissions) if alpha else []:
+        if p.id not in seen:
+            seen.add(p.id)
+            analyst_perms.append(p)
+    for p in list(sql_lab_role.permissions) if sql_lab_role else []:
+        if p.id not in seen:
+            seen.add(p.id)
+            analyst_perms.append(p)
+    if ds_all and ds_all.id not in seen:
+        analyst_perms.append(ds_all)
+    analyst.permissions = analyst_perms
+    db.session.commit()
+    print(
+        f"[superset-init] '{ANALYST}' has {len(analyst_perms)} permissions "
+        "(Alpha ∪ sql_lab + all_datasource_access)"
+    )
+
     # -- Tenant RLS: seed filter + attach to every existing MonCTL CH dataset --
     # The app-level SqlaTable.after_insert listener handles NEW datasets; this
     # loop catches datasets created before RLS was wired up (idempotent).

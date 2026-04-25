@@ -136,6 +136,21 @@ async def _consume_code(code: str) -> dict | None:
         return None
 
 
+def _effective_superset_access(user: User) -> str:
+    """Resolve the effective Superset BI tier for a user.
+
+    Stored values: 'none' | 'viewer' | 'analyst' | 'admin'.
+    NULL is legacy → derived from `role` (admin → 'admin', else → 'viewer').
+    The migration backfills existing rows so NULL is rare in practice, but
+    the fallback keeps userinfo well-defined for any new code path that
+    forgets to set the column.
+    """
+    val = (user.superset_access or "").strip().lower()
+    if val in {"none", "viewer", "analyst", "admin"}:
+        return val
+    return "admin" if user.role == "admin" else "viewer"
+
+
 def _parse_basic_auth(request: Request) -> tuple[str, str] | None:
     header = request.headers.get("authorization", "")
     if not header.lower().startswith("basic "):
@@ -220,6 +235,25 @@ async def authorize(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="user_inactive",
+        )
+
+    # Per-user gate: superset_access='none' denies the OAuth flow without
+    # ever issuing a code. Legacy rows (NULL) derive from `role` so the
+    # behaviour stays consistent with /v1/oauth/userinfo.
+    eff_access = _effective_superset_access(user)
+    if eff_access == "none":
+        # RFC 6749 §4.1.2.1 — redirect with error params, never expose 4xx
+        # to the browser (would leak the redirect_uri to a generic error
+        # page).
+        err = {
+            "error": "access_denied",
+            "error_description": "user_not_allowed_for_client",
+        }
+        if state:
+            err["state"] = state
+        sep = "&" if "?" in redirect_uri else "?"
+        return RedirectResponse(
+            f"{redirect_uri}{sep}{urlencode(err)}", status_code=302
         )
 
     code = _secrets.token_urlsafe(32)
@@ -436,6 +470,9 @@ async def userinfo(
         "role": user.role,
         "all_tenants": is_all_tenants,
         "tenant_ids": tenant_ids,
+        # Drives the Superset role mapping in oauth_user_info() —
+        # see docker/superset/superset_config.py.
+        "superset_access": _effective_superset_access(user),
     }
 
 
