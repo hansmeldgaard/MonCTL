@@ -25,6 +25,7 @@ import {
 import { cn } from "@/lib/utils.ts";
 import { useUpgradeBadge } from "@/api/hooks.ts";
 import { usePermissions } from "@/hooks/usePermissions.ts";
+import { useAuth } from "@/hooks/useAuth.tsx";
 
 interface SidebarProps {
   collapsed: boolean;
@@ -38,6 +39,9 @@ interface NavItem {
   end?: boolean;
   resource?: string; // permission resource required to see this item
   adminOnly?: boolean;
+  // Hide this entry when the current user's superset_access tier is 'none'.
+  // Used by the Superset BI link so denied users don't even see the menu.
+  requiresSupersetAccess?: boolean;
 }
 
 interface NavGroup {
@@ -151,6 +155,7 @@ const navGroups: NavGroup[] = [
         icon: BarChart3,
         label: "Superset",
         resource: "dashboard",
+        requiresSupersetAccess: true,
       },
     ],
   },
@@ -172,11 +177,16 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const { data: badge } = useUpgradeBadge();
   const osUpdateCount = badge?.os_update_count ?? 0;
   const { isAdmin, canView } = usePermissions();
+  const { user } = useAuth();
+  const supersetAccess = user?.superset_access ?? "viewer";
 
   const visibleGroups = navGroups
     .map((group) => ({
       ...group,
       items: group.items.filter((item) => {
+        if (item.requiresSupersetAccess && supersetAccess === "none") {
+          return false;
+        }
         if (item.adminOnly) return isAdmin;
         if (item.resource) return canView(item.resource);
         return true;

@@ -527,6 +527,13 @@ async def get_me(request: Request, db: AsyncSession = Depends(get_db)):
 
     idle_timeout = await _get_effective_idle_timeout(user, db) if user else 60
 
+    # Effective Superset BI tier — same derivation rule as the OAuth
+    # userinfo helper so the frontend can hide the Superset sidebar entry
+    # and render a friendly denial state without depending on a separate
+    # call.
+    from monctl_central.auth.oauth import _effective_superset_access
+    superset_access = _effective_superset_access(user) if user else "viewer"
+
     return {
         "status": "success",
         "data": {
@@ -547,6 +554,7 @@ async def get_me(request: Request, db: AsyncSession = Depends(get_db)):
             "iface_chart_metric": user.iface_chart_metric if user else "traffic",
             "iface_time_range": user.iface_time_range if user else "24h",
             "default_page": user.default_page if user else "/",
+            "superset_access": superset_access,
             "ui_preferences": (user.ui_preferences if user else {}) or {},
         },
     }

@@ -70,6 +70,9 @@ export interface AuthUser {
   all_tenants?: boolean;
   tenant_ids?: string[] | null; // null = unrestricted, [] = see nothing, [ids] = specific
   permissions?: string[] | null; // null = admin (full access), ["resource:action", ...]
+  // Effective Superset BI tier (always populated — backend derives NULL → role).
+  // Drives the Superset sidebar entry visibility + the SupersetPage gate.
+  superset_access?: "none" | "viewer" | "analyst" | "admin";
   ui_preferences?: UiPreferences;
 }
 
