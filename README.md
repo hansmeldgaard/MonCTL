@@ -80,6 +80,7 @@ End-users install MonCTL with the `monctl_ctl` CLI, which renders per-host Docke
 → **[INSTALL.md](INSTALL.md)** — from bare VMs to a live cluster in about 15 minutes.
 → **[UPGRADE.md](UPGRADE.md)** — rolling upgrade procedure.
 → **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** — common issues and recovery steps.
+→ **[docs/superset.md](docs/superset.md)** — Superset BI integration: SSO, access tiers, tenant-scoped RLS.
 
 Example inventories at the repo root (`inventory.example.micro.yaml`, `inventory.example.small.yaml`, `inventory.example.large.yaml`) cover single-host to full-HA deployments.
 
