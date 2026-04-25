@@ -91,7 +91,9 @@
       "Read(**/*password*)",
       "Read(**/*.pem)",
       "Read(**/*.key)",
-      "Read(**/*credentials*)",
+      "Read(**/credentials.json)",
+      "Read(**/credentials.yaml)",
+      "Read(**/.credentials/*)",
       "Read(**/.aws/*)",
       "Read(**/.ssh/*)"
     ]

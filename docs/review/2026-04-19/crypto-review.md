@@ -2,6 +2,7 @@
 
 **Date:** 2026-04-21
 **Files:**
+
 - `packages/central/src/monctl_central/credentials/crypto.py` — central at-rest encryption (PostgreSQL `credentials.encrypted_value`)
 - `packages/collector/src/monctl_collector/central/credentials.py` — collector local cache (SQLite)
 
@@ -11,16 +12,16 @@
 
 ## Central: `crypto.py`
 
-| Property | Value | Assessment |
-| --- | --- | --- |
-| Cipher | AES-256-GCM (AEAD) via `AESGCM` | ✅ Modern, authenticated |
-| Key size | 256 bits | ✅ |
-| Nonce | `os.urandom(12)`, 96-bit, per-message | ✅ NIST SP 800-38D §8.2.2 random-nonce bound is ~2³² messages/key; credential store won't approach |
-| Tag | Implicit GCM tag appended by library | ✅ |
-| AAD | `None` (no additional authenticated data) | ⚠ Ciphertext not bound to row ID — theoretical row-swap attack requires DB write access |
-| Key source | `MONCTL_ENCRYPTION_KEY` env, 64 hex chars | ✅ Validated on read |
-| Serialization | `base64url(nonce ‖ ciphertext+tag)` | ⚠ No version prefix → cannot distinguish ciphertexts across future cipher/key changes |
-| Error handling | `InvalidTag` propagates | ✅ |
+| Property       | Value                                     | Assessment                                                                                         |
+| -------------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Cipher         | AES-256-GCM (AEAD) via `AESGCM`           | ✅ Modern, authenticated                                                                           |
+| Key size       | 256 bits                                  | ✅                                                                                                 |
+| Nonce          | `os.urandom(12)`, 96-bit, per-message     | ✅ NIST SP 800-38D §8.2.2 random-nonce bound is ~2³² messages/key; credential store won't approach |
+| Tag            | Implicit GCM tag appended by library      | ✅                                                                                                 |
+| AAD            | `None` (no additional authenticated data) | ⚠ Ciphertext not bound to row ID — theoretical row-swap attack requires DB write access            |
+| Key source     | `MONCTL_ENCRYPTION_KEY` env, 64 hex chars | ✅ Validated on read                                                                               |
+| Serialization  | `base64url(nonce ‖ ciphertext+tag)`       | ⚠ No version prefix → cannot distinguish ciphertexts across future cipher/key changes              |
+| Error handling | `InvalidTag` propagates                   | ✅                                                                                                 |
 
 ### Observations
 
@@ -28,19 +29,19 @@
 - No visible key-rotation path. Rotating requires:
   1. A ciphertext version / key-ID prefix (not present).
   2. A migration that decrypts-with-old + encrypts-with-new for every row.
-  Neither exists today. Acceptable for a single-operator deployment; painful the day you need it.
+     Neither exists today. Acceptable for a single-operator deployment; painful the day you need it.
 
 ## Collector: `credentials.py`
 
-| Property | Value | Assessment |
-| --- | --- | --- |
-| Cipher | Fernet (AES-128-CBC + HMAC-SHA256) | ✅ Safe, battle-tested |
-| Key size | 128 bits | ✅ Sufficient; lower than central but different cipher, different blast radius |
-| IV | Random per encrypt, managed by Fernet | ✅ |
-| Tag | HMAC-SHA256 appended by Fernet | ✅ |
-| Key source | `ENCRYPTION_KEY` env (64 hex → base64url) OR `Fernet.generate_key()` if unset | ⚠ See below |
-| Error handling | `InvalidToken` on tamper/key-mismatch → refresh from central | ✅ Graceful |
-| Offline fallback | Serves stale cache indefinitely when central down | ✅ Intentional (monitoring must not stop) |
+| Property         | Value                                                                         | Assessment                                                                     |
+| ---------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Cipher           | Fernet (AES-128-CBC + HMAC-SHA256)                                            | ✅ Safe, battle-tested                                                         |
+| Key size         | 128 bits                                                                      | ✅ Sufficient; lower than central but different cipher, different blast radius |
+| IV               | Random per encrypt, managed by Fernet                                         | ✅                                                                             |
+| Tag              | HMAC-SHA256 appended by Fernet                                                | ✅                                                                             |
+| Key source       | `ENCRYPTION_KEY` env (64 hex → base64url) OR `Fernet.generate_key()` if unset | ⚠ See below                                                                    |
+| Error handling   | `InvalidToken` on tamper/key-mismatch → refresh from central                  | ✅ Graceful                                                                    |
+| Offline fallback | Serves stale cache indefinitely when central down                             | ✅ Intentional (monitoring must not stop)                                      |
 
 ### Observations
 

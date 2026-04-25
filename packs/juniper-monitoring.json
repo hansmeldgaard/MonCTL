@@ -60,9 +60,7 @@
                 "check": "exists"
               }
             ],
-            "volatile_keys": [
-              "component_details"
-            ]
+            "volatile_keys": ["component_details"]
           }
         ],
         "alert_definitions": [
