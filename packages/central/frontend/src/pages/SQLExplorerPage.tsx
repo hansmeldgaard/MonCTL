@@ -8,6 +8,7 @@ import {
   Table2,
   Database,
   Save,
+  Shield,
 } from "lucide-react";
 import { Button } from "@/components/ui/button.tsx";
 import { SqlEditor } from "@/components/SqlEditor.tsx";
@@ -20,10 +21,12 @@ import {
   useCreateAnalyticsDashboard,
   useAppendDashboardWidget,
 } from "@/api/hooks.ts";
+import { usePermissions } from "@/hooks/usePermissions.ts";
 import type { QueryResult } from "@/types/api.ts";
 
 export function SQLExplorerPage() {
   const navigate = useNavigate();
+  const { isAdmin } = usePermissions();
   const [sqlText, setSqlText] = useState(
     "SELECT device_name, state, rtt_ms, executed_at\nFROM availability_latency_latest FINAL\nWHERE device_name != ''\nORDER BY executed_at DESC\nLIMIT 100",
   );
@@ -89,6 +92,17 @@ export function SQLExplorerPage() {
     if (bytes < 1024 * 1024 * 1024)
       return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
     return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  }
+
+  if (!isAdmin) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 gap-3 text-zinc-500">
+        <Shield className="h-10 w-10 text-zinc-700" />
+        <p className="text-sm">
+          You need admin privileges to use the SQL Explorer.
+        </p>
+      </div>
+    );
   }
 
   return (

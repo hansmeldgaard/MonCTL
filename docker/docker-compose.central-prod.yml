@@ -31,6 +31,11 @@ services:
       MONCTL_NODE_IP: ${NODE_IP:-}
       MONCTL_DOCKER_STATS_HOSTS: ${MONCTL_DOCKER_STATS_HOSTS:-}
       MONCTL_TLS_SAN_IPS: ${MONCTL_TLS_SAN_IPS:-}
+      # OAuth2/OIDC provider — config for SSO clients (Superset today).
+      MONCTL_OAUTH_CLIENT_ID: ${MONCTL_OAUTH_CLIENT_ID:-}
+      MONCTL_OAUTH_CLIENT_SECRET: ${MONCTL_OAUTH_CLIENT_SECRET:-}
+      MONCTL_OAUTH_REDIRECT_URIS: ${MONCTL_OAUTH_REDIRECT_URIS:-}
+      MONCTL_OAUTH_ISSUER: ${MONCTL_OAUTH_ISSUER:-https://10.145.210.40}
     volumes:
       - upgrades_data:/data/upgrades
       - tls_certs:/etc/haproxy/certs

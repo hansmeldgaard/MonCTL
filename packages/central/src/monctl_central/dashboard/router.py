@@ -123,19 +123,13 @@ async def _device_health(db: AsyncSession, tenant_ids: list[str] | None) -> dict
     ch = get_clickhouse()
     try:
         reachability_rows = await asyncio.to_thread(
-            ch.query_latest, table="availability_latency", tenant_id=None
+            ch.query_latest,
+            table="availability_latency",
+            tenant_ids=tenant_ids,
         )
     except Exception:
         logger.exception("Failed to query availability_latency_latest for dashboard")
         reachability_rows = []
-
-    # Filter by tenant if needed
-    if tenant_ids is not None and len(tenant_ids) > 0:
-        tid_set = set(tenant_ids)
-        reachability_rows = [
-            r for r in reachability_rows
-            if str(r.get("tenant_id", "")) in tid_set
-        ]
 
     # Group by device_id
     device_checks: dict[str, list[bool]] = {}
@@ -273,10 +267,15 @@ async def _performance_top_n(tenant_ids: list[str] | None) -> dict:
     ch = get_clickhouse()
     result: dict[str, list] = {"cpu": [], "memory": [], "bandwidth": []}
 
+    # Empty tenant list → user has no tenants; return empty rather than
+    # firing 3 unbound queries.
+    if tenant_ids is not None and len(tenant_ids) == 0:
+        return result
+
     tenant_filter = ""
-    if tenant_ids and len(tenant_ids) == 1:
-        tid = tenant_ids[0].replace("'", "")
-        tenant_filter = f" AND tenant_id = toUUID('{tid}')"
+    clause = ch._tenant_uuid_clause(tenant_ids)
+    if clause is not None:
+        tenant_filter = f" AND {clause}"
 
     cpu_sql = f"""
         SELECT

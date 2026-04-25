@@ -100,6 +100,17 @@ class Settings(BaseSettings):
     # the existing EventEngine and writes to PG incidents table only.
     incident_engine: str = "shadow"
 
+    # OAuth2 / OIDC provider (used by Superset SSO today; any OAuth2 client
+    # in the future). Single-client config via env for now — promote to a DB
+    # table when a second client arrives.
+    oauth_client_id: str = ""
+    oauth_client_secret: str = ""
+    # Comma-separated list of exact allowed redirect_uri values for the client.
+    # Any deviation rejects the authorize request — do not wildcard.
+    oauth_redirect_uris: str = ""
+    # OIDC issuer claim; should match the public base URL seen by browsers.
+    oauth_issuer: str = "https://10.145.210.40"
+
 
 settings = Settings()
 

@@ -14,7 +14,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from monctl_central.dependencies import get_clickhouse, get_db, require_permission
+from monctl_central.dependencies import (
+    apply_tenant_filter,
+    get_clickhouse,
+    get_db,
+    require_permission,
+)
 from monctl_central.storage.models import AuditLoginEvent
 
 router = APIRouter()
@@ -54,6 +59,10 @@ async def list_login_events(
     """List authentication audit events (login/logout/refresh)."""
     stmt = select(AuditLoginEvent)
     count_stmt = select(func.count()).select_from(AuditLoginEvent)
+
+    # Tenant scope first so subsequent filters compose with it.
+    stmt = apply_tenant_filter(stmt, auth, AuditLoginEvent.tenant_id)
+    count_stmt = apply_tenant_filter(count_stmt, auth, AuditLoginEvent.tenant_id)
 
     if user_id:
         stmt = stmt.where(AuditLoginEvent.user_id == user_id)
@@ -110,6 +119,7 @@ async def list_mutations(
         resource_id=resource_id,
         action=action,
         ip_address=ip_address,
+        tenant_ids=auth.get("tenant_ids"),
         from_ts=from_ts.strftime("%Y-%m-%d %H:%M:%S") if from_ts else None,
         to_ts=to_ts.strftime("%Y-%m-%d %H:%M:%S") if to_ts else None,
         limit=limit,
@@ -148,6 +158,7 @@ async def latest_mutations_by_resource(
         ch.query_latest_mutation_per_resource,
         resource_type=resource_type,
         resource_ids=ids,
+        tenant_ids=auth.get("tenant_ids"),
     )
     for r in rows:
         ts = r.pop("last_ts", None)
@@ -172,6 +183,7 @@ async def resource_history(
         ch.query_audit_mutations,
         resource_type=resource_type,
         resource_id=resource_id,
+        tenant_ids=auth.get("tenant_ids"),
         limit=limit,
         offset=offset,
     )
@@ -201,12 +213,16 @@ async def user_activity(
         .order_by(desc(AuditLoginEvent.timestamp))
         .limit(limit)
     )
+    login_stmt = apply_tenant_filter(login_stmt, auth, AuditLoginEvent.tenant_id)
     login_rows = (await db.execute(login_stmt)).scalars().all()
 
     # Mutations
     ch = get_clickhouse()
     mut_rows, _ = await asyncio.to_thread(
-        ch.query_audit_mutations, user_id=user_id, limit=limit
+        ch.query_audit_mutations,
+        user_id=user_id,
+        tenant_ids=auth.get("tenant_ids"),
+        limit=limit,
     )
     for r in mut_rows:
         ts = r.get("timestamp")

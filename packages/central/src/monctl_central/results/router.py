@@ -118,14 +118,11 @@ async def list_results(
 
     ch = get_clickhouse()
 
-    # Parse tenant filter
+    # Tenant filter is now applied in SQL via tenant_ids list. Empty list
+    # means see-nothing; None means admin/unrestricted.
     tenant_ids = auth.get("tenant_ids")
-    tenant_id = None
-    if tenant_ids is not None:
-        if len(tenant_ids) == 0:
-            return {"status": "success", "data": [], "meta": {"limit": limit, "offset": offset, "count": 0}}
-        if len(tenant_ids) == 1:
-            tenant_id = tenant_ids[0]
+    if tenant_ids is not None and len(tenant_ids) == 0:
+        return {"status": "success", "data": [], "meta": {"limit": limit, "offset": offset, "count": 0}}
 
     from_dt = None
     to_dt = None
@@ -142,7 +139,7 @@ async def list_results(
             collector_id=collector_id,
             app_id=app_id,
             state=state,
-            tenant_id=tenant_id,
+            tenant_ids=tenant_ids,
             from_ts=from_dt,
             to_ts=to_dt,
             limit=limit,
@@ -160,11 +157,6 @@ async def list_results(
             raise outcome
         _, rows = outcome
         all_rows.extend(rows)
-
-    # Multi-tenant filter for users with multiple tenant assignments
-    if tenant_ids is not None and len(tenant_ids) > 1:
-        tid_set = set(tenant_ids)
-        all_rows = [r for r in all_rows if str(r.get("tenant_id", "")) in tid_set]
 
     # Role filter — allows frontend to request only availability/latency results
     if role:
@@ -209,18 +201,14 @@ async def latest_results(
     ch = get_clickhouse()
 
     tenant_ids = auth.get("tenant_ids")
-    tenant_id = None
-    if tenant_ids is not None:
-        if len(tenant_ids) == 0:
-            return {"status": "success", "data": [], "meta": {"count": 0}}
-        if len(tenant_ids) == 1:
-            tenant_id = tenant_ids[0]
+    if tenant_ids is not None and len(tenant_ids) == 0:
+        return {"status": "success", "data": [], "meta": {"count": 0}}
 
     async def _fetch_latest(t: str):
         return t, await asyncio.to_thread(
             ch.query_latest,
             table=t,
-            tenant_id=tenant_id,
+            tenant_ids=tenant_ids,
             device_id=device_id,
             collector_id=collector_id,
         )
@@ -236,10 +224,6 @@ async def latest_results(
             raise outcome
         _, rows = outcome
         all_rows.extend(rows)
-
-    if tenant_ids is not None and len(tenant_ids) > 1:
-        tid_set = set(tenant_ids)
-        all_rows = [r for r in all_rows if str(r.get("tenant_id", "")) in tid_set]
 
     data = [_format_ch_row(r) for r in all_rows]
     return {

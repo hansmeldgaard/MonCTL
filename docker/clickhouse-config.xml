@@ -2,6 +2,12 @@
     <!-- Use IP instead of hostname for interserver communication -->
     <interserver_http_host from_env="INTERSERVER_HTTP_HOST" />
 
+    <!-- Allow per-query custom settings under the monctl_ prefix.
+         Used by row policies (e.g. monctl_tenant_scope) to enforce
+         tenant isolation as a defense-in-depth backstop behind the
+         per-endpoint apply_tenant_filter / tenant_ids SQL filtering. -->
+    <custom_settings_prefixes>monctl_</custom_settings_prefixes>
+
     <remote_servers>
         <monctl_cluster>
             <shard>

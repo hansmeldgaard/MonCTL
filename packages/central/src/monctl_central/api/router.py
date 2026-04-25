@@ -16,6 +16,7 @@ from monctl_central.credentials.router import router as credentials_router
 from monctl_central.tenants.router import router as tenants_router
 from monctl_central.users.router import router as users_router
 from monctl_central.auth.router import router as auth_router
+from monctl_central.auth.oauth import router as oauth_router
 from monctl_central.snmp_oids.router import router as snmp_oids_router
 from monctl_central.registration_tokens.router import router as registration_tokens_router
 from monctl_central.credential_keys.router import router as credential_keys_router
@@ -49,6 +50,10 @@ from monctl_central.audit.router import router as audit_router
 api_router = APIRouter()
 
 api_router.include_router(auth_router, prefix="/auth", tags=["auth"])
+# OAuth2/OIDC provider — routes already namespaced under /oauth/... inside the
+# module, so no extra prefix. Served under /v1/oauth/authorize, /v1/oauth/token,
+# /v1/oauth/userinfo (+ OIDC discovery at /v1/.well-known/openid-configuration).
+api_router.include_router(oauth_router, tags=["oauth"])
 api_router.include_router(ingestion_router, tags=["ingestion"])
 api_router.include_router(collectors_router, prefix="/collectors", tags=["collectors"])
 api_router.include_router(collector_groups_router, prefix="/collector-groups", tags=["collector-groups"])

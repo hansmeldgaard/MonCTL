@@ -1690,6 +1690,16 @@ export function useUpdateUser() {
   });
 }
 
+export function useAdminResetUserPassword() {
+  return useMutation({
+    mutationFn: ({ id, new_password }: { id: string; new_password: string }) =>
+      apiPost<{ user_id: string; username: string; message: string }>(
+        `/users/${id}/reset-password`,
+        { new_password },
+      ),
+  });
+}
+
 export function useUpdateMyTimezone() {
   const qc = useQueryClient();
   return useMutation({

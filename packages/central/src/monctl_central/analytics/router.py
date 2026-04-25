@@ -9,7 +9,7 @@ import re
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from monctl_central.dependencies import get_clickhouse, require_permission
+from monctl_central.dependencies import get_clickhouse, require_admin
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -74,7 +74,7 @@ class QueryRequest(BaseModel):
 @router.post("/query")
 async def run_query(
     body: QueryRequest,
-    auth: dict = Depends(require_permission("result", "view")),
+    auth: dict = Depends(require_admin),
 ):
     """Execute a read-only SQL query against ClickHouse."""
     sql = _validate_sql(body.sql)
@@ -91,8 +91,12 @@ async def run_query(
     ch = get_clickhouse()
     client = ch._get_client()
 
+    # readonly=2 (not 1): SELECT/SHOW only, but setting changes ARE allowed
+    # for this query. Layer 3's monctl_tenant_scope is auto-injected by the
+    # pool wrapper; readonly=1 would silently drop it and the row policy's
+    # getSetting() then errors with UNKNOWN_SETTING.
     query_settings = {
-        "readonly": 1,
+        "readonly": 2,
         "max_execution_time": 30,
     }
 
@@ -168,13 +172,14 @@ def _serialise(value):
 
 @router.get("/tables")
 async def list_tables(
-    auth: dict = Depends(require_permission("result", "view")),
+    auth: dict = Depends(require_admin),
 ):
     """Browse ClickHouse schema — tables and columns for the monctl database."""
     ch = get_clickhouse()
     client = ch._get_client()
 
-    query_settings = {"readonly": 1, "max_execution_time": 10}
+    # readonly=2: see /query endpoint for why we don't use readonly=1.
+    query_settings = {"readonly": 2, "max_execution_time": 10}
 
     try:
         tables_result = await asyncio.to_thread(

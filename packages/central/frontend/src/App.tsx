@@ -80,6 +80,9 @@ const CustomDashboardsPage = lazy(() =>
     _named("CustomDashboardsPage"),
   ),
 );
+const SupersetPage = lazy(() =>
+  import("@/pages/SupersetPage.tsx").then(_named("SupersetPage")),
+);
 const DashboardEditorPage = lazy(() =>
   import("@/pages/DashboardEditorPage.tsx").then(_named("DashboardEditorPage")),
 );
@@ -306,6 +309,14 @@ export function App() {
           element={
             <RouteSuspense>
               <CustomDashboardsPage />
+            </RouteSuspense>
+          }
+        />
+        <Route
+          path="analytics/superset"
+          element={
+            <RouteSuspense>
+              <SupersetPage />
             </RouteSuspense>
           }
         />

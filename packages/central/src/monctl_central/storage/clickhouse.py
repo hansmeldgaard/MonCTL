@@ -19,6 +19,27 @@ from typing import Any, Callable
 import clickhouse_connect
 from clickhouse_connect.driver.client import Client
 
+# Layer 3 — allow clickhouse-connect to forward custom monctl_* settings
+# (e.g. monctl_tenant_scope) to the server even though they're not in
+# system.settings. The server has <custom_settings_prefixes>monctl_</...>
+# configured to accept them; clickhouse-connect's default `invalid_action`
+# is 'error' which would raise client-side before the request leaves.
+clickhouse_connect.common.set_setting("invalid_setting_action", "send")
+
+# Register monctl_tenant_scope as a known transport setting so the client
+# stops emitting "Attempting to send unrecognized or readonly setting"
+# WARNINGs (one per query, ~4/sec under load). HttpClient overrides
+# Client.valid_transport_settings — patch the concrete class actually
+# instantiated by clickhouse_connect.get_client().
+try:
+    from clickhouse_connect.driver.httpclient import HttpClient as _CHHttpClient
+
+    _CHHttpClient.valid_transport_settings = (
+        _CHHttpClient.valid_transport_settings | {"monctl_tenant_scope"}
+    )
+except Exception:
+    pass
+
 
 def _is_conn_error(exc: Exception) -> bool:
     if isinstance(exc, (OSError, ConnectionError, TimeoutError)):
@@ -91,17 +112,41 @@ class _PooledClient:
     call and releases it on return. Non-callable attributes (properties) are
     not currently accessed anywhere in the codebase, so the proxy treats
     every attribute as a method.
+
+    Layer 3 — tenant scope injection: ``query``, ``command``, and
+    ``insert`` calls auto-merge
+    ``settings={"monctl_tenant_scope": tenant_scope_var.get()}`` so
+    ClickHouse row policies on tenant-scoped tables fire on every
+    request (defense-in-depth backstop behind per-endpoint
+    apply_tenant_filter / tenant_ids SQL filtering).
+
+    ``insert`` is wrapped because the materialized-view trigger fired by
+    an INSERT into a base table evaluates the destination view's row
+    policy expression; without the setting defined in the session, the
+    expression hits ``Unknown setting 'monctl_tenant_scope'``.
     """
 
     __slots__ = ("_pool",)
+
+    # Methods whose `settings` kwarg participates in row-policy evaluation.
+    _SCOPED_METHODS = frozenset({"query", "command", "insert"})
 
     def __init__(self, pool: _ClientPool):
         object.__setattr__(self, "_pool", pool)
 
     def __getattr__(self, name: str):
         pool = self._pool
+        scoped = name in self._SCOPED_METHODS
 
         def wrapped(*args, **kwargs):
+            if scoped:
+                # Lazy import: dependencies.py imports clickhouse via
+                # get_clickhouse() so a top-level import would cycle.
+                from monctl_central.dependencies import tenant_scope_var
+
+                merged = dict(kwargs.get("settings") or {})
+                merged.setdefault("monctl_tenant_scope", tenant_scope_var.get())
+                kwargs["settings"] = merged
             with pool.acquire() as client:
                 return getattr(client, name)(*args, **kwargs)
 
@@ -1962,7 +2007,144 @@ class ClickHouseClient:
             except Exception:
                 pass
 
+        # Layer 3 — defense-in-depth row policies on every tenant-scoped table.
+        try:
+            self._ensure_row_policies(has_cluster)
+        except Exception:
+            logger.exception("ensure_row_policies_failed")
+
         logger.info("ClickHouse tables ensured (4 domain tables + events + alert_log + materialized views)")
+
+    # ------------------------------------------------------------------
+    # Row policies (Layer 3 — defense-in-depth tenant isolation)
+    # ------------------------------------------------------------------
+    #
+    # Every tenant-scoped table gets a single ``monctl_tenant_scope`` row
+    # policy that filters SELECTs by the per-query custom setting
+    # ``monctl_tenant_scope``. The setting is auto-injected by the central
+    # app on every authenticated CH query (see _PooledClient and
+    # tenant_scope_var). System code that does not run the auth deps gets
+    # the empty-string default → admin pass-through.
+    #
+    # Setting value encoding (matches dependencies._set_tenant_scope_from_auth):
+    #   ""                 → admin / system pass-through (sees all rows)
+    #   "uuid1,uuid2,..."  → scoped to those tenant UUIDs
+    #   "ffff...ffff"      → see-nothing sentinel for users with zero tenants
+    #
+    # Updating an existing policy expression requires DROP + CREATE
+    # (CREATE ROW POLICY IF NOT EXISTS is a no-op when the name is taken).
+
+    # UUID-typed tenant_id (the common case across hot-path tables).
+    _ROW_POLICY_TABLES_UUID = (
+        "availability_latency",
+        "availability_latency_hourly",
+        "availability_latency_daily",
+        "availability_latency_latest",
+        "performance",
+        "performance_hourly",
+        "performance_daily",
+        "performance_latest",
+        "interface",
+        "interface_hourly",
+        "interface_daily",
+        "interface_latest",
+        "config",
+        "config_latest",
+        "events",
+        "alert_log",
+        "logs",
+    )
+
+    # String-typed tenant_id (audit_mutations carries the request's tenant
+    # context as String, not UUID).
+    _ROW_POLICY_TABLES_STRING = (
+        "audit_mutations",
+    )
+
+    # Setting values recognised as admin pass-through. '' is what the
+    # central pool wrapper sends for admin / api_key / system code; '*' is
+    # the profile default seeded in clickhouse-monctl-tenant-scope.xml so
+    # paths that bypass the wrapper (clickhouse-client, MV trigger
+    # fallbacks, third-party tools) still get pass-through behaviour
+    # without raising UNKNOWN_SETTING.
+    _POLICY_PASS_THROUGH_VALUES = "('', '*')"
+
+    @classmethod
+    def _row_policy_using_uuid(cls) -> str:
+        """USING expression for UUID-typed tenant_id columns."""
+        return (
+            f"getSetting('monctl_tenant_scope') IN {cls._POLICY_PASS_THROUGH_VALUES}"
+            " OR has("
+            "arrayMap(x -> toUUID(x), splitByChar(',', getSetting('monctl_tenant_scope')))"
+            ", tenant_id"
+            ")"
+        )
+
+    @classmethod
+    def _row_policy_using_string(cls) -> str:
+        """USING expression for String-typed tenant_id columns."""
+        return (
+            f"getSetting('monctl_tenant_scope') IN {cls._POLICY_PASS_THROUGH_VALUES}"
+            " OR has(splitByChar(',', getSetting('monctl_tenant_scope')), tenant_id)"
+        )
+
+    def _ensure_row_policies(self, has_cluster: bool) -> None:
+        """Idempotently create the monctl_tenant_scope row policy on every
+        tenant-scoped table.
+
+        ``CREATE ROW POLICY IF NOT EXISTS`` is a no-op when the policy
+        already exists, so to update the USING expression we DROP + CREATE
+        only on tables whose live expression doesn't match the expected
+        one (guarded migration, mirrors the *_latest MV pattern).
+        """
+        client = self._get_client()
+        on_cluster = f" ON CLUSTER '{self._cluster_name}'" if has_cluster else ""
+
+        # Live policy expressions for our tables — used to detect drift.
+        try:
+            existing = client.query(
+                "SELECT short_name, splitByChar('.', database || '.' || table)[2] AS tbl, "
+                "select_filter FROM system.row_policies "
+                "WHERE database = {db:String} AND short_name = 'monctl_tenant_scope'",
+                parameters={"db": self._database},
+            )
+            live_expr = {row[1]: row[2] for row in existing.result_rows}
+        except Exception:
+            live_expr = {}
+
+        expected_uuid = self._row_policy_using_uuid()
+        expected_string = self._row_policy_using_string()
+
+        def upsert(table: str, expected: str) -> None:
+            current = live_expr.get(table)
+            if current is not None and current.replace(" ", "") == expected.replace(" ", ""):
+                # already up to date
+                return
+            try:
+                if current is not None:
+                    client.command(
+                        f"DROP ROW POLICY IF EXISTS monctl_tenant_scope"
+                        f"{on_cluster} ON {self._database}.{table}"
+                    )
+                client.command(
+                    f"CREATE ROW POLICY IF NOT EXISTS monctl_tenant_scope"
+                    f"{on_cluster} ON {self._database}.{table}"
+                    f" USING ({expected}) TO ALL"
+                )
+            except Exception as exc:
+                logger.warning("row_policy_create_failed table=%s err=%s", table, exc)
+
+        for table in self._ROW_POLICY_TABLES_UUID:
+            upsert(table, expected_uuid)
+        for table in self._ROW_POLICY_TABLES_STRING:
+            upsert(table, expected_string)
+
+        logger.info(
+            "row_policies_ensured uuid=%d string=%d cluster=%s",
+            len(self._ROW_POLICY_TABLES_UUID),
+            len(self._ROW_POLICY_TABLES_STRING),
+            has_cluster,
+        )
 
     # ------------------------------------------------------------------
     # Insert methods
@@ -2055,11 +2237,53 @@ class ClickHouseClient:
     # Query methods — availability_latency (primary, backward compat)
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _tenant_uuid_clause(
+        tenant_ids: list[str] | None, *, column: str = "tenant_id",
+    ) -> str | None:
+        """Build a WHERE-clause fragment for UUID-typed tenant_id columns.
+
+        Returns:
+          - None  → no filter (admin / unrestricted)
+          - "0"   → fail-closed (empty list, or all UUIDs filtered out)
+          - "tenant_id IN (toUUID('...'), ...)" → restricted to those tenants
+
+        Mirrors `apply_tenant_filter` for PostgreSQL: ``None`` means
+        unrestricted, an empty list means see-nothing.
+        """
+        if tenant_ids is None:
+            return None
+        safe = [
+            t for t in tenant_ids
+            if all(c in "0123456789abcdefABCDEF-" for c in t)
+        ]
+        if not safe:
+            return "0"
+        uuids_literal = ",".join(f"toUUID('{t}')" for t in safe)
+        return f"{column} IN ({uuids_literal})"
+
+    @staticmethod
+    def _tenant_string_clause(
+        tenant_ids: list[str] | None, *, column: str = "tenant_id",
+    ) -> str | None:
+        """Same as `_tenant_uuid_clause` but for String-typed tenant_id columns."""
+        if tenant_ids is None:
+            return None
+        safe = [
+            t for t in tenant_ids
+            if all(c in "0123456789abcdefABCDEF-" for c in t)
+        ]
+        if not safe:
+            return "0"
+        quoted = ",".join(f"'{t}'" for t in safe)
+        return f"{column} IN ({quoted})"
+
     def query_latest(
         self,
         *,
         table: str = "availability_latency",
         tenant_id: str | None = None,
+        tenant_ids: list[str] | None = None,
         device_id: str | None = None,
         collector_id: str | None = None,
     ) -> list[dict]:
@@ -2069,6 +2293,9 @@ class ClickHouseClient:
         wheres: list[str] = []
         params: dict[str, Any] = {}
 
+        clause = self._tenant_uuid_clause(tenant_ids)
+        if clause is not None:
+            wheres.append(clause)
         if tenant_id:
             wheres.append("tenant_id = {tenant_id:UUID}")
             params["tenant_id"] = tenant_id
@@ -2175,6 +2402,7 @@ class ClickHouseClient:
         app_id: str | None = None,
         state: int | None = None,
         tenant_id: str | None = None,
+        tenant_ids: list[str] | None = None,
         from_ts: datetime | None = None,
         to_ts: datetime | None = None,
         limit: int = 50,
@@ -2185,6 +2413,9 @@ class ClickHouseClient:
         wheres: list[str] = []
         params: dict[str, Any] = {}
 
+        clause = self._tenant_uuid_clause(tenant_ids)
+        if clause is not None:
+            wheres.append(clause)
         if assignment_id:
             wheres.append("assignment_id = {assignment_id:UUID}")
             params["assignment_id"] = assignment_id
@@ -3091,6 +3322,7 @@ class ClickHouseClient:
         resource_id: str | None = None,
         action: str | None = None,
         ip_address: str | None = None,
+        tenant_ids: list[str] | None = None,
         from_ts: str | None = None,
         to_ts: str | None = None,
         limit: int = 100,
@@ -3101,6 +3333,10 @@ class ClickHouseClient:
 
         wheres: list[str] = []
         params: dict[str, Any] = {}
+        # audit_mutations.tenant_id is a String column, not UUID.
+        clause = self._tenant_string_clause(tenant_ids)
+        if clause is not None:
+            wheres.append(clause)
         if user_id:
             wheres.append("user_id = {user_id:String}")
             params["user_id"] = user_id
@@ -3152,6 +3388,7 @@ class ClickHouseClient:
         *,
         resource_type: str,
         resource_ids: list[str],
+        tenant_ids: list[str] | None = None,
     ) -> list[dict]:
         """Latest audit_mutation row per ``resource_id`` — batch lookup.
 
@@ -3169,9 +3406,12 @@ class ClickHouseClient:
             "argMax(action, timestamp) AS action "
             "FROM audit_mutations "
             "WHERE resource_type = {resource_type:String} "
-            "AND resource_id IN {resource_ids:Array(String)} "
-            "GROUP BY resource_id"
+            "AND resource_id IN {resource_ids:Array(String)}"
         )
+        clause = self._tenant_string_clause(tenant_ids)
+        if clause is not None:
+            sql += f" AND {clause}"
+        sql += " GROUP BY resource_id"
         params = {
             "resource_type": resource_type,
             "resource_ids": [str(r) for r in resource_ids],
@@ -3192,12 +3432,37 @@ class ClickHouseClient:
         device_name: str | None = None,
         message: str | None = None,
         tenant_id: str | None = None,
+        tenant_ids: list[str] | None = None,
         from_ts: str | None = None,
         to_ts: str | None = None,
     ) -> tuple[list[str], dict[str, Any]]:
-        """Build WHERE clauses and params for alert_log queries."""
+        """Build WHERE clauses and params for alert_log queries.
+
+        Tenant scoping semantics:
+          - `tenant_ids is None`         → no filter (admin / unrestricted)
+          - `tenant_ids == []`           → emit `0` (match nothing) so scoped
+                                            users with no tenants see nothing
+          - `tenant_ids == [uuid, ...]`  → `tenant_id IN (uuid, ...)`
+
+        `tenant_id` (singular) is the legacy single-value form — still
+        supported for backward compat, ANDed with the list form if both given.
+        """
         wheres: list[str] = []
         params: dict[str, Any] = {}
+
+        if tenant_ids is not None:
+            if len(tenant_ids) == 0:
+                # Fail-closed: empty list means "no tenants assigned".
+                wheres.append("0")
+            else:
+                uuids_literal = ",".join(
+                    f"toUUID('{t}')" for t in tenant_ids
+                    if all(c in "0123456789abcdefABCDEF-" for c in t)
+                )
+                if uuids_literal:
+                    wheres.append(f"tenant_id IN ({uuids_literal})")
+                else:
+                    wheres.append("0")
 
         if definition_id:
             wheres.append("definition_id = {definition_id:UUID}")
@@ -3243,6 +3508,7 @@ class ClickHouseClient:
         device_name: str | None = None,
         message: str | None = None,
         tenant_id: str | None = None,
+        tenant_ids: list[str] | None = None,
         from_ts: str | None = None,
         to_ts: str | None = None,
         sort_by: str = "occurred_at",
@@ -3256,7 +3522,8 @@ class ClickHouseClient:
             device_id=device_id, action=action,
             definition_name=definition_name, device_name=device_name,
             message=message,
-            tenant_id=tenant_id, from_ts=from_ts, to_ts=to_ts,
+            tenant_id=tenant_id, tenant_ids=tenant_ids,
+            from_ts=from_ts, to_ts=to_ts,
         )
 
         sql = "SELECT * FROM alert_log"
@@ -3294,6 +3561,7 @@ class ClickHouseClient:
         device_name: str | None = None,
         message: str | None = None,
         tenant_id: str | None = None,
+        tenant_ids: list[str] | None = None,
         from_ts: str | None = None,
         to_ts: str | None = None,
     ) -> int:
@@ -3303,7 +3571,8 @@ class ClickHouseClient:
             device_id=device_id, action=action,
             definition_name=definition_name, device_name=device_name,
             message=message,
-            tenant_id=tenant_id, from_ts=from_ts, to_ts=to_ts,
+            tenant_id=tenant_id, tenant_ids=tenant_ids,
+            from_ts=from_ts, to_ts=to_ts,
         )
         sql = "SELECT count() FROM alert_log"
         if wheres:
@@ -3343,14 +3612,34 @@ class ClickHouseClient:
         device_id: str | None = None,
         event_id: str | None = None,
         status: str | None = None,
+        device_ids: list[str] | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[dict], int]:
-        """Query RBA runs with filters. Returns (rows, total_count)."""
+        """Query RBA runs with filters. Returns (rows, total_count).
+
+        Tenant scoping: rba_runs has no tenant_id column. Callers that
+        need tenant restriction must resolve tenant→device_ids in
+        PostgreSQL and pass the result as ``device_ids``. ``[]`` means
+        no devices in the user's tenants → see-nothing.
+        """
         client = self._get_client()
         where_parts = ["1=1"]
         params: dict = {}
 
+        if device_ids is not None:
+            if not device_ids:
+                where_parts.append("0")
+            else:
+                safe_ids = [
+                    d for d in device_ids
+                    if all(c in "0123456789abcdefABCDEF-" for c in d)
+                ]
+                if not safe_ids:
+                    where_parts.append("0")
+                else:
+                    uuid_lits = ",".join(f"toUUID('{d}')" for d in safe_ids)
+                    where_parts.append(f"device_id IN ({uuid_lits})")
         if automation_id:
             where_parts.append("automation_id = {automation_id:UUID}")
             params["automation_id"] = automation_id

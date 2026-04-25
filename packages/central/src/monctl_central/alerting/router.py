@@ -18,7 +18,7 @@ from monctl_central.alerting.dsl import invert_expression, validate_expression
 from monctl_central.alerting.instance_sync import sync_instances_for_definition
 from monctl_central.alerting.threshold_sync import sync_threshold_variables
 from monctl_central.common.filters import ilike_filter
-from monctl_central.dependencies import get_clickhouse, get_db, require_permission
+from monctl_central.dependencies import apply_tenant_filter, get_clickhouse, get_db, require_permission
 from monctl_central.storage.models import (
     AlertEntity,
     App,
@@ -494,12 +494,20 @@ async def list_alert_instances(
     """List alert instances with optional filters, sort, and pagination."""
     from monctl_central.storage.models import Device
 
+    # INNER join Device so tenant-scoped users can only see entities whose
+    # device is in their tenant. Admins pass through `apply_tenant_filter`
+    # unchanged (tenant_ids=None → no filter), so they still see entities
+    # without a resolvable device — but INNER JOIN would hide those. For
+    # admins we want visibility of every entity, including orphan ones, so
+    # we outer-join and rely on `apply_tenant_filter` alone to drop rows
+    # with NULL tenant_id for scoped users.
     stmt = (
         select(AlertEntity)
         .join(AlertDefinition, AlertEntity.definition_id == AlertDefinition.id)
         .join(App, AlertDefinition.app_id == App.id)
         .outerjoin(Device, AlertEntity.device_id == Device.id)
     )
+    stmt = apply_tenant_filter(stmt, auth, Device.tenant_id)
     if state:
         stmt = stmt.where(AlertEntity.state == state)
     if device_id:
@@ -572,7 +580,14 @@ async def list_active_instances(
     auth: dict = Depends(require_permission("alert", "view")),
 ):
     """List all currently firing alert instances."""
-    stmt = select(AlertEntity).where(AlertEntity.state == "firing")
+    from monctl_central.storage.models import Device
+
+    stmt = (
+        select(AlertEntity)
+        .outerjoin(Device, AlertEntity.device_id == Device.id)
+        .where(AlertEntity.state == "firing")
+    )
+    stmt = apply_tenant_filter(stmt, auth, Device.tenant_id)
     instances = (await db.execute(stmt)).scalars().all()
 
     result = []
@@ -611,6 +626,7 @@ async def list_resolved_instances(
 
     stmt = (
         select(AlertEntity)
+        .outerjoin(Device, AlertEntity.device_id == Device.id)
         .where(
             AlertEntity.state == "resolved",
             AlertEntity.last_cleared_at >= cutoff,
@@ -618,6 +634,7 @@ async def list_resolved_instances(
         .order_by(AlertEntity.last_cleared_at.desc())
         .limit(limit)
     )
+    stmt = apply_tenant_filter(stmt, auth, Device.tenant_id)
     if device_id:
         stmt = stmt.where(AlertEntity.device_id == uuid.UUID(device_id))
 
@@ -789,7 +806,10 @@ async def query_alert_log(
     ch=Depends(get_clickhouse),
 ):
     """Query the alert fire/clear log from ClickHouse."""
-    tenant_id = auth.get("tenant_id")
+    # auth has `tenant_ids` (plural list, or None for admins) — NOT the
+    # legacy singular `tenant_id`. Passing the legacy key here was a silent
+    # no-op that made scoped users see every tenant's alert history.
+    tenant_ids = auth.get("tenant_ids")
     rows_raw, total = await asyncio.gather(
         asyncio.to_thread(
             ch.query_alert_log,
@@ -800,7 +820,7 @@ async def query_alert_log(
             definition_name=definition_name,
             device_name=device_name,
             message=message,
-            tenant_id=tenant_id,
+            tenant_ids=tenant_ids,
             from_ts=from_ts,
             to_ts=to_ts,
             sort_by=sort_by,
@@ -817,7 +837,7 @@ async def query_alert_log(
             definition_name=definition_name,
             device_name=device_name,
             message=message,
-            tenant_id=tenant_id,
+            tenant_ids=tenant_ids,
             from_ts=from_ts,
             to_ts=to_ts,
         ),

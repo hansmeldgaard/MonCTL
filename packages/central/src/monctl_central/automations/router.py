@@ -13,8 +13,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from monctl_central.common.filters import ilike_filter
-from monctl_central.dependencies import get_db, get_clickhouse, get_session_factory, require_permission
-from monctl_central.storage.models import Action, Automation, AutomationStep
+from monctl_central.dependencies import (
+    check_tenant_access,
+    get_clickhouse,
+    get_db,
+    get_session_factory,
+    require_permission,
+)
+from monctl_central.storage.models import (
+    Action,
+    Automation,
+    AutomationStep,
+    Device,
+)
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -564,16 +575,36 @@ async def list_runs(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=100),
     ch=Depends(get_clickhouse),
+    db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_permission("automation", "view")),
 ):
     """List automation run history from ClickHouse."""
     import json
+
+    # rba_runs has no tenant_id column. For non-admin users, restrict to
+    # runs whose device falls in one of their tenants by resolving the
+    # tenant→device mapping from PostgreSQL first. Empty list → see-nothing.
+    tenant_ids = auth.get("tenant_ids")
+    device_ids: list[str] | None = None
+    if tenant_ids is not None:
+        if len(tenant_ids) == 0:
+            device_ids = []
+        else:
+            uuids = [uuid.UUID(t) for t in tenant_ids]
+            rows = (
+                await db.execute(
+                    select(Device.id).where(Device.tenant_id.in_(uuids))
+                )
+            ).scalars().all()
+            device_ids = [str(d) for d in rows]
+
     rows, total = await asyncio.to_thread(
         ch.query_rba_runs,
         automation_id=automation_id,
         device_id=device_id,
         event_id=event_id,
         status=run_status,
+        device_ids=device_ids,
         limit=page_size,
         offset=(page - 1) * page_size,
     )
@@ -608,6 +639,7 @@ async def list_runs(
 async def get_run(
     run_id: str,
     ch=Depends(get_clickhouse),
+    db: AsyncSession = Depends(get_db),
     auth: dict = Depends(require_permission("automation", "view")),
 ):
     """Get a single run's details including step results."""
@@ -625,6 +657,21 @@ async def get_run(
         raise HTTPException(status_code=404, detail="Run not found")
 
     row = dict(zip(result.column_names, result.result_rows[0]))
+
+    # Tenant scope: rba_runs has no tenant_id; resolve via the device.
+    # Admins (tenant_ids=None) bypass via check_tenant_access.
+    raw_did = row.get("device_id")
+    did_str = str(raw_did) if raw_did is not None else ""
+    if did_str and did_str != "00000000-0000-0000-0000-000000000000":
+        device_tenant = (
+            await db.execute(
+                select(Device.tenant_id).where(Device.id == uuid.UUID(did_str))
+            )
+        ).scalar_one_or_none()
+    else:
+        device_tenant = None
+    if not check_tenant_access(auth, device_tenant):
+        raise HTTPException(status_code=404, detail="Run not found")
     for field in ("step_results", "shared_data"):
         if isinstance(row.get(field), str):
             try:
