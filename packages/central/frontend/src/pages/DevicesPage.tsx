@@ -910,15 +910,17 @@ export function DevicesPage() {
             <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
               <Monitor className="mb-2 h-8 w-8 text-zinc-600" />
               <p className="text-sm">No devices found</p>
-              <Button
-                size="sm"
-                variant="secondary"
-                className="mt-4"
-                onClick={() => setAddOpen(true)}
-              >
-                <Plus className="h-4 w-4" />
-                Add your first device
-              </Button>
+              {canCreate("device") && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="mt-4"
+                  onClick={() => setAddOpen(true)}
+                >
+                  <Plus className="h-4 w-4" />
+                  Add your first device
+                </Button>
+              )}
             </div>
           ) : (
             <>

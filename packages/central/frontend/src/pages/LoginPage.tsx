@@ -32,6 +32,13 @@ export function LoginPage() {
     const rawNext = searchParams.get("next") || "/";
     const next =
       rawNext.startsWith("/") && !rawNext.startsWith("/login") ? rawNext : "/";
+    // Paths served by the backend (not the SPA) need a full page load so the
+    // browser hits HAProxy → central rather than React Router's client route
+    // table. Used by OAuth2 /authorize after fresh login.
+    if (next.startsWith("/v1/") || next.startsWith("/api/")) {
+      window.location.replace(next);
+      return null;
+    }
     return <Navigate to={next} replace />;
   }
 

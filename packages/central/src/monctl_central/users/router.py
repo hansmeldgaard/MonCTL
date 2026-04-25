@@ -377,6 +377,45 @@ async def change_my_password(
     return {"status": "success", "data": {"message": "Password changed successfully"}}
 
 
+class AdminResetPasswordRequest(BaseModel):
+    new_password: str = Field(min_length=6, max_length=128)
+
+
+@router.post("/{user_id}/reset-password")
+async def admin_reset_password(
+    user_id: str,
+    request: AdminResetPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_admin),
+):
+    """Admin sets a new password for another user. Bumps token_version so
+    every outstanding access + refresh JWT is invalidated — the target user
+    is forced to re-authenticate with the new password."""
+    from monctl_central.auth.service import hash_password
+
+    user = await db.get(User, uuid.UUID(user_id))
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    user.password_hash = hash_password(request.new_password)
+    user.token_version = (user.token_version or 0) + 1
+    user.updated_at = utc_now()
+    await db.flush()
+
+    # Drop any cached auth state so the new token_version is seen immediately.
+    from monctl_central.cache import invalidate_user_auth_cache
+    await invalidate_user_auth_cache(db, user_id)
+
+    return {
+        "status": "success",
+        "data": {
+            "user_id": str(user.id),
+            "username": user.username,
+            "message": "Password reset; existing sessions invalidated",
+        },
+    }
+
+
 @router.get("")
 async def list_users(
     db: AsyncSession = Depends(get_db),

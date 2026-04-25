@@ -24,6 +24,7 @@ const pageTitles: Record<string, string> = {
   "/automations": "Automations",
   "/analytics/explorer": "SQL Explorer",
   "/analytics/dashboards": "Custom Dashboards",
+  "/analytics/superset": "Superset",
   "/upgrades": "Upgrades",
   "/settings": "Settings",
 };

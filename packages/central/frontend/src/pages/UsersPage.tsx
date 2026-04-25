@@ -5,7 +5,16 @@ import {
   validatePassword,
   validateEmail,
 } from "@/lib/validation.ts";
-import { Loader2, Plus, Shield, Trash2, UserCog, Users, X } from "lucide-react";
+import {
+  Key,
+  Loader2,
+  Plus,
+  Shield,
+  Trash2,
+  UserCog,
+  Users,
+  X,
+} from "lucide-react";
 import {
   Card,
   CardContent,
@@ -23,6 +32,7 @@ import {
   useCreateUser,
   useUpdateUser,
   useDeleteUser,
+  useAdminResetUserPassword,
   useUserTenants,
   useAssignTenantToUser,
   useRemoveTenantFromUser,
@@ -591,6 +601,7 @@ export function UsersPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<User | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
+  const [passwordTarget, setPasswordTarget] = useState<User | null>(null);
 
   const columns = useMemo<FlexColumnDef<User>[]>(
     () => [
@@ -674,6 +685,13 @@ export function UsersPage() {
               title="Edit user"
             >
               <UserCog className="h-4 w-4" />
+            </button>
+            <button
+              onClick={() => setPasswordTarget(u)}
+              className="rounded p-1 text-zinc-600 hover:text-amber-400 hover:bg-amber-500/10 transition-colors cursor-pointer"
+              title="Reset password"
+            >
+              <Key className="h-4 w-4" />
             </button>
             {u.id !== currentUser?.user_id && (
               <button
@@ -871,6 +889,86 @@ export function UsersPage() {
           </Button>
         </DialogFooter>
       </Dialog>
+
+      <ResetPasswordDialog
+        user={passwordTarget}
+        onClose={() => setPasswordTarget(null)}
+      />
     </div>
+  );
+}
+
+// ── Reset Password Dialog ────────────────────────────────
+
+function ResetPasswordDialog({
+  user,
+  onClose,
+}: {
+  user: User | null;
+  onClose: () => void;
+}) {
+  const resetPassword = useAdminResetUserPassword();
+  const passwordField = useField("", validatePassword);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (user) {
+      passwordField.reset();
+      setError("");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  async function handleSubmit() {
+    if (!user) return;
+    if (!validateAll(passwordField)) return;
+    setError("");
+    try {
+      await resetPassword.mutateAsync({
+        id: user.id,
+        new_password: passwordField.value,
+      });
+      onClose();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to reset password");
+    }
+  }
+
+  return (
+    <Dialog open={!!user} onClose={onClose} title="Reset Password">
+      <p className="text-sm text-zinc-400">
+        Set a new password for{" "}
+        <span className="font-semibold text-zinc-200">{user?.username}</span>.
+        All active sessions for this user will be invalidated — they'll need to
+        sign in again with the new password.
+      </p>
+      <div className="mt-4 space-y-1">
+        <Label htmlFor="rp-password">New password</Label>
+        <Input
+          id="rp-password"
+          type="password"
+          value={passwordField.value}
+          onChange={passwordField.onChange}
+          onBlur={passwordField.onBlur}
+          onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+          autoFocus
+        />
+        {passwordField.error && (
+          <p className="text-xs text-red-400">{passwordField.error}</p>
+        )}
+      </div>
+      {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
+      <DialogFooter>
+        <Button variant="secondary" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button onClick={handleSubmit} disabled={resetPassword.isPending}>
+          {resetPassword.isPending && (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          )}
+          Reset
+        </Button>
+      </DialogFooter>
+    </Dialog>
   );
 }
