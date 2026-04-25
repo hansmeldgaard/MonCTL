@@ -33,9 +33,14 @@ echo "[superset-init] initializing default roles + permissions..."
 superset init
 
 echo "[superset-init] upserting ClickHouse database connection..."
-# readonly=1 forces session-level read-only at the ClickHouse protocol level,
-# blocking INSERT/ALTER/DROP even if the underlying CH user has write privs.
-export CH_URI="clickhousedb://${CLICKHOUSE_SUPERSET_USER}:${CLICKHOUSE_SUPERSET_PW}@${CLICKHOUSE_HOST_PRIMARY}:8123/${CLICKHOUSE_DB}?readonly=1"
+# readonly=2 (NOT 1): blocks INSERT/ALTER/DROP at the protocol level (same as
+# readonly=1 for that purpose), but unlike readonly=1 it ALLOWS per-query
+# setting changes — required for the SQL_QUERY_MUTATOR's
+# `SETTINGS monctl_tenant_scope='...'` clause that drives Layer 3 row
+# policies. With readonly=1, CH rejects the setting with code 164 "Cannot
+# modify 'monctl_tenant_scope' setting in readonly mode" and every chart
+# fails (admins included).
+export CH_URI="clickhousedb://${CLICKHOUSE_SUPERSET_USER}:${CLICKHOUSE_SUPERSET_PW}@${CLICKHOUSE_HOST_PRIMARY}:8123/${CLICKHOUSE_DB}?readonly=2"
 
 python <<'PYEOF'
 import os
