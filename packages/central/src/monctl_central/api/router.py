@@ -42,8 +42,6 @@ from monctl_central.discovery.router import router as discovery_router
 from monctl_central.discovery.rules_router import router as device_types_router
 from monctl_central.ws.command_router import router as ws_command_router
 from monctl_central.logs.router import router as logs_router
-from monctl_central.analytics.router import router as analytics_router
-from monctl_central.analytics.dashboards import router as analytics_dashboards_router
 from monctl_central.automations.router import router as automations_router
 from monctl_central.audit.router import router as audit_router
 
@@ -90,7 +88,5 @@ api_router.include_router(discovery_router, prefix="/devices", tags=["discovery"
 api_router.include_router(device_types_router, prefix="/device-types", tags=["device-types"])
 api_router.include_router(ws_command_router, tags=["collectors"])
 api_router.include_router(logs_router, tags=["logs"])
-api_router.include_router(analytics_router, prefix="/analytics", tags=["analytics"])
-api_router.include_router(analytics_dashboards_router, prefix="/analytics", tags=["analytics"])
 api_router.include_router(automations_router, prefix="/automations", tags=["automations"])
 api_router.include_router(audit_router, prefix="/audit", tags=["audit"])

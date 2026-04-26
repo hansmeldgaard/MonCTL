@@ -2,7 +2,6 @@ import { NavLink } from "react-router-dom";
 import {
   AppWindow,
   BarChart3,
-  Terminal,
   Bell,
   Boxes,
   ChevronLeft,
@@ -135,26 +134,12 @@ const navGroups: NavGroup[] = [
     ],
   },
   {
-    label: "Analytics",
+    label: "BI",
     items: [
-      {
-        to: "/analytics/explorer",
-        icon: Terminal,
-        label: "SQL Explorer",
-        end: true,
-        adminOnly: true,
-      },
-      {
-        to: "/analytics/dashboards",
-        icon: BarChart3,
-        label: "Dashboards",
-        resource: "dashboard",
-      },
       {
         to: "/analytics/superset",
         icon: BarChart3,
         label: "Superset",
-        resource: "dashboard",
         requiresSupersetAccess: true,
       },
     ],

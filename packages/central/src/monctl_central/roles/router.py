@@ -17,7 +17,7 @@ router = APIRouter()
 
 VALID_RESOURCES = {
     "device", "app", "assignment", "credential", "alert",
-    "automation", "event", "connector", "dashboard",
+    "automation", "event", "connector",
     "collector", "tenant", "user", "template", "settings", "result",
     "audit",
 }
@@ -33,7 +33,6 @@ RESOURCE_ACTIONS: dict[str, list[str]] = {
     "automation": ["view", "create", "edit", "delete"],
     "event": ["view", "manage"],
     "connector": ["view", "create", "edit", "delete"],
-    "dashboard": ["view", "create", "edit", "delete"],
     "collector": ["view", "manage"],
     "tenant": ["view", "manage"],
     "user": ["view", "manage"],

@@ -22,8 +22,6 @@ const pageTitles: Record<string, string> = {
   "/incident-rules": "Incident Rules",
   "/device-types": "Device Types",
   "/automations": "Automations",
-  "/analytics/explorer": "SQL Explorer",
-  "/analytics/dashboards": "Custom Dashboards",
   "/analytics/superset": "Superset",
   "/upgrades": "Upgrades",
   "/settings": "Settings",
@@ -44,8 +42,6 @@ export function Header() {
     else if (location.pathname.startsWith("/connectors/"))
       title = "Connector Detail";
     else if (location.pathname.startsWith("/packs/")) title = "Pack Detail";
-    else if (location.pathname.startsWith("/analytics/dashboards/"))
-      title = "Dashboard Editor";
     else if (location.pathname.startsWith("/settings/")) title = "Settings";
     else title = "MonCTL";
   }

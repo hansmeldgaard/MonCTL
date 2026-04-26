@@ -72,19 +72,8 @@ const DockerInfraPage = lazy(() =>
 const UpgradesPage = lazy(() =>
   import("@/pages/UpgradesPage.tsx").then(_named("UpgradesPage")),
 );
-const SQLExplorerPage = lazy(() =>
-  import("@/pages/SQLExplorerPage.tsx").then(_named("SQLExplorerPage")),
-);
-const CustomDashboardsPage = lazy(() =>
-  import("@/pages/CustomDashboardsPage.tsx").then(
-    _named("CustomDashboardsPage"),
-  ),
-);
 const SupersetPage = lazy(() =>
   import("@/pages/SupersetPage.tsx").then(_named("SupersetPage")),
-);
-const DashboardEditorPage = lazy(() =>
-  import("@/pages/DashboardEditorPage.tsx").then(_named("DashboardEditorPage")),
 );
 const DeviceTypesPage = lazy(() =>
   import("@/pages/DiscoveryRulesPage.tsx").then(_named("DeviceTypesPage")),
@@ -297,34 +286,10 @@ export function App() {
           }
         />
         <Route
-          path="analytics/explorer"
-          element={
-            <RouteSuspense>
-              <SQLExplorerPage />
-            </RouteSuspense>
-          }
-        />
-        <Route
-          path="analytics/dashboards"
-          element={
-            <RouteSuspense>
-              <CustomDashboardsPage />
-            </RouteSuspense>
-          }
-        />
-        <Route
           path="analytics/superset"
           element={
             <RouteSuspense>
               <SupersetPage />
-            </RouteSuspense>
-          }
-        />
-        <Route
-          path="analytics/dashboards/:id"
-          element={
-            <RouteSuspense>
-              <DashboardEditorPage />
             </RouteSuspense>
           }
         />
