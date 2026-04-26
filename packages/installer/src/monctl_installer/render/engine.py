@@ -58,6 +58,8 @@ class RenderEngine:
             out += self._render_central(host, plan)
         if host.has_role("haproxy") and plan.haproxy_enabled:
             out += self._render_haproxy(host, plan)
+        if host.has_role("superset"):
+            out += self._render_superset(host, plan)
         if host.has_role("collector"):
             out += self._render_collector(host, plan)
         # docker-stats sidecar is implicit on every host that has any other role
@@ -176,6 +178,32 @@ class RenderEngine:
             ),
         ]
 
+    def _render_superset(self, host: Host, plan: Plan) -> list[RenderedFile]:
+        ctx = self._base_ctx(host, plan)
+        return [
+            RenderedFile(
+                "superset",
+                "docker-compose.yml",
+                self._render("compose/superset.yml.j2", ctx),
+            ),
+            RenderedFile("superset", ".env", self._render("env/superset.env.j2", ctx)),
+            RenderedFile(
+                "superset",
+                "superset_config.py",
+                self._render("config/superset_config.py.j2", ctx),
+            ),
+            RenderedFile(
+                "superset",
+                "init.sh",
+                self._render("config/superset-init.sh.j2", ctx),
+            ),
+            RenderedFile(
+                "superset",
+                "requirements-local.txt",
+                self._render("config/superset-requirements.txt.j2", ctx),
+            ),
+        ]
+
     def _render_collector(self, host: Host, plan: Plan) -> list[RenderedFile]:
         ctx = self._base_ctx(host, plan)
         return [
@@ -230,6 +258,9 @@ class RenderEngine:
             ),
             "central_api_url": central_api_url,
             "central_role": _central_role(plan, host),
+            "superset_host_address": plan.superset_host.address if plan.superset_host else None,
+            "central_internal_url": _central_internal_url(plan),
+            "clickhouse_first_host": plan.clickhouse[0].host.address if plan.clickhouse else None,
         }
 
 
@@ -268,6 +299,18 @@ def _central_role(plan: Plan, host: Host) -> str:
     if plan.central_hosts and plan.central_hosts[0].name == host.name:
         return "all"
     return "api"
+
+
+def _central_internal_url(plan: Plan) -> str:
+    """Server-to-server URL Superset uses to reach central's OAuth provider.
+
+    Always plain HTTP to the first central's :8443 — Superset and central
+    share an internal trust boundary; TLS termination is at HAProxy on the
+    public edge, not internally.
+    """
+    if not plan.central_hosts:
+        return "http://localhost:8443"
+    return f"http://{plan.central_hosts[0].address}:8443"
 
 
 def render_plan(plan: Plan, out_dir: Path) -> dict[str, list[Path]]:

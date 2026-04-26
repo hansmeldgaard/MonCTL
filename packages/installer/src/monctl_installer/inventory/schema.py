@@ -22,6 +22,7 @@ Role = Literal[
     "haproxy",
     "collector",
     "docker_stats",
+    "superset",
 ]
 
 ALL_ROLES: tuple[Role, ...] = (
@@ -34,6 +35,7 @@ ALL_ROLES: tuple[Role, ...] = (
     "haproxy",
     "collector",
     "docker_stats",
+    "superset",
 )
 
 
@@ -162,6 +164,10 @@ class Inventory(BaseModel):
             raise ValueError("host names must be unique")
         if len({h.address for h in self.hosts}) != len(self.hosts):
             raise ValueError("host addresses must be unique")
+        # Superset is single-host only — HA Superset is out of scope.
+        # See docs/superset.md ("Initial Superset deploy" → single host).
+        if len(self.hosts_with("superset")) > 1:
+            raise ValueError("at most one host may carry the 'superset' role")
         return self
 
     def hosts_with(self, role: Role) -> list[Host]:

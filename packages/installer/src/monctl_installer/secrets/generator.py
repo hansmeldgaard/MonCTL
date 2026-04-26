@@ -29,6 +29,13 @@ class SecretBundle:
     clickhouse_password: str
     peer_token: str  # shared gRPC secret between cache-node and poll-worker
     monctl_admin_password: str  # pronounceable; printed once
+    # Superset (only used when the inventory has a host with role=superset, but
+    # always generated so flipping the role on later doesn't require a re-init).
+    superset_secret_key: str  # 64 bytes urlsafe-base64 — Flask session signing
+    superset_db_pw: str  # Postgres metadata DB password (Superset's internal PG)
+    superset_admin_pw: str  # initial Superset UI admin
+    monctl_oauth_client_id: str  # OAuth2 client ID central seeds at startup
+    monctl_oauth_client_secret: str  # OAuth2 client secret
 
     def to_env_lines(self) -> list[str]:
         """Emit in the order the compose `.env` files expect.
@@ -47,6 +54,11 @@ class SecretBundle:
             f"CLICKHOUSE_PASSWORD={self.clickhouse_password}",
             f"PEER_TOKEN={self.peer_token}",
             f"MONCTL_ADMIN_PASSWORD={self.monctl_admin_password}",
+            f"SUPERSET_SECRET_KEY={self.superset_secret_key}",
+            f"SUPERSET_DB_PW={self.superset_db_pw}",
+            f"SUPERSET_ADMIN_PW={self.superset_admin_pw}",
+            f"MONCTL_OAUTH_CLIENT_ID={self.monctl_oauth_client_id}",
+            f"MONCTL_OAUTH_CLIENT_SECRET={self.monctl_oauth_client_secret}",
         ]
 
 
@@ -60,6 +72,11 @@ def generate_secrets() -> SecretBundle:
         clickhouse_password=secrets.token_urlsafe(32),
         peer_token=secrets.token_urlsafe(32),
         monctl_admin_password=_pronounceable_password(length=20),
+        superset_secret_key=secrets.token_urlsafe(64),
+        superset_db_pw=secrets.token_urlsafe(32),
+        superset_admin_pw=_pronounceable_password(length=20),
+        monctl_oauth_client_id=f"superset_{secrets.token_urlsafe(16)}",
+        monctl_oauth_client_secret=secrets.token_urlsafe(48),
     )
 
 

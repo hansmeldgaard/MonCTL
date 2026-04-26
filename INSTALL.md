@@ -72,6 +72,8 @@ monctl_ctl init --from inventory.yaml --force
 - 8 ClickHouse nodes (4 shards × 2 replicas) with embedded Keeper on the first 3.
 - N dedicated collector hosts.
 
+**Optional: Superset BI** — add a host with `roles: [superset]` (small/large) or co-locate with `central` (micro). The installer brings up Superset behind HAProxy at `https://<vip>/bi/` with SSO against MonCTL. At most one host may carry `superset` (HA Superset is out of scope; see [`docs/superset.md`](docs/superset.md) for the access-tier and tenant-scope model).
+
 ## 4. Preflight
 
 ```bash
@@ -109,9 +111,15 @@ Username: `admin`. Password: the 20-char value from the red banner after `monctl
 monctl_ctl status
 ```
 
-Per-host table with docker container count, central `/v1/health`, Patroni role + state, ClickHouse reachability, Redis replication role. Exit 1 if any subsystem is down.
+Per-host table with docker container count, central `/v1/health`, Patroni role + state, ClickHouse reachability, Redis replication role, Superset `/bi/health` (if the role is present). Exit 1 if any subsystem is down.
 
-## 8. Day-two operations
+## 8. BI access (Superset)
+
+If your inventory has a host with `roles: [superset]`, `monctl_ctl deploy` brings Superset up at `https://<vip>/bi/` (or `https://<central-IP>:8443/bi/` for non-VIP topologies). The first time, log in to MonCTL as admin → Settings → Users, set each user's **Superset access** tier (`viewer`/`analyst`/`admin`) and **Tenants** scope. Users at tier `none` cannot reach Superset. Tier and tenant changes take effect on the user's next OAuth login.
+
+See [`docs/superset.md`](docs/superset.md) for the full access-tier model, tenant-scope row policies, and operator runbook (granting/revoking access, tier troubleshooting).
+
+## 9. Day-two operations
 
 - **Upgrade** to a new version: `monctl_ctl upgrade v1.1.0` (canary first, then rolling).
 - **Logs**: `monctl_ctl logs <host> --project central --service central --tail 500 --follow`
@@ -155,6 +163,7 @@ Open these inbound per role:
 | 26379      | redis (sentinel)    | quorum                                                                  |
 | 8123, 9000 | clickhouse          | HTTP + native client                                                    |
 | 9181, 9234 | clickhouse (keeper) | Keeper                                                                  |
+| 8088       | superset            | Superset HTTP (behind HAProxy `/bi/*`)                                  |
 
 Collectors only need outbound 443 to the central VIP/IP and whatever protocols their checks use (ICMP, SNMP 161/162, SSH 22, HTTPS 443, etc.).
 

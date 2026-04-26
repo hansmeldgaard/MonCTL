@@ -1,0 +1,119 @@
+# Apache Superset — BI frontend for MonCTL ClickHouse
+# Rendered by monctl_ctl for {{ host.name }} ({{ host.address }})
+#
+# Secrets in ./.env (mode 0600) populated by monctl_ctl init:
+#   SUPERSET_SECRET_KEY           — Flask session key
+#   SUPERSET_DB_PW                — Postgres metadata DB password
+#   SUPERSET_ADMIN_PW             — initial UI admin password
+#   MONCTL_OAUTH_CLIENT_ID        — OAuth2 client ID central knows about
+#   MONCTL_OAUTH_CLIENT_SECRET    — OAuth2 client secret
+#   CLICKHOUSE_SUPERSET_USER/PW   — CH user (defaults to monctl/monctl)
+
+x-superset-common: &superset-common
+  image: apache/superset:4.1.1
+  env_file: .env
+  environment:
+    SUPERSET_CONFIG_PATH: /app/pythonpath/superset_config.py
+    SUPERSET_LOAD_EXAMPLES: "no"
+    DATABASE_DIALECT: postgresql
+    DATABASE_HOST: superset-db
+    DATABASE_PORT: "5432"
+    DATABASE_DB: superset
+    DATABASE_USER: superset
+    DATABASE_PASSWORD: ${SUPERSET_DB_PW}
+    REDIS_HOST: superset-redis
+    REDIS_PORT: "6379"
+    MONCTL_OAUTH_CLIENT_ID: ${MONCTL_OAUTH_CLIENT_ID}
+    MONCTL_OAUTH_CLIENT_SECRET: ${MONCTL_OAUTH_CLIENT_SECRET}
+    MONCTL_PUBLIC_BASE: ${MONCTL_PUBLIC_BASE}
+    MONCTL_INTERNAL_BASE: ${MONCTL_INTERNAL_BASE}
+    SUPERSET_PUBLIC_ORIGIN: ${SUPERSET_PUBLIC_ORIGIN}
+  volumes:
+    - ./superset_config.py:/app/pythonpath/superset_config.py:ro
+    - ./init.sh:/app/pythonpath/init.sh:ro
+    - ./requirements-local.txt:/app/docker/requirements-local.txt:ro
+    - superset_home:/app/superset_home
+  depends_on:
+    superset-db:
+      condition: service_healthy
+    superset-redis:
+      condition: service_healthy
+
+services:
+  superset-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: superset
+      POSTGRES_PASSWORD: ${SUPERSET_DB_PW}
+      POSTGRES_DB: superset
+    volumes:
+      - superset_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U superset -d superset"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    mem_limit: 256m
+
+  superset-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - superset_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    mem_limit: 128m
+
+  # One-shot: installs CH driver, runs DB migrations, creates admin, seeds
+  # CH connection. Exits 0 when done. Idempotent — safe to re-run.
+  superset-init:
+    <<: *superset-common
+    restart: "no"
+    entrypoint: ["/bin/bash", "/app/pythonpath/init.sh"]
+    environment:
+      SUPERSET_CONFIG_PATH: /app/pythonpath/superset_config.py
+      DATABASE_DIALECT: postgresql
+      DATABASE_HOST: superset-db
+      DATABASE_PORT: "5432"
+      DATABASE_DB: superset
+      DATABASE_USER: superset
+      DATABASE_PASSWORD: ${SUPERSET_DB_PW}
+      REDIS_HOST: superset-redis
+      REDIS_PORT: "6379"
+      SUPERSET_ADMIN_USER: ${SUPERSET_ADMIN_USER:-admin}
+      SUPERSET_ADMIN_PW: ${SUPERSET_ADMIN_PW}
+      SUPERSET_ADMIN_EMAIL: ${SUPERSET_ADMIN_EMAIL:-admin@monctl.local}
+      CLICKHOUSE_SUPERSET_USER: ${CLICKHOUSE_SUPERSET_USER:-monctl}
+      CLICKHOUSE_SUPERSET_PW: ${CLICKHOUSE_SUPERSET_PW:-monctl}
+      CLICKHOUSE_HOST_PRIMARY: ${CLICKHOUSE_HOST_PRIMARY}
+      CLICKHOUSE_HOST_SECONDARY: ${CLICKHOUSE_HOST_SECONDARY:-}
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-monctl}
+
+  superset:
+    <<: *superset-common
+    restart: unless-stopped
+    ports:
+      - "{{ host.address }}:8088:8088"
+    depends_on:
+      superset-db:
+        condition: service_healthy
+      superset-redis:
+        condition: service_healthy
+      superset-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8088/bi/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    mem_limit: 1536m
+
+volumes:
+  superset_home:
+  superset_pg:
+  superset_redis:
