@@ -19,6 +19,10 @@ depends_on = None
 
 def upgrade():
     op.execute("DELETE FROM role_permissions WHERE resource = 'dashboard'")
+    op.execute(
+        "UPDATE users SET default_page = '/devices' "
+        "WHERE default_page IN ('/analytics/explorer', '/analytics/dashboards')"
+    )
     op.drop_index("ix_analytics_widgets_dashboard_id", table_name="analytics_widgets")
     op.drop_table("analytics_widgets")
     op.drop_table("analytics_dashboards")
