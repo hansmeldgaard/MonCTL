@@ -140,7 +140,9 @@ Tenant changes propagate to active Superset sessions within 60s via the `before_
 
 ### Initial Superset deploy
 
-Superset runs on the dev host (currently `10.145.210.10`) via `/opt/superset/docker-compose.yml`. First-time bring-up:
+For new customer clusters, Superset is deployed by `monctl_ctl deploy` on the host carrying the `superset` role — see [`INSTALL.md`](../INSTALL.md). The installer renders the compose bundle, generates the OAuth client credentials + admin password into `secrets.env`, and runs the `superset-init` one-shot.
+
+For the dev cluster on `10.145.210.10`, the same compose lives at `/opt/superset/docker-compose.yml` and is brought up by hand:
 
 ```bash
 cd /opt/superset
@@ -148,7 +150,7 @@ docker compose --env-file .env up -d
 docker compose logs -f superset-init   # waits for Postgres, runs init.sh
 ```
 
-`init.sh` is idempotent:
+`init.sh` is idempotent in both cases:
 
 - Runs Superset DB migrations.
 - Creates / resets the bootstrap admin from `.env`.

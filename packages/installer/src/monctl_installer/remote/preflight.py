@@ -47,6 +47,7 @@ _RAM_MB_PER_ROLE: dict[Role, int] = {
     "haproxy": 256,
     "collector": 1024,
     "docker_stats": 128,
+    "superset": 2048,
 }
 
 _DISK_GB_PER_ROLE: dict[Role, int] = {
@@ -222,6 +223,8 @@ def _required_ports_for(host: Host, plan: Plan) -> list[int]:
         ports.add(8443)
     if host.has_role("haproxy") and plan.haproxy_enabled:
         ports.update({443, 8404})
+    if host.has_role("superset"):
+        ports.add(8088)
     if host.has_role("docker_stats"):
         ports.add(9100)
     return sorted(ports)

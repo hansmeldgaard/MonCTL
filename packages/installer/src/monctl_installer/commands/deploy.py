@@ -5,8 +5,10 @@ Idempotency: a sha256 of the rendered files is written to
 short-circuits the scp + compose-up steps for that project.
 
 Order within a host: postgres → etcd → redis → clickhouse → clickhouse-keeper →
-central → haproxy → collector → docker-stats. That mirrors the dependency
-chain: nothing that depends on the DB starts before the DB's compose stack is up.
+central → superset → haproxy → collector → docker-stats. That mirrors the
+dependency chain: nothing that depends on the DB starts before the DB's compose
+stack is up. Superset comes after central (it OAuths against central) and before
+haproxy (which routes /bi/ traffic to it).
 """
 from __future__ import annotations
 
@@ -36,6 +38,7 @@ PROJECT_ORDER: list[str] = [
     "clickhouse",
     "clickhouse-keeper",
     "central",
+    "superset",
     "haproxy",
     "collector",
     "docker-stats",

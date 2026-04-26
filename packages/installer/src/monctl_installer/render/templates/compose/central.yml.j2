@@ -33,6 +33,13 @@ services:
 {% if cluster.vip %}
       MONCTL_TLS_SAN_IPS: {{ cluster.vip }}
 {% endif %}
+{% if plan.superset_host %}
+{% set _public_base = 'https://' ~ cluster.vip if cluster.vip else 'https://' ~ plan.central_hosts[0].address ~ ':8443' %}
+      MONCTL_OAUTH_CLIENT_ID: ${MONCTL_OAUTH_CLIENT_ID}
+      MONCTL_OAUTH_CLIENT_SECRET: ${MONCTL_OAUTH_CLIENT_SECRET}
+      MONCTL_OAUTH_REDIRECT_URIS: {{ _public_base }}/bi/oauth-authorized/monctl
+      MONCTL_OAUTH_ISSUER: {{ _public_base }}
+{% endif %}
     volumes:
       - upgrades_data:/data/upgrades
       - tls_certs:/etc/haproxy/certs

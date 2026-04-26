@@ -68,6 +68,8 @@ def _probe_host(host: Host, plan: Plan, runner: SSHRunner) -> list[ProbeResult]:
         r.host.name == host.name for r in plan.redis
     ):
         out.append(_probe_redis(host, runner))
+    if host.has_role("superset"):
+        out.append(_probe_superset(host, runner))
     return out
 
 
@@ -130,6 +132,19 @@ def _probe_clickhouse(host: Host, runner: SSHRunner) -> ProbeResult:
     if "FAIL" in body or body != "1":
         return ProbeResult(host.name, "clickhouse", "down", f"SELECT 1 failed: {body[:80]}")
     return ProbeResult(host.name, "clickhouse", "ok", "SELECT 1 → 1")
+
+
+def _probe_superset(host: Host, runner: SSHRunner) -> ProbeResult:
+    r = runner.run(
+        host,
+        "curl -sf --max-time 5 http://localhost:8088/bi/health 2>&1 || echo FAIL",
+    )
+    body = r.stdout.strip()
+    if "FAIL" in body or not r.ok:
+        return ProbeResult(host.name, "superset", "down", ":8088 /bi/health unreachable")
+    if body == "OK":
+        return ProbeResult(host.name, "superset", "ok", "/bi/health=OK")
+    return ProbeResult(host.name, "superset", "warn", f"unexpected body: {body[:80]}")
 
 
 def _probe_redis(host: Host, runner: SSHRunner) -> ProbeResult:

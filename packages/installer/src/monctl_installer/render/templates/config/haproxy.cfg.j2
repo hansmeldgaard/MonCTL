@@ -19,7 +19,25 @@ defaults
 frontend https_in
     bind *:443 ssl crt /etc/haproxy/certs/monctl.pem
     acl is_websocket path_beg /ws/
+{% if plan.superset_host %}
+    # Superset's JS bundle has URL strings baked in at build time that bypass
+    # SCRIPT_NAME: /superset/log (telemetry), /static/assets/*.chunk.js (webpack
+    # publicPath), /api/v1/{database,chart,dashboard,...} (SupersetClient base
+    # URL). Rewrite all of these to /bi/* so they reach Superset through the
+    # DispatcherMiddleware mount. MonCTL's /api/v1/* is disjoint from Superset's
+    # /api/v1/* — none collide. MonCTL uses no /static/ or /superset/ routes.
+    http-request replace-path ^/superset/(.*)$ /bi/superset/\1
+    http-request replace-path ^/static/(.*)$ /bi/static/\1
+    http-request replace-path ^/api/v1/(advanced_data_type|annotation_layer|assets|async_event|available_domains|cachekey|chart|css_template|dashboard|database|dataset|datasource|embedded_dashboard|explore|form_data|log|me|menu|query|report|rowlevelsecurity|saved_query|security|sqllab|tag|time_range|user)(/.*)?$ /bi/api/v1/\1\2
+    # Top-level Superset views FAB sometimes emits without SCRIPT_NAME. Excludes
+    # login/logout/users/roles which collide with the MonCTL SPA.
+    http-request replace-path ^/(tablemodelview|sqllab|explore|chart|dashboard|databaseview|savedqueryview|tabstateview|tagview|alert|annotationlayer|report|rowlevelsecurity|csstemplatemodelview|csstemplateasyncmodelview|datasource|dataset|dashboardasync|sliceasync|sqlmetricinlineview|tablecolumninlineview|tableschemaview|logmodelview|embedded|dynamic-plugins|userinfoeditview|swagger|savedqueryviewapi|resetmypassword|resetpassword|registeruser)(/.*)?$ /bi/\1\2
+    acl is_bi path_beg /bi/ /bi
+{% endif %}
     use_backend ws_backend if is_websocket
+{% if plan.superset_host %}
+    use_backend superset_backend if is_bi
+{% endif %}
     default_backend central_nodes
 
     option forwardfor
@@ -50,6 +68,27 @@ backend ws_backend
     server {{ h.name }} {{ h.address }}:8443 check inter 5s fall 3 rise 2
 {% endfor %}
 
+{% if plan.superset_host %}
+# ── Superset (BI frontend) ───────────────────────────────────────────────────
+# Single upstream — Superset HA is out of scope. See docs/superset.md.
+backend superset_backend
+    option forwardfor
+    http-request set-header X-Forwarded-Proto https
+    http-request set-header X-Forwarded-Host %[req.hdr(host)]
+    # Do NOT strip /bi — Superset's WSGI app is mounted at /bi via
+    # DispatcherMiddleware in superset_config.py.
+    http-request set-header X-Forwarded-Prefix /bi
+    # Superset has hardcoded redirects like redirect("/superset/welcome/") that
+    # bypass url_for() and therefore don't carry the /bi prefix. Prefix every
+    # relative Location header that isn't already under /bi/. Absolute URLs
+    # (http://..., https://...) are untouched.
+    acl loc_already_bi  res.hdr(Location) -m beg /bi/
+    acl loc_absolute    res.hdr(Location) -m reg ^[a-z]+:
+    http-response replace-header Location ^/(.*)$ /bi/\1 if !loc_already_bi !loc_absolute
+    timeout server 120s
+    server superset1 {{ plan.superset_host.address }}:8088 check inter 10s fall 3 rise 2
+
+{% endif %}
 {% if plan.pg_ha %}
 frontend pg_in
     bind *:5432

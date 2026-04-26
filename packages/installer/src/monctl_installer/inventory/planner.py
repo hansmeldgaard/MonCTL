@@ -50,6 +50,7 @@ class Plan:
     central_hosts: list[Host]
     haproxy_hosts: list[Host]
     collector_hosts: list[Host]
+    superset_host: Host | None = None
     # derived flags
     pg_ha: bool = field(default=False)
     redis_sentinel: bool = field(default=False)
@@ -90,6 +91,9 @@ def plan_cluster(inv: Inventory) -> Plan:
     haproxy_enabled = _resolve_haproxy(inv, central_hosts)
     haproxy_hosts = inv.hosts_with("haproxy") if haproxy_enabled else []
 
+    superset_hosts = inv.hosts_with("superset")
+    superset_host = superset_hosts[0] if superset_hosts else None
+
     _validate_plan(
         inv=inv,
         pg_nodes=pg_nodes,
@@ -109,6 +113,7 @@ def plan_cluster(inv: Inventory) -> Plan:
         central_hosts=central_hosts,
         haproxy_hosts=haproxy_hosts,
         collector_hosts=collector_hosts,
+        superset_host=superset_host,
         pg_ha=pg_ha,
         redis_sentinel=redis_sentinel,
         haproxy_enabled=haproxy_enabled,
