@@ -728,26 +728,15 @@ FEATURE_FLAGS = {
     "EMBEDDED_SUPERSET": True,
 }
 
-# Theme — match MonCTL's dark-blue palette (zinc-* surfaces + brand-500 primary)
-# so the embedded /bi/ view doesn't visually fight the host UI. Superset 4.1.x
-# applies these tokens to charts, accents, primary buttons. Chrome (sidebar,
-# header) stays Superset-default — native dark mode is a 5.0 feature.
+# Theme — primary-only override so buttons / links / chart accents pick up
+# MonCTL's brand-blue. Also tried overriding `grayscale` (body bg + surfaces)
+# but Superset 4.1's chrome (top nav, cards) doesn't read those tokens — only
+# the body did, leaving an ugly white-chrome / dark-body band. Native dark
+# mode lands in Superset 5.0; until then, primary-only is the safe middle.
 THEME_OVERRIDES = {
     "colors": {
-        "primary": {"base": "#0134a8"},   # MonCTL brand-500
+        "primary": {"base": "#0134a8"},    # MonCTL brand-500
         "secondary": {"base": "#00217c"},  # brand-600
-        "grayscale": {
-            "base":   "#ffffff",
-            "dark1":  "#e5e7eb",  # zinc-100 (body text)
-            "dark2":  "#d1d5db",  # zinc-200
-            "light1": "#1f2937",  # zinc-800
-            "light2": "#111827",  # zinc-900
-            "light3": "#010102",  # surface-900
-            "light4": "#000101",  # surface-950 (page bg)
-        },
-        "error": {"base": "#dc2626"},
-        "warning": {"base": "#f97316"},
-        "success": {"base": "#10b981"},
     },
     "borderRadius": 6,
 }
