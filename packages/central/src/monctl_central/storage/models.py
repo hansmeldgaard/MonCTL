@@ -1570,49 +1570,6 @@ class AuditLoginEvent(Base):
     )
 
 
-class AnalyticsDashboard(Base):
-    """A user-created analytics dashboard with SQL-based widgets."""
-    __tablename__ = "analytics_dashboards"
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[str | None] = mapped_column(Text)
-    owner_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
-    )
-    variables: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default="now()"
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default="now()"
-    )
-
-    owner: Mapped["User | None"] = relationship()
-    widgets: Mapped[list["AnalyticsWidget"]] = relationship(
-        back_populates="dashboard", cascade="all, delete-orphan"
-    )
-
-
-class AnalyticsWidget(Base):
-    """A single widget (chart / table / stat) on an analytics dashboard."""
-    __tablename__ = "analytics_widgets"
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    dashboard_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("analytics_dashboards.id", ondelete="CASCADE"),
-        nullable=False, index=True,
-    )
-    title: Mapped[str] = mapped_column(String(255), nullable=False)
-    config: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
-    layout: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default="now()"
-    )
-
-    dashboard: Mapped["AnalyticsDashboard"] = relationship(back_populates="widgets")
-
-
 class Action(Base):
     """A reusable Python script that can execute on a collector or on central."""
     __tablename__ = "actions"

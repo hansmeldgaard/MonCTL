@@ -60,9 +60,6 @@ TABLE_TO_RESOURCE: dict[str, str] = {
     "system_settings": "system_setting",
     "data_retention_overrides": "data_retention_override",
     "tls_certificates": "tls_certificate",
-    # Dashboards
-    "analytics_dashboards": "analytics_dashboard",
-    "analytics_widgets": "analytics_widget",
     # Upgrade jobs (central-initiated — remote execution, worth auditing)
     "upgrade_packages": "upgrade_package",
     "upgrade_jobs": "upgrade_job",

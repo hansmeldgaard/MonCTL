@@ -354,7 +354,7 @@ VALID_DEFAULT_PAGES = {
     "/", "/system-health", "/devices", "/device-types", "/assignments",
     "/apps", "/connectors", "/python-modules", "/templates", "/credentials",
     "/labels", "/packs", "/alerts", "/events", "/automations",
-    "/analytics/explorer", "/analytics/dashboards", "/upgrades", "/settings",
+    "/analytics/superset", "/upgrades", "/settings",
 }
 
 
