@@ -4176,6 +4176,7 @@ export function useCreateDeviceType() {
       os_family?: string;
       description?: string;
       priority?: number;
+      auto_assign_packs?: string[];
     }) => apiPost<DeviceType>("/device-types", data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["device-types"] });

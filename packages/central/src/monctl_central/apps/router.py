@@ -348,6 +348,18 @@ async def list_apps(
         )).all()
         device_counts = {row[0]: row[1] for row in dc_rows}
 
+    # Batch-fetch eligibility OID count for each app's latest version
+    eligibility_counts: dict[uuid.UUID, int] = {}
+    if app_ids:
+        ev_rows = (await db.execute(
+            select(AppVersion.app_id, AppVersion.eligibility_oids)
+            .where(AppVersion.app_id.in_(app_ids))
+            .where(AppVersion.is_latest == True)  # noqa: E712
+        )).all()
+        eligibility_counts = {
+            r[0]: len(r[1] or []) for r in ev_rows
+        }
+
     apps_list = [
         {
             "id": str(a.id),
@@ -356,6 +368,7 @@ async def list_apps(
             "app_type": a.app_type,
             "target_table": a.target_table,
             "vendor_oid_prefix": a.vendor_oid_prefix,
+            "eligibility_oid_count": eligibility_counts.get(a.id, 0),
             "created_at": a.created_at.isoformat() if a.created_at else None,
             "updated_at": a.updated_at.isoformat() if a.updated_at else None,
             "pack_id": str(a.pack_id) if a.pack_id else None,

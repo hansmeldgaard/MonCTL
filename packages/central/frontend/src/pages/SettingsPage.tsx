@@ -961,6 +961,8 @@ function AutomationsTab() {
   const [enabled, setEnabled] = useState("false");
   const [intervalHours, setIntervalHours] = useState("24");
   const [scope, setScope] = useState("has_type");
+  const [scanTime, setScanTime] = useState("02:00");
+  const [scanTimeError, setScanTimeError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [runResult, setRunResult] = useState<{
     applied: number;
@@ -972,21 +974,30 @@ function AutomationsTab() {
       setEnabled(settings.template_auto_apply_enabled ?? "false");
       setIntervalHours(settings.template_auto_apply_interval_hours ?? "24");
       setScope(settings.template_auto_apply_scope ?? "has_type");
+      setScanTime(settings.eligibility_scan_time ?? "02:00");
     }
   }, [settings]);
 
+  const scanTimeValid = /^([01]\d|2[0-3]):[0-5]\d$/.test(scanTime);
   const modified =
     settings &&
     (enabled !== (settings.template_auto_apply_enabled ?? "false") ||
       intervalHours !== (settings.template_auto_apply_interval_hours ?? "24") ||
-      scope !== (settings.template_auto_apply_scope ?? "has_type"));
+      scope !== (settings.template_auto_apply_scope ?? "has_type") ||
+      scanTime !== (settings.eligibility_scan_time ?? "02:00"));
 
   async function handleSave() {
+    if (!scanTimeValid) {
+      setScanTimeError("Use HH:MM 24-hour format (e.g. 02:00)");
+      return;
+    }
+    setScanTimeError(null);
     await updateSettings.mutateAsync({
       settings: {
         template_auto_apply_enabled: enabled,
         template_auto_apply_interval_hours: intervalHours,
         template_auto_apply_scope: scope,
+        eligibility_scan_time: scanTime,
       },
     });
     setSaved(true);
@@ -1128,6 +1139,45 @@ function AutomationsTab() {
               </Button>
             </div>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm text-zinc-300 flex items-center gap-2">
+            <RefreshCw className="h-4 w-4 text-brand-400" />
+            Nightly Eligibility Scan
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-xs text-zinc-500">
+            Once daily, central re-runs SNMP discovery for devices whose device
+            type has <code className="text-zinc-400">auto_assign_packs</code>{" "}
+            set but still has unassigned candidate apps. Probed OIDs are
+            evaluated against each app's eligibility rules to drive
+            auto-assignment.
+          </p>
+          <div className="flex items-center justify-between">
+            <div>
+              <Label className="text-sm text-zinc-300">Scan time (UTC)</Label>
+              <p className="text-xs text-zinc-500 mt-0.5">
+                24-hour HH:MM. Default 02:00.
+              </p>
+            </div>
+            <Input
+              value={scanTime}
+              onChange={(e) => {
+                setScanTime(e.target.value);
+                setScanTimeError(null);
+              }}
+              className="w-24 h-8 text-sm font-mono text-center"
+              placeholder="02:00"
+              maxLength={5}
+            />
+          </div>
+          {scanTimeError && (
+            <p className="text-xs text-red-400">{scanTimeError}</p>
+          )}
         </CardContent>
       </Card>
     </div>

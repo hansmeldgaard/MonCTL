@@ -220,6 +220,42 @@ export function AppsPage() {
         },
       },
       {
+        key: "__eligibility",
+        label: "Eligibility",
+        pickerLabel: "Eligibility",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 180,
+        cell: (app) => {
+          const oidCount = app.eligibility_oid_count ?? 0;
+          const prefix = app.vendor_oid_prefix;
+          if (!prefix && oidCount === 0)
+            return <span className="text-zinc-600 text-xs">—</span>;
+          return (
+            <div className="flex flex-wrap gap-1">
+              {prefix && (
+                <Badge
+                  variant="info"
+                  className="text-xs font-mono"
+                  title={`Vendor sysObjectID prefix: ${prefix}`}
+                >
+                  {prefix.length > 16 ? `…${prefix.slice(-14)}` : prefix}
+                </Badge>
+              )}
+              {oidCount > 0 && (
+                <Badge
+                  variant="info"
+                  className="text-xs"
+                  title="Eligibility OID checks defined on the latest version"
+                >
+                  {oidCount} OID{oidCount === 1 ? "" : "s"}
+                </Badge>
+              )}
+            </div>
+          );
+        },
+      },
+      {
         key: "description",
         label: "Description",
         sortable: false,

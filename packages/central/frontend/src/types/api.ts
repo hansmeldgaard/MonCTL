@@ -125,6 +125,7 @@ export interface DeviceType {
   os_family: string | null;
   description: string | null;
   priority: number;
+  auto_assign_packs: string[];
   pack_id: string | null;
   created_at: string;
 }
@@ -486,6 +487,7 @@ export interface AppSummary {
   app_type: string;
   target_table: string;
   vendor_oid_prefix?: string | null;
+  eligibility_oid_count?: number;
   created_at?: string | null;
   updated_at?: string | null;
   pack_id?: string | null;

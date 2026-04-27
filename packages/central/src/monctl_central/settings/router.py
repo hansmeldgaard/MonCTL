@@ -36,6 +36,7 @@ _DEFAULTS = {
     "template_auto_apply_enabled": "false",
     "template_auto_apply_interval_hours": "24",
     "template_auto_apply_scope": "has_type",
+    "eligibility_scan_time": "02:00",
 }
 
 

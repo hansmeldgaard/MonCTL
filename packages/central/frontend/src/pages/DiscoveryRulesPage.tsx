@@ -39,6 +39,7 @@ import {
   useBindDeviceTypeTemplate,
   useUnbindDeviceTypeTemplate,
   useTemplates,
+  usePacks,
 } from "@/api/hooks.ts";
 import { useListState } from "@/hooks/useListState.ts";
 import { useTablePreferences } from "@/hooks/useTablePreferences.ts";
@@ -186,6 +187,27 @@ function DeviceTypesTab() {
         defaultWidth: 90,
         cellClassName: "text-zinc-500 text-sm tabular-nums",
         cell: (rule) => rule.priority,
+      },
+      {
+        key: "__auto_assign_packs",
+        label: "Auto-assign",
+        pickerLabel: "Auto-assign Packs",
+        sortable: false,
+        filterable: false,
+        defaultWidth: 130,
+        cell: (rule) => {
+          const packs = rule.auto_assign_packs || [];
+          if (packs.length === 0)
+            return <span className="text-sm text-zinc-600">—</span>;
+          return (
+            <span
+              className="text-sm font-medium text-brand-400"
+              title={packs.join(", ")}
+            >
+              {packs.length} pack{packs.length === 1 ? "" : "s"}
+            </span>
+          );
+        },
       },
       {
         key: "__device_count",
@@ -420,7 +442,13 @@ export function RuleFormDialog({
   );
   const [description, setDescription] = useState(rule?.description ?? "");
   const [priority, setPriority] = useState(rule?.priority ?? 0);
+  const [autoAssignPacks, setAutoAssignPacks] = useState<string[]>(
+    rule?.auto_assign_packs ?? [],
+  );
   const [error, setError] = useState<string | null>(null);
+
+  const { data: packsResp } = usePacks({ limit: 200 });
+  const allPacks = packsResp?.data ?? [];
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -440,6 +468,7 @@ export function RuleFormDialog({
             os_family: osFamily || undefined,
             description: description || undefined,
             priority,
+            auto_assign_packs: autoAssignPacks,
           },
         });
       } else {
@@ -452,6 +481,8 @@ export function RuleFormDialog({
           os_family: osFamily || undefined,
           description: description || undefined,
           priority,
+          auto_assign_packs:
+            autoAssignPacks.length > 0 ? autoAssignPacks : undefined,
         });
       }
       onSuccess?.();
@@ -556,6 +587,62 @@ export function RuleFormDialog({
               onChange={(e) => setPriority(Number(e.target.value))}
             />
           </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label>Auto-assign Packs</Label>
+          <p className="text-xs text-zinc-500">
+            When a device matches this type via SNMP discovery, apps from these
+            packs are auto-assigned. Apps with{" "}
+            <code className="text-zinc-400">eligibility_oids</code> defined run
+            an extra OID probe before assignment.
+          </p>
+          {autoAssignPacks.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {autoAssignPacks.map((uid) => {
+                const pack = allPacks.find((p) => p.pack_uid === uid);
+                return (
+                  <Badge
+                    key={uid}
+                    variant="info"
+                    className="flex items-center gap-1 text-xs"
+                  >
+                    <span className="font-mono">{pack?.name ?? uid}</span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setAutoAssignPacks(
+                          autoAssignPacks.filter((p) => p !== uid),
+                        )
+                      }
+                      className="rounded hover:bg-zinc-700 cursor-pointer"
+                      aria-label={`Remove ${uid}`}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </Badge>
+                );
+              })}
+            </div>
+          )}
+          <SearchableSelect
+            value=""
+            onChange={(uid) => {
+              if (uid && !autoAssignPacks.includes(uid))
+                setAutoAssignPacks([...autoAssignPacks, uid]);
+            }}
+            options={allPacks
+              .filter((p) => !autoAssignPacks.includes(p.pack_uid))
+              .map((p) => ({
+                value: p.pack_uid,
+                label: `${p.name} (${p.pack_uid})`,
+              }))}
+            placeholder={
+              autoAssignPacks.length === 0
+                ? "Select packs to auto-assign…"
+                : "Add another pack…"
+            }
+          />
         </div>
 
         {error && <p className="text-sm text-red-400">{error}</p>}

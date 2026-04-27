@@ -83,7 +83,7 @@ async def db_session(sqlite_engine) -> AsyncSession:
 @pytest.fixture
 async def seeded_session(db_session: AsyncSession) -> AsyncSession:
     """Session with seed data: admin user, default device types."""
-    from monctl_central.storage.models import User, DeviceType
+    from monctl_central.storage.models import User, DeviceType, DeviceCategory
 
     admin = User(
         username="admin",
@@ -93,11 +93,22 @@ async def seeded_session(db_session: AsyncSession) -> AsyncSession:
     )
     db_session.add(admin)
 
-    for name, desc, cat in [
-        ("host", "Generic server", "server"),
-        ("network", "Network device", "network"),
-    ]:
-        db_session.add(DeviceType(name=name, description=desc, category=cat))
+    seeds = [
+        ("host", "Generic server", "server", "1.3.6.1.4.1.8072"),
+        ("network", "Network device", "network", "1.3.6.1.4.1.9"),
+    ]
+    for name, desc, cat, oid in seeds:
+        category = DeviceCategory(name=name, description=desc, category=cat)
+        db_session.add(category)
+        await db_session.flush()
+        db_session.add(
+            DeviceType(
+                name=name,
+                description=desc,
+                sys_object_id_pattern=oid,
+                device_category_id=category.id,
+            )
+        )
 
     await db_session.flush()
     return db_session
@@ -179,5 +190,6 @@ async def auth_client(client: AsyncClient, admin_credentials: dict) -> AsyncClie
     """Client with a valid admin JWT cookie attached."""
     resp = await client.post("/v1/auth/login", json=admin_credentials)
     assert resp.status_code == 200, f"Login failed: {resp.text}"
-    client.cookies = resp.cookies
+    for k, v in resp.cookies.items():
+        client.cookies.set(k, v)
     return client
