@@ -200,9 +200,19 @@ class PollEngine:
 
         now = time.time()
         for job_def, profile in job_pairs:
+            # Skip jobs currently in flight. _run_job_inner will re-add the
+            # next-cycle entry on completion (interval > 0) or leave it out
+            # entirely (interval == 0 one-shots). Re-adding here would
+            # produce a duplicate heap entry whose dispatch immediately hits
+            # the still-running branch — and for interval=0 the reschedule
+            # math collapses to now+0, hot-looping _dispatch_ready.
+            if job_def.job_id in self._running:
+                continue
             prev = existing.get(job_def.job_id)
             if prev is None:
-                # Brand-new job — jittered first deadline
+                # Brand-new job — jittered first deadline. For one-shots
+                # (interval == 0) clamp the divisor to 1 so hash % 1 == 0
+                # → deadline = now (run immediately).
                 deadline = now + (hash(job_def.job_id) % max(1, job_def.interval))
             elif prev[1] != job_def.interval:
                 # Interval changed — re-jitter on the new cadence so the change
@@ -256,10 +266,18 @@ class PollEngine:
                     "job_still_running", job_id=sj.job_id,
                     app=sj.job.app_id, running=list(self._running),
                 )
+                # Drop one-shots (interval <= 0): re-pushing with deadline=now
+                # creates a tight loop that starves the event loop and prevents
+                # the original task's `finally` from clearing self._running.
+                # The original task will discard itself from _running on exit.
+                if sj.job.interval <= 0:
+                    continue
+                # Floor at 1s so a tiny interval can't produce deadline≈now and
+                # spin the dispatch loop.
                 heapq.heappush(
                     self._heap,
                     ScheduledJob(
-                        next_deadline=now + sj.job.interval * 0.1,  # retry in 10% of interval
+                        next_deadline=now + max(sj.job.interval * 0.1, 1.0),
                         job_id=sj.job_id,
                         job=sj.job,
                         profile=sj.profile,
