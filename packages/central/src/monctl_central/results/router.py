@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from monctl_central.dependencies import check_tenant_access, get_clickhouse, get_db, require_permission
-from monctl_central.storage.models import Device, InterfaceMetadata
+from monctl_central.storage.models import AppAssignment, Device, InterfaceMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -564,6 +564,21 @@ async def device_status(
         logger.exception("query_by_device failed for device %s", device_id)
         rows = []
 
+    # Drop CH rows whose assignment_id no longer exists in PostgreSQL — keeps
+    # the Checks tab in sync with the Assignments tab when an app/assignment
+    # is deleted but its row in *_latest MVs still lingers.
+    from sqlalchemy import select
+    live_aids = {
+        str(a) for a in (
+            await db.execute(
+                select(AppAssignment.id).where(
+                    AppAssignment.device_id == uuid.UUID(device_id)
+                )
+            )
+        ).scalars().all()
+    }
+    rows = [r for r in rows if str(r.get("assignment_id")) in live_aids]
+
     if not rows:
         logger.warning("device_status: 0 checks returned from ClickHouse for device %s", device_id)
 
@@ -1042,10 +1057,6 @@ async def device_availability(
     if to_ts:
         sql += f" AND {time_col} <= {{to_ts:DateTime64}}"
         params["to_ts"] = to_ts.replace("Z", "").replace("+00:00", "").split("+")[0]
-
-    if selected_tier == "raw":
-        # Only include availability/latency roles for raw tier
-        sql += " AND role IN ('availability', 'latency')"
 
     sql += f" ORDER BY {time_col} DESC LIMIT {{limit:UInt32}}"
     params["limit"] = limit
