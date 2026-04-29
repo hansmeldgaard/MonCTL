@@ -117,14 +117,6 @@ function buildChartData(
 } {
   if (!results.length) return { data: [], appNames: [] };
 
-  // Only include results from availability and latency monitoring roles.
-  // General assignments (role="" or null) and interface assignments should NOT
-  // appear on this chart — they have their own dedicated views.
-  results = results.filter(
-    (r) => r.role === "availability" || r.role === "latency",
-  );
-  if (!results.length) return { data: [], appNames: [] };
-
   // Collect unique app names for series
   const assignmentToApp = new Map<string, string>();
   for (const r of results) {
@@ -177,12 +169,11 @@ function buildChartData(
   const bucketMs = Math.max(chooseBucketMs(spanMs), detectedGranularityMs);
 
   // ── Availability carry-forward ─────────────────────────────────────────────
-  // The availability strip is driven exclusively by availability-role checks.
-  // We carry-forward the last known state into buckets where only the latency
-  // check fired, so the strip is a solid green/red bar — never falsely red
-  // due to a failing latency check.
+  // The availability strip is driven by every check that landed in the
+  // availability_latency table — the table itself is the type discriminator.
+  // We carry-forward the last known state into buckets where no check fired
+  // so the strip is a solid green/red bar.
   const availCheckpoints = results
-    .filter((r) => r.role === "availability")
     .map((r) => ({
       ts: new Date(r.executed_at).getTime(),
       reachable: r.reachable,
