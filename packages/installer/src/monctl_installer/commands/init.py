@@ -17,7 +17,11 @@ import yaml
 from monctl_installer.inventory.loader import load_inventory
 from monctl_installer.inventory.planner import plan_cluster
 from monctl_installer.secrets.generator import generate_secrets
-from monctl_installer.secrets.store import SecretsFileError, write_secrets
+from monctl_installer.secrets.store import (
+    SecretsFileError,
+    load_secrets,
+    write_secrets,
+)
 
 
 @dataclass(frozen=True)
@@ -37,10 +41,17 @@ def run_interactive(
     inventory_path: Path,
     secrets_path: Path,
     overwrite: bool,
+    regenerate_secrets: bool = False,
 ) -> InitResult:
-    """Walk the operator through a minimal set of questions, write both files."""
+    """Walk the operator through a minimal set of questions, write both files.
+
+    ``overwrite`` (``--force``) replaces an existing inventory file but NOT
+    secrets. Rotating secrets requires the explicit ``regenerate_secrets``
+    flag (``--regenerate-secrets``) — otherwise existing secrets.env values
+    are preserved across re-runs (M-INST-010).
+    """
     _check_writable(inventory_path, overwrite, "inventory")
-    _check_writable(secrets_path, overwrite, "secrets")
+    _check_secrets_action(secrets_path, regenerate_secrets)
 
     click.echo()
     click.secho("MonCTL installer — cluster setup", fg="cyan", bold=True)
@@ -95,7 +106,9 @@ def run_interactive(
         pg_mode=pg_mode,
         secrets_file=secrets_path,
     )
-    return _finalize(inventory_doc, inventory_path, secrets_path)
+    return _finalize(
+        inventory_doc, inventory_path, secrets_path, regenerate_secrets=regenerate_secrets
+    )
 
 
 def run_from_yaml(
@@ -104,21 +117,27 @@ def run_from_yaml(
     inventory_path: Path,
     secrets_path: Path,
     overwrite: bool,
+    regenerate_secrets: bool = False,
 ) -> InitResult:
     """Non-interactive: the operator hands us a seed inventory, we copy + generate secrets.
 
     The seed file is a complete inventory.yaml. `init --from` just normalises it
     (writes a clean copy to `inventory_path`) and generates matching secrets.
     Useful for CI, automated installs, reproducing a topology.
+
+    ``overwrite`` replaces inventory; ``regenerate_secrets`` is required to
+    rotate an existing secrets.env (otherwise it's preserved). See M-INST-010.
     """
     _check_writable(inventory_path, overwrite, "inventory")
-    _check_writable(secrets_path, overwrite, "secrets")
+    _check_secrets_action(secrets_path, regenerate_secrets)
     raw = yaml.safe_load(seed_path.read_text())
     if not isinstance(raw, dict):
         raise InitError(f"{seed_path}: top-level must be a mapping")
     # Keep the secrets path consistent with the init run.
     raw.setdefault("secrets", {})["file"] = str(secrets_path)
-    return _finalize(raw, inventory_path, secrets_path)
+    return _finalize(
+        raw, inventory_path, secrets_path, regenerate_secrets=regenerate_secrets
+    )
 
 
 def _build_inventory_doc(  # type: ignore[no-untyped-def]
@@ -154,7 +173,13 @@ def _build_inventory_doc(  # type: ignore[no-untyped-def]
     }
 
 
-def _finalize(inv_doc: dict, inventory_path: Path, secrets_path: Path) -> InitResult:
+def _finalize(
+    inv_doc: dict,
+    inventory_path: Path,
+    secrets_path: Path,
+    *,
+    regenerate_secrets: bool = False,
+) -> InitResult:
     # Write inventory first so validate() has something to parse.
     inventory_path.parent.mkdir(parents=True, exist_ok=True)
     inventory_path.write_text(yaml.safe_dump(inv_doc, sort_keys=False, default_flow_style=False))
@@ -167,17 +192,36 @@ def _finalize(inv_doc: dict, inventory_path: Path, secrets_path: Path) -> InitRe
         inventory_path.unlink(missing_ok=True)
         raise InitError(f"generated inventory failed validation: {exc}") from exc
 
-    bundle = generate_secrets()
-    try:
-        write_secrets(bundle, secrets_path, overwrite=True)
-    except SecretsFileError as exc:  # pragma: no cover — extremely unlikely after overwrite=True
-        raise InitError(str(exc)) from exc
+    # Secrets handling:
+    #   * secrets.env missing  → generate fresh.
+    #   * secrets.env present + regenerate_secrets=False → preserve as-is.
+    #   * secrets.env present + regenerate_secrets=True  → rotate everything.
+    # The second case is the M-INST-010 fix — re-running init to fix a typo
+    # in inventory must NEVER silently invalidate every existing JWT, every
+    # encrypted credential at rest, and every collector's API key.
+    if secrets_path.exists() and not regenerate_secrets:
+        existing = load_secrets(secrets_path)
+        admin_password = existing.get("MONCTL_ADMIN_PASSWORD", "")
+        if not admin_password:
+            raise InitError(
+                f"{secrets_path} exists but is missing MONCTL_ADMIN_PASSWORD; "
+                "re-run with --regenerate-secrets to rotate (DESTRUCTIVE — "
+                "every session token, encrypted credential, and collector key "
+                "will be invalidated)."
+            )
+    else:
+        bundle = generate_secrets()
+        try:
+            write_secrets(bundle, secrets_path, overwrite=regenerate_secrets)
+        except SecretsFileError as exc:
+            raise InitError(str(exc)) from exc
+        admin_password = bundle.monctl_admin_password
 
     login_url = _login_url(plan)
     return InitResult(
         inventory_path=inventory_path,
         secrets_path=secrets_path,
-        admin_password=bundle.monctl_admin_password,
+        admin_password=admin_password,
         login_url=login_url,
     )
 
@@ -193,3 +237,17 @@ def _check_writable(path: Path, overwrite: bool, label: str) -> None:
         raise InitError(
             f"{label} already exists at {path}; re-run with --force to replace"
         )
+
+
+def _check_secrets_action(secrets_path: Path, regenerate_secrets: bool) -> None:
+    """Refuse to silently destroy an existing secrets.env (M-INST-010).
+
+    ``--force`` alone replaces *inventory only*; rotating secrets needs the
+    explicit ``--regenerate-secrets`` flag because it invalidates every
+    session, encrypted credential, and collector key in the cluster. This
+    function is currently a no-op signpost — the actual decision lives in
+    ``_finalize`` where we have access to the bundle. Kept as a separate
+    function so future schema-completeness checks (e.g. detecting a missing
+    new secret added in a newer installer version) have a natural home.
+    """
+    return
