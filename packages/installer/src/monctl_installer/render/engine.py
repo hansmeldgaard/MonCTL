@@ -261,6 +261,11 @@ class RenderEngine:
             "superset_host_address": plan.superset_host.address if plan.superset_host else None,
             "central_internal_url": _central_internal_url(plan),
             "clickhouse_first_host": plan.clickhouse[0].host.address if plan.clickhouse else None,
+            # Lower-case string ("true"/"false") so YAML / env parsers consume
+            # it without surprises. Resolution: cluster.tls.verify if set,
+            # else default by tls.mode (true for "provided", false for
+            # "self-signed"). See cluster.tls.verify in inventory schema.
+            "tls_verify": "true" if plan.inventory.cluster.tls.effective_verify else "false",
         }
 
 

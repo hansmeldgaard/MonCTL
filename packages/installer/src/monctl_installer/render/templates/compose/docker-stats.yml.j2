@@ -13,7 +13,7 @@ services:
       MONCTL_HOST_LABEL: ${MONCTL_HOST_LABEL}
       MONCTL_PUSH_URL: ${MONCTL_PUSH_URL}
       MONCTL_PUSH_API_KEY: ${MONCTL_PUSH_API_KEY}
-      MONCTL_PUSH_VERIFY_SSL: "false"
+      MONCTL_PUSH_VERIFY_SSL: "{{ tls_verify }}"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9100/health"]

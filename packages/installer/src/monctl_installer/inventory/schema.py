@@ -45,12 +45,28 @@ class TLSConfig(BaseModel):
     mode: Literal["self-signed", "provided"] = "self-signed"
     cert_path: Path | None = None
     san_ips: list[str] = Field(default_factory=list)
+    # Whether collectors verify central's TLS cert. Self-signed (the
+    # bootstrap default) leaves this off so first contact succeeds; once
+    # the operator distributes their own CA bundle they should flip this
+    # to true. (S-INST-003)
+    verify: bool | None = None
 
     @model_validator(mode="after")
     def _require_cert_when_provided(self) -> TLSConfig:
         if self.mode == "provided" and self.cert_path is None:
             raise ValueError("tls.cert_path required when tls.mode=provided")
         return self
+
+    @property
+    def effective_verify(self) -> bool:
+        """Resolve ``verify`` against the cert mode.
+
+        Default: ``False`` for self-signed, ``True`` for provided. Operators
+        can override either way via the explicit ``verify`` field.
+        """
+        if self.verify is not None:
+            return self.verify
+        return self.mode == "provided"
 
 
 class ClusterConfig(BaseModel):
