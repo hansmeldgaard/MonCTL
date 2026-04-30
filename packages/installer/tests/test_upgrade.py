@@ -33,9 +33,10 @@ class FakeRunner:
             return CommandResult(host.name, cmd, 0, json.dumps(state) or "{}", "")
         if "curl" in cmd and "/v1/health" in cmd:
             # Default: healthy. Tests can override via responder.
+            # Mirrors the real /v1/health response from packages/central/src/monctl_central/main.py.
             if self._responder:
                 return self._responder(host, cmd)
-            return CommandResult(host.name, cmd, 0, '{"status":"success"}', "")
+            return CommandResult(host.name, cmd, 0, '{"status":"healthy"}', "")
         if self._responder:
             return self._responder(host, cmd)
         return CommandResult(host.name, cmd, 0, "", "")
