@@ -20,15 +20,10 @@ from monctl_central.scheduler.leader import LeaderElection
 logger = logging.getLogger(__name__)
 
 
-def _log_task_exception(task: asyncio.Task) -> None:
-    """Done-callback that surfaces exceptions from fire-and-forget tasks."""
-    if task.cancelled():
-        return
-    exc = task.exception()
-    if exc is not None:
-        logger.exception(
-            "scheduler_background_task_failed", exc_info=exc, extra={"task": task.get_name()}
-        )
+# Re-exported from the shared helper so existing callers that imported
+# this module's private symbol keep working. New code should import the
+# helper directly from `monctl_central.common.task_callbacks`.
+from monctl_central.common.task_callbacks import log_task_exception as _log_task_exception  # noqa: E402,F401
 
 
 class SchedulerRunner:

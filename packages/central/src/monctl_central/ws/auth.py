@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import os
 import uuid
 
@@ -32,9 +33,16 @@ async def authenticate_ws(
     try:
         factory = get_session_factory()
         async with factory() as db:
-            # Mode 1: Try shared secret first
+            # Mode 1: Try shared secret first.
+            # R-CEN-009 — F-CEN-012 hardened the HTTP path with
+            # hmac.compare_digest; do the same here so the WS auth path
+            # doesn't reintroduce the timing-side-channel.
             shared_secret = os.environ.get("MONCTL_COLLECTOR_API_KEY", "")
-            if shared_secret and token == shared_secret and collector_id_hint:
+            if (
+                shared_secret
+                and hmac.compare_digest(token, shared_secret)
+                and collector_id_hint
+            ):
                 try:
                     cid = uuid.UUID(collector_id_hint)
                     collector = await db.get(Collector, cid)

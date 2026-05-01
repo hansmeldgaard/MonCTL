@@ -501,18 +501,26 @@ async def set_latest_version(
         .values(config_version=Collector.config_version + 1, updated_at=utc_now())
     )
 
-    await db.flush()
-
-    # Collect the collector ids we just bumped so we can push a config_reload
-    # over WS — forces an immediate full /jobs sync instead of waiting for the
-    # collector's next poll cycle (up to ~10 min with default full-sync every
-    # 10 cycles of 60s). broadcast_command routes via Redis if the collector's
-    # WS lives on a different central node.
+    # Collect the bumped collector ids while we're still in the same
+    # transaction; we need them before commit but only emit the WS push
+    # after.
     bumped_ids_rows = await db.execute(
         select(Collector.id).where(bump_filter)
     )
     bumped_ids = [row[0] for row in bumped_ids_rows.all()]
 
+    # R-CEN-001 — commit BEFORE pushing config_reload over WS. The previous
+    # ordering (flush → notify → request returns → get_db commits) sent the
+    # WS push while the transaction was still uncommitted. A commit failure
+    # at the dependency-yield boundary would leave every notified collector
+    # reloading onto state that central just rolled back — a fleet-wide
+    # blast-radius bug.
+    await db.commit()
+
+    # broadcast_command routes via Redis if the collector's WS lives on a
+    # different central node, so the push reaches collectors regardless of
+    # which central serviced this request. Forces an immediate full /jobs
+    # sync instead of waiting up to ~10 min for the collector's next poll.
     from monctl_central.ws.router import manager as ws_manager
     ws_notified = await ws_manager.notify_config_reload(bumped_ids)
 

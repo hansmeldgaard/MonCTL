@@ -114,15 +114,22 @@ class PollEngine:
     # ── Main loop ────────────────────────────────────────────────────────────
 
     async def _run(self) -> None:
-        """Interleave job refresh and deadline dispatch."""
+        """Interleave job refresh and deadline dispatch.
+
+        R-CEN-010 — all scheduling math uses ``time.monotonic()``. The wall
+        clock (``time.time()``) is still used for result timestamps elsewhere
+        in this module, but deadlines must be unaffected by NTP step-back
+        (would re-fire every queued job instantly) or step-forward (would
+        delay every poll by the step amount).
+        """
         last_refresh = 0.0
         while self._running_flag:
-            now = time.time()
+            now = time.monotonic()
 
             # Refresh job list periodically
             if now - last_refresh >= self._refresh_interval:
                 await self._refresh_jobs()
-                last_refresh = time.time()
+                last_refresh = time.monotonic()
 
             # Dispatch overdue jobs
             await self._dispatch_ready()
@@ -131,7 +138,7 @@ class PollEngine:
             next_deadline = self._heap[0].next_deadline if self._heap else now + 1.0
             next_refresh = last_refresh + self._refresh_interval
             sleep_until = min(next_deadline, next_refresh)
-            sleep_time = max(0.0, sleep_until - time.time())
+            sleep_time = max(0.0, sleep_until - time.monotonic())
             if sleep_time > 0:
                 await asyncio.sleep(sleep_time)
 
@@ -198,7 +205,8 @@ class PollEngine:
         }
         self._heap.clear()
 
-        now = time.time()
+        # R-CEN-010 — monotonic clock for deadlines (NTP step-safe).
+        now = time.monotonic()
         for job_def, profile in job_pairs:
             # Skip jobs currently in flight. _run_job_inner will re-add the
             # next-cycle entry on completion (interval > 0) or leave it out
@@ -257,7 +265,9 @@ class PollEngine:
 
     async def _dispatch_ready(self) -> None:
         """Launch tasks for all jobs whose deadline has passed."""
-        now = time.time()
+        # R-CEN-010 — monotonic for deadline comparison; wall-clock for the
+        # PollResult.started_at field comes from time.time() elsewhere.
+        now = time.monotonic()
         while self._heap and self._heap[0].next_deadline <= now:
             sj = heapq.heappop(self._heap)
             if sj.job_id in self._running:
@@ -310,7 +320,13 @@ class PollEngine:
 
     async def _run_job_inner(self, sj: ScheduledJob, sem: asyncio.Semaphore) -> None:
         job = sj.job
+        # ``start`` is the wall-clock timestamp attached to the PollResult so
+        # central can correlate it with collector-side telemetry. ``start_mono``
+        # is the monotonic value used to compute the next scheduling deadline
+        # (R-CEN-010 — wall-clock would re-fire every queued job on NTP
+        # step-back).
         start = time.time()
+        start_mono = time.monotonic()
         result: PollResult | None = None
 
         async with sem:
@@ -459,7 +475,9 @@ class PollEngine:
 
         # Reschedule (skip for one-shot jobs like discovery)
         if job.interval > 0:
-            next_deadline = start + job.interval
+            # R-CEN-010 — schedule against the monotonic timestamp captured
+            # at the start of this run, not the wall-clock value.
+            next_deadline = start_mono + job.interval
             heapq.heappush(
                 self._heap,
                 ScheduledJob(

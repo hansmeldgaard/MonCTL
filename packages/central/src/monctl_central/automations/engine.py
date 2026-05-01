@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
+from monctl_central.common.task_callbacks import log_task_exception
 from monctl_central.storage.models import (
     Action, Automation, AutomationStep, Collector, Credential, Device,
 )
@@ -141,7 +142,7 @@ class AutomationEngine:
                     "incident_rule_id": rule_id,
                     "incident_transition": transition,
                 }
-                asyncio.create_task(
+                _t = asyncio.create_task(
                     self._execute_automation(
                         session_factory=self._session_factory,
                         automation=automation,
@@ -152,6 +153,7 @@ class AutomationEngine:
                     ),
                     name=f"rba_incident_{automation.id}_{device_id}",
                 )
+                _t.add_done_callback(log_task_exception)
 
     def _incident_matches(
         self,
@@ -227,7 +229,7 @@ class AutomationEngine:
                             if elapsed < automation.cooldown_seconds:
                                 continue
 
-                    asyncio.create_task(
+                    _t = asyncio.create_task(
                         self._execute_automation(
                             session_factory=self._session_factory,
                             automation=automation,
@@ -238,6 +240,7 @@ class AutomationEngine:
                         ),
                         name=f"rba_cron_{automation.id}_{device.id}",
                     )
+                    _t.add_done_callback(log_task_exception)
 
     async def _resolve_cron_devices(
         self, session: AsyncSession, automation: Automation
@@ -290,7 +293,7 @@ class AutomationEngine:
             run_ids = []
             for device_id in device_ids:
                 run_id = str(uuid.uuid4())
-                asyncio.create_task(
+                _t = asyncio.create_task(
                     self._execute_automation(
                         session_factory=self._session_factory,
                         automation=automation,
@@ -302,6 +305,7 @@ class AutomationEngine:
                     ),
                     name=f"rba_manual_{automation.id}_{device_id}",
                 )
+                _t.add_done_callback(log_task_exception)
                 run_ids.append(run_id)
             return run_ids
 

@@ -535,8 +535,13 @@ async def lifespan(app: FastAPI):
     # ── TLS cert sync (runs on ALL nodes, not leader-gated) ─────────────
     cert_sync_task = None
     try:
+        from monctl_central.common.task_callbacks import log_task_exception
         from monctl_central.tls.sync import run_cert_sync_loop
         cert_sync_task = asyncio.create_task(run_cert_sync_loop(factory))
+        # R-CEN-008 — without this callback a crash in the cert-sync loop
+        # dies silently; certs stop refreshing and operators never notice
+        # until expiry.
+        cert_sync_task.add_done_callback(log_task_exception)
         logger.info("tls_cert_sync_started")
     except Exception:
         logger.warning("tls_cert_sync_start_failed", exc_info=True)
