@@ -345,7 +345,7 @@ These have each bitten the project at least once. Read them before touching the 
 
 **Alembic migrations and rebases** — When rebasing a long-lived branch onto main, check for duplicate revision IDs and carry any unmerged migrations forward. Deploying from a branch missing migrations the DB already ran will fail at startup with "Can't locate revision". Always `git log --oneline main..HEAD -- '*/alembic/versions/'` before `./deploy.sh`.
 
-**PAT lacks `workflow` scope** — Pushes that touch `.github/workflows/*.yml` are rejected with `refusing to allow a Personal Access Token…`. Before composing a commit, `git diff --stat -- .github/workflows/` and split the change if non-empty. The user commits workflow changes via web UI or a locally-scoped token.
+**PAT scope for workflow files** — As of 2026-04-21 the project PAT has the `workflow` scope, so pushes that touch `.github/workflows/*.yml` work directly. Don't preemptively split workflow edits into a separate commit — try the push first. Only fall back to splitting (or having the user commit via web UI) if the push is actually rejected with `refusing to allow a Personal Access Token…`.
 
 ---
 

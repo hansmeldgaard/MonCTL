@@ -17,6 +17,7 @@ need to invoke them. The advisory-lock there dedups concurrent runs.
 """
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -196,8 +197,14 @@ def _wait_healthy(
                 host,
                 "curl -sfk --max-time 5 http://localhost:8443/v1/health 2>&1 || echo FAIL",
             )
-            if r.ok and "FAIL" not in r.stdout and "success" in r.stdout:
-                return True
+            # /v1/health returns {"status": "healthy", ...} on success.
+            if r.ok and "FAIL" not in r.stdout:
+                try:
+                    payload = json.loads(r.stdout)
+                except json.JSONDecodeError:
+                    payload = {}
+                if payload.get("status") == "healthy":
+                    return True
         except SSHError:
             pass
         sleep_fn(interval_s)

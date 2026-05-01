@@ -595,43 +595,58 @@ class SchedulerRunner:
 
         now = datetime.now(timezone.utc)
 
-        # Hourly rollup — run after :05 of each hour, once per hour
+        # Hourly rollup — run after :05 of each hour, once per hour.
+        # Each rollup target gets its own try/except so a failure in one
+        # (e.g. interface schema drift) doesn't skip the others for the hour.
         if now.minute >= 5 and (
             self._last_hourly_rollup is None
             or (now - self._last_hourly_rollup).total_seconds() >= 3600
         ):
-            try:
-                await self._hourly_rollup()
-                await self._perf_hourly_rollup()
-                await self._avail_hourly_rollup()
-                self._last_hourly_rollup = now
-            except Exception:
-                logger.exception("hourly_rollup_error")
-                self._last_hourly_rollup = now  # avoid retry storm
+            for label, fn in (
+                ("interface_hourly_rollup", self._hourly_rollup),
+                ("perf_hourly_rollup", self._perf_hourly_rollup),
+                ("avail_hourly_rollup", self._avail_hourly_rollup),
+            ):
+                try:
+                    await fn()
+                except Exception:
+                    logger.exception("%s_error", label)
+            # Stamp regardless of per-target failures: avoid retry storm.
+            self._last_hourly_rollup = now
 
             try:
                 await self._config_dedup()
             except Exception:
                 logger.exception("config_dedup_error")
 
-        # Daily rollup + cleanup — run after 00:15 UTC, once per day
+        # Daily rollup + cleanup — run after 00:15 UTC, once per day.
+        # Same per-target isolation as hourly.
         if now.hour == 0 and now.minute >= 15 and (
             self._last_daily_rollup is None
             or (now - self._last_daily_rollup).total_seconds() >= 86400
         ):
+            for label, fn in (
+                ("interface_daily_rollup", self._daily_rollup),
+                ("perf_daily_rollup", self._perf_daily_rollup),
+                ("avail_daily_rollup", self._avail_daily_rollup),
+                ("retention_cleanup", self._retention_cleanup),
+            ):
+                try:
+                    await fn()
+                except Exception:
+                    logger.exception("%s_error", label)
+
+            # Alert history cleanup — reset old resolved instances to ok
             try:
-                await self._daily_rollup()
-                await self._perf_daily_rollup()
-                await self._avail_daily_rollup()
-                await self._retention_cleanup()
-                # Alert history cleanup — reset old resolved instances to ok
                 from monctl_central.alerting.cleanup import cleanup_resolved_instances
                 async with self._session_factory() as session:
                     await cleanup_resolved_instances(session)
                     await session.commit()
-                self._last_daily_rollup = now
             except Exception:
-                logger.exception("daily_rollup_error")
+                logger.exception("alert_history_cleanup_error")
+
+            # Stamp regardless of per-target failures: avoid retry storm.
+            self._last_daily_rollup = now
 
     async def _hourly_rollup(self) -> None:
         """Aggregate raw interface data into interface_hourly."""
