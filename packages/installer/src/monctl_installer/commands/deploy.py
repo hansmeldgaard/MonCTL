@@ -115,17 +115,44 @@ def _apply_project(
 ) -> None:
     """Upload compose + configs, append secrets into .env, docker compose up."""
     project_dir = f"{PROJECT_ROOT}/{project}"
+    # Derive per-host secret overrides (M-INST-012). PEER_TOKEN is computed
+    # from PEER_TOKEN_SEED so cache-node and poll-worker on the *same* host
+    # agree, but a leak from one host doesn't compromise others.
+    host_secrets = _per_host_secret_overrides(host, secret_values)
     for f in files:
         mode = 0o600 if f.filename == ".env" else 0o644
         content = f.content
         if f.filename == ".env":
-            content = _materialise_env(content, secret_values)
+            content = _materialise_env(content, host_secrets)
         runner.put(host, content, f"{project_dir}/{f.filename}", mode=mode)
     r = runner.run(host, f"cd {project_dir} && docker compose up -d --remove-orphans")
     if not r.ok:
         raise SSHError(
             f"docker compose up failed in {project_dir}: rc={r.exit_code} stderr={r.stderr!r}"
         )
+
+
+def _per_host_secret_overrides(host: Host, secret_values: dict[str, str]) -> dict[str, str]:
+    """Return a per-host copy of ``secret_values`` with derived overrides.
+
+    Currently overrides ``PEER_TOKEN`` only — derived from ``PEER_TOKEN_SEED``
+    via HMAC-SHA256(seed, host.name). Falls back to the legacy single-value
+    ``PEER_TOKEN`` from secrets.env if no seed is present (preserves existing
+    customer installs that haven't been re-rendered yet).
+    """
+    import base64
+    import hashlib
+    import hmac
+
+    overrides = dict(secret_values)
+    seed = secret_values.get("PEER_TOKEN_SEED") or secret_values.get("PEER_TOKEN", "")
+    if not seed:
+        return overrides
+    digest = hmac.new(
+        seed.encode("utf-8"), host.name.encode("utf-8"), hashlib.sha256
+    ).digest()
+    overrides["PEER_TOKEN"] = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+    return overrides
 
 
 def _materialise_env(template_rendered: str, secret_values: dict[str, str]) -> str:
