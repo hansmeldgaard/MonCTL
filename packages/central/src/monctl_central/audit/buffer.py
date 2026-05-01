@@ -25,18 +25,49 @@ class AuditBuffer:
         self._lock = threading.Lock()
         self._task: asyncio.Task | None = None
         self._stop = asyncio.Event()
+        # O-CEN-003 — local in-process counters for the new `audit` subsystem
+        # in /v1/system/health. We also bump the Redis daily-rollup counter
+        # via observability.counters so external dashboards can see it, but
+        # the in-process value is what system-health reads (no Redis hop in
+        # the health-check fast path).
+        self._dropped_total: int = 0
+        self._flush_failures: int = 0
 
     def extend(self, rows: list[dict]) -> None:
         """Append rows to the buffer. Safe to call from sync or async code."""
         if not rows:
             return
+        dropped = 0
         with self._lock:
             if len(self._rows) >= _MAX_BUFFER:
                 # Drop oldest to make room — audit should not OOM the process
-                drop = len(self._rows) + len(rows) - _MAX_BUFFER
-                self._rows = self._rows[drop:]
-                logger.warning("audit_buffer_overflow", dropped=drop)
+                dropped = len(self._rows) + len(rows) - _MAX_BUFFER
+                self._rows = self._rows[dropped:]
+                self._dropped_total += dropped
+                logger.warning("audit_buffer_overflow", dropped=dropped)
             self._rows.extend(rows)
+        if dropped:
+            # Schedule the Redis incr from a thread-safe context — extend()
+            # may be called from sync code paths (SQLAlchemy event listener)
+            # so we can't `await` here.
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            if loop is not None:
+                from monctl_central.observability.counters import incr
+
+                loop.create_task(incr("audit.dropped", dropped))
+
+    @property
+    def dropped_total(self) -> int:
+        """Cumulative count of audit rows dropped on overflow since process start."""
+        return self._dropped_total
+
+    @property
+    def flush_failures(self) -> int:
+        """Cumulative count of CH-flush failures since process start."""
+        return self._flush_failures
 
     def _drain(self, max_rows: int) -> list[dict]:
         with self._lock:
@@ -65,6 +96,12 @@ class AuditBuffer:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("audit_flush_failed", error=str(exc), rows=len(batch))
                 # Drop batch — prefer availability over completeness
+                self._flush_failures += 1
+                self._dropped_total += len(batch)
+                from monctl_central.observability.counters import incr
+
+                await incr("audit.flush_failed", 1)
+                await incr("audit.dropped", len(batch))
 
     def start(self) -> None:
         if self._task is None or self._task.done():
