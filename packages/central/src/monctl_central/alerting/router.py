@@ -677,7 +677,23 @@ async def update_alert_instance(
     instance = await db.get(AlertEntity, uuid.UUID(instance_id))
     if not instance:
         raise HTTPException(status_code=404, detail="Not found")
+    prev_enabled = bool(instance.enabled)
     instance.enabled = request.enabled
+
+    # Manual-action audit (S-X-003). `alert_entities` is opt-out
+    # because the engine rewrites the row every cycle, but enable/
+    # disable is an admin-driven silence/un-silence that auditors
+    # need to see.
+    if prev_enabled != bool(request.enabled):
+        from monctl_central.audit.manual import record_manual_action
+        record_manual_action(
+            resource_type="alert_entity_action",
+            resource_id=str(instance.id),
+            action="silence" if not request.enabled else "unsilence",
+            old={"enabled": prev_enabled},
+            new={"enabled": bool(request.enabled)},
+        )
+
     return {"status": "success", "data": _fmt_entity(instance)}
 
 
