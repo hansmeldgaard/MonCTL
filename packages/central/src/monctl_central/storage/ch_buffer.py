@@ -101,13 +101,21 @@ class ClickHouseWriteBuffer:
             )
             async with self._lock:
                 existing = self._buffers[table]
-                total = len(existing) + len(rows)
-                if total <= _MAX_BUFFER_ROWS:
-                    self._buffers[table] = rows + existing
+                # R-CEN-002 — previous behaviour silently fell through to
+                # an empty re-buffer when the merged total exceeded the
+                # cap, dropping every row of the failed batch with a
+                # debug-level warning. Now: keep the newest rows up to
+                # the cap (newer rows are usually more useful) and log
+                # the actual drop count so operators see what we lost.
+                merged = rows + existing
+                if len(merged) <= _MAX_BUFFER_ROWS:
+                    self._buffers[table] = merged
                 else:
+                    keep = merged[-_MAX_BUFFER_ROWS:]
+                    self._buffers[table] = keep
                     logger.warning(
-                        "ch_buffer_overflow table=%s dropped=%d",
-                        table, total - _MAX_BUFFER_ROWS,
+                        "ch_buffer_overflow table=%s dropped=%d kept=%d",
+                        table, len(merged) - len(keep), len(keep),
                     )
 
     def stats(self) -> dict:
