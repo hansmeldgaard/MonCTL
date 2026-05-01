@@ -111,6 +111,20 @@ class Settings(BaseSettings):
     # OIDC issuer claim; should match the public base URL seen by browsers.
     oauth_issuer: str = "https://10.145.210.40"
 
+    # S-CEN-002 — strict per-collector authentication.
+    # When True, /api/v1/* endpoints reject the legacy shared-secret path
+    # whenever the caller can't be matched to a specific Collector record
+    # (no per-collector key, no X-Collector-Id header, no hostname match).
+    # Default False during the rollout — the installer doesn't provision
+    # per-collector keys yet (M-INST-011), so flipping this on
+    # cluster-wide would lock out collector hosts. Operators who have
+    # rolled per-collector keys (#117/#118/#122 in prod) can opt in via
+    # MONCTL_REQUIRE_PER_COLLECTOR_AUTH=true. When False, every
+    # shared-secret call without a resolvable collector identity emits a
+    # `collector_shared_secret_used` warning so operators can monitor the
+    # sunset.
+    require_per_collector_auth: bool = False
+
 
 settings = Settings()
 

@@ -1228,13 +1228,24 @@ async def get_credential(
             )
     else:
         # No caller identity at all — legacy shared-secret without the
-        # collector_id query hint. Preserve current behaviour but log so
-        # ops can see which deployments still need the per-collector key.
+        # collector_id query hint. Strict mode (S-CEN-002,
+        # MONCTL_REQUIRE_PER_COLLECTOR_AUTH=true) rejects; default mode
+        # logs and accepts during the rollout.
+        from monctl_central.config import settings as _settings
         logger.warning(
             "collector_credential_no_identity",
             credential_name=credential_name,
             auth_type=auth.get("auth_type"),
+            strict=_settings.require_per_collector_auth,
         )
+        if _settings.require_per_collector_auth:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=(
+                    "collector identity could not be resolved; per-collector "
+                    "auth is required for credential fetch."
+                ),
+            )
 
     stmt = select(Credential).where(Credential.name == credential_name)
     result = await db.execute(stmt)
@@ -1649,13 +1660,28 @@ async def submit_results(
     )
     if caller_collector is None:
         # No identity at all — can't enforce. Log loudly so ops notice any
-        # collector still running unbranded; accept results to preserve the
-        # pre-fix behaviour until the fleet is fully migrated.
+        # collector still running unbranded. With strict mode on
+        # (S-CEN-002, MONCTL_REQUIRE_PER_COLLECTOR_AUTH=true), reject the
+        # entire batch — operators who have rolled per-collector keys
+        # opt in via that env var. Default mode preserves pre-fix
+        # behaviour during the rollout.
+        from monctl_central.config import settings as _settings
         logger.warning(
             "collector_results_no_identity",
             collector_node=request.collector_node,
             auth_type=auth.get("auth_type"),
+            strict=_settings.require_per_collector_auth,
         )
+        if _settings.require_per_collector_auth:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=(
+                    "collector identity could not be resolved; per-collector "
+                    "auth is required (MONCTL_REQUIRE_PER_COLLECTOR_AUTH=true). "
+                    "Provision a per-collector API key for this host or "
+                    "supply X-Collector-Id."
+                ),
+            )
 
     ch_rows = []
     skipped = 0
