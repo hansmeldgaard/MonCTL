@@ -80,12 +80,25 @@ async def handle_module_update(payload: dict) -> dict:
     return {"acknowledged": True}
 
 
+def _urlopen_blocking(url: str, timeout: int) -> dict:
+    """Synchronous helper run via asyncio.to_thread — see callers below.
+
+    R-CEN-015 — urllib.request.urlopen is a blocking call. Calling it
+    directly from an async coroutine on the cache-node WS reader loop
+    blocks every other WS-routed operation (poll-now, config-reload,
+    debug-run) for up to the timeout. Run it on a thread instead.
+    """
+    req = urllib.request.Request(url, method="GET")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode())
+
+
 async def handle_docker_health(payload: dict) -> dict:
     """Fetch Docker container stats from local sidecar."""
     try:
-        req = urllib.request.Request(f"{_sidecar_url}/stats", method="GET")
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode())
+        data = await asyncio.to_thread(
+            _urlopen_blocking, f"{_sidecar_url}/stats", 5
+        )
         return {"success": True, "data": data}
     except Exception as exc:
         logger.warning("docker_health_failed", error=str(exc))
@@ -103,9 +116,7 @@ async def handle_docker_logs(payload: dict) -> dict:
             quote_via=urllib.parse.quote,
         )
         url = f"{_sidecar_url}/logs?{qs}"
-        req = urllib.request.Request(url, method="GET")
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode())
+        data = await asyncio.to_thread(_urlopen_blocking, url, 10)
         return {"success": True, "data": data}
     except Exception as exc:
         return {"success": False, "error": type(exc).__name__}
