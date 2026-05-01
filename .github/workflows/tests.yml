@@ -1,0 +1,170 @@
+name: Tests
+
+# Closes review-#2 T-X-001: every PR runs pytest + vitest + pack validation.
+# Branch protection (T-X-004) is configured separately via `gh api` after this
+# workflow lands; the required-check names are the job ids below.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Cancel superseded runs on the same PR — dev pushes 5 commits in a row, only
+# the newest needs to pass.
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Backend: pytest across every package + the integration suite. One job so
+  # coverage from each test tree merges into a single artifact.
+  # ---------------------------------------------------------------------------
+  pytest:
+    name: pytest (backend + integration)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install local packages + test deps
+        # Order matters: common/sdk have no local deps; central/collector/
+        # installer depend on them. ``-e`` so coverage source paths resolve
+        # correctly. ``[dev]`` extras pull in pytest, pytest-asyncio, and
+        # (where present) pytest-cov + coverage.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e packages/common
+          pip install -e packages/sdk
+          pip install -e 'packages/central[dev]'
+          pip install -e packages/collector
+          pip install -e packages/installer
+          pip install pytest pytest-asyncio pytest-cov coverage
+
+      - name: Run pytest with coverage (T-X-002)
+        # Coverage scope follows the central pyproject's [tool.coverage.run]
+        # source list. Other packages use the same pytest invocation but
+        # don't contribute to the central coverage XML — separate trees.
+        run: |
+          set -e
+          # Central — covered, exported to XML
+          pytest packages/central/tests \
+                 --cov=packages/central/src/monctl_central \
+                 --cov-report=xml:coverage-central.xml \
+                 --cov-report=term \
+                 -v
+          # Installer — runs alongside but no coverage gate yet
+          pytest packages/installer/tests -v
+          # Repo-root tests/ tree (DSL adversarial corpus, integration
+          # tests with the e2e-smoke fixtures, etc.). Doesn't depend on
+          # the central coverage run because conftest is rooted there.
+          pytest tests -v
+
+      - name: Upload coverage XML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-central
+          path: coverage-central.xml
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # Pack validation — fast, no Python deps beyond the stdlib + pyyaml.
+  # ---------------------------------------------------------------------------
+  validate-packs:
+    name: validate built-in packs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run scripts/validate_packs.py
+        run: python scripts/validate_packs.py
+
+  # ---------------------------------------------------------------------------
+  # Frontend — Vitest (T-WEB-030 harness from review #1). Uses npm install
+  # rather than ``ci`` because the project ships without a package-lock.json
+  # (per CLAUDE.md "Building & Deploying" notes).
+  # ---------------------------------------------------------------------------
+  vitest:
+    name: vitest (frontend)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/central/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: packages/central/frontend/package.json
+      - name: Install deps
+        run: npm install --no-audit --no-fund
+      - name: Run vitest
+        run: npm test
+
+  # ---------------------------------------------------------------------------
+  # E2E smoke — boots the F-X-007 phase-1 harness (postgres + redis +
+  # clickhouse + central on isolated ports) and runs the integration tests
+  # against the real stack. T-X-003.
+  #
+  # Build cost is meaningful (central image ≈ 4-5 min cold). Use buildx + GHA
+  # cache so warm builds finish in ~30s. Path-filter so PRs that don't touch
+  # central / packs / migrations skip this job entirely — the cheap pytest +
+  # vitest + pack-validate jobs above always run, this one is the load-bearing
+  # full-stack check.
+  # ---------------------------------------------------------------------------
+  e2e-smoke:
+    name: e2e smoke (docker-compose stack)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pytest deps
+        # Same install path as the pytest job — the integration tests
+        # import from monctl_central / monctl_common.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e packages/common
+          pip install -e packages/sdk
+          pip install -e 'packages/central[dev]'
+          pip install pytest pytest-asyncio httpx
+
+      - name: Build central image (cached)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.central
+          tags: monctl-central:latest
+          load: true
+          cache-from: type=gha,scope=central
+          cache-to: type=gha,scope=central,mode=max
+
+      - name: Run e2e harness
+        # SKIP_BUILD=1 — the buildx step above already produced the
+        # tagged image into the local docker daemon.
+        env:
+          SKIP_BUILD: "1"
+        run: ./scripts/run_e2e.sh run
+
+      - name: Dump compose logs on failure
+        if: failure()
+        run: |
+          docker compose -f docker/docker-compose.e2e.yml -p monctl-e2e logs --tail=200 || true
