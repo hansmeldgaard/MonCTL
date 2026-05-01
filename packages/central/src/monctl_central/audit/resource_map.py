@@ -60,6 +60,18 @@ TABLE_TO_RESOURCE: dict[str, str] = {
     "system_settings": "system_setting",
     "data_retention_overrides": "data_retention_override",
     "tls_certificates": "tls_certificate",
+    # API key issuance / revocation. Previously opted out as
+    # "issuance surfaces via collector / user routes" — but those
+    # mutate the parent only, not the api_keys row, so the
+    # before_flush listener fired nothing. Issuing a long-lived
+    # management key for a user left no audit trail. (S-CEN-018)
+    "api_keys": "api_key",
+    # Per-assignment, per-connector-type credential override —
+    # the highest-impact authorisation change in the system
+    # (lateral access to devices). Updating the override row
+    # alone leaves the parent AppAssignment untouched, so the
+    # parent-table audit captures nothing. (S-CEN-019)
+    "assignment_credential_overrides": "assignment_credential_override",
     # Upgrade jobs (central-initiated — remote execution, worth auditing)
     "upgrade_packages": "upgrade_package",
     "upgrade_jobs": "upgrade_job",
