@@ -225,19 +225,41 @@ async def start_server(
 
     The caller is responsible for calling server.wait_for_termination().
     """
+    import os
+
     interceptors: list = []
     token = get_peer_token()
     if token:
         interceptors.append(PeerAuthServerInterceptor(token))
         logger.info("peer_auth_enabled")
-    else:
-        # Grandfathered path — deployments that haven't provisioned the token
-        # yet stay wide-open but surface a boot warning that audit can pick
-        # up. Plan is to drop this branch once the fleet has rolled.
+    elif os.environ.get("MONCTL_ALLOW_UNAUTHENTICATED_PEER", "").lower() in {
+        "1", "true", "yes"
+    }:
+        # Explicit opt-out for legacy deployments that haven't yet provisioned
+        # MONCTL_PEER_TOKEN. The flag is documented as DEPRECATED — once every
+        # fleet host has rolled to a token (memory: project_peer_token_per_host
+        # confirms prod is fully provisioned), this branch goes away. Until
+        # then, surface the unauthenticated-state loudly so it can't be
+        # missed.
         logger.warning(
             "peer_auth_disabled",
-            reason="MONCTL_PEER_TOKEN unset; gRPC channel is unauthenticated",
+            reason="MONCTL_PEER_TOKEN unset and MONCTL_ALLOW_UNAUTHENTICATED_PEER=1",
             finding="F-COL-026",
+            deprecated="will be removed once installer provisions per-host tokens",
+        )
+    else:
+        # S-COL-001 — fail closed by default. The cache-node ↔ poll-worker
+        # gRPC channel is the path that exposes credentials; running it
+        # unauthenticated is a free credential-exfil vector for anything in
+        # the same Docker bridge network. Refuse to start; the operator
+        # needs to either set MONCTL_PEER_TOKEN (provisioned by the
+        # installer) or explicitly opt back into the legacy path via
+        # MONCTL_ALLOW_UNAUTHENTICATED_PEER=1.
+        raise RuntimeError(
+            "MONCTL_PEER_TOKEN is unset. Refusing to start the gRPC peer "
+            "server unauthenticated (S-COL-001). Set the env var (the "
+            "installer's secrets.env populates it) or, for legacy "
+            "deployments only, set MONCTL_ALLOW_UNAUTHENTICATED_PEER=1."
         )
 
     server = grpc.aio.server(interceptors=interceptors) if interceptors else grpc.aio.server()
