@@ -184,12 +184,27 @@ class ConnectionManager:
 
     def __init__(self):
         self._connections: dict[uuid.UUID, CollectorConnection] = {}
+        # R-CEN-006 — serialise the read-replace-write of self._connections
+        # so two concurrent reconnects from the same collector_id don't
+        # both observe `old`, both close it, both write a new entry, and
+        # leak the second-loser's underlying socket.
+        self._connect_lock = asyncio.Lock()
 
     async def connect(self, collector_id: uuid.UUID, name: str, websocket: WebSocket):
         """Register a new collector connection. Replaces any existing."""
-        if collector_id in self._connections:
-            old = self._connections[collector_id]
-            await old.stop_keepalive()
+        async with self._connect_lock:
+            old = self._connections.get(collector_id)
+            # Pre-register the new connection so a second concurrent
+            # connect() picks it up as the prior, not the same `old`.
+            conn = CollectorConnection(collector_id, name, websocket)
+            self._connections[collector_id] = conn
+        # Tear down the displaced connection outside the lock — close()
+        # awaits and we don't want to block other collectors.
+        if old is not None:
+            try:
+                await old.stop_keepalive()
+            except Exception:
+                pass
             try:
                 await old.websocket.close(code=4000, reason="Replaced by new connection")
             except Exception as exc:
@@ -199,8 +214,6 @@ class ConnectionManager:
                     error=str(exc),
                 )
 
-        conn = CollectorConnection(collector_id, name, websocket)
-        self._connections[collector_id] = conn
         await conn.start_keepalive()
         await _redis_set_connection(collector_id, name, conn.connected_at, conn.last_seen_at)
         logger.info("ws_collector_connected", collector_id=str(collector_id), name=name)
