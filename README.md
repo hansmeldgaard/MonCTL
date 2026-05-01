@@ -2,7 +2,7 @@
 
 **A distributed monitoring platform — one idea, built end-to-end with [Claude Code](https://claude.com/claude-code).**
 
-MonCTL watches your infrastructure: network devices, servers, containers, and anything else that speaks SNMP, SSH, ICMP, or HTTP. A central HA cluster owns configuration and storage; distributed collectors do the work and ship results back. You get a React UI, a REST API, alerting, events, dashboards, RBAC, multi-tenancy, and a pack system for sharing monitoring logic.
+MonCTL watches your infrastructure: network devices, servers, containers, and anything else that speaks SNMP, SSH, ICMP, HTTP or what ever you make apps and connectors for. A central HA cluster owns configuration and storage; distributed collectors do the work and ship results back. You get a React UI, a REST API, alerting, events, dashboards, RBAC, multi-tenancy, and a pack system for sharing monitoring logic.
 
 It is also an experiment in how far a single engineer can get with a clear product idea and an AI pair-programmer. Almost every line of code in this repository — backend, frontend, deployment tooling, docs — was written collaboratively with Claude Code. The commit history reads like a pairing session.
 
