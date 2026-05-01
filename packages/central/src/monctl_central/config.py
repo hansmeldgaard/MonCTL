@@ -109,7 +109,10 @@ class Settings(BaseSettings):
     # Any deviation rejects the authorize request — do not wildcard.
     oauth_redirect_uris: str = ""
     # OIDC issuer claim; should match the public base URL seen by browsers.
-    oauth_issuer: str = "https://10.145.210.40"
+    # Must be set by the operator (installer's central.env.j2 wires this).
+    # Default empty — refusing to ship a hardcoded dev IP that customer
+    # installs would silently inherit (S-INST-002).
+    oauth_issuer: str = ""
 
 
 settings = Settings()

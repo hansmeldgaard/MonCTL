@@ -173,9 +173,10 @@ def _mount_at_bi(app):
     import urllib.request as _urlreq
     import json as _json
 
-    _MONCTL_INTERNAL = os.environ.get(
-        "MONCTL_INTERNAL_BASE", "http://10.145.210.41:8443"
-    )
+    # Required env (set by installer's superset.env.j2). No fallback —
+    # a missing value should fail loudly, not silently target MonCTL's
+    # dev cluster (S-INST-002).
+    _MONCTL_INTERNAL = os.environ["MONCTL_INTERNAL_BASE"]
     _REFRESH_INTERVAL_SECONDS = 60
 
     @app.before_request
@@ -285,7 +286,8 @@ PROXY_FIX_CONFIG = {
     "x_prefix": 1,
 }
 WTF_CSRF_TRUSTED_ORIGINS = [
-    os.environ.get("SUPERSET_PUBLIC_ORIGIN", "https://10.145.210.40"),
+    # Required env (set by installer's superset.env.j2). See S-INST-002.
+    os.environ["SUPERSET_PUBLIC_ORIGIN"],
 ]
 
 # ---------------------------------------------------------------------------
@@ -295,14 +297,13 @@ WTF_CSRF_TRUSTED_ORIGINS = [
 _MONCTL_OAUTH_CLIENT_ID = os.environ.get("MONCTL_OAUTH_CLIENT_ID", "")
 _MONCTL_OAUTH_CLIENT_SECRET = os.environ.get("MONCTL_OAUTH_CLIENT_SECRET", "")
 # Browser-facing authorize URL — goes through HAProxy on the VIP.
-_MONCTL_PUBLIC_BASE = os.environ.get("MONCTL_PUBLIC_BASE", "https://10.145.210.40")
+# Required env (set by installer's superset.env.j2). See S-INST-002.
+_MONCTL_PUBLIC_BASE = os.environ["MONCTL_PUBLIC_BASE"]
 # Server-side token/userinfo URLs — direct HTTP to a single central node so
 # we don't have to trust HAProxy's self-signed cert from inside this container.
 # Single node is a SPOF for SSO; acceptable for dev. Upgrade path: front an
 # internal-only HAProxy listener or install the central CA here.
-_MONCTL_INTERNAL_BASE = os.environ.get(
-    "MONCTL_INTERNAL_BASE", "http://10.145.210.41:8443"
-)
+_MONCTL_INTERNAL_BASE = os.environ["MONCTL_INTERNAL_BASE"]
 
 if _MONCTL_OAUTH_CLIENT_ID and _MONCTL_OAUTH_CLIENT_SECRET:
     AUTH_TYPE = AUTH_OAUTH
@@ -754,7 +755,8 @@ TALISMAN_CONFIG = {
         "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
         "frame-ancestors": [
             "'self'",
-            os.environ.get("SUPERSET_PUBLIC_ORIGIN", "https://10.145.210.40"),
+            # Required env (set by installer's superset.env.j2). See S-INST-002.
+            os.environ["SUPERSET_PUBLIC_ORIGIN"],
         ],
     },
     "force_https": False,

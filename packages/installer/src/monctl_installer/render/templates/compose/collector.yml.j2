@@ -11,7 +11,7 @@ services:
       MONCTL_NODE_ID: {{ host.name }}
       MONCTL_CENTRAL_URL: {{ central_api_url }}
       MONCTL_CENTRAL_API_KEY: ${MONCTL_COLLECTOR_API_KEY}
-      MONCTL_VERIFY_SSL: "false"
+      MONCTL_VERIFY_SSL: "{{ tls_verify }}"
       MONCTL_GRPC_ADDRESS: 0.0.0.0:50051
       MONCTL_DB_PATH: /data/cache.db
       MONCTL_COLLECTOR_API_KEY: ${MONCTL_COLLECTOR_API_KEY}
@@ -43,7 +43,7 @@ services:
       MONCTL_WORKER_ID: {{ host.name }}-worker-1
       MONCTL_CENTRAL_URL: {{ central_api_url }}
       MONCTL_CENTRAL_API_KEY: ${MONCTL_COLLECTOR_API_KEY}
-      MONCTL_VERIFY_SSL: "false"
+      MONCTL_VERIFY_SSL: "{{ tls_verify }}"
       MONCTL_PEER_TOKEN: ${PEER_TOKEN}
       MONCTL_APPS_DIR: /data/apps
       MONCTL_VENVS_DIR: /data/venvs
@@ -65,7 +65,7 @@ services:
       MONCTL_NODE_ID: {{ host.name }}
       MONCTL_CENTRAL_URL: {{ central_api_url }}
       MONCTL_CENTRAL_API_KEY: ${MONCTL_COLLECTOR_API_KEY}
-      MONCTL_VERIFY_SSL: "false"
+      MONCTL_VERIFY_SSL: "{{ tls_verify }}"
       MONCTL_DB_PATH: /data/cache.db
     volumes:
       - cache_data:/data

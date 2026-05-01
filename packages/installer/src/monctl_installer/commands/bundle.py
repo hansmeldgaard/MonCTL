@@ -26,6 +26,8 @@ now so the air-gapped story exists.
 """
 from __future__ import annotations
 
+import hashlib
+import os
 import shutil
 import subprocess
 import tarfile
@@ -36,6 +38,10 @@ from typing import Literal
 REPO_ROOT_HINT = "hansmeldgaard"  # GHCR namespace used in release.yml
 
 COMPONENTS: tuple[str, ...] = ("central", "collector", "docker-stats")
+
+# Files inside the bundle that the manifest covers (everything except the
+# manifest itself). MANIFEST.sha256 lists `<sha256>  <relative-path>` per line.
+MANIFEST_NAME = "MANIFEST.sha256"
 
 
 @dataclass(frozen=True)
@@ -75,7 +81,13 @@ def create_bundle(
     staging = out_path.parent / f".{out_path.stem}.staging"
     if staging.exists():
         shutil.rmtree(staging)
-    (staging / "images").mkdir(parents=True)
+    # Lock down staging perms so a shared work dir (e.g. /tmp) can't expose
+    # half-built images while the bundle is assembled (S-INST-013).
+    prev_umask = os.umask(0o077)
+    try:
+        (staging / "images").mkdir(parents=True)
+    finally:
+        os.umask(prev_umask)
 
     # Pull + save every image.
     images: list[str] = []
@@ -107,6 +119,11 @@ def create_bundle(
                 staging / "inventory-examples" / f"inventory.example.{example}.yaml",
             )
 
+    # Generate manifest of every staged file BEFORE packing so loaders can
+    # detect tampering / corruption-in-transit (M-INST-014).
+    manifest_path = staging / MANIFEST_NAME
+    manifest_path.write_text(_compute_manifest(staging))
+
     # Pack it up.
     with tarfile.open(out_path, "w:gz") as tf:
         tf.add(staging, arcname=out_path.stem)
@@ -117,6 +134,25 @@ def create_bundle(
         size_bytes=out_path.stat().st_size,
         components=COMPONENTS,
     )
+
+
+def _compute_manifest(root: Path) -> str:
+    """Return ``MANIFEST.sha256`` text covering every file under ``root``.
+
+    Excludes the manifest itself so verification can recompute against the
+    same set. Sorted lexicographically for deterministic output.
+    """
+    lines: list[str] = []
+    for fpath in sorted(p for p in root.rglob("*") if p.is_file()):
+        rel = fpath.relative_to(root).as_posix()
+        if rel == MANIFEST_NAME:
+            continue
+        h = hashlib.sha256()
+        with fpath.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(64 * 1024), b""):
+                h.update(chunk)
+        lines.append(f"{h.hexdigest()}  {rel}")
+    return "\n".join(lines) + "\n"
 
 
 def load_bundle(path: Path, *, docker: str = "docker") -> list[str]:
@@ -133,10 +169,30 @@ def load_bundle(path: Path, *, docker: str = "docker") -> list[str]:
         shutil.rmtree(work)
     work.mkdir(parents=True)
     try:
+        # ``filter='data'`` blocks tar-slip / absolute-path / device-file
+        # entries (PEP 706, default in Python 3.12+). Pre-3.12 systems get
+        # the same protection because the named arg is supported back to
+        # 3.11.4. On older 3.11 the call raises TypeError; we catch and
+        # fall back to a manual safe-extract loop. (S-INST-001 / M-INST-015)
         with tarfile.open(path, "r:gz") as tf:
-            tf.extractall(work)
+            try:
+                tf.extractall(work, filter="data")
+            except TypeError:
+                _safe_extractall(tf, work)
+
+        # Verify manifest BEFORE handing tar contents to docker (M-INST-014).
+        # Find the bundle's top-level directory inside ``work``; bundles use
+        # ``out_path.stem`` as the arcname so there's exactly one child.
+        roots = [p for p in work.iterdir() if p.is_dir()]
+        if len(roots) != 1:
+            raise BundleError(
+                f"bundle layout invalid: expected 1 top-level dir, got {len(roots)}"
+            )
+        bundle_root = roots[0]
+        _verify_manifest(bundle_root)
+
         loaded: list[str] = []
-        for img_tar in sorted((work).rglob("images/*.tar")):
+        for img_tar in sorted(bundle_root.rglob("images/*.tar")):
             out = _run(docker, "load", "-i", str(img_tar))
             # docker load prints "Loaded image: <ref>" per image
             for line in out.splitlines():
@@ -145,6 +201,78 @@ def load_bundle(path: Path, *, docker: str = "docker") -> list[str]:
         return loaded
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+def _safe_extractall(tf: tarfile.TarFile, dest: Path) -> None:
+    """Manual tar-slip-safe extraction for Python builds without ``filter='data'``.
+
+    Rejects absolute paths, ``..`` segments, symlinks pointing outside dest,
+    and device / FIFO members.
+    """
+    dest = dest.resolve()
+    for member in tf.getmembers():
+        if member.isdev() or member.isfifo():
+            raise BundleError(f"bundle contains unsafe member type: {member.name!r}")
+        target = (dest / member.name).resolve()
+        if not str(target).startswith(str(dest) + os.sep) and target != dest:
+            raise BundleError(f"bundle contains path-traversal entry: {member.name!r}")
+        if member.issym() or member.islnk():
+            link_target = (target.parent / member.linkname).resolve()
+            if not str(link_target).startswith(str(dest) + os.sep):
+                raise BundleError(
+                    f"bundle contains link escaping dest: {member.name!r} -> {member.linkname!r}"
+                )
+        tf.extract(member, dest)
+
+
+def _verify_manifest(root: Path) -> None:
+    """Recompute SHA-256s for every file under ``root`` and match the manifest.
+
+    Raises ``BundleError`` on any mismatch, missing file, or extra file.
+    """
+    manifest_path = root / MANIFEST_NAME
+    if not manifest_path.exists():
+        raise BundleError(
+            f"bundle integrity check failed: {MANIFEST_NAME} missing — "
+            "bundle is from a pre-manifest installer or has been tampered with"
+        )
+
+    expected: dict[str, str] = {}
+    for line in manifest_path.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split("  ", 1)
+        if len(parts) != 2:
+            raise BundleError(f"malformed manifest line: {line!r}")
+        sha, rel = parts
+        expected[rel] = sha
+
+    seen: set[str] = set()
+    for fpath in root.rglob("*"):
+        if not fpath.is_file():
+            continue
+        rel = fpath.relative_to(root).as_posix()
+        if rel == MANIFEST_NAME:
+            continue
+        seen.add(rel)
+        if rel not in expected:
+            raise BundleError(f"bundle has unexpected file not in manifest: {rel}")
+        h = hashlib.sha256()
+        with fpath.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(64 * 1024), b""):
+                h.update(chunk)
+        if h.hexdigest() != expected[rel]:
+            raise BundleError(
+                f"bundle integrity check failed: {rel} sha256 mismatch "
+                f"(expected {expected[rel][:12]}…, got {h.hexdigest()[:12]}…)"
+            )
+
+    missing = set(expected) - seen
+    if missing:
+        raise BundleError(
+            f"bundle missing files listed in manifest: {sorted(missing)}"
+        )
 
 
 def _manifest_text(version: str, images: list[str]) -> str:

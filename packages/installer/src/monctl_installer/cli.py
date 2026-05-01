@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -10,6 +11,17 @@ from monctl_installer.version import __version__
 
 console = Console()
 err_console = Console(stderr=True)
+
+
+def _activate_accept_new_hostkeys(flag: bool) -> None:
+    """Toggle ``MONCTL_ACCEPT_NEW_HOSTKEYS`` for the rest of this CLI run.
+
+    SSHRunner reads this env var as a fallback when its own constructor arg
+    is not explicit. Setting it at the CLI entry point propagates to every
+    SSH-using subcommand without having to thread the flag through each one.
+    """
+    if flag:
+        os.environ["MONCTL_ACCEPT_NEW_HOSTKEYS"] = "1"
 
 
 @click.group()
@@ -79,13 +91,25 @@ def render(inventory: Path, out: Path) -> None:
     help="Non-interactive: seed from an existing inventory YAML",
 )
 @click.option(
-    "--force", is_flag=True, help="Overwrite existing inventory.yaml / secrets.env"
+    "--force",
+    is_flag=True,
+    help="Overwrite an existing inventory.yaml. Does NOT rotate an existing "
+    "secrets.env — use --regenerate-secrets for that.",
+)
+@click.option(
+    "--regenerate-secrets",
+    is_flag=True,
+    help="DESTRUCTIVE: rotate every value in secrets.env. Invalidates all "
+    "session tokens, all encrypted credentials at rest, every collector's "
+    "API key, and the OAuth client_secret. Only use when you intentionally "
+    "want a full key rotation.",
 )
 def init(
     inventory: Path,
     secrets_path: Path,
     seed_path: Path | None,
     force: bool,
+    regenerate_secrets: bool,
 ) -> None:
     """Wizard: collect cluster layout, generate secrets, write inventory + secrets.env."""
     from monctl_installer.commands.init import (
@@ -101,12 +125,14 @@ def init(
                 inventory_path=inventory,
                 secrets_path=secrets_path,
                 overwrite=force,
+                regenerate_secrets=regenerate_secrets,
             )
         else:
             result = run_interactive(
                 inventory_path=inventory,
                 secrets_path=secrets_path,
                 overwrite=force,
+                regenerate_secrets=regenerate_secrets,
             )
     except InitError as exc:
         err_console.print(f"[red]init failed:[/red] {exc}")
@@ -114,15 +140,38 @@ def init(
 
     console.print()
     console.print(f"[green]wrote[/green] inventory → {result.inventory_path}")
-    console.print(f"[green]wrote[/green] secrets   → {result.secrets_path} (mode 0600)")
-    console.print()
-    console.print("[bold red]── ADMIN CREDENTIALS — SAVE THIS NOW ──[/bold red]")
-    console.print(f"URL:      [cyan]{result.login_url}[/cyan]")
-    console.print("Username: [cyan]admin[/cyan]")
-    console.print(f"Password: [yellow]{result.admin_password}[/yellow]")
-    console.print("[dim]This password is also in secrets.env but will never be printed again.[/dim]")
+    if regenerate_secrets or not result.secrets_path.exists() or _is_freshly_written(
+        result.secrets_path
+    ):
+        # Either a fresh install or operator explicitly rotated.
+        console.print(f"[green]wrote[/green] secrets   → {result.secrets_path} (mode 0600)")
+        console.print()
+        console.print("[bold red]── ADMIN CREDENTIALS — SAVE THIS NOW ──[/bold red]")
+        console.print(f"URL:      [cyan]{result.login_url}[/cyan]")
+        console.print("Username: [cyan]admin[/cyan]")
+        console.print(f"Password: [yellow]{result.admin_password}[/yellow]")
+        console.print("[dim]This password is also in secrets.env but will never be printed again.[/dim]")
+    else:
+        # Existing secrets preserved — no destructive rotation.
+        console.print(
+            f"[dim]preserved[/dim] secrets → {result.secrets_path} "
+            "([yellow]re-run with --regenerate-secrets to rotate[/yellow])"
+        )
     console.print()
     console.print("Next: [cyan]monctl_ctl validate[/cyan] to pre-flight the target hosts")
+
+
+def _is_freshly_written(path: Path, *, threshold_seconds: int = 5) -> bool:
+    """Heuristic: was ``path`` modified within the last ``threshold_seconds``?
+
+    Used to differentiate "we just wrote this in _finalize" from "we read an
+    existing file unchanged." Avoids threading a flag back through InitResult.
+    """
+    try:
+        import time
+        return (time.time() - path.stat().st_mtime) < threshold_seconds
+    except OSError:
+        return False
 
 
 @main.command()
@@ -134,11 +183,19 @@ def init(
     show_default=True,
     help="Path to inventory.yaml",
 )
-def validate(inventory: Path) -> None:
+@click.option(
+    "--accept-new-hostkeys",
+    is_flag=True,
+    help="Trust unknown SSH host keys on first contact and write them to "
+    "~/.ssh/known_hosts. After that, strict-mode is restored. Use this "
+    "ONCE during initial cluster onboarding.",
+)
+def validate(inventory: Path, accept_new_hostkeys: bool) -> None:
     """SSH-reachability + Docker + ports + RAM + disk + time-sync preflight."""
     from monctl_installer.commands.validate import run as run_validate
     from monctl_installer.inventory.loader import InventoryValidationError
 
+    _activate_accept_new_hostkeys(accept_new_hostkeys)
     try:
         summary = run_validate(inventory, console)
     except InventoryValidationError as exc:
@@ -162,12 +219,18 @@ def validate(inventory: Path) -> None:
     is_flag=True,
     help="Render + diff against remote state but don't upload or restart containers",
 )
-def deploy(inventory: Path, dry_run: bool) -> None:
+@click.option(
+    "--accept-new-hostkeys",
+    is_flag=True,
+    help="Trust unknown SSH host keys on first contact (initial onboarding only).",
+)
+def deploy(inventory: Path, dry_run: bool, accept_new_hostkeys: bool) -> None:
     """SSH-distribute compose bundles and `docker compose up -d` on every host."""
     from monctl_installer.commands.deploy import deploy as run_deploy
     from monctl_installer.inventory.loader import InventoryValidationError
     from monctl_installer.secrets.store import SecretsFileError
 
+    _activate_accept_new_hostkeys(accept_new_hostkeys)
     try:
         outcomes = run_deploy(inventory, dry_run=dry_run)
     except (InventoryValidationError, SecretsFileError) as exc:
@@ -201,8 +264,14 @@ def deploy(inventory: Path, dry_run: bool) -> None:
     default=Path("./inventory.yaml"),
     show_default=True,
 )
-def status(inventory: Path) -> None:
+@click.option(
+    "--accept-new-hostkeys",
+    is_flag=True,
+    help="Trust unknown SSH host keys on first contact (initial onboarding only).",
+)
+def status(inventory: Path, accept_new_hostkeys: bool) -> None:
     """Probe each host and print cluster health summary."""
+    _activate_accept_new_hostkeys(accept_new_hostkeys)
     from monctl_installer.commands.status import print_table, run_status
     from monctl_installer.inventory.loader import (
         InventoryValidationError,
@@ -237,12 +306,20 @@ def status(inventory: Path) -> None:
     default=None,
     help="Name of the central host to upgrade first (default: first central)",
 )
-def upgrade(version: str, inventory: Path, canary: str | None) -> None:
+@click.option(
+    "--accept-new-hostkeys",
+    is_flag=True,
+    help="Trust unknown SSH host keys on first contact (initial onboarding only).",
+)
+def upgrade(
+    version: str, inventory: Path, canary: str | None, accept_new_hostkeys: bool
+) -> None:
     """Rolling upgrade to <version>: canary → remaining centrals → collectors."""
     from monctl_installer.commands.upgrade import UpgradeAborted, upgrade as run_upgrade
     from monctl_installer.inventory.loader import InventoryValidationError
     from monctl_installer.secrets.store import SecretsFileError
 
+    _activate_accept_new_hostkeys(accept_new_hostkeys)
     try:
         steps = run_upgrade(inventory, version, canary=canary)
     except (InventoryValidationError, SecretsFileError, ValueError) as exc:
