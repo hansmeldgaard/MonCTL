@@ -20,6 +20,18 @@ from monctl_installer.secrets.generator import SecretBundle, bundle_fieldnames
 
 PLACEHOLDER_VALUES = {"", "CHANGEME", "TODO", "REPLACE_ME"}
 
+# Backward-compat aliases for env keys that have been renamed in newer
+# installer versions. validate_secrets_file accepts either the canonical
+# new name or any of the legacy names listed here, so an existing
+# secrets.env survives the upgrade without forcing the operator to
+# rotate. Map: canonical → tuple of accepted legacy names.
+_LEGACY_ENV_KEY_ALIASES: dict[str, tuple[str, ...]] = {
+    # M-INST-012 — `peer_token` was promoted to a per-host derived value
+    # in v0.2; the legacy single-value `PEER_TOKEN` still satisfies the
+    # contract during the transition.
+    "PEER_TOKEN_SEED": ("PEER_TOKEN",),
+}
+
 
 class SecretsFileError(Exception):
     """Raised when secrets.env is missing, malformed, or insecurely permissioned."""
@@ -67,6 +79,13 @@ def validate_secrets_file(path: Path) -> None:
     for key in bundle_fieldnames():
         env_key = _field_to_env_key(key)
         value = data.get(env_key)
+        if value is None:
+            # Try legacy aliases before failing — preserves existing
+            # customer secrets.env files across rename refactors.
+            for legacy in _LEGACY_ENV_KEY_ALIASES.get(env_key, ()):
+                value = data.get(legacy)
+                if value is not None:
+                    break
         if value is None:
             raise SecretsFileError(f"{path}: missing required key {env_key}")
         if value in PLACEHOLDER_VALUES:

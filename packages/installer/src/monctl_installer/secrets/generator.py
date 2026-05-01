@@ -27,7 +27,13 @@ class SecretBundle:
     pg_password: str
     pg_repl_password: str
     clickhouse_password: str
-    peer_token: str  # shared gRPC secret between cache-node and poll-worker
+    # Cluster-wide seed used to derive a per-host PEER_TOKEN at render time
+    # via HMAC-SHA256(seed, host.name). Deterministic so re-rendering the
+    # same inventory produces stable per-host tokens; fleet-wide blast radius
+    # is contained to one host because the actual gRPC token differs per
+    # host (M-INST-012). Legacy installs have a single shared `peer_token`
+    # field — write_secrets carries that forward as a fallback.
+    peer_token_seed: str
     monctl_admin_password: str  # pronounceable; printed once
     # Superset (only used when the inventory has a host with role=superset, but
     # always generated so flipping the role on later doesn't require a re-init).
@@ -52,7 +58,13 @@ class SecretBundle:
             f"PG_PASSWORD={self.pg_password}",
             f"PG_REPL_PASSWORD={self.pg_repl_password}",
             f"CLICKHOUSE_PASSWORD={self.clickhouse_password}",
-            f"PEER_TOKEN={self.peer_token}",
+            # PEER_TOKEN_SEED is the cluster-wide seed; the per-host value
+            # is derived by the renderer (M-INST-012). We also emit the
+            # legacy PEER_TOKEN line set to the seed itself so any
+            # standalone collector test that hasn't gone through the
+            # renderer still works during the transition.
+            f"PEER_TOKEN_SEED={self.peer_token_seed}",
+            f"PEER_TOKEN={self.peer_token_seed}",
             f"MONCTL_ADMIN_PASSWORD={self.monctl_admin_password}",
             f"SUPERSET_SECRET_KEY={self.superset_secret_key}",
             f"SUPERSET_DB_PW={self.superset_db_pw}",
@@ -60,6 +72,26 @@ class SecretBundle:
             f"MONCTL_OAUTH_CLIENT_ID={self.monctl_oauth_client_id}",
             f"MONCTL_OAUTH_CLIENT_SECRET={self.monctl_oauth_client_secret}",
         ]
+
+    def host_peer_token(self, host_name: str) -> str:
+        """HMAC-SHA256(peer_token_seed, host_name), urlsafe-base64 truncated to 43 chars.
+
+        Deterministic across re-renders, unique per host. Used by the
+        renderer to populate ``PEER_TOKEN`` in each worker's compose env
+        (M-INST-012).
+        """
+        import base64
+        import hashlib
+        import hmac
+
+        digest = hmac.new(
+            self.peer_token_seed.encode("utf-8"),
+            host_name.encode("utf-8"),
+            hashlib.sha256,
+        ).digest()
+        # urlsafe-b64 of 32 bytes is 44 chars with one trailing '='; strip
+        # it to match the visual look of token_urlsafe(32).
+        return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
 
 def generate_secrets() -> SecretBundle:
@@ -70,7 +102,7 @@ def generate_secrets() -> SecretBundle:
         pg_password=secrets.token_urlsafe(32),
         pg_repl_password=secrets.token_urlsafe(32),
         clickhouse_password=secrets.token_urlsafe(32),
-        peer_token=secrets.token_urlsafe(32),
+        peer_token_seed=secrets.token_urlsafe(32),
         monctl_admin_password=_pronounceable_password(length=20),
         superset_secret_key=secrets.token_urlsafe(64),
         superset_db_pw=secrets.token_urlsafe(32),
