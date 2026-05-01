@@ -366,8 +366,21 @@ async def _acquire_driver_lease(redis, job_id: UUID, instance_id: str) -> bool:
     return bool(result)
 
 
-async def _refresh_driver_lease(redis, job_id: UUID, instance_id: str) -> None:
-    """Refresh loop while actively driving. Stops when the process dies."""
+async def _refresh_driver_lease(
+    redis,
+    job_id: UUID,
+    instance_id: str,
+    *,
+    cancel_event: asyncio.Event | None = None,
+) -> None:
+    """Refresh loop while actively driving. Stops when the process dies.
+
+    R-CEN-005 — when the lease is lost (another central acquired it),
+    set ``cancel_event`` so the driving task in ``execute_os_install_job``
+    can stop mutating PG rows for the job. Without this signal, two
+    centrals could end up driving the same job concurrently after a
+    network partition + clock-skew window.
+    """
     key = f"{DRIVER_LEASE_PREFIX}{job_id}:driver"
     # Lua: only refresh if we still hold the lease.
     script = (
@@ -385,6 +398,8 @@ async def _refresh_driver_lease(redis, job_id: UUID, instance_id: str) -> None:
                     job_id=str(job_id),
                     instance_id=instance_id,
                 )
+                if cancel_event is not None:
+                    cancel_event.set()
                 return
         except asyncio.CancelledError:
             raise
@@ -425,7 +440,16 @@ async def execute_os_install_job(session_factory, job_id: UUID) -> None:
     from monctl_central.cache import _redis
     from monctl_central.config import settings
 
-    instance_id = getattr(settings, "instance_id", "?")
+    # R-CEN-004 — empty instance_id used to fall back to literal "?", which
+    # made every central node match the same lease holder. Fail loud
+    # instead; main.py's lifespan generates a fresh instance_id at startup
+    # if the operator didn't supply one.
+    instance_id = (settings.instance_id or "").strip()
+    if not instance_id:
+        raise RuntimeError(
+            "settings.instance_id is empty. Refusing to acquire OS-install "
+            "driver lease without a unique node identifier (R-CEN-004)."
+        )
 
     if _redis is not None:
         try:
@@ -445,10 +469,15 @@ async def execute_os_install_job(session_factory, job_id: UUID) -> None:
             )
             return
 
+    # R-CEN-005 — share a cancel_event with the lease refresher. If the
+    # refresher loses the lease (another central acquired it), it sets
+    # the event; _run_steps checks it between steps and exits cleanly so
+    # we don't drive a job whose lease is now held by someone else.
+    cancel_event = asyncio.Event()
     refresher: asyncio.Task | None = None
     if _redis is not None:
         refresher = asyncio.create_task(
-            _refresh_driver_lease(_redis, job_id, instance_id),
+            _refresh_driver_lease(_redis, job_id, instance_id, cancel_event=cancel_event),
             name=f"os_install_lease_refresh_{job_id}",
         )
 
@@ -465,7 +494,16 @@ async def execute_os_install_job(session_factory, job_id: UUID) -> None:
                 await db.commit()
 
             try:
-                await _run_steps(db, job)
+                await _run_steps(db, job, cancel_event=cancel_event)
+            except _LeaseLostError:
+                logger.warning(
+                    "os_install_job_yielded_to_new_driver",
+                    job_id=str(job_id),
+                    instance_id=instance_id,
+                )
+                # Don't mark failed — another driver is mid-flight. Leave
+                # the job in `running`; the new driver will advance it.
+                return
             except Exception as exc:
                 job.status = "failed"
                 job.error_message = str(exc)
@@ -492,12 +530,29 @@ async def execute_os_install_job(session_factory, job_id: UUID) -> None:
             await _release_driver_lease(_redis, job_id, instance_id)
 
 
-async def _run_steps(db: AsyncSession, job: OsInstallJob) -> None:
+class _LeaseLostError(Exception):
+    """Raised by _run_steps when the driver lease is lost mid-run.
+
+    R-CEN-005 — caught by execute_os_install_job to leave the job in
+    `running` state for the new driver instead of marking it `failed`.
+    """
+
+
+async def _run_steps(
+    db: AsyncSession,
+    job: OsInstallJob,
+    *,
+    cancel_event: asyncio.Event | None = None,
+) -> None:
     """Run all pending steps in order. Handles test_first pause and fail-fast.
 
     Central node steps are executed directly via sidecar.
     Collector node steps are marked 'awaiting_collector' — collectors pull and
     execute them via the /api/v1/os-packages/my-tasks polling endpoint.
+
+    If ``cancel_event`` is set between iterations (R-CEN-005), the loop
+    exits with ``_LeaseLostError`` so the calling task can yield cleanly
+    to whichever central just took the lease.
     """
     steps = sorted(job.steps, key=lambda s: s.step_order)
     failed = False
@@ -541,6 +596,11 @@ async def _run_steps(db: AsyncSession, job: OsInstallJob) -> None:
 
     i = 0
     while True:
+        # R-CEN-005 — bail out cleanly if our driver lease was lost. The
+        # refresher sets the event from a separate task so we check on
+        # every iteration before doing more work.
+        if cancel_event is not None and cancel_event.is_set():
+            raise _LeaseLostError(f"driver lease lost mid-run for job {job.id}")
         idx = _pick_next_pending(steps, current, i)
         if idx is None:
             break
