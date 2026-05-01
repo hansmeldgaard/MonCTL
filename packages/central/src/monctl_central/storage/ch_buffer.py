@@ -99,6 +99,8 @@ class ClickHouseWriteBuffer:
             logger.exception(
                 "ch_buffer_insert_error table=%s rows=%d", table, len(rows)
             )
+            from monctl_central.observability.counters import incr
+            await incr(f"ch_buffer.insert_error.{table}", len(rows))
             async with self._lock:
                 existing = self._buffers[table]
                 # R-CEN-002 — previous behaviour silently fell through to
@@ -111,12 +113,20 @@ class ClickHouseWriteBuffer:
                 if len(merged) <= _MAX_BUFFER_ROWS:
                     self._buffers[table] = merged
                 else:
+                    # R-CEN-002 (Wave 3): keep the newest rows up to the
+                    # cap; previously the failed batch was silently dropped
+                    # in its entirety. O-CEN-003 (Wave 4): bump the
+                    # observability counter so the loss surfaces in
+                    # /v1/observability/counters and the new audit health
+                    # subsystem.
                     keep = merged[-_MAX_BUFFER_ROWS:]
                     self._buffers[table] = keep
+                    dropped = len(merged) - len(keep)
                     logger.warning(
                         "ch_buffer_overflow table=%s dropped=%d kept=%d",
-                        table, len(merged) - len(keep), len(keep),
+                        table, dropped, len(keep),
                     )
+                    await incr(f"ch_buffer.dropped.{table}", dropped)
 
     def stats(self) -> dict:
         return {
