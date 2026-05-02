@@ -58,7 +58,20 @@ def deploy(
     *,
     runner: SSHRunner | None = None,
     dry_run: bool = False,
+    max_parallel_hosts: int = 4,
 ) -> list[DeployOutcome]:
+    """Render bundles, scp per-project to each host, ``docker compose up -d``.
+
+    P-INST-005 — host loop runs in parallel up to ``max_parallel_hosts``.
+    Within a host, the project order (postgres → etcd → redis → … → central
+    → … → collector → docker-stats) is preserved sequentially because
+    those projects have inter-project dependencies on the same host.
+    Different hosts are independent; running them in parallel cuts a
+    cold cluster deploy from ~5–10 min wall-clock to ~1–2 min on a
+    typical 4–8 host inventory. Combined with SSHRunner's per-host
+    connection cache, the auth overhead also drops from N×200 ms to a
+    single round per host.
+    """
     inv = load_inventory(inventory_path)
     plan = plan_cluster(inv)
     secrets_path = Path(inv.secrets.file)
@@ -66,12 +79,14 @@ def deploy(
         secrets_path = inventory_path.parent / secrets_path
     validate_secrets_file(secrets_path)
     secret_values = load_secrets(secrets_path)
+    owns_runner = runner is None
     if runner is None:
         runner = SSHRunner()
 
     engine = RenderEngine()
-    outcomes: list[DeployOutcome] = []
-    for host in inv.hosts:
+
+    def _deploy_host(host: Host) -> list[DeployOutcome]:
+        host_outcomes: list[DeployOutcome] = []
         files = engine.render_host(host, plan)
         by_project: dict[str, list[RenderedFile]] = {}
         for f in files:
@@ -83,24 +98,60 @@ def deploy(
                 continue
             digest = _hash_project(pf)
             if prior_state.get(project) == digest:
-                outcomes.append(
+                host_outcomes.append(
                     DeployOutcome(host.name, project, "unchanged", f"sha={digest[:12]}")
                 )
                 continue
             try:
                 if dry_run:
-                    outcomes.append(
+                    host_outcomes.append(
                         DeployOutcome(host.name, project, "applied", "dry-run")
                     )
                 else:
                     _apply_project(host, project, pf, secret_values, runner)
                     prior_state[project] = digest
                     _save_remote_state(host, runner, prior_state)
-                    outcomes.append(
+                    host_outcomes.append(
                         DeployOutcome(host.name, project, "applied", f"sha={digest[:12]}")
                     )
             except SSHError as exc:
-                outcomes.append(DeployOutcome(host.name, project, "failed", str(exc)))
+                host_outcomes.append(DeployOutcome(host.name, project, "failed", str(exc)))
+        return host_outcomes
+
+    outcomes: list[DeployOutcome] = []
+    try:
+        if max_parallel_hosts <= 1 or len(inv.hosts) <= 1:
+            # Either explicit serial mode or trivially one host —
+            # avoid the executor overhead.
+            for host in inv.hosts:
+                outcomes.extend(_deploy_host(host))
+        else:
+            # Bounded host fan-out. Project order within a host stays
+            # sequential because role compositions on the same machine
+            # depend on each other (postgres before central, etc.).
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            with ThreadPoolExecutor(max_workers=max_parallel_hosts) as pool:
+                futures = {
+                    pool.submit(_deploy_host, h): h for h in inv.hosts
+                }
+                for fut in as_completed(futures):
+                    host = futures[fut]
+                    try:
+                        outcomes.extend(fut.result())
+                    except Exception as exc:
+                        outcomes.append(
+                            DeployOutcome(
+                                host.name,
+                                "<unknown>",
+                                "failed",
+                                f"unexpected error: {exc}",
+                            )
+                        )
+    finally:
+        if owns_runner:
+            runner.close()
+
     return outcomes
 
 

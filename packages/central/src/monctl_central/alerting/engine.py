@@ -59,32 +59,56 @@ class AlertEngine:
         self._session_factory = session_factory
         self._ch = ch_client
 
+    # P-CEN-001 — chunk size for parallel definition evaluation.
+    # Matches the ClickHouse client pool default (8); each definition
+    # evaluation issues 1-N CH queries so a higher concurrency buys
+    # nothing once the pool is saturated. Override via env if the pool
+    # ever bumps up.
+    _EVAL_CHUNK_SIZE = 8
+
     async def evaluate_all(self) -> None:
-        """Main evaluation loop. Called every 30s by the scheduler."""
+        """Main evaluation loop. Called every 30s by the scheduler.
+
+        P-CEN-001 — definitions are evaluated in chunks of
+        ``_EVAL_CHUNK_SIZE`` via ``asyncio.gather`` so the CH pool stays
+        saturated instead of serialising definition × tier × freshness
+        queries one definition at a time. Each evaluation owns its own
+        SQLAlchemy session — definitions are independent and committing
+        them per-batch lets a slow def not hold the overall transaction
+        open.
+        """
         alert_log_records: list[dict] = []
 
+        # First pass: fetch the definition IDs only. Each per-def
+        # evaluator opens its own session and re-loads the row to avoid
+        # cross-session sharing of ORM-attached objects.
         async with self._session_factory() as session:
-            definitions = (
+            def_ids = (
                 await session.execute(
-                    select(AlertDefinition)
+                    select(AlertDefinition.id)
                     .where(AlertDefinition.enabled == True)  # noqa: E712
-                    .options(selectinload(AlertDefinition.app))
                 )
             ).scalars().all()
 
-            logger.info("alert_eval_cycle definition_count=%d", len(definitions))
+        logger.info("alert_eval_cycle definition_count=%d", len(def_ids))
 
-            for defn in definitions:
-                try:
-                    records = await self._evaluate_definition(session, defn)
-                    alert_log_records.extend(records)
-                except Exception:
+        # Chunked gather. Each chunk lets up to _EVAL_CHUNK_SIZE
+        # definitions race to the CH pool; the next chunk starts when
+        # all of the previous chunk's evaluations finish (or fail).
+        for i in range(0, len(def_ids), self._EVAL_CHUNK_SIZE):
+            batch = def_ids[i:i + self._EVAL_CHUNK_SIZE]
+            results = await asyncio.gather(
+                *[self._evaluate_definition_isolated(d) for d in batch],
+                return_exceptions=True,
+            )
+            for def_id, result in zip(batch, results):
+                if isinstance(result, Exception):
                     logger.exception(
-                        "alert_def_eval_error definition_id=%s name=%s",
-                        defn.id, defn.name,
+                        "alert_def_eval_error definition_id=%s",
+                        def_id, exc_info=result,
                     )
-
-            await session.commit()
+                    continue
+                alert_log_records.extend(result)
 
         # Batch insert all fire/clear records to ClickHouse
         if alert_log_records:
@@ -95,6 +119,30 @@ class AlertEngine:
                 logger.info("alert_log_inserted count=%d", len(alert_log_records))
             except Exception:
                 logger.exception("alert_log_insert_error")
+
+    async def _evaluate_definition_isolated(self, def_id) -> list[dict]:
+        """Open a fresh session, evaluate one definition, commit independently.
+
+        Per-definition isolation lets ``evaluate_all`` parallelise across
+        definitions safely (P-CEN-001). Each session commits or rolls
+        back on its own; one failing definition doesn't poison sibling
+        evaluations.
+        """
+        async with self._session_factory() as session:
+            defn = await session.get(
+                AlertDefinition,
+                def_id,
+                options=[selectinload(AlertDefinition.app)],
+            )
+            if defn is None or not defn.enabled:
+                return []
+            try:
+                records = await self._evaluate_definition(session, defn)
+                await session.commit()
+                return records
+            except Exception:
+                await session.rollback()
+                raise
 
     async def _evaluate_definition(
         self,

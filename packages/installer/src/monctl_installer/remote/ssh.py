@@ -15,6 +15,7 @@ Host-key policy:
 from __future__ import annotations
 
 import secrets as _secrets
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -69,6 +70,16 @@ class SSHRunner:
             ).lower() in {"1", "true", "yes"}
         self._accept_new_hostkeys = accept_new_hostkeys
         self._known_hosts_path = known_hosts_path or Path("~/.ssh/known_hosts").expanduser()
+        # P-INST-005 — per-host connection cache. Each fresh paramiko
+        # connect costs ~200 ms (TCP + handshake + auth); a typical
+        # deploy fires 50+ ops per host (every project's compose +
+        # .env + state.json + `docker compose up`). Caching cuts the
+        # auth overhead to one round per host. paramiko Transport is
+        # thread-safe, and exec_command spawns a fresh Channel per
+        # call, so concurrent ``run`` / ``put`` from ``run_many``
+        # work without an extra per-host lock.
+        self._clients: dict[str, paramiko.SSHClient] = {}
+        self._clients_lock = threading.Lock()
 
     def run(self, host: Host, command: str) -> CommandResult:
         try:
@@ -148,8 +159,63 @@ class SSHRunner:
         except (paramiko.SSHException, OSError) as exc:
             raise SSHError(f"{host.name}: scp {remote_path}: {exc}") from exc
 
+    def close(self) -> None:
+        """Close every cached SSH client. Safe to call multiple times.
+
+        Recommended pattern for CLI commands::
+
+            runner = SSHRunner()
+            try:
+                ...
+            finally:
+                runner.close()
+        """
+        with self._clients_lock:
+            clients, self._clients = self._clients, {}
+        for c in clients.values():
+            try:
+                c.close()
+            except Exception:
+                pass
+
+    def __enter__(self) -> "SSHRunner":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        # Defensive: if a caller forgot the explicit close, GC at least
+        # tears down the underlying TCP sessions instead of leaving them
+        # to the OS.
+        try:
+            self.close()
+        except Exception:
+            pass
+
     @contextmanager
     def _connect(self, host: Host) -> Iterator[paramiko.SSHClient]:
+        # P-INST-005 — return the cached client when present; otherwise
+        # open one and cache it. The yielded contextmanager intentionally
+        # does NOT close the client on exit; close() does that explicitly
+        # at the end of a CLI command's lifetime.
+        with self._clients_lock:
+            cached = self._clients.get(host.name)
+        if cached is not None:
+            transport = cached.get_transport()
+            if transport is not None and transport.is_active():
+                yield cached
+                return
+            # Stale (transport dropped). Drop from cache and re-open.
+            with self._clients_lock:
+                # Re-check in case another thread already replaced it.
+                if self._clients.get(host.name) is cached:
+                    self._clients.pop(host.name, None)
+                    try:
+                        cached.close()
+                    except Exception:
+                        pass
+
         client = paramiko.SSHClient()
         # Strict by default: reject unknown host keys. First-time onboarding
         # must pass ``accept_new_hostkeys=True`` (CLI: --accept-new-hostkeys)
@@ -204,10 +270,12 @@ class SSHRunner:
                 client.save_host_keys(str(self._known_hosts_path))
             except OSError:
                 pass
-        try:
-            yield client
-        finally:
-            client.close()
+
+        # Cache the freshly-opened client for the remaining ops on this
+        # host. close() (or runner-as-context-manager) closes them all.
+        with self._clients_lock:
+            self._clients[host.name] = client
+        yield client
 
 
 def _ensure_remote_parent(sftp: paramiko.SFTPClient, path: str) -> None:

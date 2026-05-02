@@ -902,25 +902,129 @@ async def get_jobs(
                 )
                 disc_app_cbs = list((await db.execute(disc_acb_stmt)).scalars().all())
 
-            flagged_count = 0
+            # P-CEN-003 — first pass: identify the actually-flagged
+            # devices via Redis (`get_and_clear_discovery_flag` is
+            # destructive — it CLEARS the flag — so we can't repeat it
+            # for batching). Then batch-load every Device, Pack, App,
+            # latest AppVersion that any flagged device's pipeline
+            # touches in a small fixed number of SQL round-trips,
+            # instead of the previous nested per-device-per-pack-per-app
+            # query chain that fired 5+ PG queries per flagged device.
+            flagged_dev_id_strs: list[str] = []
             for dev_id_str in discovery_device_ids:
-                if not await get_and_clear_discovery_flag(dev_id_str):
-                    continue
-                flagged_count += 1
-                logger.warning("DISCOVERY_FLAG_FOUND", device_id=dev_id_str)
+                if await get_and_clear_discovery_flag(dev_id_str):
+                    flagged_dev_id_strs.append(dev_id_str)
+            flagged_count = len(flagged_dev_id_strs)
 
-                device = await db.get(Device, uuid.UUID(dev_id_str))
+            # Batch-load Device rows.
+            flagged_uuids: list[uuid.UUID] = []
+            for s in flagged_dev_id_strs:
+                try:
+                    flagged_uuids.append(uuid.UUID(s))
+                except ValueError:
+                    continue
+            devices_by_id: dict[uuid.UUID, Device] = {}
+            if flagged_uuids:
+                rows = (await db.execute(
+                    select(Device).where(Device.id.in_(flagged_uuids))
+                )).scalars().all()
+                devices_by_id = {d.id: d for d in rows}
+
+            # Collect every (DeviceType id, sys_object_id) pair, batch
+            # load DeviceType rows, gather the union of pack_uid
+            # references, then batch-load packs/apps/versions.
+            from monctl_central.storage.models import DeviceType as DT, Pack as PackModel
+
+            dt_ids: set[uuid.UUID] = {
+                d.device_type_id for d in devices_by_id.values()
+                if d.device_type_id
+            }
+            dts_by_id: dict[uuid.UUID, DT] = {}
+            if dt_ids:
+                rows = (await db.execute(
+                    select(DT).where(DT.id.in_(dt_ids))
+                )).scalars().all()
+                dts_by_id = {d.id: d for d in rows}
+
+            pack_uids: set[str] = set()
+            for dt in dts_by_id.values():
+                for pu in (dt.auto_assign_packs or []):
+                    pack_uids.add(pu)
+
+            packs_by_uid: dict[str, PackModel] = {}
+            if pack_uids:
+                rows = (await db.execute(
+                    select(PackModel).where(PackModel.pack_uid.in_(pack_uids))
+                )).scalars().all()
+                packs_by_uid = {p.pack_uid: p for p in rows}
+
+            apps_by_pack_id: dict[uuid.UUID, list[App]] = {}
+            pack_ids = [p.id for p in packs_by_uid.values()]
+            if pack_ids:
+                rows = (await db.execute(
+                    select(App).where(App.pack_id.in_(pack_ids))
+                )).scalars().all()
+                for app_row in rows:
+                    apps_by_pack_id.setdefault(app_row.pack_id, []).append(app_row)
+
+            # Latest AppVersion per pack-app, in one query.
+            latest_version_by_app_id: dict[uuid.UUID, AppVersion] = {}
+            all_app_ids = {a.id for apps in apps_by_pack_id.values() for a in apps}
+            if all_app_ids:
+                rows = (await db.execute(
+                    select(AppVersion).where(
+                        AppVersion.app_id.in_(all_app_ids),
+                        AppVersion.is_latest == True,  # noqa: E712
+                    )
+                )).scalars().all()
+                latest_version_by_app_id = {v.app_id: v for v in rows}
+
+            # Batch-resolve any credential names not already in
+            # cred_name_map. Walk every flagged device's SNMP-typed
+            # credential id, dedup, single SELECT.
+            missing_cred_ids: set[uuid.UUID] = set()
+            for d in devices_by_id.values():
+                if not d.credentials:
+                    continue
+                for ctype, cval in d.credentials.items():
+                    if "snmp" not in ctype.lower():
+                        continue
+                    try:
+                        cid = uuid.UUID(
+                            str(cval.get("id", "") if isinstance(cval, dict) else cval)
+                        )
+                    except (ValueError, TypeError):
+                        continue
+                    if cid not in cred_name_map:
+                        missing_cred_ids.add(cid)
+                    break
+            if missing_cred_ids:
+                rows = (await db.execute(
+                    select(Credential.id, Credential.name)
+                    .where(Credential.id.in_(missing_cred_ids))
+                )).all()
+                for cid, cname in rows:
+                    cred_name_map[cid] = cname
+
+            from monctl_central.cache import get_eligibility_oids_for_device
+
+            for dev_id_str in flagged_dev_id_strs:
+                logger.warning("DISCOVERY_FLAG_FOUND", device_id=dev_id_str)
+                try:
+                    dev_uuid = uuid.UUID(dev_id_str)
+                except ValueError:
+                    continue
+                device = devices_by_id.get(dev_uuid)
                 if not device:
                     logger.warning("discovery_device_not_found_for_flag", device_id=dev_id_str)
                     continue
 
-                # Resolve SNMP credential for discovery
+                # Resolve SNMP credential for discovery (lookup-only now).
                 disc_cred_id: uuid.UUID | None = None
                 if device.credentials:
                     for ctype, cval in device.credentials.items():
                         if "snmp" in ctype.lower():
                             try:
-                                # credentials JSONB: {type: uuid_str} or {type: {id: uuid_str, ...}}
                                 if isinstance(cval, dict):
                                     disc_cred_id = uuid.UUID(str(cval.get("id", "")))
                                 else:
@@ -929,12 +1033,6 @@ async def get_jobs(
                                 pass
                             break
                 disc_cred_name = cred_name_map.get(disc_cred_id) if disc_cred_id else None
-                # If credential not in our pre-loaded map, look it up
-                if disc_cred_id and not disc_cred_name:
-                    cred_row = (await db.execute(
-                        select(Credential.name).where(Credential.id == disc_cred_id)
-                    )).scalar_one_or_none()
-                    disc_cred_name = cred_row
 
                 # Build connector bindings for discovery job
                 disc_bindings = []
@@ -958,7 +1056,6 @@ async def get_jobs(
                 seen_oids: set[str] = set()
 
                 # Source 1: per-device Redis key from test-eligibility probe mode
-                from monctl_central.cache import get_eligibility_oids_for_device
                 redis_oids = await get_eligibility_oids_for_device(dev_id_str)
                 if redis_oids:
                     for oid_str in redis_oids:
@@ -966,39 +1063,28 @@ async def get_jobs(
                             seen_oids.add(oid_str)
                             eligibility_oids_to_probe.append(oid_str)
 
-                # Source 2: auto_assign_packs on the device type
-                if device.device_type_id:
-                    from monctl_central.storage.models import DeviceType as DT, Pack as PackModel
-                    dt = await db.get(DT, device.device_type_id)
-                    if dt and dt.auto_assign_packs:
-                        device_sys_oid = (device.metadata_ or {}).get("sys_object_id")
-                        for pack_uid in dt.auto_assign_packs:
-                            pack = (await db.execute(
-                                select(PackModel).where(PackModel.pack_uid == pack_uid)
-                            )).scalar_one_or_none()
-                            if not pack:
-                                continue
-                            pack_apps = (await db.execute(
-                                select(App).where(App.pack_id == pack.id)
-                            )).scalars().all()
-                            for papp in pack_apps:
-                                # Vendor scope pre-filter
-                                if papp.vendor_oid_prefix and device_sys_oid:
-                                    pfx = papp.vendor_oid_prefix
-                                    if not (device_sys_oid == pfx or device_sys_oid.startswith(pfx + ".")):
-                                        continue
-                                latest_v = (await db.execute(
-                                    select(AppVersion).where(
-                                        AppVersion.app_id == papp.id,
-                                        AppVersion.is_latest == True,  # noqa: E712
-                                    )
-                                )).scalar_one_or_none()
-                                if latest_v and latest_v.eligibility_oids:
-                                    for ec in latest_v.eligibility_oids:
-                                        oid_str = ec.get("oid", "")
-                                        if oid_str and oid_str not in seen_oids:
-                                            seen_oids.add(oid_str)
-                                            eligibility_oids_to_probe.append(oid_str)
+                # Source 2: auto_assign_packs on the device type — pure
+                # dict lookups against the pre-loaded batches.
+                dt = dts_by_id.get(device.device_type_id) if device.device_type_id else None
+                if dt and dt.auto_assign_packs:
+                    device_sys_oid = (device.metadata_ or {}).get("sys_object_id")
+                    for pack_uid in dt.auto_assign_packs:
+                        pack = packs_by_uid.get(pack_uid)
+                        if not pack:
+                            continue
+                        for papp in apps_by_pack_id.get(pack.id, []):
+                            # Vendor scope pre-filter
+                            if papp.vendor_oid_prefix and device_sys_oid:
+                                pfx = papp.vendor_oid_prefix
+                                if not (device_sys_oid == pfx or device_sys_oid.startswith(pfx + ".")):
+                                    continue
+                            latest_v = latest_version_by_app_id.get(papp.id)
+                            if latest_v and latest_v.eligibility_oids:
+                                for ec in latest_v.eligibility_oids:
+                                    oid_str = ec.get("oid", "")
+                                    if oid_str and oid_str not in seen_oids:
+                                        seen_oids.add(oid_str)
+                                        eligibility_oids_to_probe.append(oid_str)
 
                 disc_params: dict = {"_one_shot": True}
                 if eligibility_oids_to_probe:
