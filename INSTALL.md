@@ -24,13 +24,15 @@ On the _operator laptop_ (not a target host):
 
 ## 2. Install the `monctl_ctl` CLI
 
+The package is not on PyPI yet, so install from the GitHub release wheel:
+
 ```bash
-pipx install monctl-installer
-monctl_ctl --version
+pipx install https://github.com/hansmeldgaard/MonCTL/releases/download/v0.1.0/monctl_installer-0.1.0-py3-none-any.whl
+monctl_ctl --version    # expected: 0.1.0
 ```
 
-(Until the package is published to PyPI, install from the GitHub release wheel:
-`pipx install https://github.com/hansmeldgaard/MonCTL/releases/download/v1.0.0/monctl_installer-1.0.0-py3-none-any.whl`.)
+(Once the package is published to PyPI you'll be able to run
+`pipx install monctl-installer` directly.)
 
 ## 3. Describe your cluster
 

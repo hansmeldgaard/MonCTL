@@ -1,6 +1,22 @@
 # Event Policy Rework — Design Doc
 
-**Status:** draft, not yet approved
+> **⚠️ SUPERSEDED — kept for historical context only.**
+>
+> The rework shipped across PRs #20–#33 (event policy) and was rewritten
+> again by PR #38 (severity-tier alerting model). The parallel
+> `IncidentRule` / `Incident` data model described below was largely
+> scrapped during implementation. This document does **not** describe
+> current behaviour.
+>
+> **Where to look instead:**
+>
+> - Current alerting semantics: `CLAUDE.md` → "Alerting & Thresholds"
+> - Current event-engine + incident-engine wiring: `packages/central/src/monctl_central/{alerting,events,incidents}/`
+> - Severity-tier model (PR #38): see `severity_tiers` JSONB on `AlertDefinition`
+
+---
+
+**Status:** ~~draft, not yet approved~~ HISTORICAL — superseded as above
 **Author:** initial sketch by Claude on 2026-04-10
 **Tracks:** progress.md item #6
 
