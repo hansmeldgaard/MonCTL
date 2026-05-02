@@ -81,10 +81,29 @@ async def _alert_summary(db: AsyncSession, tenant_ids: list[str] | None) -> dict
 
     recent_entities = (await db.execute(recent_stmt)).scalars().all()
 
+    # P-CEN-002 — batch the AlertDefinition + Device lookups instead of
+    # firing 2 PG round-trips per row in the loop. With 10 entities this
+    # shrinks 20 round-trips to 2; the dashboard refreshes every 15 s
+    # so the savings compound across active operators.
+    def_ids = {e.definition_id for e in recent_entities if e.definition_id}
+    device_ids_set = {e.device_id for e in recent_entities if e.device_id}
+    defs_by_id: dict[uuid.UUID, AlertDefinition] = {}
+    if def_ids:
+        rows = (
+            await db.execute(select(AlertDefinition).where(AlertDefinition.id.in_(def_ids)))
+        ).scalars().all()
+        defs_by_id = {d.id: d for d in rows}
+    devs_by_id: dict[uuid.UUID, Device] = {}
+    if device_ids_set:
+        rows = (
+            await db.execute(select(Device).where(Device.id.in_(device_ids_set)))
+        ).scalars().all()
+        devs_by_id = {d.id: d for d in rows}
+
     recent = []
     for entity in recent_entities:
-        defn = await db.get(AlertDefinition, entity.definition_id)
-        device = await db.get(Device, entity.device_id) if entity.device_id else None
+        defn = defs_by_id.get(entity.definition_id)
+        device = devs_by_id.get(entity.device_id) if entity.device_id else None
         recent.append({
             "id": str(entity.id),
             "definition_name": defn.name if defn else "",
@@ -166,14 +185,20 @@ async def _device_health(db: AsyncSession, tenant_ids: list[str] | None) -> dict
 
     worst = []
     if worst_ids:
-        devices_by_id = {}
+        # P-CEN-002 — single batched select instead of one db.get per
+        # device. Same hot-path argument as the alert summary above.
+        device_uuids: list[uuid.UUID] = []
         for did in worst_ids:
             try:
-                device = await db.get(Device, uuid.UUID(did))
-                if device:
-                    devices_by_id[did] = device
-            except Exception:
-                pass
+                device_uuids.append(uuid.UUID(did))
+            except (ValueError, TypeError):
+                continue
+        devices_by_id: dict[str, Device] = {}
+        if device_uuids:
+            rows = (
+                await db.execute(select(Device).where(Device.id.in_(device_uuids)))
+            ).scalars().all()
+            devices_by_id = {str(d.id): d for d in rows}
 
         # Count firing alerts per device
         alert_count_stmt = (

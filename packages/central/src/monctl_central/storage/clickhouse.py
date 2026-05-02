@@ -3332,9 +3332,17 @@ class ClickHouseClient:
         table: str | None = None,
         from_ts: datetime | None = None,
         to_ts: datetime | None = None,
+        step_seconds: int | None = None,
         limit: int = 10000,
     ) -> list[dict]:
-        """Return ingestion-rate samples with optional table/time filters."""
+        """Return ingestion-rate samples with optional table/time filters.
+
+        When ``step_seconds`` is provided, samples are bucketed server-side
+        (``toStartOfInterval`` + GROUP BY) so wide ranges stay well under
+        ``limit`` (P-CEN-008). The sampler runs every 5 min × 7+ tracked
+        tables, so 7 days of history = 14k rows uncapped — the tail
+        truncates silently otherwise.
+        """
         wheres: list[str] = []
         params: dict[str, Any] = {}
         if table:
@@ -3347,13 +3355,29 @@ class ClickHouseClient:
             wheres.append("timestamp <= {to_ts:DateTime}")
             params["to_ts"] = to_ts.strftime("%Y-%m-%d %H:%M:%S")
         where_sql = ("WHERE " + " AND ".join(wheres)) if wheres else ""
-        sql = (
-            "SELECT timestamp, table_name, row_count, rows_per_second, "
-            "       window_seconds "
-            f"FROM ingestion_rate_history {where_sql} "
-            "ORDER BY timestamp ASC, table_name "
-            f"LIMIT {int(limit)}"
-        )
+
+        if step_seconds and step_seconds > 0:
+            params["step"] = int(step_seconds)
+            sql = (
+                "SELECT "
+                "toStartOfInterval(timestamp, INTERVAL {step:UInt32} SECOND) AS timestamp, "
+                "table_name, "
+                "avg(rows_per_second) AS rows_per_second, "
+                "max(row_count) AS row_count, "
+                "max(window_seconds) AS window_seconds "
+                f"FROM ingestion_rate_history {where_sql} "
+                "GROUP BY timestamp, table_name "
+                "ORDER BY timestamp ASC, table_name "
+                f"LIMIT {int(limit)}"
+            )
+        else:
+            sql = (
+                "SELECT timestamp, table_name, row_count, rows_per_second, "
+                "       window_seconds "
+                f"FROM ingestion_rate_history {where_sql} "
+                "ORDER BY timestamp ASC, table_name "
+                f"LIMIT {int(limit)}"
+            )
         client = self._get_client()
         result = client.query(sql, parameters=params)
         return list(result.named_results())
