@@ -154,6 +154,34 @@ class _PooledClient:
 
 logger = logging.getLogger(__name__)
 
+
+def _apply_on_cluster(stmt: str, has_cluster: bool, cluster_name: str) -> str:
+    """Inject ``ON CLUSTER '<name>'`` into an ``ALTER TABLE`` / ``ALTER MV``
+    statement when the deployment is clustered.
+
+    Used by the post-CREATE migration loops (column adds, index adds) so
+    each statement propagates across every replica instead of landing
+    only on the host this central is connected to (M-CEN-003 / M-CEN-004).
+    Returns the statement unchanged when ``has_cluster`` is False so
+    standalone deployments aren't affected.
+
+    Naive but sufficient: the migration lists are entirely
+    ``ALTER TABLE <name> ADD COLUMN ...`` / ``ADD INDEX ...`` shapes.
+    Insert ``ON CLUSTER '<name>'`` after the table identifier (the third
+    whitespace-separated token).
+    """
+    if not has_cluster:
+        return stmt
+    parts = stmt.split(None, 3)
+    # Expect: ["ALTER", "TABLE", "<name>", "<rest>"]
+    if len(parts) < 4 or parts[0].upper() != "ALTER" or parts[1].upper() != "TABLE":
+        return stmt
+    if " ON CLUSTER " in stmt.upper():
+        return stmt  # already specified
+    keyword, table_kw, name, rest = parts
+    return f"{keyword} {table_kw} {name} ON CLUSTER '{cluster_name}' {rest}"
+
+
 # ---------------------------------------------------------------------------
 # Table definitions — clustered (ReplicatedMergeTree)
 # ---------------------------------------------------------------------------
@@ -1879,11 +1907,21 @@ class ClickHouseClient:
             "ALTER TABLE config ADD COLUMN IF NOT EXISTS execution_time Float32 DEFAULT 0 AFTER reachable",
             "ALTER TABLE interface ADD COLUMN IF NOT EXISTS execution_time Float32 DEFAULT 0 AFTER state",
         ]
+        # M-CEN-003 — propagate ALTER ADD COLUMN across replicas on cluster
+        # setups. Without `ON CLUSTER` the change lands only on whichever
+        # CH host this central is connected to; replicated inserts then
+        # silently drop the new field on the missing-column replica.
+        # M-CEN-006 — log every swallowed exception at WARNING. `IF NOT
+        # EXISTS` already handles the benign duplicate-column path, so a
+        # failure here is by definition non-benign (typo in DDL, locked
+        # table, missing privilege, etc.) and operators need to see it.
         for alter_sql in _TENANT_NAME_ALTERS:
             try:
-                client.command(alter_sql)
+                client.command(_apply_on_cluster(alter_sql, has_cluster, self._cluster_name))
             except Exception:
-                pass
+                logger.warning(
+                    "ch_ddl_alter_failed sql=%s", alter_sql, exc_info=True
+                )
 
         # One-shot: recreate config_latest / interface_latest when they
         # lack the execution_time column. CH 24.3 rejects ALTER ADD
@@ -2001,11 +2039,18 @@ class ClickHouseClient:
             "ALTER TABLE alert_log ADD INDEX IF NOT EXISTS idx_action set(action) GRANULARITY 4",
             "ALTER TABLE alert_log ADD INDEX IF NOT EXISTS idx_severity set(severity) GRANULARITY 4",
         ]
+        # M-CEN-004 — same reasoning as M-CEN-003 for skipping indexes:
+        # if shard A has an index but shard B doesn't, queries that
+        # should hit the bloom filter fall back to a full-merge-scan on
+        # B with no error surface. Propagate via ON CLUSTER and log
+        # any genuine failure (M-CEN-006).
         for idx_sql in _INDEXES:
             try:
-                client.command(idx_sql)
+                client.command(_apply_on_cluster(idx_sql, has_cluster, self._cluster_name))
             except Exception:
-                pass
+                logger.warning(
+                    "ch_ddl_index_failed sql=%s", idx_sql, exc_info=True
+                )
 
         # Layer 3 — defense-in-depth row policies on every tenant-scoped table.
         try:
