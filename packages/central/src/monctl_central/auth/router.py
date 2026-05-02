@@ -92,6 +92,9 @@ async def _record_login_failure(
                 user_id=user_id,
                 failure_reason=f"threshold_{_LOGIN_FAIL_THRESHOLD}_in_{_LOGIN_FAIL_WINDOW}s",
             )
+            # O-CEN-006 — surface lockout rate via observability counters.
+            from monctl_central.observability.counters import incr
+            await incr("auth.login_locked")
     except Exception:
         logger.warning("login_rl_record_failed", exc_info=True)
 
@@ -426,6 +429,11 @@ async def refresh(
             logger.warning(
                 "refresh_token_replay_detected user_id=%s jti=%s", user.id, jti
             )
+            # O-CEN-005 — high-signal compromise indicator. Surface via
+            # observability counters so a single replay shows up on the
+            # security dashboard the same day.
+            from monctl_central.observability.counters import incr
+            await incr("auth.refresh_token_replay")
             raise HTTPException(status_code=401, detail="Token revoked")
 
     await record_login_event(

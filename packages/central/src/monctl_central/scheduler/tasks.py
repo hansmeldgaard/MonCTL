@@ -519,6 +519,12 @@ class SchedulerRunner:
 
         if self._alert_cycle_lock.locked():
             logger.warning("alert_evaluation_skipped_previous_cycle_in_flight")
+            # O-CEN-002 — operators can't notice a degraded alerting cycle
+            # from a single WARN line per skip across 4 nodes. Counter
+            # surfaces it in /v1/observability/counters and (below) makes
+            # the scheduler subsystem report degraded when the rate climbs.
+            from monctl_central.observability.counters import incr
+            await incr("scheduler.alert_cycle_skipped")
             return
 
         async with self._alert_cycle_lock:

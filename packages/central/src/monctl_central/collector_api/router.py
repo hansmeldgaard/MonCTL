@@ -1730,6 +1730,14 @@ async def submit_results(
                     assignment_id=str(assignment_id),
                 )
                 unauthorised += 1
+                # O-CEN-007 — per-collector counter so a misbehaving /
+                # compromised collector showing up as a spike on the
+                # observability dashboard, not buried in central logs
+                # the offending collector itself never sees.
+                from monctl_central.observability.counters import incr
+                await incr(
+                    f"collector.unauthorised.{caller_collector.id}", 1
+                )
                 continue
 
         # Map status string to integer state

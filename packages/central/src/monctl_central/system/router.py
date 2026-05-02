@@ -1230,12 +1230,37 @@ async def _check_redis() -> dict:
 
     # Determine status
     status = "healthy"
+    quorum_reason: str | None = None
     if replication:
         if replication.get("role") == "master" and replication.get("connected_slaves", 0) == 0:
             if settings.redis_sentinel_hosts:
                 status = "degraded"  # No replicas connected in HA mode
     if sentinel_info and sentinel_info.get("flags") and "s_down" in sentinel_info["flags"]:
         status = "degraded"
+    # O-CEN-010 — alert at the quorum floor BEFORE the cluster goes
+    # split-brain. With 3 sentinels and quorum=2, losing one passes
+    # silently today; losing the second is the failure mode no one
+    # wants to hear about for the first time at 3am.
+    if sentinel_info:
+        try:
+            num = int(sentinel_info.get("num_sentinels") or 0)
+            quorum = int(sentinel_info.get("quorum") or 0)
+        except (TypeError, ValueError):
+            num, quorum = 0, 0
+        if quorum > 0 and num > 0:
+            if num < quorum:
+                status = "critical"
+                quorum_reason = (
+                    f"sentinels {num} below quorum {quorum} — split-brain risk"
+                )
+            elif num == quorum:
+                # At the floor: another sentinel loss tips the cluster.
+                if status == "healthy":
+                    status = "degraded"
+                quorum_reason = (
+                    f"sentinels at quorum floor ({num}/{quorum}) — "
+                    "any further loss removes failover quorum"
+                )
 
     return {
         "status": status,
@@ -1248,6 +1273,7 @@ async def _check_redis() -> dict:
             "memory": memory_stats,
             "replication": replication,
             "sentinel": sentinel_info,
+            "sentinel_reason": quorum_reason,
             "key_stats": key_stats,
         },
     }
@@ -1763,6 +1789,44 @@ async def _check_alerts_standalone() -> dict:
         return await _check_alerts(db)
 
 
+async def _check_audit() -> dict:
+    """Audit-buffer health: drop count + flush failures.
+
+    O-CEN-003 — the audit buffer silently drops rows on overflow / when
+    ClickHouse is unavailable. Surfacing the in-process counter as a
+    health subsystem makes the loss visible in the same place operators
+    already look (system health), and lets the top-bar dot turn yellow
+    instead of staying green during a CH outage that's costing audit
+    rows.
+    """
+    from monctl_central.audit.buffer import audit_buffer
+    from monctl_central.observability.counters import sum_recent
+
+    in_process = audit_buffer.dropped_total
+    flush_failures = audit_buffer.flush_failures
+    dropped_24h = await sum_recent("audit.dropped", days=1)
+    failed_24h = await sum_recent("audit.flush_failed", days=1)
+
+    if dropped_24h > 0 or in_process > 0:
+        # Fresh drops in the rolling 24h or any drops since start =
+        # actionable; promote to degraded so it shows on the top-bar.
+        status = "degraded"
+        reason = f"audit_dropped_24h={dropped_24h} in_process={in_process}"
+    else:
+        status = "healthy"
+        reason = None
+    return {
+        "status": status,
+        "reason": reason,
+        "details": {
+            "dropped_in_process": in_process,
+            "flush_failures_in_process": flush_failures,
+            "dropped_24h": dropped_24h,
+            "flush_failed_24h": failed_24h,
+        },
+    }
+
+
 @router.get("/health")
 async def system_health(
     auth: dict = Depends(require_admin),
@@ -1779,6 +1843,7 @@ async def system_health(
         _run_check("scheduler", _check_scheduler()),
         _run_check("ingestion", _check_ingestion()),
         _run_check("alerts", _check_alerts_standalone()),
+        _run_check("audit", _check_audit()),
         _run_check("docker", _check_docker_infrastructure(), timeout=_DOCKER_CHECK_TIMEOUT),
         return_exceptions=True,
     )
@@ -1806,6 +1871,7 @@ async def system_health(
     _INFRA_SUBSYSTEMS = {
         "central", "postgresql", "patroni", "etcd", "clickhouse",
         "redis", "collectors", "scheduler", "ingestion", "docker",
+        "audit",  # O-CEN-003 — drops on CH outage must show in top-bar
     }
     priority = {"critical": 2, "degraded": 1, "healthy": 0, "unknown": -1}
     worst = max(
@@ -1910,6 +1976,7 @@ async def _compute_overall_status() -> dict:
         _run_check("collectors", _check_collectors_standalone()),
         _run_check("scheduler", _check_scheduler()),
         _run_check("ingestion", _check_ingestion()),
+        _run_check("audit", _check_audit()),
         _run_check("docker", _check_docker_infrastructure(), timeout=_DOCKER_CHECK_TIMEOUT),
         return_exceptions=True,
     )
@@ -1934,6 +2001,7 @@ async def _compute_overall_status() -> dict:
     _INFRA_SUBSYSTEMS = {
         "central", "postgresql", "patroni", "etcd", "clickhouse",
         "redis", "collectors", "scheduler", "ingestion", "docker",
+        "audit",  # O-CEN-003 — drops on CH outage must show in top-bar
     }
     priority = {"critical": 2, "degraded": 1, "healthy": 0, "unknown": -1}
     worst = max(
@@ -1961,29 +2029,48 @@ async def system_health_status(
     """Lightweight endpoint returning overall status (for top-bar indicator).
 
     Re-evaluates automatically if the cached status is stale (>90s) or unknown.
+
+    O-CEN-004 — the response now carries an explicit ``age_seconds`` and
+    ``cache_stale`` flag. If the most recent refresh failed, the cached
+    payload is returned with ``cache_stale: true`` so the frontend top-bar
+    can render the dot in `unknown` instead of falsely showing healthy.
     """
     global _last_health_status
 
-    stale = True
-    if _last_health_status.get("checked_at"):
-        from datetime import datetime, timezone
+    from datetime import datetime, timezone
 
+    def _age(payload: dict) -> float | None:
+        ts = payload.get("checked_at") if isinstance(payload, dict) else None
+        if not ts:
+            return None
         try:
-            checked = datetime.fromisoformat(_last_health_status["checked_at"])
-            age = (datetime.now(timezone.utc) - checked).total_seconds()
-            stale = age > _HEALTH_CACHE_TTL
+            checked = datetime.fromisoformat(ts)
+            return (datetime.now(timezone.utc) - checked).total_seconds()
         except (ValueError, TypeError):
-            stale = True
+            return None
 
+    age = _age(_last_health_status)
+    stale = age is None or age > _HEALTH_CACHE_TTL
+
+    refresh_failed = False
     if stale:
         try:
             _last_health_status = await asyncio.wait_for(
                 _compute_overall_status(), timeout=15.0
             )
+            age = _age(_last_health_status) or 0.0
         except Exception:
             logger.exception("health_status_refresh_failed")
+            refresh_failed = True
 
-    return {"status": "success", "data": _last_health_status}
+    payload = dict(_last_health_status)
+    payload["age_seconds"] = round(age, 1) if age is not None else None
+    # ``cache_stale`` is true if we're returning a value older than the
+    # cache TTL (refresh just failed) or we never had a fresh value.
+    payload["cache_stale"] = (
+        refresh_failed or age is None or age > _HEALTH_CACHE_TTL
+    )
+    return {"status": "success", "data": payload}
 
 
 @router.get("/db-size-history")
