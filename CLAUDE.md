@@ -36,9 +36,13 @@ apps/                           # Reference BasePoller source (SNMP apps only)
 ├── snmp_discovery.py           # Device auto-discovery (one-shot)
 └── snmp_uptime.py              # Device uptime via snmpEngineTime/sysUpTime
 
-packs/                          # Built-in monitoring packs (auto-imported at startup)
-├── snmp-core-v1.0.0.json      # snmp_check, snmp_interface_poller, snmp_discovery, snmp_uptime
-└── basic-checks-v1.0.0.json   # ping_check, port_check, http_check
+packs/                          # 8 vendor-grouped packs (auto-imported at startup)
+                                # snmp-core, basic-checks, cisco-monitoring,
+                                # juniper-monitoring, linux-server,
+                                # entity-mib-inventory, docker-container-stats,
+                                # cisco-juniper-device-types
+                                # Filenames have no version suffix; the pack
+                                # JSON carries `version` internally.
 
 packages/
 ├── central/                    # Central management server
@@ -113,6 +117,8 @@ packages/
 ## Key Gotchas & Non-Obvious Behavior
 
 ### App & Pack System
+
+> Authoring a new app? Read [`docs/app-development-guide.md`](docs/app-development-guide.md) — it covers BasePoller, error categories, app-data cache, and the cross-app + delta patterns shipped in PR #151.
 
 - **All apps are BasePoller subclasses** with `class Poller(BasePoller)` and `async def poll() -> PollResult`. No legacy script (stdin/stdout) execution.
 - **Built-in packs** (`packs/`) are auto-imported at startup if not already present. Uses "skip" resolution (creates missing apps, never overwrites existing).
@@ -216,7 +222,8 @@ packages/
 
 - **Web UI**: JWT in HTTP-only cookies (`access_token` + `refresh_token`)
 - **Management API**: `Authorization: Bearer monctl_m_<key>`
-- **Collector API**: `Authorization: Bearer <MONCTL_COLLECTOR_API_KEY>` (shared secret)
+- **Collector API**: `Authorization: Bearer <MONCTL_COLLECTOR_API_KEY>` (shared secret); per-collector keys (PR #120/#122) take precedence when issued
+- **OAuth2 / OIDC provider**: `/v1/oauth/{authorize,token,userinfo}` for Superset SSO and any future external OAuth2 client. HS256-signed JWTs. Configured via `MONCTL_OAUTH_CLIENT_ID/SECRET/REDIRECT_URIS/ISSUER`. See `docs/superset.md` for the SSO flow and 9 non-obvious quirks.
 - **Dependencies**: `require_permission("resource", "action")` (RBAC-enforced), `require_admin` (admin role only)
 - **RBAC**: All endpoints use `require_permission`. Admins and API keys bypass automatically. Resources: `device`, `app`, `assignment`, `credential`, `alert`, `collector`, `tenant`, `user`, `template`, `settings`, `result`. Actions: `view`, `create`, `edit`, `delete`, `manage`.
 - **Frontend**: `usePermissions()` hook controls sidebar visibility, settings tabs, and action buttons
@@ -237,7 +244,9 @@ stmt = apply_tenant_filter(stmt, auth, Device.tenant_id)
 
 ## Building & Deploying
 
-### Deploy Script (preferred)
+> `./deploy.sh` is the **maintainer dev-cluster workflow** against `10.145.210.41-44` / `.31-.34`. Customers and external operators should use `monctl_ctl deploy` — see `INSTALL.md`.
+
+### Deploy Script (preferred — dev cluster)
 
 Use `./deploy.sh` for all deployments — it builds, saves the image once, and deploys to all nodes in parallel:
 
@@ -346,6 +355,18 @@ These have each bitten the project at least once. Read them before touching the 
 **Alembic migrations and rebases** — When rebasing a long-lived branch onto main, check for duplicate revision IDs and carry any unmerged migrations forward. Deploying from a branch missing migrations the DB already ran will fail at startup with "Can't locate revision". Always `git log --oneline main..HEAD -- '*/alembic/versions/'` before `./deploy.sh`.
 
 **PAT scope for workflow files** — As of 2026-04-21 the project PAT has the `workflow` scope, so pushes that touch `.github/workflows/*.yml` work directly. Don't preemptively split workflow edits into a separate commit — try the push first. Only fall back to splitting (or having the user commit via web UI) if the push is actually rejected with `refusing to allow a Personal Access Token…`.
+
+**History endpoints need server-side `toStartOfInterval` bucketing** — Any `*_history` endpoint that returns N rows per timestamp (e.g. one row per ingestion table per sample, one row per host per sample) silently truncates at `LIMIT 10000` somewhere around 7 days of history. Mirror the `db_size_history` pattern: accept `step_seconds`, wrap the query with `toStartOfInterval(timestamp, INTERVAL {step:UInt32} SECOND)` + `GROUP BY` + aggregate. Use `_bucket_step_for_range` from the system router to pick the step.
+
+**`AlertDefinition.expression` is gone (PR #38)** — The single-expression model was replaced by `severity_tiers` (JSONB list of `{severity, expression, message_template}`). Anything still reading `def.expression` is dead code that should be deleted. The healthy tier is optional and acts as a positive-clear signal when present.
+
+**Pack first-import race is benign on HA** — On a 4-central HA cluster, the first-time deploy of a NEW `pack_uid` lets all 4 nodes attempt the insert simultaneously. N-1 lose the unique-violation race and log `builtin_pack_import_failed` with `error="UniqueViolationError ..."`. Real pack-corruption failures emit the same WARN line shape, so context matters: if you see 3 of these in 4 central logs at startup with the same pack_uid, ignore them. The pack-import path catches `IntegrityError` separately as of post-review-#2 follow-up; pre-fix logs need to be filtered by hand.
+
+**Squash-merge can silently drop dev-branch compose / config edits** — When merging a long-lived branch via squash, any compose-file or `.env.j2` edits that landed on the branch but never made it into a separate commit can be silently absorbed away. After every squash-merge that touched `docker/`, `packages/installer/.../templates/`, or central env files, diff the merge result against the branch tip: `git diff <branch-tip> main -- docker/ packages/installer/`.
+
+**`monctl_ctl` not `monctlctl`** — No glued suffixes on CLI binary names. The customer installer ships as `monctl_ctl` (underscore separator). When introducing a new CLI, prefer `monctl_<word>` or a distinct word entirely. Compound forms like `monctlctl` / `monctlbi` are unparseable at a glance.
+
+**Grep for existing helpers before adding enforcement logic** — This codebase often has half-wired private helpers (`_caller_*`, `_require_*`, `_resolve_*`) that are imported but unused, or wired only in some endpoints. Before writing a new auth check / validation gate, grep the surface module for matching names. Adding a parallel implementation creates two enforcement paths and the next refactor only catches one.
 
 ---
 

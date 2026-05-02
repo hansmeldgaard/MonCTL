@@ -100,6 +100,16 @@ docs/               Guides, deployment notes, code-review reports
 scripts/            Dev utilities (e2e smoke, seed data, deck generator)
 ```
 
+### Documentation map
+
+- [`INSTALL.md`](INSTALL.md) — install MonCTL on bare VMs via `monctl_ctl`.
+- [`docs/app-development-guide.md`](docs/app-development-guide.md) — write a custom monitoring app (`BasePoller`, app-data cache, error categories).
+- [`docs/action-development-guide.md`](docs/action-development-guide.md) — write a Run Book Automation action.
+- [`docs/superset.md`](docs/superset.md) — Superset BI integration (SSO, tenant scoping, theming).
+- [`docs/eligibility.md`](docs/eligibility.md) — Smart App Assignment via SNMP eligibility OIDs.
+- [`docs/env-reference.md`](docs/env-reference.md) — every `MONCTL_*` env var central / collector / installer reads.
+- [`CLAUDE.md`](CLAUDE.md) — onboarding doc the AI agent reads. Includes Known pitfalls (the load-bearing landmines).
+
 ## Development
 
 ```bash

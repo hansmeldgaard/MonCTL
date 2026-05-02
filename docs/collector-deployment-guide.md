@@ -1,6 +1,21 @@
 # Collector Deployment Guide
 
-This guide covers deploying a MonCTL collector node from scratch — including host prerequisites, network requirements, and the deployment steps.
+> **⚠️ MAINTAINER REFERENCE — partially superseded.**
+>
+> Customers and external operators should NOT follow §4 of this doc.
+> Use `monctl_ctl deploy` instead, which renders the collector compose
+> bundle, scp's it to each host, and does the right thing for the
+> inventory in question. See `INSTALL.md` for the supported path.
+>
+> §1–§3 (host prerequisites, network requirements, NTP/SSH setup) are
+> still accurate and worth reading before adding a collector host. §4
+> (`./deploy.sh collector` against `worker1-4`) is a maintainer-only
+> workflow against the dev cluster at `10.145.210.31-34`; the IPs and
+> shell paths are not portable.
+>
+> Long-term plan: fold §1–§3 into `INSTALL.md` as a "Collector node
+> prereqs" subsection and retire this file. Tracked under review-#2
+> finding D-COL-013.
 
 ---
 
