@@ -460,51 +460,67 @@ class SchedulerRunner:
 
         Catches cases where definitions were created after assignments,
         or assignments were created via template auto-apply without triggering sync.
+
+        P-CEN-006 — single INSERT…SELECT…WHERE NOT EXISTS instead of 2N
+        round-trips per cycle. The previous loop ran one SELECT per
+        definition for assignments and one for existing entities; with
+        ~50 definitions that's 100 PG queries every 5 min on the
+        leader. The new query is bounded by N rows of work for the DB
+        regardless of definition count.
         """
-        from sqlalchemy import select
+        from sqlalchemy import insert, select, exists
         from monctl_central.storage.models import AlertDefinition, AlertEntity, AppAssignment
 
         try:
             async with self._session_factory() as session:
-                definitions = (
+                # Subquery: assignments enabled for an enabled definition
+                # whose AlertEntity row doesn't exist yet.
+                #
+                # AlertEntity rows are seeded with enabled=True / state='ok'
+                # — same defaults the previous Python loop set. The engine
+                # populates the rest on first eval cycle.
+                missing = (
+                    select(
+                        AlertDefinition.id.label("definition_id"),
+                        AppAssignment.id.label("assignment_id"),
+                        AppAssignment.device_id.label("device_id"),
+                    )
+                    .select_from(AlertDefinition)
+                    .join(AppAssignment, AppAssignment.app_id == AlertDefinition.app_id)
+                    .where(
+                        AlertDefinition.enabled == True,  # noqa: E712
+                        AppAssignment.enabled == True,  # noqa: E712
+                        AppAssignment.device_id.isnot(None),
+                        ~exists().where(
+                            (AlertEntity.definition_id == AlertDefinition.id)
+                            & (AlertEntity.assignment_id == AppAssignment.id)
+                        ),
+                    )
+                ).subquery()
+
+                rows = (
                     await session.execute(
-                        select(AlertDefinition).where(AlertDefinition.enabled == True)  # noqa: E712
-                    )
-                ).scalars().all()
-
-                created = 0
-                for defn in definitions:
-                    assignments = (
-                        await session.execute(
-                            select(AppAssignment).where(
-                                AppAssignment.app_id == defn.app_id,
-                                AppAssignment.enabled == True,  # noqa: E712
-                                AppAssignment.device_id.isnot(None),
-                            )
+                        select(
+                            missing.c.definition_id,
+                            missing.c.assignment_id,
+                            missing.c.device_id,
                         )
-                    ).scalars().all()
-
-                    existing_keys = set(
-                        (await session.execute(
-                            select(AlertEntity.assignment_id)
-                            .where(AlertEntity.definition_id == defn.id)
-                        )).scalars().all()
                     )
+                ).all()
 
-                    for assignment in assignments:
-                        if assignment.id not in existing_keys:
-                            session.add(AlertEntity(
-                                definition_id=defn.id,
-                                assignment_id=assignment.id,
-                                device_id=assignment.device_id,
-                                enabled=True,
-                                state="ok",
-                            ))
-                            created += 1
-
-                if created:
+                if rows:
+                    session.add_all([
+                        AlertEntity(
+                            definition_id=def_id,
+                            assignment_id=asg_id,
+                            device_id=dev_id,
+                            enabled=True,
+                            state="ok",
+                        )
+                        for def_id, asg_id, dev_id in rows
+                    ])
                     await session.commit()
-                    logger.info("alert_instance_sync created=%d", created)
+                    logger.info("alert_instance_sync created=%d", len(rows))
         except Exception:
             logger.exception("alert_instance_sync_error")
 

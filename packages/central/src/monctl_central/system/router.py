@@ -2314,6 +2314,11 @@ async def get_ingestion_rate_history(
 
     Filters: table (one of the core ingestion tables), from_ts/to_ts
     (ISO-8601). Rows ordered by timestamp ascending.
+
+    P-CEN-008 — server-side bucketing via ``_bucket_step_for_range`` so
+    wide ranges (7 d+) don't silently truncate at LIMIT 10000. The
+    sampler emits one row per tracked table per 5 min, so 7 d uncapped
+    = ~14k rows.
     """
     from datetime import datetime
 
@@ -2325,12 +2330,17 @@ async def get_ingestion_rate_history(
         except ValueError:
             return None
 
+    parsed_from = _parse(from_ts)
+    parsed_to = _parse(to_ts)
+    step = _bucket_step_for_range(parsed_from, parsed_to)
+
     try:
         rows = await asyncio.to_thread(
             ch.query_ingestion_rate_history,
             table=table,
-            from_ts=_parse(from_ts),
-            to_ts=_parse(to_ts),
+            from_ts=parsed_from,
+            to_ts=parsed_to,
+            step_seconds=step,
             limit=min(max(int(limit), 1), 50000),
         )
     except Exception:

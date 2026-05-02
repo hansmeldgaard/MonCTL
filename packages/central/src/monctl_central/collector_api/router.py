@@ -298,41 +298,62 @@ async def _caller_allowed_app_ids(
 # Helper
 # ---------------------------------------------------------------------------
 
-def _weighted_job_owner(
-    assignment_id: str,
+def _build_weighted_ring(
     weights: dict[str, float],
     vnodes_base: int = 100,
-) -> str:
-    """Weighted consistent hashing — returns the hostname that owns this job.
+) -> tuple[list[int], list[str]]:
+    """Build a sorted virtual-node ring once. Returns parallel
+    (hashes, hostnames) lists ordered by hash value.
 
-    Each collector gets `vnodes_base * normalized_weight` virtual nodes on a
-    SHA256 hash ring. More capacity → more vnodes → more jobs.
+    P-CEN-004 — pulled out of the per-assignment hot path. The previous
+    implementation rebuilt the ring inside _weighted_job_owner for every
+    assignment, doing N×K SHA256s plus an O(K²) bisect.insert chain. With
+    20k unpinned assignments and 4 collectors that compounded to ~8M
+    SHA256s per /jobs request. Now O(K log K) once + O(log K) per lookup.
     """
-    if not weights:
-        return ""
-    if len(weights) == 1:
-        return next(iter(weights))
-
     # Normalize weights so the max is 1.0
     max_w = max(weights.values()) or 1.0
-
-    # Build ring: list of (hash_value, hostname) sorted by hash_value
-    ring_hashes: list[int] = []
-    ring_nodes: list[str] = []
+    ring: list[tuple[int, str]] = []
     for hostname, w in sorted(weights.items()):
         n_vnodes = max(1, int(vnodes_base * (w / max_w)))
         for i in range(n_vnodes):
             h = int(hashlib.sha256(f"{hostname}:{i}".encode()).hexdigest(), 16)
-            idx = bisect.bisect_left(ring_hashes, h)
-            ring_hashes.insert(idx, h)
-            ring_nodes.insert(idx, hostname)
+            ring.append((h, hostname))
+    ring.sort(key=lambda x: x[0])
+    return [h for h, _ in ring], [host for _, host in ring]
 
-    # Hash the assignment and find its position on the ring
+
+def _lookup_weighted_owner(
+    assignment_id: str,
+    ring_hashes: list[int],
+    ring_nodes: list[str],
+) -> str:
+    """O(log K) lookup against a pre-built ring."""
+    if not ring_nodes:
+        return ""
     key_hash = int(hashlib.sha256(assignment_id.encode()).hexdigest(), 16)
     idx = bisect.bisect_left(ring_hashes, key_hash)
     if idx >= len(ring_hashes):
         idx = 0
     return ring_nodes[idx]
+
+
+def _weighted_job_owner(
+    assignment_id: str,
+    weights: dict[str, float],
+    vnodes_base: int = 100,
+) -> str:
+    """Backward-compat wrapper — builds and immediately discards the ring.
+
+    Kept for callers that own a single lookup; use the split helpers
+    above when looping over many assignments.
+    """
+    if not weights:
+        return ""
+    if len(weights) == 1:
+        return next(iter(weights))
+    ring_hashes, ring_nodes = _build_weighted_ring(weights, vnodes_base)
+    return _lookup_weighted_owner(assignment_id, ring_hashes, ring_nodes)
 
 
 _CRED_REF_RE = re.compile(r"\$credential:([^\"}]+)")
@@ -545,10 +566,19 @@ async def get_jobs(
 
             if my_hostname in weights:
                 total_before = len(rows)
-                rows = [
-                    r for r in rows
-                    if _weighted_job_owner(str(r.AppAssignment.id), weights) == my_hostname
-                ]
+                # P-CEN-004 — build the ring ONCE, then do an O(log K)
+                # lookup per assignment.
+                if len(weights) <= 1:
+                    # Trivial single-host case — no ring needed.
+                    rows = list(rows) if my_hostname in weights else []
+                else:
+                    ring_hashes, ring_nodes = _build_weighted_ring(weights)
+                    rows = [
+                        r for r in rows
+                        if _lookup_weighted_owner(
+                            str(r.AppAssignment.id), ring_hashes, ring_nodes
+                        ) == my_hostname
+                    ]
                 logger.info(
                     "job_partitioning_weighted",
                     collector=my_hostname,
