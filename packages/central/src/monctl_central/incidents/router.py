@@ -303,11 +303,41 @@ async def clear_incidents(
         return {"status": "success", "data": {"cleared": 0}}
 
     now = datetime.now(timezone.utc)
+    # Snapshot the incidents we'll actually clear so we can emit an
+    # audit row per id (S-X-003). `visible_ids` is already tenant-
+    # scoped + id-restricted; filtering to state='open' inside the
+    # update keeps the audit list aligned with the rowcount we
+    # eventually return to the caller.
+    open_ids = (
+        await db.execute(
+            select(Incident.id).where(
+                Incident.id.in_(visible_ids), Incident.state == "open"
+            )
+        )
+    ).scalars().all()
+
     result = await db.execute(
         update(Incident)
         .where(Incident.id.in_(visible_ids), Incident.state == "open")
         .values(state="cleared", cleared_at=now, cleared_reason="manual")
     )
+
+    # Manual-action audit (S-X-003). `incidents` is in _AUDIT_OPT_OUT
+    # because the engine rewrites the row every cycle, but admin-
+    # driven clears are exactly the high-value mutation auditors want
+    # to see. Emit one row per cleared incident with the operator's
+    # context (user_id, request_id, IP) attached automatically.
+    from monctl_central.audit.manual import record_manual_action
+
+    for incident_id in open_ids:
+        record_manual_action(
+            resource_type="incident_action",
+            resource_id=str(incident_id),
+            action="clear",
+            old={"state": "open"},
+            new={"state": "cleared", "cleared_reason": "manual"},
+        )
+
     return {
         "status": "success",
         "data": {"cleared": int(result.rowcount or 0)},

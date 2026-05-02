@@ -33,10 +33,14 @@ from monctl_central.storage.models import Base
 # reason as the dict value — reviewers read these when bumping the list.
 _AUDIT_OPT_OUT: dict[str, str] = {
     # Audit-related / bookkeeping. `audit_login_events` IS the audit log
-    # itself, so it would recurse; `api_keys` / `registration_tokens`
-    # churn at register/rotate time and are already surfaced via the
-    # login-event + user routes.
-    "api_keys": "bookkeeping — issuance already surfaces via collector registration / user key endpoints",
+    # itself, so it would recurse. `registration_tokens` are short-lived
+    # bootstrap one-shots (token created at register, deleted on first
+    # use) so audit value would be near zero.
+    # `api_keys` was previously here with the same rationale; review #2
+    # (S-CEN-018) reclassified it because issuance / revocation does not
+    # mutate the parent user/collector row, so the before_flush listener
+    # never fired and issuing a long-lived management key left no trail.
+    # Now mapped in TABLE_TO_RESOURCE.
     "registration_tokens": "ephemeral one-time bootstrap tokens",
     "audit_login_events": "this IS the audit log — recursion",
     # Derived or computed state — recomputed from audited parents.
@@ -46,7 +50,10 @@ _AUDIT_OPT_OUT: dict[str, str] = {
     # Edge tables whose parents are audited separately (avoid double-writes).
     "app_connector_bindings": "edge of apps — parent is the audited entity",
     "assignment_connector_bindings": "edge of app_assignments — parent is audited",
-    "assignment_credential_overrides": "edge of app_assignments — parent is audited",
+    # `assignment_credential_overrides` was opted out with the same
+    # "edge of app_assignments" rationale, but updating ONLY the override
+    # row leaves the parent untouched — so we lost every credential
+    # rebind. Reclassified in S-CEN-019; now mapped.
     "os_install_job_steps": "edge of os_install_jobs — parent is audited",
     "upgrade_job_steps": "edge of upgrade_jobs — parent is audited",
     "pack_versions": "edge of packs — the pack row captures version moves",

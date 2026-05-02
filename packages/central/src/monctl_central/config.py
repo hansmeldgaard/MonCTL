@@ -128,6 +128,17 @@ class Settings(BaseSettings):
     # sunset.
     require_per_collector_auth: bool = False
 
+    # S-CEN-009 — comma-separated list of immediate-peer IPs whose
+    # ``X-Forwarded-For`` / ``X-Real-IP`` headers central is willing to
+    # trust. Production setups front central with HAProxy on the same
+    # host (peer = 127.0.0.1) plus the VIP fallback; single-node
+    # customer installs that expose 8443 directly should leave this
+    # empty so audit rows record the actual TCP peer instead of
+    # whatever the attacker put in the header.
+    # Format: "ip,ip,..." — IPs only, no CIDR yet. Default empty,
+    # which is the safe fail-closed behaviour.
+    trusted_proxies: str = ""
+
 
 settings = Settings()
 

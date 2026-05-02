@@ -12,6 +12,13 @@ _SENSITIVE_KEYS = (
     "password",
     "password_hash",
     "api_key",
+    # `api_keys` table stores `key_hash` (SHA-256 of the bearer key).
+    # The hash is one-way but defence-in-depth says don't ship it through
+    # the audit pipeline either — a leaked hash is still useful to an
+    # attacker for time-correlation / rainbow-table attempts on short keys.
+    # Listed before "secret" so substring matching catches it on the
+    # `api_keys` row that S-CEN-018 newly audits.
+    "key_hash",
     "encryption_key",
     "jwt_secret",
     "credential_value",
