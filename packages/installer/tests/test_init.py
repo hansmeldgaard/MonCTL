@@ -47,7 +47,14 @@ def test_init_refuses_to_overwrite(tmp_path: Path) -> None:
         )
 
 
-def test_init_force_overwrites(tmp_path: Path) -> None:
+def test_init_force_preserves_existing_secrets(tmp_path: Path) -> None:
+    """`--force` rewrites the inventory but MUST NOT rotate secrets.
+
+    Post M-INST-010: re-running init to fix a typo in inventory must never
+    silently invalidate every JWT, encrypted credential at rest, and
+    collector key. Rotation requires the explicit `regenerate_secrets`
+    flag (`--regenerate-secrets` on the CLI).
+    """
     inv = tmp_path / "inventory.yaml"
     sec = tmp_path / "secrets.env"
     first = run_from_yaml(
@@ -55,6 +62,23 @@ def test_init_force_overwrites(tmp_path: Path) -> None:
     )
     second = run_from_yaml(
         seed_path=MICRO, inventory_path=inv, secrets_path=sec, overwrite=True
+    )
+    assert first.admin_password == second.admin_password
+
+
+def test_init_regenerate_secrets_rotates_password(tmp_path: Path) -> None:
+    """Opting in via `regenerate_secrets=True` rotates the password."""
+    inv = tmp_path / "inventory.yaml"
+    sec = tmp_path / "secrets.env"
+    first = run_from_yaml(
+        seed_path=MICRO, inventory_path=inv, secrets_path=sec, overwrite=False
+    )
+    second = run_from_yaml(
+        seed_path=MICRO,
+        inventory_path=inv,
+        secrets_path=sec,
+        overwrite=True,
+        regenerate_secrets=True,
     )
     assert first.admin_password != second.admin_password
 
