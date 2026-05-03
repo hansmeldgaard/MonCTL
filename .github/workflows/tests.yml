@@ -64,10 +64,12 @@ jobs:
                  -v
           # Installer — runs alongside but no coverage gate yet
           pytest packages/installer/tests -v
-          # Repo-root tests/ tree (DSL adversarial corpus, integration
-          # tests with the e2e-smoke fixtures, etc.). Doesn't depend on
-          # the central coverage run because conftest is rooted there.
-          pytest tests -v
+          # Repo-root tests/ tree (DSL adversarial corpus, etc.).
+          # tests/integration/ requires the live docker-compose.e2e.yml
+          # stack and is covered by the dedicated `e2e-smoke` job below;
+          # don't run it here without the stack or every PR will fail
+          # with `ConnectError: Connection refused`.
+          pytest tests --ignore=tests/integration -v
 
       - name: Upload coverage XML
         if: always()

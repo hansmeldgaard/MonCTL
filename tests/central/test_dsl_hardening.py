@@ -32,7 +32,9 @@ _GOOD_CASES = [
     # (expression, target_table)
     ("avg(rtt_ms) > 80", "availability_latency"),
     ("max(rtt_ms) > 500 AND avg(rtt_ms) > 100", "availability_latency"),
-    ("rate(in_octets) * 8 / 1e6 > 500", "interface"),
+    # DSL accepts integer/decimal literals; scientific notation (1e6) is
+    # not in the lexer grammar, so use the explicit value.
+    ("rate(in_octets) * 8 / 1000000 > 500", "interface"),
     ("last(cpu_idle) < 10", "performance"),
     ("avg(rtt_ms) > rtt_ms_warn", "availability_latency"),
     ("state != 'ok'", "config"),

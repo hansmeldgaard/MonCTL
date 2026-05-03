@@ -59,7 +59,7 @@ markers = [
 filterwarnings = [
     "ignore::DeprecationWarning:sqlalchemy.*",
     "ignore::DeprecationWarning:fastapi.*",
-    "ignore::jwt.exceptions.InsecureKeyLengthWarning",
+    "ignore:The JWT key.*:UserWarning",
 ]
 
 [tool.coverage.run]

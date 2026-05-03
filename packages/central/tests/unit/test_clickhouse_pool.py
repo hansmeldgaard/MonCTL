@@ -49,7 +49,7 @@ class _FakeClient:
         self.tag = tag
         self.closed = False
 
-    def query(self, sql: str) -> str:
+    def query(self, sql: str, **_kwargs) -> str:
         return f"{self.tag}:{sql}"
 
     def close(self) -> None:
@@ -109,7 +109,7 @@ class _SlowClient(_FakeClient):
         super().__init__(tag)
         self._gate = gate
 
-    def query(self, sql: str) -> str:
+    def query(self, sql: str, **_kwargs) -> str:
         # All 4 threads must reach this barrier before any can proceed.
         self._gate.wait(timeout=5.0)
         return f"{self.tag}:{sql}"
@@ -124,7 +124,7 @@ def test_connection_error_recycles_slot() -> None:
         n = state["n"]
 
         class Variant(_FakeClient):
-            def query(self, sql: str):
+            def query(self, sql: str, **_kwargs):
                 if n == 1:
                     raise ConnectionError("broken pipe")
                 return f"v{n}:{sql}"
@@ -151,7 +151,7 @@ def test_non_connection_error_preserves_slot() -> None:
     make, counter = _counting_factory()
 
     class _Boom(_FakeClient):
-        def query(self, sql: str):
+        def query(self, sql: str, **_kwargs):
             raise ValueError("bad sql")
 
     def factory():

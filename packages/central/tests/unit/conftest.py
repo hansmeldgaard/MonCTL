@@ -80,6 +80,26 @@ async def db_session(sqlite_engine) -> AsyncSession:
         await session.rollback()
 
 
+@pytest.fixture(autouse=True)
+def _redirect_session_factory(monkeypatch, sqlite_engine):
+    """Redirect `monctl_central.dependencies.get_session_factory` to SQLite.
+
+    Several call sites bypass FastAPI's `Depends(get_db)` and instantiate
+    their own session via `get_session_factory()` (record_login_event,
+    `_revoke_all_user_tokens`, `_validate_api_key`, ws/auth.authenticate_ws,
+    audit/buffer flush). Without this patch they connect to the real
+    Postgres URL from settings and fail with `Connect call failed
+    ('127.0.0.1', 5432)` under unit tests.
+    """
+    factory = async_sessionmaker(
+        sqlite_engine, class_=AsyncSession, expire_on_commit=False
+    )
+    monkeypatch.setattr(
+        "monctl_central.dependencies.get_session_factory", lambda: factory
+    )
+    return None
+
+
 @pytest.fixture
 async def seeded_session(db_session: AsyncSession) -> AsyncSession:
     """Session with seed data: admin user, default device types."""

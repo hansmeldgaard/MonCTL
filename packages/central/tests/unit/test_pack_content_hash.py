@@ -14,8 +14,8 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _BUNDLED_PACKS = (
-    _REPO_ROOT / "packs" / "basic-checks-v1.0.0.json",
-    _REPO_ROOT / "packs" / "snmp-core-v1.0.0.json",
+    _REPO_ROOT / "packs" / "basic-checks.json",
+    _REPO_ROOT / "packs" / "snmp-core.json",
 )
 
 
@@ -32,7 +32,7 @@ def test_pack_content_hash_is_raw_file_bytes() -> None:
 
 def test_pack_content_hash_changes_on_edit(tmp_path: Path) -> None:
     """Editing a single byte must change the hash."""
-    original = (_REPO_ROOT / "packs" / "basic-checks-v1.0.0.json").read_bytes()
+    original = (_REPO_ROOT / "packs" / "basic-checks.json").read_bytes()
     h1 = hashlib.sha256(original).hexdigest()
     tampered = original + b" "
     h2 = hashlib.sha256(tampered).hexdigest()
