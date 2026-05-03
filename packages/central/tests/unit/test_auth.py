@@ -70,7 +70,9 @@ class TestRefresh:
             "password": "changeme",
         })
         assert login_resp.status_code == 200
-        client.cookies = login_resp.cookies
+        # `client.cookies = ...` is a silent no-op on httpx 0.28+; use per-cookie set
+        for k, v in login_resp.cookies.items():
+            client.cookies.set(k, v)
 
         # Now refresh
         resp = await client.post("/v1/auth/refresh")
