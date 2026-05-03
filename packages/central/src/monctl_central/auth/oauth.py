@@ -32,6 +32,7 @@ import binascii
 import json
 import logging
 import secrets as _secrets
+import uuid
 from datetime import timedelta
 from urllib.parse import quote, urlencode
 
@@ -230,7 +231,14 @@ async def authorize(
         next_url = f"{request.url.path}?{q}" if q else request.url.path
         return RedirectResponse(f"/login?next={quote(next_url, safe='')}", status_code=302)
 
-    user = await db.get(User, user_dict["user_id"])
+    try:
+        user_pk = uuid.UUID(user_dict["user_id"])
+    except (ValueError, TypeError, KeyError):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="user_inactive",
+        )
+    user = await db.get(User, user_pk)
     if user is None or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -336,7 +344,19 @@ async def token(
                 detail="invalid_grant",
             )
 
-        user = await db.get(User, data["user_id"])
+        # Coerce the JSON-stored ID back to a UUID. asyncpg accepts
+        # either str or UUID for primary-key lookups, but other
+        # SQLAlchemy dialects (e.g. SQLite under test) require the
+        # native type. Defensive cast — also catches any future
+        # serialiser that strings the wrong field.
+        try:
+            user_pk = uuid.UUID(data["user_id"])
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="invalid_grant",
+            )
+        user = await db.get(User, user_pk)
         if user is None or not user.is_active:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -377,7 +397,14 @@ async def token(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="invalid_grant",
             )
-        user = await db.get(User, payload["sub"])
+        try:
+            sub_pk = uuid.UUID(payload["sub"])
+        except (ValueError, TypeError, KeyError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="invalid_grant",
+            )
+        user = await db.get(User, sub_pk)
         if user is None or not user.is_active:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -440,7 +467,14 @@ async def userinfo(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="invalid_token",
         )
-    user = await db.get(User, payload["sub"])
+    try:
+        sub_pk = uuid.UUID(payload["sub"])
+    except (ValueError, TypeError, KeyError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid_token",
+        )
+    user = await db.get(User, sub_pk)
     if user is None or not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="user_inactive")
     if (user.token_version or 0) != payload.get("tv", 0):
