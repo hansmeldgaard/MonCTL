@@ -160,7 +160,9 @@ def test_clustered_drop_includes_on_cluster_and_sync() -> None:
     """In a clustered deployment the DROP must propagate to every replica
     and SYNC so the subsequent CREATE doesn't race against still-existing
     table state on a slow replica."""
-    client = _make_client(ctq="<no execution_time>")
+    # NB: the helper uses a substring match on `create_table_query`, so the
+    # fake DDL must NOT contain the literal string `execution_time`.
+    client = _make_client(ctq="CREATE MV bare AS SELECT id FROM base")
     _ensure_mv_drift_rebuild(
         client, "config_latest", _DDL_CLUSTER, _DDL_LOCAL,
         has_cluster=True, cluster_name="monctl_cluster",
@@ -173,7 +175,7 @@ def test_clustered_drop_includes_on_cluster_and_sync() -> None:
 
 
 def test_local_path_uses_local_ddl_string_unchanged() -> None:
-    client = _make_client(ctq="<no execution_time>")
+    client = _make_client(ctq="CREATE MV bare AS SELECT id FROM base")
     _ensure_mv_drift_rebuild(
         client, "config_latest", _DDL_CLUSTER, _DDL_LOCAL,
         has_cluster=False, cluster_name="monctl",
