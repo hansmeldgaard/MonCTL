@@ -62,6 +62,8 @@ def deploy(
     runner: SSHRunner | None = None,
     dry_run: bool = False,
     max_parallel_hosts: int = 4,
+    register_collectors: bool = True,
+    http_client: "object | None" = None,
 ) -> list[DeployOutcome]:
     """Render bundles, scp per-project to each host, ``docker compose up -d``.
 
@@ -74,6 +76,14 @@ def deploy(
     typical 4–8 host inventory. Combined with SSHRunner's per-host
     connection cache, the auth overhead also drops from N×200 ms to a
     single round per host.
+
+    Wave 2C — when ``register_collectors`` is True (the default) and at
+    least one collector host applied/unchanged successfully, run the
+    register-collectors post-step automatically. Each collector host
+    gets a unique ``MONCTL_COLLECTOR_API_KEY`` and the container is
+    restarted to pick it up. Outcomes are appended to the returned
+    list with project=``register-collectors``. Skipped on
+    ``dry_run=True``.
     """
     inv = load_inventory(inventory_path)
     plan = plan_cluster(inv)
@@ -167,11 +177,72 @@ def deploy(
                                 f"unexpected error: {exc}",
                             )
                         )
+
+        # Wave 2C — register-collectors post-step. Inside the try so the
+        # SSH runner we just used for the project loop is still alive
+        # (the finally below closes it). Skip on dry-run, and skip if no
+        # collector host applied/unchanged (no point provisioning keys
+        # for hosts whose collector container isn't running yet).
+        # Failures here are non-fatal — the cluster is still up on the
+        # shared-secret path.
+        if register_collectors and not dry_run:
+            collector_outcomes = [
+                o for o in outcomes
+                if o.project == "collector" and o.status in ("applied", "unchanged")
+            ]
+            if collector_outcomes:
+                outcomes.extend(
+                    _post_step_register_collectors(
+                        inventory_path,
+                        runner=runner,
+                        http_client=http_client,
+                    )
+                )
     finally:
         if owns_runner:
             runner.close()
 
     return outcomes
+
+
+def _post_step_register_collectors(
+    inventory_path: Path,
+    *,
+    runner: SSHRunner,
+    http_client: "object | None" = None,
+) -> list[DeployOutcome]:
+    """Run register-collectors and translate its outcomes into
+    DeployOutcome rows so the caller sees them alongside per-project
+    deploy results.
+    """
+    from monctl_installer.commands.register_collectors import (
+        RegisterError,
+        register_collectors,
+    )
+
+    try:
+        results = register_collectors(
+            inventory_path, runner=runner, http_client=http_client,
+        )
+    except RegisterError as exc:
+        return [DeployOutcome(
+            "<cluster>", "register-collectors", "failed", str(exc),
+        )]
+
+    # Map register status → DeployOutcome status:
+    #   registered → applied (key minted + .env updated + restart)
+    #   skipped    → unchanged
+    #   failed     → failed
+    _status_map = {"registered": "applied", "skipped": "unchanged", "failed": "failed"}
+    return [
+        DeployOutcome(
+            r.host,
+            "register-collectors",
+            _status_map.get(r.status, "failed"),  # type: ignore[arg-type]
+            r.detail,
+        )
+        for r in results
+    ]
 
 
 # ── remote operations ─────────────────────────────────────────────────────
