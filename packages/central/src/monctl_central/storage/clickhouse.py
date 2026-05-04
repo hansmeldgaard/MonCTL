@@ -182,6 +182,76 @@ def _apply_on_cluster(stmt: str, has_cluster: bool, cluster_name: str) -> str:
     return f"{keyword} {table_kw} {name} ON CLUSTER '{cluster_name}' {rest}"
 
 
+def _ensure_mv_drift_rebuild(
+    client: Any,
+    mv_name: str,
+    source_ddl_cluster: str,
+    source_ddl_local: str,
+    *,
+    has_cluster: bool,
+    cluster_name: str,
+    expected_columns: set[str] | tuple[str, ...] = (),
+    expected_sort_key_terms: set[str] | tuple[str, ...] = (),
+    log_label: str | None = None,
+) -> None:
+    """Guarded DROP+CREATE for `*_latest` MVs that have drifted off DDL.
+
+    M-CEN-005 — generalises the bespoke per-MV drift checks that used
+    to live inline. Per memory `feedback_ch_mv_schema_migrations`:
+    `*_latest` MVs created with `AS SELECT * FROM base` freeze their
+    column list, ALTER MV is silently ignored, and any column add /
+    sort-key change requires a guarded DROP+CREATE in this startup
+    path. Adding a new column to a `*_latest` MV after this is now a
+    one-line change to ``expected_columns`` rather than a fresh
+    `if "<colname>" not in create_table_query` block per-MV.
+
+    Drives off ``system.tables.create_table_query`` + ``sorting_key``
+    so the same helper handles both column-presence checks
+    (config_latest / interface_latest growing ``execution_time``) and
+    sort-key checks (performance_latest gaining ``assignment_id`` in
+    ORDER BY).
+    """
+    label = log_label or mv_name
+    try:
+        check = client.query(
+            "SELECT create_table_query, sorting_key FROM system.tables "
+            "WHERE database = currentDatabase() AND name = {name:String}",
+            parameters={"name": mv_name},
+        )
+        if not check.result_rows:
+            # MV doesn't exist yet — earlier CREATE MATERIALIZED VIEW
+            # IF NOT EXISTS in the same startup path will create it.
+            return
+        ctq = check.first_row[0] or ""
+        sort_key = check.first_row[1] or ""
+
+        missing_cols = [c for c in expected_columns if c not in ctq]
+        missing_sort = [t for t in expected_sort_key_terms if t not in sort_key]
+
+        if not missing_cols and not missing_sort:
+            return
+
+        logger.info(
+            "%s_migration_running missing_cols=%s missing_sort=%s",
+            label, missing_cols, missing_sort,
+        )
+        drop_sql = f"DROP TABLE IF EXISTS {mv_name}"
+        if has_cluster:
+            drop_sql += f" ON CLUSTER '{cluster_name}' SYNC"
+        client.command(drop_sql)
+        create_sql = (
+            source_ddl_cluster.format(cluster=cluster_name)
+            if has_cluster
+            else source_ddl_local
+        )
+        client.command(create_sql)
+        logger.info("%s_migration_done", label)
+    except Exception:
+        logger.warning(
+            "%s_migration_failed", label, exc_info=True,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Table definitions — clustered (ReplicatedMergeTree)
 # ---------------------------------------------------------------------------
@@ -1923,87 +1993,40 @@ class ClickHouseClient:
                     "ch_ddl_alter_failed sql=%s", alter_sql, exc_info=True
                 )
 
-        # One-shot: recreate config_latest / interface_latest when they
-        # lack the execution_time column. CH 24.3 rejects ALTER ADD
-        # COLUMN on MVs so this is the only safe path. ReplacingMergeTree
-        # MVs rebuild quickly — within one poll cycle of each assignment
+        # M-CEN-005 — guarded DROP+CREATE for `*_latest` MVs that have
+        # drifted off the canonical DDL. CH 24.3 rejects ALTER ADD
+        # COLUMN on MVs and silently ignores ALTER MODIFY ORDER BY,
+        # so this is the only safe path. ReplacingMergeTree MVs
+        # rebuild quickly — within one poll cycle of each assignment
         # the new MV is repopulated with the latest row per key.
-        for mv_name, source_ddl_cluster, source_ddl_local in (
-            ("config_latest", _CONFIG_LATEST_DDL, _CONFIG_LATEST_DDL_LOCAL),
-            ("interface_latest", _INTERFACE_LATEST_DDL, _INTERFACE_LATEST_DDL_LOCAL),
-        ):
-            try:
-                check = client.query(
-                    "SELECT position(create_table_query, 'execution_time') "
-                    "FROM system.tables "
-                    "WHERE database = currentDatabase() AND name = {name:String}",
-                    parameters={"name": mv_name},
-                )
-                has_col = (
-                    check.first_row[0] > 0
-                    if check.result_rows
-                    else False
-                )
-                if not has_col:
-                    logger.info(
-                        "%s_execution_time_migration_running", mv_name,
-                    )
-                    drop_sql = f"DROP TABLE IF EXISTS {mv_name}"
-                    if has_cluster:
-                        drop_sql += f" ON CLUSTER '{self._cluster_name}' SYNC"
-                    client.command(drop_sql)
-                    create_sql = (
-                        source_ddl_cluster.format(cluster=self._cluster_name)
-                        if has_cluster
-                        else source_ddl_local
-                    )
-                    client.command(create_sql)
-                    logger.info(
-                        "%s_execution_time_migration_done", mv_name,
-                    )
-            except Exception:
-                logger.warning(
-                    "%s_execution_time_migration_failed",
-                    mv_name,
-                    exc_info=True,
-                )
-
-        # One-shot: recreate performance_latest with assignment_id in
-        # ORDER BY. Error rows from multiple performance-target apps
-        # (cisco_cpu_memory, snmp_uptime, …) all have
-        # component_type="" / component="" and otherwise collide in the
-        # same slot, overwriting each other. Guard with a sorting_key
-        # check so a container restart doesn't wipe the MV every time.
-        try:
-            check = client.query(
-                "SELECT sorting_key FROM system.tables "
-                "WHERE database = currentDatabase() AND name = 'performance_latest'"
-            )
-            current_sort_key = (
-                check.first_row[0]
-                if check.result_rows
-                else ""
-            )
-            if "assignment_id" not in (current_sort_key or ""):
-                logger.info(
-                    "perf_latest_order_by_migration_running current_sort_key=%s",
-                    current_sort_key,
-                )
-                drop_sql = "DROP TABLE IF EXISTS performance_latest"
-                if has_cluster:
-                    drop_sql += f" ON CLUSTER '{self._cluster_name}' SYNC"
-                client.command(drop_sql)
-                create_sql = (
-                    _PERFORMANCE_LATEST_DDL.format(cluster=self._cluster_name)
-                    if has_cluster
-                    else _PERFORMANCE_LATEST_DDL_LOCAL
-                )
-                client.command(create_sql)
-                logger.info("perf_latest_order_by_migration_done")
-        except Exception:
-            logger.warning(
-                "perf_latest_order_by_migration_failed", exc_info=True
-            )
+        # Adding a future column to one of these MVs is now a
+        # one-line change to ``expected_columns`` here.
+        _ensure_mv_drift_rebuild(
+            client, "config_latest",
+            _CONFIG_LATEST_DDL, _CONFIG_LATEST_DDL_LOCAL,
+            has_cluster=has_cluster, cluster_name=self._cluster_name,
+            expected_columns={"execution_time"},
+            log_label="config_latest_execution_time",
+        )
+        _ensure_mv_drift_rebuild(
+            client, "interface_latest",
+            _INTERFACE_LATEST_DDL, _INTERFACE_LATEST_DDL_LOCAL,
+            has_cluster=has_cluster, cluster_name=self._cluster_name,
+            expected_columns={"execution_time"},
+            log_label="interface_latest_execution_time",
+        )
+        # performance_latest needs `assignment_id` in ORDER BY — error
+        # rows from multiple performance-target apps (cisco_cpu_memory,
+        # snmp_uptime, …) all have component_type="" / component=""
+        # and otherwise collide in the same slot, overwriting each
+        # other. Sort-key check fires the same DROP+CREATE.
+        _ensure_mv_drift_rebuild(
+            client, "performance_latest",
+            _PERFORMANCE_LATEST_DDL, _PERFORMANCE_LATEST_DDL_LOCAL,
+            has_cluster=has_cluster, cluster_name=self._cluster_name,
+            expected_sort_key_terms={"assignment_id"},
+            log_label="perf_latest_order_by",
+        )
 
         # Add bloom filter indexes via ALTER TABLE (ClickHouse 24.x compat)
         _INDEXES = [
