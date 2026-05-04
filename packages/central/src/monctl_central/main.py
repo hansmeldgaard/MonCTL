@@ -415,13 +415,32 @@ async def lifespan(app: FastAPI):
             elif latest_ver.checksum != src_checksum:
                 # Same-or-older seed, but source drifted — almost certainly
                 # because an operator uploaded patched source under the same
-                # version label. Log for audit; do NOT overwrite.
-                logger.info(
+                # version label. Log + persist to Redis for the system-health
+                # subsystem to pick up; do NOT overwrite (per
+                # feedback_check_memory_before_writing_code).
+                #
+                # O-CEN-008 — bump from INFO → WARNING (a redeploy that
+                # silently reverts custom-uploaded connector code has
+                # fleet-wide blast radius) and persist the drifted name to
+                # `monctl:connectors:drifted`. The connectors-drift
+                # subsystem in /v1/system/health reads this set.
+                logger.warning(
                     "connector_seed_drift_detected",
                     name=spec["name"],
                     installed_version=latest_ver.version,
                     seed_version=spec["version"],
                 )
+                from monctl_central.cache import _redis as _drift_redis
+                if _drift_redis is not None:
+                    try:
+                        await _drift_redis.sadd(
+                            "monctl:connectors:drifted", spec["name"]
+                        )
+                    except Exception:  # noqa: BLE001
+                        logger.warning(
+                            "connector_drift_redis_unavailable",
+                            name=spec["name"], exc_info=True,
+                        )
 
         await session.commit()
 
