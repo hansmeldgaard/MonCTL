@@ -13,6 +13,23 @@ import structlog
 
 logger = structlog.get_logger()
 
+
+# S-CEN-010 — env var allowlist for the action subprocess.
+#
+# Previously: ``env=os.environ.copy()`` inherited every MonCTL secret
+# (encryption key, JWT secret, DB DSN with password, OAuth client secret,
+# collector API key, peer token, ...). An action with `automation:create`
+# could exfil the cluster's keying material in a single ``print
+# os.environ`` line. We now build a clean env from a small allowlist of
+# system vars the user script may legitimately depend on, plus the two
+# wrapper-internal vars (``MONCTL_ACTION_CONTEXT``,
+# ``MONCTL_ACTION_OUTPUT``). Anything else — secrets in particular —
+# stays in the parent process and never reaches the subprocess.
+_SAFE_ENV_VARS = (
+    "PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "USER", "TZ", "TERM",
+    "TMPDIR", "PYTHONIOENCODING",
+)
+
 _WRAPPER_TEMPLATE = '''
 import json
 import sys
@@ -81,10 +98,21 @@ async def execute_action_locally(
         script_path = Path(tmpdir) / "action_script.py"
         output_path = Path(tmpdir) / "action_output.json"
 
-        wrapped = _WRAPPER_TEMPLATE.format(user_script=source_code)
+        # `.replace` instead of `.format` — the wrapper template
+        # contains literal `{}` (e.g. `data.get("credential", {})`,
+        # `self._output_data = {}`) which `.format()` interprets as
+        # positional placeholders and raises `IndexError`. Replace is
+        # also robust against `{` chars in user-supplied source_code.
+        wrapped = _WRAPPER_TEMPLATE.replace("{user_script}", source_code)
         script_path.write_text(wrapped)
 
-        env = os.environ.copy()
+        # S-CEN-010 — allowlist clean env. Never propagate parent
+        # MonCTL secrets to the user-authored action script.
+        env = {
+            name: os.environ[name]
+            for name in _SAFE_ENV_VARS
+            if name in os.environ
+        }
         env["MONCTL_ACTION_CONTEXT"] = json.dumps(context_data)
         env["MONCTL_ACTION_OUTPUT"] = str(output_path)
 
