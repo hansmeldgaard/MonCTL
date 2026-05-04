@@ -292,6 +292,86 @@ def status(inventory: Path, accept_new_hostkeys: bool) -> None:
         sys.exit(1)
 
 
+@main.command(name="register-collectors")
+@click.option(
+    "--inventory",
+    "-i",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("./inventory.yaml"),
+    show_default=True,
+    help="Path to inventory.yaml",
+)
+@click.option(
+    "--central-url",
+    type=str,
+    default=None,
+    help="Override the central base URL (default: derive from cluster.vip "
+    "or the first host with the `central` role).",
+)
+@click.option(
+    "--revoke-existing",
+    is_flag=True,
+    help="Delete prior keys for each collector before minting the new one. "
+    "Use during a rotation to invalidate any leaked keys immediately.",
+)
+@click.option(
+    "--accept-new-hostkeys",
+    is_flag=True,
+    help="Trust unknown SSH host keys on first contact (initial onboarding only).",
+)
+def register_collectors_cmd(
+    inventory: Path,
+    central_url: str | None,
+    revoke_existing: bool,
+    accept_new_hostkeys: bool,
+) -> None:
+    """Mint per-host collector API keys + write to each host's collector .env.
+
+    Run after `monctl_ctl deploy` brings the cluster up. Closes the
+    install-time gap where every collector shipped with the same
+    cluster-wide MONCTL_COLLECTOR_API_KEY (M-INST-011 / S-COL-002 /
+    S-X-002).
+    """
+    _activate_accept_new_hostkeys(accept_new_hostkeys)
+    from monctl_installer.commands.register_collectors import (
+        RegisterError,
+        register_collectors,
+    )
+    from monctl_installer.inventory.loader import InventoryValidationError
+    from monctl_installer.secrets.store import SecretsFileError
+
+    try:
+        outcomes = register_collectors(
+            inventory,
+            central_url=central_url,
+            revoke_existing=revoke_existing,
+        )
+    except (InventoryValidationError, SecretsFileError, RegisterError) as exc:
+        err_console.print(f"[red]register-collectors precondition failed:[/red] {exc}")
+        sys.exit(1)
+
+    if not outcomes:
+        console.print(
+            "[yellow]no collector hosts in inventory — nothing to do[/yellow]"
+        )
+        return
+
+    registered = sum(1 for o in outcomes if o.status == "registered")
+    failed = sum(1 for o in outcomes if o.status == "failed")
+    for o in outcomes:
+        colour = {"registered": "green", "skipped": "dim", "failed": "red"}[o.status]
+        console.print(
+            f"[{colour}]{o.status:11}[/{colour}] "
+            f"[cyan]{o.host}[/cyan] — {o.detail}"
+        )
+    console.print()
+    console.print(
+        f"[green]{registered} registered[/green], [red]{failed} failed[/red]"
+    )
+    if failed:
+        sys.exit(1)
+
+
 @main.command()
 @click.argument("version")
 @click.option(
