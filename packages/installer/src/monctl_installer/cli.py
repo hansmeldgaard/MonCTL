@@ -224,7 +224,20 @@ def validate(inventory: Path, accept_new_hostkeys: bool) -> None:
     is_flag=True,
     help="Trust unknown SSH host keys on first contact (initial onboarding only).",
 )
-def deploy(inventory: Path, dry_run: bool, accept_new_hostkeys: bool) -> None:
+@click.option(
+    "--skip-register-collectors",
+    is_flag=True,
+    help="Skip the post-deploy step that mints per-host collector API keys "
+    "(M-INST-011 / S-COL-002 / S-X-002). Use during a partial deploy where "
+    "central isn't reachable yet, then run `monctl_ctl register-collectors` "
+    "manually once the cluster is up.",
+)
+def deploy(
+    inventory: Path,
+    dry_run: bool,
+    accept_new_hostkeys: bool,
+    skip_register_collectors: bool,
+) -> None:
     """SSH-distribute compose bundles and `docker compose up -d` on every host."""
     from monctl_installer.commands.deploy import deploy as run_deploy
     from monctl_installer.inventory.loader import InventoryValidationError
@@ -232,7 +245,11 @@ def deploy(inventory: Path, dry_run: bool, accept_new_hostkeys: bool) -> None:
 
     _activate_accept_new_hostkeys(accept_new_hostkeys)
     try:
-        outcomes = run_deploy(inventory, dry_run=dry_run)
+        outcomes = run_deploy(
+            inventory,
+            dry_run=dry_run,
+            register_collectors=not skip_register_collectors,
+        )
     except (InventoryValidationError, SecretsFileError) as exc:
         err_console.print(f"[red]deploy precondition failed:[/red] {exc}")
         sys.exit(1)

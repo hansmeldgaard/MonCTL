@@ -70,7 +70,7 @@ def seeded_install(tmp_path: Path):  # type: ignore[no-untyped-def]
 
 def test_first_deploy_applies_every_project(seeded_install: Path) -> None:
     runner = FakeRunner()
-    outcomes = deploy(seeded_install, runner=runner)  # type: ignore[arg-type]
+    outcomes = deploy(seeded_install, runner=runner, register_collectors=False)  # type: ignore[arg-type]
     applied = [o for o in outcomes if o.status == "applied"]
     assert len(applied) >= 6  # micro touches ~7 projects
     assert all(o.status != "failed" for o in outcomes)
@@ -81,11 +81,11 @@ def test_first_deploy_applies_every_project(seeded_install: Path) -> None:
 
 def test_second_deploy_is_idempotent(seeded_install: Path) -> None:
     r1 = FakeRunner()
-    deploy(seeded_install, runner=r1)  # type: ignore[arg-type]
+    deploy(seeded_install, runner=r1, register_collectors=False)  # type: ignore[arg-type]
     # Second runner observes the same remote state (pre-seeded).
     r2 = FakeRunner()
     r2._state.update(r1._state)  # type: ignore[attr-defined]
-    outcomes2 = deploy(seeded_install, runner=r2)  # type: ignore[arg-type]
+    outcomes2 = deploy(seeded_install, runner=r2, register_collectors=False)  # type: ignore[arg-type]
     assert all(o.status == "unchanged" for o in outcomes2), outcomes2
     # No docker compose up runs this time.
     up_runs = [cmd for (_, cmd) in r2.runs if "docker compose up" in cmd]
@@ -94,7 +94,7 @@ def test_second_deploy_is_idempotent(seeded_install: Path) -> None:
 
 def test_project_order_respected(seeded_install: Path) -> None:
     runner = FakeRunner()
-    deploy(seeded_install, runner=runner)  # type: ignore[arg-type]
+    deploy(seeded_install, runner=runner, register_collectors=False)  # type: ignore[arg-type]
     up_sequence = [cmd for (_, cmd) in runner.runs if "docker compose up" in cmd]
     # Extract project name between `cd /opt/monctl/` and ` &&`
     projects_seen = []
@@ -107,7 +107,7 @@ def test_project_order_respected(seeded_install: Path) -> None:
 
 def test_env_files_have_secrets_substituted(seeded_install: Path) -> None:
     runner = FakeRunner()
-    deploy(seeded_install, runner=runner)  # type: ignore[arg-type]
+    deploy(seeded_install, runner=runner, register_collectors=False)  # type: ignore[arg-type]
     central_env = next(
         content for (h, path), content in runner.uploads.items() if path.endswith("central/.env")
     )
@@ -140,7 +140,7 @@ def test_failure_is_surfaced_not_swallowed(seeded_install: Path) -> None:
         return CommandResult(host.name, cmd, 0, "", "")
 
     runner = FakeRunner(responder=responder)
-    outcomes = deploy(seeded_install, runner=runner)  # type: ignore[arg-type]
+    outcomes = deploy(seeded_install, runner=runner, register_collectors=False)  # type: ignore[arg-type]
     failed = [o for o in outcomes if o.status == "failed"]
     assert len(failed) >= 1
     assert all("boom" in o.detail or "rc=1" in o.detail for o in failed)
@@ -176,7 +176,7 @@ def test_deploy_writes_history_jsonl_on_apply(seeded_install: Path) -> None:
     """Every applied project gets a JSONL row with status, digest, timing,
     and installer version (O-INST-001)."""
     runner = FakeRunner()
-    outcomes = deploy(seeded_install, runner=runner)  # type: ignore[arg-type]
+    outcomes = deploy(seeded_install, runner=runner, register_collectors=False)  # type: ignore[arg-type]
     applied = {o.project for o in outcomes if o.status == "applied"}
     # Each host has a stream of entries, one per project we touched.
     hosts = {o.host for o in outcomes}
@@ -206,7 +206,7 @@ def test_deploy_history_records_failures_with_detail(seeded_install: Path) -> No
         return CommandResult(host.name, cmd, 0, "", "")
 
     runner = FakeRunner(responder=responder)
-    outcomes = deploy(seeded_install, runner=runner)  # type: ignore[arg-type]
+    outcomes = deploy(seeded_install, runner=runner, register_collectors=False)  # type: ignore[arg-type]
     failed = [o for o in outcomes if o.status == "failed"]
     assert failed
     # Every failed outcome has a corresponding history entry.
@@ -243,7 +243,99 @@ def test_deploy_history_is_best_effort_on_ssh_failure(seeded_install: Path) -> N
         return CommandResult(host.name, cmd, 0, "", "")
 
     runner = FakeRunner(responder=responder)
-    outcomes = deploy(seeded_install, runner=runner)  # type: ignore[arg-type]
+    outcomes = deploy(  # type: ignore[arg-type]
+        seeded_install, runner=runner, register_collectors=False,
+    )
     # Deploy itself is unaffected — every project still applies
     assert any(o.status == "applied" for o in outcomes)
     assert all(o.status != "failed" for o in outcomes)
+
+
+# ── Wave 2C — register-collectors post-step ────────────────────────────────
+
+
+def _make_register_http_client():
+    """Tiny httpx.Client that handles /v1/auth/login + the key-mint endpoint."""
+    import httpx as _httpx
+
+    def handler(request: _httpx.Request) -> _httpx.Response:
+        if request.url.path == "/v1/auth/login":
+            r = _httpx.Response(200, json={"status": "success"})
+            r.headers["set-cookie"] = "access_token=fake; Path=/; HttpOnly"
+            return r
+        if request.url.path.startswith("/v1/collectors/by-hostname/"):
+            host_name = request.url.path.split("/")[-2]
+            return _httpx.Response(
+                201,
+                json={
+                    "collector_id": f"id-{host_name}",
+                    "api_key": f"per-host-{host_name}",
+                    "name": host_name,
+                    "status": "PENDING",
+                    "created": True,
+                },
+            )
+        return _httpx.Response(404)
+
+    return _httpx.Client(
+        transport=_httpx.MockTransport(handler),
+        base_url="https://central.test",
+    )
+
+
+def test_deploy_runs_register_collectors_post_step_by_default(
+    seeded_install: Path,
+) -> None:
+    """A normal deploy (default `register_collectors=True`) should
+    finish with per-host keys minted and outcomes appended."""
+    runner = FakeRunner()
+    http_client = _make_register_http_client()
+    outcomes = deploy(  # type: ignore[arg-type]
+        seeded_install, runner=runner, http_client=http_client,
+    )
+    register_outcomes = [
+        o for o in outcomes if o.project == "register-collectors"
+    ]
+    assert register_outcomes, "post-step did not run"
+    assert all(o.status == "applied" for o in register_outcomes)
+
+
+def test_deploy_skips_post_step_when_register_collectors_false(
+    seeded_install: Path,
+) -> None:
+    runner = FakeRunner()
+    outcomes = deploy(  # type: ignore[arg-type]
+        seeded_install, runner=runner, register_collectors=False,
+    )
+    assert not any(o.project == "register-collectors" for o in outcomes)
+
+
+def test_deploy_dry_run_skips_post_step(seeded_install: Path) -> None:
+    """`dry_run=True` is operator preview; no central calls or .env writes."""
+    runner = FakeRunner()
+    outcomes = deploy(  # type: ignore[arg-type]
+        seeded_install, runner=runner, dry_run=True, register_collectors=True,
+    )
+    assert not any(o.project == "register-collectors" for o in outcomes)
+
+
+def test_deploy_skips_post_step_when_no_collector_succeeded(
+    seeded_install: Path,
+) -> None:
+    """If every collector apply failed, don't bother trying to mint keys —
+    the host isn't running the collector container. Skip cleanly."""
+    def responder(host: Host, cmd: str) -> CommandResult:
+        if "docker compose up" in cmd and "/opt/monctl/collector" in cmd:
+            return CommandResult(host.name, cmd, 1, "", "boom")
+        return CommandResult(host.name, cmd, 0, "", "")
+
+    runner = FakeRunner(responder=responder)
+    http_client = _make_register_http_client()
+    outcomes = deploy(  # type: ignore[arg-type]
+        seeded_install, runner=runner, http_client=http_client,
+    )
+    register_outcomes = [
+        o for o in outcomes if o.project == "register-collectors"
+    ]
+    # Collector failed → register-collectors not attempted at all.
+    assert register_outcomes == []
