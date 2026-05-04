@@ -177,32 +177,39 @@ def deploy(
                                 f"unexpected error: {exc}",
                             )
                         )
+
+        # Wave 2C — register-collectors post-step. Inside the try so the
+        # SSH runner we just used for the project loop is still alive
+        # (the finally below closes it). Skip on dry-run, and skip if no
+        # collector host applied/unchanged (no point provisioning keys
+        # for hosts whose collector container isn't running yet).
+        # Failures here are non-fatal — the cluster is still up on the
+        # shared-secret path.
+        if register_collectors and not dry_run:
+            collector_outcomes = [
+                o for o in outcomes
+                if o.project == "collector" and o.status in ("applied", "unchanged")
+            ]
+            if collector_outcomes:
+                outcomes.extend(
+                    _post_step_register_collectors(
+                        inventory_path,
+                        runner=runner,
+                        http_client=http_client,
+                    )
+                )
     finally:
         if owns_runner:
             runner.close()
-
-    # Wave 2C — register-collectors post-step. Skip on dry-run, and skip
-    # if the deploy itself failed on every collector host (no point trying
-    # to provision keys for hosts that aren't reachable / aren't running
-    # the collector container yet). Failures here are non-fatal — the
-    # cluster is still up on the shared-secret path.
-    if register_collectors and not dry_run:
-        collector_outcomes = [
-            o for o in outcomes
-            if o.project == "collector" and o.status in ("applied", "unchanged")
-        ]
-        if collector_outcomes:
-            outcomes.extend(
-                _post_step_register_collectors(
-                    inventory_path, http_client=http_client
-                )
-            )
 
     return outcomes
 
 
 def _post_step_register_collectors(
-    inventory_path: Path, *, http_client: "object | None" = None,
+    inventory_path: Path,
+    *,
+    runner: SSHRunner,
+    http_client: "object | None" = None,
 ) -> list[DeployOutcome]:
     """Run register-collectors and translate its outcomes into
     DeployOutcome rows so the caller sees them alongside per-project
@@ -215,7 +222,7 @@ def _post_step_register_collectors(
 
     try:
         results = register_collectors(
-            inventory_path, http_client=http_client,
+            inventory_path, runner=runner, http_client=http_client,
         )
     except RegisterError as exc:
         return [DeployOutcome(
