@@ -1789,6 +1789,39 @@ async def _check_alerts_standalone() -> dict:
         return await _check_alerts(db)
 
 
+async def _check_connectors_drift() -> dict:
+    """Connector seed drift: any connector whose installed source ≠ seed.
+
+    O-CEN-008 — `_check_connector_drift` at startup persists drifted
+    names to a Redis set (`monctl:connectors:drifted`). Surfacing the
+    set as a health subsystem makes a silently-reverted redeploy
+    visible in the same place operators already look — instead of
+    requiring them to grep startup logs across every central node.
+    """
+    from monctl_central.cache import _redis as _drift_redis
+
+    if _drift_redis is None:
+        return {"status": "healthy", "reason": None, "details": {}}
+    try:
+        names = await _drift_redis.smembers("monctl:connectors:drifted")
+    except Exception:  # noqa: BLE001
+        return {
+            "status": "healthy",
+            "reason": None,
+            "details": {"redis_unavailable": True},
+        }
+    drifted = sorted(
+        n.decode("utf-8") if isinstance(n, bytes) else str(n) for n in names
+    )
+    if not drifted:
+        return {"status": "healthy", "reason": None, "details": {}}
+    return {
+        "status": "degraded",
+        "reason": "drifted=" + ",".join(drifted),
+        "details": {"drifted": drifted, "count": len(drifted)},
+    }
+
+
 async def _check_audit() -> dict:
     """Audit-buffer health: drop count + flush failures.
 
@@ -1844,6 +1877,7 @@ async def system_health(
         _run_check("ingestion", _check_ingestion()),
         _run_check("alerts", _check_alerts_standalone()),
         _run_check("audit", _check_audit()),
+        _run_check("connectors", _check_connectors_drift()),
         _run_check("docker", _check_docker_infrastructure(), timeout=_DOCKER_CHECK_TIMEOUT),
         return_exceptions=True,
     )
@@ -1872,6 +1906,7 @@ async def system_health(
         "central", "postgresql", "patroni", "etcd", "clickhouse",
         "redis", "collectors", "scheduler", "ingestion", "docker",
         "audit",  # O-CEN-003 — drops on CH outage must show in top-bar
+        "connectors",  # O-CEN-008 — silent connector-source revert
     }
     priority = {"critical": 2, "degraded": 1, "healthy": 0, "unknown": -1}
     worst = max(
@@ -1977,6 +2012,7 @@ async def _compute_overall_status() -> dict:
         _run_check("scheduler", _check_scheduler()),
         _run_check("ingestion", _check_ingestion()),
         _run_check("audit", _check_audit()),
+        _run_check("connectors", _check_connectors_drift()),
         _run_check("docker", _check_docker_infrastructure(), timeout=_DOCKER_CHECK_TIMEOUT),
         return_exceptions=True,
     )
@@ -2002,6 +2038,7 @@ async def _compute_overall_status() -> dict:
         "central", "postgresql", "patroni", "etcd", "clickhouse",
         "redis", "collectors", "scheduler", "ingestion", "docker",
         "audit",  # O-CEN-003 — drops on CH outage must show in top-bar
+        "connectors",  # O-CEN-008 — silent connector-source revert
     }
     priority = {"critical": 2, "degraded": 1, "healthy": 0, "unknown": -1}
     worst = max(
