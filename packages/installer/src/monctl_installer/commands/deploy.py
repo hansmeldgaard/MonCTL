@@ -12,10 +12,12 @@ haproxy (which routes /bi/ traffic to it).
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -28,6 +30,7 @@ from monctl_installer.secrets.store import load_secrets, validate_secrets_file
 from monctl_installer.version import __version__
 
 STATE_PATH = "/opt/monctl/.state.json"
+DEPLOY_HISTORY_PATH = "/opt/monctl/.deploy-history.jsonl"
 PROJECT_ROOT = "/opt/monctl"
 
 # Deterministic deploy order — upstreams first.
@@ -97,25 +100,41 @@ def deploy(
             if not pf:
                 continue
             digest = _hash_project(pf)
+            started_at = _now_iso()
             if prior_state.get(project) == digest:
-                host_outcomes.append(
-                    DeployOutcome(host.name, project, "unchanged", f"sha={digest[:12]}")
+                outcome = DeployOutcome(
+                    host.name, project, "unchanged", f"sha={digest[:12]}"
+                )
+                host_outcomes.append(outcome)
+                _record_deploy_event(
+                    host, runner, project, "unchanged", digest,
+                    started_at, _now_iso(), outcome.detail, dry_run,
                 )
                 continue
             try:
                 if dry_run:
-                    host_outcomes.append(
-                        DeployOutcome(host.name, project, "applied", "dry-run")
+                    outcome = DeployOutcome(
+                        host.name, project, "applied", "dry-run"
                     )
                 else:
                     _apply_project(host, project, pf, secret_values, runner)
                     prior_state[project] = digest
                     _save_remote_state(host, runner, prior_state)
-                    host_outcomes.append(
-                        DeployOutcome(host.name, project, "applied", f"sha={digest[:12]}")
+                    outcome = DeployOutcome(
+                        host.name, project, "applied", f"sha={digest[:12]}"
                     )
+                host_outcomes.append(outcome)
+                _record_deploy_event(
+                    host, runner, project, outcome.status, digest,
+                    started_at, _now_iso(), outcome.detail, dry_run,
+                )
             except SSHError as exc:
-                host_outcomes.append(DeployOutcome(host.name, project, "failed", str(exc)))
+                outcome = DeployOutcome(host.name, project, "failed", str(exc))
+                host_outcomes.append(outcome)
+                _record_deploy_event(
+                    host, runner, project, "failed", digest,
+                    started_at, _now_iso(), str(exc), dry_run,
+                )
         return host_outcomes
 
     outcomes: list[DeployOutcome] = []
@@ -156,6 +175,62 @@ def deploy(
 
 
 # ── remote operations ─────────────────────────────────────────────────────
+
+
+def _now_iso() -> str:
+    """UTC ISO-8601 timestamp suitable for the deploy-history log line."""
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _record_deploy_event(
+    host: Host,
+    runner: SSHRunner,
+    project: str,
+    status: str,
+    digest: str,
+    started_at: str,
+    finished_at: str,
+    detail: str,
+    dry_run: bool,
+) -> None:
+    """Append one JSONL row to ``/opt/monctl/.deploy-history.jsonl`` per
+    project per host per run (O-INST-001).
+
+    Best-effort: if the host filesystem is unwritable or SSH fails, we log
+    nothing and continue — the deploy itself already returned an outcome
+    object to the caller. The history line is for the operator who comes
+    back later to ask "when did central last deploy on host3, and did it
+    succeed?".
+
+    Encoded via base64 + ``base64 -d`` because the JSON line may contain
+    quotes and shell metacharacters from `detail` (an SSH stderr blob),
+    and we don't want to invent another shell-escape ladder.
+    """
+    if dry_run:
+        return  # only record real deploys; dry-run is operator preview
+    entry = {
+        "timestamp": finished_at,
+        "host": host.name,
+        "project": project,
+        "status": status,
+        "digest": digest[:12],
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "installer_version": __version__,
+        "detail": detail,
+    }
+    line = json.dumps(entry, sort_keys=True) + "\n"
+    encoded = base64.b64encode(line.encode("utf-8")).decode("ascii")
+    cmd = (
+        f"mkdir -p {PROJECT_ROOT} && "
+        f"echo {encoded} | base64 -d >> {DEPLOY_HISTORY_PATH}"
+    )
+    try:
+        runner.run(host, cmd)
+    except SSHError:
+        # Don't let history-logging failures mask the deploy outcome.
+        pass
+
 
 def _apply_project(
     host: Host,
