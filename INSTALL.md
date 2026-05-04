@@ -95,8 +95,13 @@ Per host, `deploy`:
 1. Renders a compose bundle for each role the host carries.
 2. `scp`'s files into `/opt/monctl/<project>/` (mode 0600 for `.env`).
 3. Runs `docker compose up -d --remove-orphans` in upstream-first order: postgres → etcd → redis → clickhouse → central → haproxy → collector.
+4. **Mints per-host collector API keys** (Wave 2 / S-X-002). Once the collector container is up on each host, `deploy` calls `POST /v1/collectors/by-hostname/{hostname}/api-keys` against central using the admin credentials in `secrets.env`, writes the unique key into `/opt/monctl/collector/.env`, and restarts the collector container so the key takes effect. Pass `--skip-register-collectors` to defer this step; you can run it later as `monctl_ctl register-collectors`.
 
 Re-running `deploy` on an unchanged cluster is a no-op (state hash dedups). If you edit `inventory.yaml` and re-run, only the changed projects are touched.
+
+Each newly-minted collector starts in `status="PENDING"`. Approve them via the UI (Settings → Collectors) or the API (`POST /v1/collectors/{id}/approve`).
+
+After all collectors are approved and confirmed healthy on per-host keys, you can opt into strict per-collector authentication by setting `MONCTL_REQUIRE_PER_COLLECTOR_AUTH=true` on every central node. This rejects any collector call that falls back to the cluster-wide shared secret (S-CEN-002). Until then, central still accepts the shared secret as a fallback and emits a `collector_shared_secret_used` warning so you can monitor the sunset in central logs.
 
 ## 6. Log in
 

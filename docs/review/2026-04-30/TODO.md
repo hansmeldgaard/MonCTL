@@ -36,14 +36,16 @@
 - [x] **S-INST-014** — Atomic SFTP put via random `.tmp` + `posix_rename` (`packages/installer/src/monctl_installer/remote/ssh.py`).
 - [x] **M-INST-014 / M-INST-015** — `MANIFEST.sha256` shipped + verified at `bundle load`.
 
-## Wave 2 — Per-collector key rollout at install time (still open; biggest gap from #1 → #2)
+## Wave 2 — Per-collector key rollout at install time (CLOSED)
 
-Customer installs currently bypass the per-collector auth that #117/#118/#122 added. Central enforces per-collector identity, but `monctl_ctl deploy` doesn't provision it.
+Customer installs now mint per-host collector API keys at deploy time.
+Central + installer + deploy + docs all shipped 2026-05-04 across PRs
+#186 (Wave 2A), #187 (Wave 2B), #188 (Wave 2C), and the doc closer.
 
-- [ ] **M-INST-011 / S-COL-002 / S-X-002** — `monctl_ctl deploy` post-step that registers each collector via central, writes per-host API keys to `/opt/monctl/collector/.env`, flips `MONCTL_VERIFY_SSL=true` once central CA is provisioned. — L
-- [x] **M-INST-012** — `peer_token_seed` per cluster + `host_peer_token(name)` derives a per-host token via HMAC-SHA256(seed, host_name). Verified 2026-05-04.
-- [ ] **S-CEN-002** — Once installer ships per-collector keys, flip `_resolve_caller_collector` default to 401 instead of fall-through. `packages/central/src/monctl_central/collector_api/router.py:1697-1707, 1214-1237` — S (gated on Wave 2 first item)
-- [x] **S-COL-001** — Cache-node now `raise RuntimeError(...)` when `MONCTL_PEER_TOKEN` is unset (S-COL-001 marker in source). Verified 2026-05-04.
+- [x] **M-INST-011 / S-COL-002 / S-X-002** — `monctl_ctl deploy` runs a post-step that POSTs `/v1/collectors/by-hostname/{host}/api-keys`, rewrites `MONCTL_COLLECTOR_API_KEY` in each host's `/opt/monctl/collector/.env`, and restarts the collector. `--skip-register-collectors` opts out for partial deploys; `monctl_ctl register-collectors` is the standalone subcommand. INSTALL.md §5 documents the flow.
+- [x] **M-INST-012** — `peer_token_seed` per cluster + `host_peer_token(name)` derives a per-host token via HMAC-SHA256(seed, host_name).
+- [ ] **S-CEN-002 (operator opt-in path)** — Soft-deprecation shipped: central emits `collector_shared_secret_used` warnings and exposes `MONCTL_REQUIRE_PER_COLLECTOR_AUTH=true` for operators to enforce strict per-collector auth once their fleet is migrated. Hard-flipping the default would break any install still on shared-secret; intentionally left to operators.
+- [x] **S-COL-001** — Cache-node `raise RuntimeError(...)` when `MONCTL_PEER_TOKEN` is unset.
 
 ## Wave 3 — Reliability bugs in alerting + WS + OS-install
 
@@ -124,7 +126,7 @@ Customer installs currently bypass the per-collector auth that #117/#118/#122 ad
 
 - [x] **S-CEN-004** — `/v1/auth/login` rate limit + lockout (10-fail / 10-min window, 15-min lockout, audit + counter wiring).
 - [x] **S-CEN-010** — Action automations: env allowlist (no MonCTL secret leaks) + admin gate for `target=central` create/edit (PR #179).
-- [ ] **S-X-002** — Customer installer per-collector key rollout (umbrella; same as Wave 2 first item).
+- [x] **S-X-002** — Customer installer per-collector key rollout — Wave 2 closer (PRs #186/#187/#188).
 
 ## Manual / "not code" follow-ups
 
@@ -137,6 +139,12 @@ Customer installs currently bypass the per-collector auth that #117/#118/#122 ad
 
 ## Progress
 
-All 9 HIGH-severity testing findings closed (T-CEN-001/002/010/011/012, T-APP-001, T-X-001/002/003). 6 of 7 HIGH security findings closed (S-INST-001/002/003/004, S-CEN-004, S-CEN-010); S-X-002 remains as the umbrella per-collector-key install-time rollout.
+**All 9 HIGH-severity testing findings closed.** All 7 HIGH-severity
+security findings closed (Wave 2 closer 2026-05-04 across #186/#187/#188).
+Reliability + perf + observability essentially closed.
 
-Concentration of remaining work: Wave 2 (one large multi-PR feature: installer wiring per-collector keys) and longer-tail documentation. Reliability + perf + observability are essentially closed.
+Remaining open is the longer-tail docs bucket plus a couple of MED
+operability items (`O-X-001` platform-self alerting, `T-WEB-001`
+broader frontend tests, `T-X-006` regression-per-fix coverage of
+PRs #134/#138/#140, `S-X-003` audit_alert_actions). None are HIGH
+severity.
