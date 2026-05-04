@@ -275,6 +275,104 @@ async def get_registration_status(
 # POST /v1/collectors/{collector_id}/approve
 # ---------------------------------------------------------------------------
 
+class ProvisionKeyRequest(BaseModel):
+    revoke_existing: bool = False
+
+
+class ProvisionKeyResponse(BaseModel):
+    collector_id: str
+    api_key: str
+    name: str
+    status: str
+    created: bool
+
+
+@router.post(
+    "/by-hostname/{hostname}/api-keys",
+    status_code=status.HTTP_201_CREATED,
+    response_model=ProvisionKeyResponse,
+)
+async def provision_collector_api_key(
+    hostname: str,
+    request: ProvisionKeyRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_admin),
+) -> ProvisionKeyResponse:
+    """Admin-only: mint a per-collector API key for ``hostname``.
+
+    Wave 2 installer enabler (M-INST-011 / S-COL-002 / S-X-002). The
+    customer installer needs to provision per-host collector API keys
+    at install time so that ``MONCTL_COLLECTOR_API_KEY`` shipped to
+    each collector host is unique to that host (instead of every host
+    sharing the cluster-wide secret). The collector self-registration
+    flow at ``POST /v1/collectors/register`` requires the collector to
+    initiate; this endpoint inverts that — central operators (with
+    admin credentials in their `secrets.env`) can mint keys directly,
+    suitable for orchestration from ``monctl_ctl deploy``.
+
+    If a Collector with the requested hostname doesn't exist yet, one
+    is created with ``status="PENDING"``. The operator approves it
+    via the existing ``POST /v1/collectors/{id}/approve`` flow once
+    the collector host is up. Re-running this endpoint mints
+    additional keys (multiple keys per collector are supported by the
+    current model — useful for key rotation). Pass
+    ``revoke_existing: true`` to delete prior keys at the same time.
+    """
+    if not hostname.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="hostname is required",
+        )
+
+    existing_stmt = select(Collector).where(Collector.hostname == hostname)
+    collector = (await db.execute(existing_stmt)).scalar_one_or_none()
+    created = False
+    if collector is None:
+        collector = Collector(
+            name=hostname,
+            hostname=hostname,
+            status="PENDING",
+            last_seen_at=utc_now(),
+        )
+        db.add(collector)
+        await db.flush()
+        created = True
+
+    if request.revoke_existing:
+        # Drop any existing keys + invalidate the cache so a stale key
+        # the operator may have leaked stops working immediately.
+        from monctl_central.cache import delete_cached_api_key
+
+        old_keys = (
+            await db.execute(
+                select(ApiKey).where(ApiKey.collector_id == collector.id)
+            )
+        ).scalars().all()
+        for old_key in old_keys:
+            await delete_cached_api_key(old_key.key_hash)
+            await db.delete(old_key)
+        await db.flush()
+
+    raw_key = generate_api_key(COLLECTOR_KEY_PREFIX)
+    api_key_row = ApiKey(
+        key_hash=hash_api_key(raw_key),
+        key_prefix=key_prefix_display(raw_key),
+        key_type="collector",
+        collector_id=collector.id,
+        scopes=["collector:*"],
+    )
+    db.add(api_key_row)
+    await db.flush()
+
+    return ProvisionKeyResponse(
+        collector_id=str(collector.id),
+        api_key=raw_key,
+        name=collector.name,
+        status=collector.status,
+        created=created,
+    )
+
+
 @router.post("/{collector_id}/approve")
 async def approve_collector(
     collector_id: str,
