@@ -98,7 +98,12 @@ async def execute_action_locally(
         script_path = Path(tmpdir) / "action_script.py"
         output_path = Path(tmpdir) / "action_output.json"
 
-        wrapped = _WRAPPER_TEMPLATE.format(user_script=source_code)
+        # `.replace` instead of `.format` — the wrapper template
+        # contains literal `{}` (e.g. `data.get("credential", {})`,
+        # `self._output_data = {}`) which `.format()` interprets as
+        # positional placeholders and raises `IndexError`. Replace is
+        # also robust against `{` chars in user-supplied source_code.
+        wrapped = _WRAPPER_TEMPLATE.replace("{user_script}", source_code)
         script_path.write_text(wrapped)
 
         # S-CEN-010 — allowlist clean env. Never propagate parent
