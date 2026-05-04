@@ -66,8 +66,13 @@ function mergeServerIntoPrefs(
 /** Clone + strip default-valued entries so the stored config stays lean.
  *  A key with `{}` survives because the user explicitly set something
  *  and then cleared it (e.g. reset width); normalise by dropping the
- *  whole entry. */
-function compact(config: ColumnConfigMap): ColumnConfigMap {
+ *  whole entry.
+ *
+ *  Note: `hidden != null` instead of truthy `if (entry.hidden)` —
+ *  a truthy check would drop `hidden: false`, which is the explicit
+ *  "user un-hid a defaultHidden column" signal. Memory entry
+ *  `feedback_column_config_compact_false` calls out this regression. */
+export function compact(config: ColumnConfigMap): ColumnConfigMap {
   const out: ColumnConfigMap = {};
   for (const [key, entry] of Object.entries(config)) {
     const next: ColumnConfig = {};
