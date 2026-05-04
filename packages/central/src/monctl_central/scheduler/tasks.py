@@ -26,6 +26,93 @@ logger = logging.getLogger(__name__)
 from monctl_central.common.task_callbacks import log_task_exception as _log_task_exception  # noqa: E402,F401
 
 
+async def _subsystem_health_checks() -> list[dict]:
+    """O-X-001 — translate `/v1/system/health` subsystem statuses into
+    `_check_def`-shaped dicts that the existing fire/clear loop knows
+    how to consume.
+
+    For each subsystem that the system-health endpoint surfaces, emit
+    one check row regardless of state — `breached=True` for
+    degraded/critical, `breached=False` for healthy — so the
+    Redis-backed prev_state machine in
+    ``_evaluate_system_health`` fires on transitions in either
+    direction. Subsystems that return ``status="unknown"`` are skipped
+    (no signal to act on).
+
+    Returning the list (vs. mutating an outer var) keeps the helper
+    pure for unit tests; the scheduler method just extends its own
+    ``checks`` list with whatever this returns.
+    """
+    import asyncio as _aio
+    from monctl_central.system.router import (
+        _check_alerts_standalone,
+        _check_audit,
+        _check_central,
+        _check_clickhouse,
+        _check_collectors_standalone,
+        _check_connectors_drift,
+        _check_etcd,
+        _check_patroni,
+        _check_postgresql_standalone,
+        _check_redis,
+        _check_scheduler,
+    )
+
+    pairs = (
+        ("central", _check_central()),
+        ("postgresql", _check_postgresql_standalone()),
+        ("patroni", _check_patroni()),
+        ("etcd", _check_etcd()),
+        ("clickhouse", _check_clickhouse()),
+        ("redis", _check_redis()),
+        ("collectors", _check_collectors_standalone()),
+        ("scheduler", _check_scheduler()),
+        ("alerts", _check_alerts_standalone()),
+        ("audit", _check_audit()),
+        ("connectors", _check_connectors_drift()),
+    )
+    results = await _aio.gather(
+        *(c for _, c in pairs), return_exceptions=True,
+    )
+
+    return [
+        check
+        for check in (
+            _shape_subsystem_check(name, result)
+            for (name, _), result in zip(pairs, results)
+        )
+        if check is not None
+    ]
+
+
+def _shape_subsystem_check(name: str, result: object) -> dict | None:
+    """Convert a `_check_*` return value into a fire/clear-shaped row.
+
+    Returns None for unknown statuses or non-dict results (gather
+    exceptions) so the caller can skip them.
+    """
+    if isinstance(result, Exception) or not isinstance(result, dict):
+        return None
+    status = result.get("status", "unknown")
+    if status == "unknown":
+        return None
+    breached = status in ("degraded", "critical")
+    severity = "critical" if status == "critical" else "warning"
+    if breached:
+        message = result.get("reason") or f"{name} status={status}"
+    else:
+        message = f"{name} healthy"
+    return {
+        "name": f"Subsystem health: {name}",
+        "entity_key": f"subsystem|{name}",
+        "breached": breached,
+        "severity": severity,
+        "current_value": 1.0 if breached else 0.0,
+        "threshold_value": 0.5,
+        "message": message,
+    }
+
+
 class SchedulerRunner:
     """Runs periodic tasks only when this instance is the elected leader."""
 
@@ -376,6 +463,12 @@ class SchedulerRunner:
                 ))
         except Exception:
             logger.exception("system_health_etcd_checks_failed")
+
+        # ── Subsystem-status checks (O-X-001) ──
+        try:
+            checks.extend(await _subsystem_health_checks())
+        except Exception:
+            logger.exception("system_health_subsystem_checks_failed")
 
         # ── Process results: fire/clear via Redis state ──
         if not _redis:
