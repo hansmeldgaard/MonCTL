@@ -211,6 +211,18 @@ async def create_action(
     if request.target not in ("collector", "central"):
         raise HTTPException(400, detail="target must be 'collector' or 'central'")
 
+    # S-CEN-010 — `target=central` actions run arbitrary Python on the
+    # central node and could exfil secrets / pivot the cluster. Even
+    # with the env-allowlist hardening in executor.py, that surface
+    # belongs to admins only — `automation:create` lets non-admin
+    # operators script collector-side device runbooks, not author
+    # cluster-local code.
+    if request.target == "central" and auth.get("role") != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="target='central' actions require admin role",
+        )
+
     action = Action(
         name=request.name,
         description=request.description,
@@ -237,6 +249,18 @@ async def update_action(
     action = await db.get(Action, uuid.UUID(action_id))
     if not action:
         raise HTTPException(status_code=404, detail="Action not found")
+
+    # S-CEN-010 — any edit (target change, source_code change, …) on an
+    # action whose effective target is "central" must come from an admin.
+    # A non-admin with `automation:edit` could otherwise rewrite the
+    # source_code of an existing central action and pivot the cluster,
+    # which the create-side gate alone wouldn't catch.
+    effective_target = request.target if request.target is not None else action.target
+    if effective_target == "central" and auth.get("role") != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="editing target='central' actions requires admin role",
+        )
 
     if request.name is not None:
         action.name = request.name
