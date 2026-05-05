@@ -201,6 +201,12 @@ async def list_devices(
     collector_group_name: Optional[str] = Query(default=None, description="Filter by collector group name"),
     label_key: Optional[str] = Query(default=None, description="Filter by label key"),
     label_value: Optional[str] = Query(default=None, description="Filter by label value (requires label_key)"),
+    q: Optional[str] = Query(default=None, description="Global search (matches name OR address, ilike)"),
+    status: Optional[str] = Query(
+        default=None,
+        pattern="^(all|up|down|unknown|disabled)$",
+        description="Filter by computed device status (all|up|down|unknown|disabled)",
+    ),
     sort_by: str = Query(default="name", description="Sort field"),
     sort_dir: str = Query(default="asc", description="Sort direction: asc or desc"),
     limit: int = Query(default=50, le=500),
@@ -241,10 +247,71 @@ async def list_devices(
         stmt = stmt.where(Device.labels.has_key(label_key))
         if label_value:
             stmt = stmt.where(Device.labels[label_key].astext == label_value)
+    if q:
+        like = f"%{q}%"
+        stmt = stmt.where(sa.or_(Device.name.ilike(like), Device.address.ilike(like)))
 
     stmt = apply_tenant_filter(stmt, auth, Device.tenant_id)
 
-    # Count query (same WHERE clause)
+    # ── Status counts + optional status filter ────────────────
+    # Computed from is_enabled (PG) + latest availability_latency rows (CH).
+    # status_counts is always returned in meta so the UI can show pill counts
+    # regardless of the active filter.
+    ids_subq = stmt.with_only_columns(Device.id, Device.is_enabled).subquery()
+    id_rows = (await db.execute(select(ids_subq.c.id, ids_subq.c.is_enabled))).all()
+    enabled_by_id = {r.id: r.is_enabled for r in id_rows}
+
+    reachability_by_device: dict[str, bool] = {}
+    if enabled_by_id:
+        ch = get_clickhouse()
+        try:
+            latest_rows = await asyncio.to_thread(
+                ch.query_latest,
+                table="availability_latency",
+                tenant_ids=auth.get("tenant_ids"),
+            )
+        except Exception as exc:  # ClickHouse outage shouldn't 500 the list
+            logger.warning("device_status_ch_query_failed", error=str(exc))
+            latest_rows = []
+        # Prefer availability-role rows; any non-reachable wins ("worst-of").
+        avail: dict[str, bool] = {}
+        any_role: dict[str, bool] = {}
+        for r in latest_rows:
+            dev_id = str(r.get("device_id", ""))
+            if not dev_id:
+                continue
+            reach = bool(r.get("reachable", True))
+            if r.get("role") == "availability":
+                avail[dev_id] = avail.get(dev_id, True) and reach
+            else:
+                any_role[dev_id] = any_role.get(dev_id, True) and reach
+        reachability_by_device = {**any_role, **avail}
+
+    def _status_for(dev_id: uuid.UUID, is_enabled: bool) -> str:
+        if not is_enabled:
+            return "disabled"
+        reach = reachability_by_device.get(str(dev_id))
+        if reach is None:
+            return "unknown"
+        return "up" if reach else "down"
+
+    status_counts = {"all": len(enabled_by_id), "up": 0, "down": 0, "unknown": 0, "disabled": 0}
+    per_device_status: dict[uuid.UUID, str] = {}
+    for dev_id, en in enabled_by_id.items():
+        s = _status_for(dev_id, en)
+        per_device_status[dev_id] = s
+        status_counts[s] += 1
+
+    if status and status != "all":
+        matching_ids = [d for d, s in per_device_status.items() if s == status]
+        # Force an empty resultset when filter matches nothing — `in_([])` is
+        # SQL-invalid in some dialects, so use a short-circuit.
+        if matching_ids:
+            stmt = stmt.where(Device.id.in_(matching_ids))
+        else:
+            stmt = stmt.where(sa.false())
+
+    # Count query (same WHERE clause, including any status filter applied above)
     count_stmt = select(sa.func.count()).select_from(stmt.subquery())
     total = (await db.execute(count_stmt)).scalar() or 0
 
@@ -286,7 +353,13 @@ async def list_devices(
     return {
         "status": "success",
         "data": [_format_device(d) for d in devices],
-        "meta": {"limit": limit, "offset": offset, "count": len(devices), "total": total},
+        "meta": {
+            "limit": limit,
+            "offset": offset,
+            "count": len(devices),
+            "total": total,
+            "status_counts": status_counts,
+        },
     }
 
 

@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card.tsx";
 import { CardHeaderBar } from "@/components/devices-beta/CardHeaderBar.tsx";
+import { DeviceStatusFilter } from "@/components/devices-beta/DeviceStatusFilter.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Select } from "@/components/ui/select.tsx";
@@ -24,7 +25,7 @@ import { FlexTable } from "@/components/FlexTable/FlexTable.tsx";
 import { DisplayMenu } from "@/components/FlexTable/DisplayMenu.tsx";
 import { useDisplayPreferences } from "@/hooks/useDisplayPreferences.ts";
 import type { FlexColumnDef } from "@/components/FlexTable/types.ts";
-import type { Device } from "@/types/api.ts";
+import type { Device, DeviceStatusCounts } from "@/types/api.ts";
 import {
   useDevices,
   useLatestResults,
@@ -62,6 +63,21 @@ export function DevicesBetaPage() {
   // ── Sorting ─────────────────────────────────────────────
   const [sortBy, setSortBy] = useState("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  // ── Global search + status pill (immediate UI state, debounced fetch) ──
+  const [q, setQ] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState("");
+  const [statusFilter, setStatusFilter] = useState<
+    "all" | "up" | "down" | "unknown" | "disabled"
+  >("all");
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedQ(q);
+      setPage(0);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [q]);
 
   // ── Per-column filters (immediate) ──────────────────────
   const [filterName, setFilterName] = useState("");
@@ -147,7 +163,7 @@ export function DevicesBetaPage() {
   // Reset infinite pages when filters/sort/scrollMode change
   useEffect(() => {
     setInfinitePages(1);
-  }, [debouncedFilters, sortBy, sortDir, scrollMode]);
+  }, [debouncedFilters, debouncedQ, statusFilter, sortBy, sortDir, scrollMode]);
 
   // ── Fetch devices ───────────────────────────────────────
   const fetchLimit =
@@ -162,6 +178,8 @@ export function DevicesBetaPage() {
     offset: fetchOffset,
     sort_by: sortBy,
     sort_dir: sortDir,
+    ...(debouncedQ ? { q: debouncedQ } : {}),
+    ...(statusFilter !== "all" ? { status: statusFilter } : {}),
     ...Object.fromEntries(
       Object.entries(debouncedFilters).filter(([, v]) => v !== ""),
     ),
@@ -795,6 +813,26 @@ export function DevicesBetaPage() {
           </>
         )}
       </div>
+
+      {/* Status pills + global search */}
+      <DeviceStatusFilter
+        status={statusFilter}
+        onStatusChange={(next) => {
+          setStatusFilter(next);
+          setPage(0);
+        }}
+        query={q}
+        onQueryChange={setQ}
+        counts={
+          (meta as { status_counts?: DeviceStatusCounts }).status_counts ?? {
+            all: total,
+            up: 0,
+            down: 0,
+            unknown: 0,
+            disabled: 0,
+          }
+        }
+      />
 
       {/* Table */}
       <Card className="overflow-hidden">
