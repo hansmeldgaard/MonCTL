@@ -4,6 +4,7 @@ import { usePermissions } from "@/hooks/usePermissions.ts";
 import { useTimezone } from "@/hooks/useTimezone.ts";
 import { useTimeDisplayMode } from "@/hooks/useTimeDisplayMode.ts";
 import { useColumnConfig } from "@/hooks/useColumnConfig.ts";
+import { useTelemetry } from "@/hooks/useTelemetry.ts";
 import { formatTime } from "@/lib/utils.ts";
 import {
   ChevronLeft,
@@ -52,6 +53,11 @@ import { DeviceIcon, categoryIconUrl } from "@/components/DeviceIcon.tsx";
 export function DevicesBetaPage() {
   const { canCreate, canEdit, canDelete } = usePermissions();
   const tz = useTimezone();
+  const track = useTelemetry();
+  // Fire devices_beta.viewed once per page mount
+  useEffect(() => {
+    track("devices_beta.viewed");
+  }, [track]);
   // ── URL state ──────────────────────────────────────────
   // Initial filter/sort state hydrates from the URL so saved views are
   // bookmarkable and shareable. Subsequent state writes back into the URL
@@ -886,6 +892,7 @@ export function DevicesBetaPage() {
         </span>
         <Link
           to="/devices"
+          onClick={() => track("devices_beta.switched_to_classic")}
           className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors no-underline"
           title="Switch back to the classic Devices page"
         >
@@ -929,6 +936,7 @@ export function DevicesBetaPage() {
         page="devices-beta"
         activeViewId={activeViewId}
         onPickView={(v) => {
+          track("devices_beta.view_picked");
           const f = v.filter_json;
           setStatusFilter(f.statusFilter ?? "all");
           setQ(f.q ?? "");
@@ -1014,23 +1022,38 @@ export function DevicesBetaPage() {
           busy={bulkPatch.isPending}
           autoAssigning={autoApplyTemplates.isPending}
           onClear={() => setSelected(new Set())}
-          onEnable={() => handleBulkPatch({ is_enabled: true })}
-          onDisable={() => handleBulkPatch({ is_enabled: false })}
+          onEnable={() => {
+            track("devices_beta.bulk_action");
+            handleBulkPatch({ is_enabled: true });
+          }}
+          onDisable={() => {
+            track("devices_beta.bulk_action");
+            handleBulkPatch({ is_enabled: false });
+          }}
           onMoveGroup={() => {
+            track("devices_beta.bulk_action");
             setSelectedGroupId("");
             setShowMoveGroupDialog(true);
           }}
           onMoveTenant={() => {
+            track("devices_beta.bulk_action");
             setSelectedTenantId("");
             setShowMoveTenantDialog(true);
           }}
           onAutoAssignTemplate={async () => {
+            track("devices_beta.bulk_action");
             const ids = Array.from(selected);
             await autoApplyTemplates.mutateAsync(ids);
             setSelected(new Set());
           }}
-          onApplyTemplate={() => setApplyTemplateOpen(true)}
-          onDelete={() => setConfirmDeleteOpen(true)}
+          onApplyTemplate={() => {
+            track("devices_beta.bulk_action");
+            setApplyTemplateOpen(true);
+          }}
+          onDelete={() => {
+            track("devices_beta.bulk_action");
+            setConfirmDeleteOpen(true);
+          }}
         />
         <CardContent>
           {devices.length === 0 && !isLoading && !hasActiveFilters ? (
