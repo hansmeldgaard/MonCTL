@@ -16,6 +16,9 @@ const _named =
 const DevicesPage = lazy(() =>
   import("@/pages/DevicesPage.tsx").then(_named("DevicesPage")),
 );
+const DevicesBetaPage = lazy(() =>
+  import("@/pages/DevicesBetaPage.tsx").then(_named("DevicesBetaPage")),
+);
 const DeviceDetailPage = lazy(() =>
   import("@/pages/DeviceDetailPage.tsx").then(_named("DeviceDetailPage")),
 );
@@ -146,6 +149,14 @@ export function App() {
           element={
             <RouteSuspense>
               <DevicesPage />
+            </RouteSuspense>
+          }
+        />
+        <Route
+          path="devices-beta"
+          element={
+            <RouteSuspense>
+              <DevicesBetaPage />
             </RouteSuspense>
           }
         />

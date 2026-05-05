@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button.tsx";
 const pageTitles: Record<string, string> = {
   "/system-health": "System Health",
   "/devices": "Devices",
+  "/devices-beta": "Devices (beta)",
   "/apps": "Apps",
   "/connectors": "Connectors",
   "/python-modules": "Modules",
