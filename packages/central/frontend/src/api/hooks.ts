@@ -177,6 +177,9 @@ export function useDevices(params: DeviceListParams = {}) {
   if (params.label_key) queryString.set("label_key", params.label_key);
   if (params.label_value) queryString.set("label_value", params.label_value);
   if (params.collector_id) queryString.set("collector_id", params.collector_id);
+  if (params.q) queryString.set("q", params.q);
+  if (params.status && params.status !== "all")
+    queryString.set("status", params.status);
   const qs = queryString.toString();
   return useQuery({
     queryKey: ["devices", params],

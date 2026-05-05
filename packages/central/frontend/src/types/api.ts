@@ -284,6 +284,16 @@ export interface DeviceListParams {
   label_key?: string;
   label_value?: string;
   collector_id?: string;
+  q?: string;
+  status?: "all" | "up" | "down" | "unknown" | "disabled";
+}
+
+export interface DeviceStatusCounts {
+  all: number;
+  up: number;
+  down: number;
+  unknown: number;
+  disabled: number;
 }
 
 export interface PaginatedResponse<T> {
