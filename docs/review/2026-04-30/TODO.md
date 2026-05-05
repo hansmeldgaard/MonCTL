@@ -119,7 +119,7 @@ Central + installer + deploy + docs all shipped 2026-05-04 across PRs
 - [x] **D-CEN-020** — Tagged the two `/api/v1/*` parent routers (`collector-api`, `docker-push`) at `main.py` mount time so OpenAPI no longer drops them in the unnamed "default" bucket; documented the include-time-tags convention + canonical mount points (`api/router.py`, `main.py`) under CLAUDE.md API Conventions. Verified end-to-end via `app.openapi()`: 43 distinct tags, zero untagged endpoints.
 - [x] **D-X-018** — `docs/pack-format.md` (~420 lines) covers top-level fields, all 8 valid `contents` sections (apps, connectors, credential_templates, snmp_oids, device_templates, device_categories, device_types, label_keys) with field-level reference tables, the three-layer versioning model (pack / app+connector / `monctl_pack` schema), skip-resolution import order, and a copy-pasteable worked example. CLAUDE.md "App & Pack System" + `app-development-guide.md` Pack JSON Structure both link to it.
 - [x] **D-X-019** — `docs/app-development-guide.md` now has an "Engine Lifecycle — What Happens Per Job" section: 8 numbered steps (app load → credential resolve → connector instantiate+connect → context build → setup/poll/timeout → error-category guard → connector close → gc.collect + malloc_trim) with the failure-classification mapping per phase, plus the two rules the lifecycle imposes on app authors (never call `connector.connect()`; no module-globals because the engine returns memory each job).
-- [ ] **D-X-021** — `docs/disaster-recovery.md` — Patroni split-brain, ClickHouse replica wipe, central node lost runbooks. — L
+- [x] **D-X-021** — `docs/disaster-recovery.md` (~440 lines) ships five runbooks for the 3 a.m. operator: (1) central node lost, (2) Patroni split-brain / etcd stale leader (etcd reset + force re-election + `patronictl reinit`), (3) ClickHouse replica wiped (auto-cleanup explanation + manual `SYSTEM DROP REPLICA` fallback), (4) Redis Sentinel quorum corrupt (coordinated 3-sentinel restart pattern), (5) total cluster loss restore from backups (with the `secrets.env` / `MONCTL_ENCRYPTION_KEY` recovery decision tree). Each ends with a `monctl_ctl status` verify block. Cross-linked from `TROUBLESHOOTING.md` "Where to look next" and `INSTALL.md` §9 Day-two operations.
 - [x] **D-COL-013 / D-COL-014** — `docs/collector-deployment-guide.md` reframed as per-host reference rather than a deployment runbook: the maintainer-only "MAINTAINER REFERENCE" banner is gone, §4 now points at `monctl_ctl deploy` + INSTALL.md and explains the rendered `.env` (per-host key, peer-token-seed derivation, `VERIFY_SSL` defaulting to `true`), the prod-IP `10.145.210.40` references in §2 / §8 are removed, and the `VERIFY_SSL=false` example is replaced with a default-true block + a note on when to flip it (closes D-COL-014).
 - [x] **D-X-001 / D-CLA-003 / D-CLA-006 / D-CEN-011 / D-X-017 / D-INST-008 / D-INST-009** — Doc cleanup PR shipped (#169).
 
@@ -145,14 +145,15 @@ at install time), Wave 4 (observability), Wave 5 (audit completeness),
 Wave 7 (test coverage), Wave 8 (perf), Wave 9 (DDL idempotence) all
 substantively closed.
 
-Remaining open is concentrated in:
+Wave 10 (docs) is also fully closed across PRs #169, #191, #192,
+#193, #194, #195, #196, #198 — covering env-reference, CLAUDE.md
+pitfalls, OpenAPI tag taxonomy, app-dev lifecycle, collector guide
+rewrite + verify_ssl fix, pack-format reference, and disaster-recovery
+runbooks.
 
-- **Wave 7 long tail** — FlexTable filter+sort + DeviceDetailPage
-  tab-routing frontend tests (`T-WEB-001` partial).
-- **Wave 5 long tail** — `audit_alert_actions` resource for ack /
-  silence / force-clear (`S-X-003`).
-- **Wave 10 docs** — `D-CEN-020`, `D-X-018`, `D-X-019`,
-  `D-X-021`, `D-COL-013`. None HIGH; mostly S–M.
-- **Manual** — AAD binding + ciphertext version prefix on
-  `credentials/crypto.py`; F-X-007 phase 2 (e2e-smoke flake);
-  F-COL-031 hash enforcement; CVE workflow human-routing step.
+Remaining open is the Wave 7 frontend long-tail (FlexTable filter+sort
+
+- DeviceDetailPage tab-routing in `T-WEB-001`) plus the four manual
+  "not code" follow-ups from Review #1: AAD binding + ciphertext version
+  prefix on `credentials/crypto.py`, F-X-007 phase 2 (e2e-smoke flake),
+  F-COL-031 hash enforcement, and the CVE workflow human-routing step.

@@ -133,6 +133,7 @@ See [`docs/superset.md`](docs/superset.md) for the full access-tier model, tenan
 - **SSH in**: `monctl_ctl ssh <host>` (passthrough to system `ssh`).
 - **Add a collector host**: `monctl_ctl add-host col5 --address 10.0.0.35 --roles collector,docker_stats`. Appends to `inventory.yaml`, runs a targeted deploy on just the new host — existing hosts untouched (idempotent). Only leaf roles (`collector`, `docker_stats`) supported; adding postgres/etcd/CH nodes needs manual quorum-member registration first.
 - **Remove a host**: `monctl_ctl remove-host col5`. Stops containers in reverse dependency order and strips from inventory. Use `--force` for hosts carrying non-leaf roles (after you've deregistered from Patroni/etcd/CH).
+- **Disaster recovery**: when something goes pear-shaped at 3 a.m., [`docs/disaster-recovery.md`](docs/disaster-recovery.md) has runbooks for central node lost, Patroni split-brain, ClickHouse replica wiped, Redis Sentinel quorum corrupt, and total cluster restore from backups.
 
 ### Air-gapped installs
 

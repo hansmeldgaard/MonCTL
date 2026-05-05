@@ -195,6 +195,12 @@ monctl_ctl init --from inventory.yaml --force
 - Patroni cluster state — `curl http://<pg-host>:8008/cluster`
 - ClickHouse replica state — `docker exec clickhouse clickhouse-client --password $CH_PASSWORD --query "SELECT * FROM system.replicas"`
 
+If you've identified the failure mode and now need the recovery
+procedure, jump to [`docs/disaster-recovery.md`](docs/disaster-recovery.md)
+— five runbooks: central node lost, Patroni split-brain, ClickHouse
+replica wiped, Redis Sentinel quorum corrupt, total cluster loss
+restore.
+
 Still stuck? Run `monctl_ctl status` and attach the full output to your support ticket. If you're opening a GitHub issue, also attach:
 
 - Redacted `inventory.yaml` (IPs and passwords removed)
