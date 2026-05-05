@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>MonCTL — Devices Redesign</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    html, body { margin: 0; padding: 0; background: #0c0d10; color: #e7e7ea; font-family: Inter, system-ui, sans-serif; }
+    *, *::before, *::after { box-sizing: border-box; }
+    button { font-family: inherit; }
+    .theme-toggle-fab {
+      position: fixed; top: 14px; right: 16px; z-index: 1000;
+      display: inline-flex; align-items: center; gap: 2px; padding: 2px;
+      background: #15161a; border: 1px solid #26272c; border-radius: 6px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+    }
+    .theme-toggle-fab button {
+      height: 24px; padding: 0 10px;
+      background: transparent; color: #8a8a93;
+      border: 0; border-radius: 4px;
+      font-family: 'JetBrains Mono', monospace; font-size: 11px; cursor: pointer;
+    }
+    .theme-toggle-fab button[data-active="true"] { background: #26272c; color: #e7e7ea; }
+  </style>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <div id="theme-fab"></div>
+
+  <script type="text/babel" src="design-canvas.jsx"></script>
+  <script type="text/babel" src="data.jsx"></script>
+  <script type="text/babel" src="icons.jsx"></script>
+  <script type="text/babel" src="v1-safe.jsx"></script>
+  <script type="text/babel" src="v2-bold.jsx"></script>
+
+  <script type="text/babel">
+    const { useState } = React;
+    const { DesignCanvas, DCSection, DCArtboard, MonctlSafe, MonctlBold } = window;
+
+    function ThemeToggle({ theme, setTheme }) {
+      return (
+        <div className="theme-toggle-fab">
+          <button data-active={theme === "dark"} onClick={() => setTheme("dark")}>dark</button>
+          <button data-active={theme === "light"} onClick={() => setTheme("light")}>light</button>
+        </div>
+      );
+    }
+
+    function App() {
+      const [theme, setTheme] = useState("dark");
+
+      return (
+        <>
+          <ThemeToggle theme={theme} setTheme={setTheme} />
+          <DesignCanvas>
+
+            <DCSection id="intro" title="Two directions, one product"
+              subtitle="Both built from the actual MonCTL codebase: real Device schema, real lucide icons, the FlexTable column patterns, the app.css brand token (oklch 0.58 0.16 250), the DisplayMenu chrome, and PaginationBar shape. Each variant streams 2,000 mock devices through a virtualized list. Theme toggle lives in the top-right; click headers to sort, type in column filters, click status pills, click checkboxes." />
+
+            <DCSection id="v1" title="V1 — Refined faithful"
+              subtitle="Tightens what's there. Same FlexTable language: drag handle + sortable label + filter input per column. Adds a status-pill quick filter strip + global search above the table; surfaces a contextual selection bar inline with table chrome rather than a floating bottom toast.">
+              <DCArtboard id="v1-dark" label="faithful refresh" width={1280} height={780}>
+                <MonctlSafe theme={theme} />
+              </DCArtboard>
+            </DCSection>
+
+            <DCSection id="v2" title="V2 — NOC console"
+              subtitle="Status-forward, terminal-flavored. Left rail of system + saved views, top stat strip, and a `monctl devices` command bar with chip-style filters in place of the per-column inputs. Each row carries a 60-second heartbeat sparkline derived from `latest_results`, so the list reads more like a status board than a CRUD table.">
+              <DCArtboard id="v2-dark" label="NOC console" width={1280} height={780}>
+                <MonctlBold theme={theme} />
+              </DCArtboard>
+            </DCSection>
+
+            <DCSection id="notes" title="Notes & next steps"
+              subtitle="Both inherit from the real shadcn-stack defaults: keyboard nav, ARIA roles, and the existing context menu / row click → device detail are not mocked here but plug straight in. Open questions: (1) keep per-column filter inputs always visible (V1) or collapse them behind a popover like the chips (V2)? (2) Heartbeat sparkline — per-row, or only on hover/expand to reduce visual load on 200+ row pages? (3) Selection action bar — inline sticky strip (V1) vs the existing floating toast you already have? Happy to merge picks into a third variant once you choose." />
+
+          </DesignCanvas>
+        </>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
