@@ -78,7 +78,7 @@ Central + installer + deploy + docs all shipped 2026-05-04 across PRs
 
 - [x] **S-CEN-018** — `api_keys` mapped in `TABLE_TO_RESOURCE` as `"api_key"` with `key_hash` redaction.
 - [x] **S-CEN-019** — `assignment_credential_overrides` mapped as `"assignment_credential_override"`.
-- [ ] **S-X-003** — `audit_alert_actions` resource for admin-driven incident state changes (ack/silence/force-clear). — M (open)
+- [x] **S-X-003** — `record_manual_action` helper in `audit/manual.py` stages a row on the request-scoped `AuditContext.mutations` list with the same shape the auto-listener produces. Wired at the two surfaces that mutate `incidents` / `alert_entities` (both opted out of the auto-listener to avoid engine-tick noise): `POST /v1/incidents/clear` → `incident_action` (action=`clear`), `PUT /v1/alerts/instances/{id}` enabled-flip → `alert_entity_action` (action=`silence` / `unsilence`). Pinned by `tests/unit/test_audit_manual_actions.py` (5 tests covering shape, both resource types, redaction, no-context safety, empty-diff handling).
 - [x] **S-CEN-009** — `X-Forwarded-For` only trusted from configured `settings.trusted_proxies`.
 
 ## Wave 6 — CI test infrastructure
