@@ -771,9 +771,17 @@ export function DevicesPage() {
     <div className="space-y-4">
       {/* Toolbar */}
       <div className="flex items-center gap-3">
-        <span className="text-sm text-zinc-500 flex-1">
+        <span className="text-sm text-zinc-500">
           {total} device{total !== 1 ? "s" : ""}
         </span>
+        <Link
+          to="/devices-beta"
+          className="text-xs text-brand-400 hover:text-brand-300 transition-colors no-underline"
+          title="Try the redesigned Devices page (beta)"
+        >
+          Try the new view →
+        </Link>
+        <span className="flex-1" />
 
         {/* Bulk actions */}
         {selected.size > 0 && (

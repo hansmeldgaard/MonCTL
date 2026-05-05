@@ -881,9 +881,17 @@ export function DevicesBetaPage() {
     <div className="space-y-4">
       {/* Toolbar */}
       <div className="flex items-center gap-3">
-        <span className="text-sm text-zinc-500 flex-1">
+        <span className="text-sm text-zinc-500">
           {total} device{total !== 1 ? "s" : ""}
         </span>
+        <Link
+          to="/devices"
+          className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors no-underline"
+          title="Switch back to the classic Devices page"
+        >
+          ← Switch to classic
+        </Link>
+        <span className="flex-1" />
 
         {/* View settings: compact density, time mode, column visibility */}
         <DisplayMenu
