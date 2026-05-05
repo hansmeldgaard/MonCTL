@@ -24,6 +24,31 @@
   --radius-lg: 0.75rem;
 }
 
+/*
+ * Semantic UI tokens used by Devices (beta) and any future page that wants
+ * to author against the design language directly (var(--surf-2), var(--text-3),
+ * etc.) instead of reaching for Tailwind utilities. Values match the dark-mode
+ * scale the existing --color-surface-* tokens already use; the new names just
+ * carry intent (surface vs border vs text).
+ */
+:root {
+  --bg: oklch(0.13 0.01 260);
+  --surf: oklch(0.17 0.012 260);
+  --surf-2: oklch(0.19 0.012 260);
+  --surf-3: oklch(0.22 0.012 260);
+  --border: oklch(0.28 0.012 260);
+  --border-2: oklch(0.35 0.012 260);
+  --text: oklch(0.96 0.002 260);
+  --text-2: oklch(0.78 0.005 260);
+  --text-3: oklch(0.58 0.006 260);
+  --text-4: oklch(0.42 0.006 260);
+  --brand: oklch(0.58 0.16 250);
+  --brand-2: oklch(0.68 0.12 250);
+  --up: oklch(0.72 0.16 152);
+  --down: oklch(0.65 0.22 25);
+  --warn: oklch(0.8 0.17 80);
+}
+
 /* Base styles */
 html {
   color-scheme: dark;

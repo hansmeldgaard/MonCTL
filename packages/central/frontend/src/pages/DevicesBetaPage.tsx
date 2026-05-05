@@ -6,25 +6,16 @@ import { useTimeDisplayMode } from "@/hooks/useTimeDisplayMode.ts";
 import { useColumnConfig } from "@/hooks/useColumnConfig.ts";
 import { formatTime } from "@/lib/utils.ts";
 import {
-  Building2,
   ChevronLeft,
   ChevronRight,
-  FileText,
   FolderInput,
   Loader2,
   Monitor,
   Plus,
-  Power,
-  PowerOff,
   Tag,
-  Trash2,
 } from "lucide-react";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card.tsx";
+import { Card, CardContent } from "@/components/ui/card.tsx";
+import { CardHeaderBar } from "@/components/devices-beta/CardHeaderBar.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Select } from "@/components/ui/select.tsx";
@@ -46,7 +37,6 @@ import {
   useDeviceCategories,
   useAutoApplyTemplates,
 } from "@/api/hooks.ts";
-import { ListChecks } from "lucide-react";
 import type { DeviceBulkPatchRequest } from "@/types/api.ts";
 import {
   useTablePreferences,
@@ -775,97 +765,6 @@ export function DevicesBetaPage() {
           {total} device{total !== 1 ? "s" : ""}
         </span>
 
-        {/* Bulk actions */}
-        {selected.size > 0 && (
-          <div className="flex items-center gap-3 rounded-lg bg-zinc-800/50 border border-zinc-700 px-4 py-2">
-            <span className="text-sm text-zinc-300">
-              {selected.size} selected
-            </span>
-            {canEdit("device") && (
-              <>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => handleBulkPatch({ is_enabled: true })}
-                  disabled={bulkPatch.isPending}
-                  className="gap-1.5"
-                >
-                  <Power className="h-3.5 w-3.5" /> Enable
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => handleBulkPatch({ is_enabled: false })}
-                  disabled={bulkPatch.isPending}
-                  className="gap-1.5"
-                >
-                  <PowerOff className="h-3.5 w-3.5" /> Disable
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    setSelectedGroupId("");
-                    setShowMoveGroupDialog(true);
-                  }}
-                  disabled={bulkPatch.isPending}
-                  className="gap-1.5"
-                >
-                  <FolderInput className="h-3.5 w-3.5" /> Move to Group
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    setSelectedTenantId("");
-                    setShowMoveTenantDialog(true);
-                  }}
-                  disabled={bulkPatch.isPending}
-                  className="gap-1.5"
-                >
-                  <Building2 className="h-3.5 w-3.5" /> Move to Tenant
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={async () => {
-                    const ids = Array.from(selected);
-                    await autoApplyTemplates.mutateAsync(ids);
-                    setSelected(new Set());
-                  }}
-                  disabled={autoApplyTemplates.isPending}
-                  className="gap-1.5"
-                >
-                  {autoApplyTemplates.isPending ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <ListChecks className="h-3.5 w-3.5" />
-                  )}{" "}
-                  Auto-Assign
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setApplyTemplateOpen(true)}
-                  className="gap-1.5"
-                >
-                  <FileText className="h-3.5 w-3.5" /> Apply Template
-                </Button>
-              </>
-            )}
-            {canDelete("device") && (
-              <Button
-                size="sm"
-                variant="destructive"
-                onClick={() => setConfirmDeleteOpen(true)}
-                className="gap-1.5"
-              >
-                <Trash2 className="h-3.5 w-3.5" /> Delete Selected
-              </Button>
-            )}
-          </div>
-        )}
-
         {/* View settings: compact density, time mode, column visibility */}
         <DisplayMenu
           columns={columns}
@@ -898,13 +797,32 @@ export function DevicesBetaPage() {
       </div>
 
       {/* Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Monitor className="h-4 w-4" />
-            Devices
-          </CardTitle>
-        </CardHeader>
+      <Card className="overflow-hidden">
+        <CardHeaderBar
+          selectedCount={selected.size}
+          canEdit={canEdit("device")}
+          canDelete={canDelete("device")}
+          busy={bulkPatch.isPending}
+          autoAssigning={autoApplyTemplates.isPending}
+          onClear={() => setSelected(new Set())}
+          onEnable={() => handleBulkPatch({ is_enabled: true })}
+          onDisable={() => handleBulkPatch({ is_enabled: false })}
+          onMoveGroup={() => {
+            setSelectedGroupId("");
+            setShowMoveGroupDialog(true);
+          }}
+          onMoveTenant={() => {
+            setSelectedTenantId("");
+            setShowMoveTenantDialog(true);
+          }}
+          onAutoAssignTemplate={async () => {
+            const ids = Array.from(selected);
+            await autoApplyTemplates.mutateAsync(ids);
+            setSelected(new Set());
+          }}
+          onApplyTemplate={() => setApplyTemplateOpen(true)}
+          onDelete={() => setConfirmDeleteOpen(true)}
+        />
         <CardContent>
           {devices.length === 0 && !isLoading && !hasActiveFilters ? (
             <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
