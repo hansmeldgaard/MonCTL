@@ -116,7 +116,7 @@ Central + installer + deploy + docs all shipped 2026-05-04 across PRs
 
 - [x] **D-X-002** — `docs/env-reference.md` enumerates every `MONCTL_*` env var; refreshed for `MONCTL_REQUIRE_PER_COLLECTOR_AUTH` in PR #191.
 - [x] **D-CLA-004** — Six new pitfalls appended to CLAUDE.md from feedback memory: empty UI as a 500, compose orphan cleanup, httpx 0.28 cookies no-op, deploying off a stale branch rolling back sibling fixes, diffing prod `is_latest` before bumping a connector, re-investigating raw data when a symptom recurs.
-- [ ] **D-CEN-020** — Audit `tags=` on every `@router.*` decorator; document tag taxonomy in CLAUDE.md API Conventions. — S
+- [x] **D-CEN-020** — Tagged the two `/api/v1/*` parent routers (`collector-api`, `docker-push`) at `main.py` mount time so OpenAPI no longer drops them in the unnamed "default" bucket; documented the include-time-tags convention + canonical mount points (`api/router.py`, `main.py`) under CLAUDE.md API Conventions. Verified end-to-end via `app.openapi()`: 43 distinct tags, zero untagged endpoints.
 - [ ] **D-X-018** — `docs/pack-format.md` — pack JSON schema reference. — M
 - [ ] **D-X-019** — Connector / BasePoller lifecycle section in `app_create.md`. — S
 - [ ] **D-X-021** — `docs/disaster-recovery.md` — Patroni split-brain, ClickHouse replica wipe, central node lost runbooks. — L
