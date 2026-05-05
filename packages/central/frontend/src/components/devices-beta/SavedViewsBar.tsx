@@ -5,6 +5,7 @@ import {
   useDeleteSavedView,
   useSavedViews,
 } from "@/api/hooks.ts";
+import { useTelemetry } from "@/hooks/useTelemetry.ts";
 import type { SavedView, SavedViewFilter } from "@/types/api.ts";
 
 interface SavedViewsBarProps {
@@ -24,6 +25,7 @@ export function SavedViewsBar({
   const { data: views = [] } = useSavedViews(page);
   const createView = useCreateSavedView();
   const deleteView = useDeleteSavedView();
+  const track = useTelemetry();
   const [hoverId, setHoverId] = useState<string | null>(null);
 
   async function handleSaveCurrent() {
@@ -34,6 +36,7 @@ export function SavedViewsBar({
       name: name.trim(),
       filter_json: currentFilter,
     });
+    track("devices_beta.view_saved");
   }
 
   return (
