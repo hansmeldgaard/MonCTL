@@ -17,6 +17,7 @@ import {
 import { Card, CardContent } from "@/components/ui/card.tsx";
 import { CardHeaderBar } from "@/components/devices-beta/CardHeaderBar.tsx";
 import { DeviceStatusFilter } from "@/components/devices-beta/DeviceStatusFilter.tsx";
+import { SavedViewsBar } from "@/components/devices-beta/SavedViewsBar.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Select } from "@/components/ui/select.tsx";
@@ -71,6 +72,12 @@ export function DevicesBetaPage() {
     "all" | "up" | "down" | "unknown" | "disabled"
   >("all");
 
+  // Active saved view (null when the user has manually edited filters).
+  // pickedFilterSig is a JSON snapshot of the filter state at pick time —
+  // when the live filter state diverges from it, activeViewId clears.
+  const [activeViewId, setActiveViewId] = useState<string | null>(null);
+  const [pickedFilterSig, setPickedFilterSig] = useState<string | null>(null);
+
   useEffect(() => {
     const t = setTimeout(() => {
       setDebouncedQ(q);
@@ -78,6 +85,35 @@ export function DevicesBetaPage() {
     }, 300);
     return () => clearTimeout(t);
   }, [q]);
+
+  // Active-view divergence guard: if any filter state changes after a view is
+  // picked, clear the activeViewId so the chip stops appearing as "lit."
+  // Uses a JSON signature so comparisons are stable.
+  const currentFilterSig = JSON.stringify({
+    statusFilter,
+    q,
+    columnFilters: {
+      name: filterName,
+      address: filterAddress,
+      device_category: filterType,
+      device_type_name: filterDeviceType,
+      tenant_name: filterTenant,
+      collector_group_name: filterGroup,
+      label_key: filterLabelKey,
+      label_value: filterLabelValue,
+    },
+    sort: { key: sortBy, dir: sortDir },
+  });
+  useEffect(() => {
+    if (
+      activeViewId &&
+      pickedFilterSig &&
+      currentFilterSig !== pickedFilterSig
+    ) {
+      setActiveViewId(null);
+      setPickedFilterSig(null);
+    }
+  }, [activeViewId, pickedFilterSig, currentFilterSig]);
 
   // ── Per-column filters (immediate) ──────────────────────
   const [filterName, setFilterName] = useState("");
@@ -813,6 +849,67 @@ export function DevicesBetaPage() {
           </>
         )}
       </div>
+
+      {/* Saved views */}
+      <SavedViewsBar
+        page="devices-beta"
+        activeViewId={activeViewId}
+        onPickView={(v) => {
+          const f = v.filter_json;
+          setStatusFilter(f.statusFilter ?? "all");
+          setQ(f.q ?? "");
+          setFilterName(f.columnFilters?.name ?? "");
+          setFilterAddress(f.columnFilters?.address ?? "");
+          setFilterType(f.columnFilters?.device_category ?? "");
+          setFilterDeviceType(f.columnFilters?.device_type_name ?? "");
+          setFilterTenant(f.columnFilters?.tenant_name ?? "");
+          setFilterGroup(f.columnFilters?.collector_group_name ?? "");
+          setFilterLabelKey(f.columnFilters?.label_key ?? "");
+          setFilterLabelValue(f.columnFilters?.label_value ?? "");
+          setSortBy(f.sort?.key ?? "name");
+          setSortDir(f.sort?.dir ?? "asc");
+          setPage(0);
+          setActiveViewId(v.id);
+          // Snapshot the picked filter so the divergence effect knows what
+          // "untouched" looks like. Must mirror the currentFilterSig shape.
+          setPickedFilterSig(
+            JSON.stringify({
+              statusFilter: f.statusFilter ?? "all",
+              q: f.q ?? "",
+              columnFilters: {
+                name: f.columnFilters?.name ?? "",
+                address: f.columnFilters?.address ?? "",
+                device_category: f.columnFilters?.device_category ?? "",
+                device_type_name: f.columnFilters?.device_type_name ?? "",
+                tenant_name: f.columnFilters?.tenant_name ?? "",
+                collector_group_name:
+                  f.columnFilters?.collector_group_name ?? "",
+                label_key: f.columnFilters?.label_key ?? "",
+                label_value: f.columnFilters?.label_value ?? "",
+              },
+              sort: {
+                key: f.sort?.key ?? "name",
+                dir: f.sort?.dir ?? "asc",
+              },
+            }),
+          );
+        }}
+        currentFilter={{
+          statusFilter,
+          q,
+          columnFilters: {
+            name: filterName,
+            address: filterAddress,
+            device_category: filterType,
+            device_type_name: filterDeviceType,
+            tenant_name: filterTenant,
+            collector_group_name: filterGroup,
+            label_key: filterLabelKey,
+            label_value: filterLabelValue,
+          },
+          sort: { key: sortBy, dir: sortDir },
+        }}
+      />
 
       {/* Status pills + global search */}
       <DeviceStatusFilter

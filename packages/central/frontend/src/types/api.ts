@@ -296,6 +296,24 @@ export interface DeviceStatusCounts {
   disabled: number;
 }
 
+export interface SavedView {
+  id: string;
+  page: string;
+  name: string;
+  filter_json: SavedViewFilter;
+  position: number;
+  is_pinned: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface SavedViewFilter {
+  statusFilter?: "all" | "up" | "down" | "unknown" | "disabled";
+  q?: string;
+  columnFilters?: Record<string, string>;
+  sort?: { key: string; dir: "asc" | "desc" };
+}
+
 export interface PaginatedResponse<T> {
   status: string;
   data: T[];
