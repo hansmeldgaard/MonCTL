@@ -19,7 +19,7 @@ VALID_RESOURCES = {
     "device", "app", "assignment", "credential", "alert",
     "automation", "event", "connector",
     "collector", "tenant", "user", "template", "settings", "result",
-    "audit",
+    "audit", "saved_view",
 }
 
 VALID_ACTIONS = {"view", "create", "edit", "delete", "manage"}
@@ -40,6 +40,7 @@ RESOURCE_ACTIONS: dict[str, list[str]] = {
     "settings": ["view", "manage"],
     "result": ["view"],
     "audit": ["view"],
+    "saved_view": ["view", "create", "edit", "delete"],
 }
 
 

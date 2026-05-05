@@ -1647,3 +1647,39 @@ class AutomationStep(Base):
 
     automation: Mapped["Automation"] = relationship("Automation", back_populates="steps")
     action: Mapped["Action"] = relationship("Action")
+
+
+class SavedView(Base):
+    """A user's saved filter set for a list page (devices-beta first, more later).
+
+    `page` is intentionally a free text column rather than an enum so future
+    list pages can adopt the same table without a schema change. `filter_json`
+    holds the four pieces of state the page restores atomically:
+    `{statusFilter, q, columnFilters, sort}`.
+    """
+    __tablename__ = "saved_views"
+    __table_args__ = (
+        Index("ix_saved_views_user_page_position", "user_id", "page", "position"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    page: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    filter_json: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    position: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    is_pinned: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )

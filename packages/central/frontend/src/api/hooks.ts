@@ -359,6 +359,86 @@ export function useDeleteCredentialType() {
   });
 }
 
+// ── Saved Views (per-user, per-page filter sets) ─────────
+
+export function useSavedViews(page: string) {
+  return useQuery({
+    queryKey: ["saved-views", page],
+    queryFn: () =>
+      apiGet<import("@/types/api.ts").SavedView[]>(
+        `/saved-views?page=${encodeURIComponent(page)}`,
+      ),
+    enabled: Boolean(page),
+  });
+}
+
+export function useCreateSavedView() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      page: string;
+      name: string;
+      filter_json: import("@/types/api.ts").SavedViewFilter;
+      is_pinned?: boolean;
+    }) => apiPost<import("@/types/api.ts").SavedView>("/saved-views", body),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ["saved-views", vars.page] });
+    },
+  });
+}
+
+export function useUpdateSavedView() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      page: _page,
+      ...body
+    }: {
+      id: string;
+      page: string;
+      name?: string;
+      filter_json?: import("@/types/api.ts").SavedViewFilter;
+      is_pinned?: boolean;
+    }) =>
+      apiPatch<import("@/types/api.ts").SavedView>(`/saved-views/${id}`, body),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ["saved-views", vars.page] });
+    },
+  });
+}
+
+export function useDeleteSavedView() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id }: { id: string; page: string }) =>
+      apiDelete(`/saved-views/${id}`),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ["saved-views", vars.page] });
+    },
+  });
+}
+
+export function useReorderSavedViews() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      page,
+      ordered_ids,
+    }: {
+      page: string;
+      ordered_ids: string[];
+    }) =>
+      apiPost<{ reordered: number }>(
+        `/saved-views/reorder?page=${encodeURIComponent(page)}`,
+        { ordered_ids },
+      ),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ["saved-views", vars.page] });
+    },
+  });
+}
+
 // ── Alerts ───────────────────────────────────────────────
 
 export function useActiveAlerts() {
