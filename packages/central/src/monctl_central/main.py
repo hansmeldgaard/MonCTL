@@ -748,13 +748,17 @@ app.include_router(api_router, prefix="/v1")
 from monctl_central.ws.router import router as ws_router  # noqa: E402
 app.include_router(ws_router)
 
-# Collector API — job-pull model (new distributed collector system)
+# Collector API — job-pull model (new distributed collector system).
+# Tag at mount time so OpenAPI groups every /api/v1/* endpoint under
+# "collector-api" instead of the default unnamed bucket; the sub-routers
+# included from inside collector_api/router.py (upgrade, os-packages, logs)
+# carry their own narrower tags and stay grouped separately.
 from monctl_central.collector_api.router import router as collector_api_router  # noqa: E402
-app.include_router(collector_api_router, prefix="/api/v1")
+app.include_router(collector_api_router, prefix="/api/v1", tags=["collector-api"])
 
 # Docker stats push endpoint (worker sidecars → central)
 from monctl_central.collector_api.docker_push import router as docker_push_router  # noqa: E402
-app.include_router(docker_push_router, prefix="/api/v1")
+app.include_router(docker_push_router, prefix="/api/v1", tags=["docker-push"])
 
 
 # ---------------------------------------------------------------------------

@@ -233,6 +233,16 @@ packages/
 - Web API under `/v1/` (e.g., `/v1/devices`, `/v1/apps`)
 - Collector API under `/api/v1/` (e.g., `/api/v1/jobs`, `/api/v1/results`)
 
+### OpenAPI tag taxonomy
+
+Tags are assigned **at `include_router` time**, never on individual `@router.*` decorators. One tag per resource group. The canonical mount points are `packages/central/src/monctl_central/api/router.py` (every `/v1/*` resource) and `packages/central/src/monctl_central/main.py` (the two `/api/v1/*` parents + websocket). When you add a new resource:
+
+1. Mount it in `api/router.py` with `tags=["<resource-name>"]` matching the URL prefix in kebab-case (e.g. `prefix="/incident-rules"` → `tags=["incident-rules"]`).
+2. Don't pass `tags=...` to `APIRouter()` itself unless the router is mounted at app-root with no parent tag — `dashboard/router.py` and `logs/router.py` are the only two cases that need this and they exist for historical reasons; new routers should follow the include-time pattern.
+3. New collector-facing endpoints go under `/api/v1/*`. The parent router carries `tags=["collector-api"]`; nested sub-routers (`upgrade`, `os-packages`, `logs`) keep their own narrower tag.
+
+The current taxonomy is the union of every `tags=` argument in those two files — Swagger UI groups endpoints by tag, so a missing tag means the endpoint lands in the unnamed "default" bucket and is hard to find. Audit the diff in `api/router.py` whenever you mount a new sub-router.
+
 ### Multi-Tenant Filtering
 
 ```python
