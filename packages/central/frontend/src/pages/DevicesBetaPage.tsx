@@ -52,8 +52,38 @@ import { DeviceIcon, categoryIconUrl } from "@/components/DeviceIcon.tsx";
 export function DevicesBetaPage() {
   const { canCreate, canEdit, canDelete } = usePermissions();
   const tz = useTimezone();
-  // ── URL query params (for deep linking from device types page) ──
-  const [searchParams] = useSearchParams();
+  // ── URL state ──────────────────────────────────────────
+  // Initial filter/sort state hydrates from the URL so saved views are
+  // bookmarkable and shareable. Subsequent state writes back into the URL
+  // via the sync effect below. Replace mode keeps history clean.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initial = useMemo(
+    () => ({
+      sortBy: searchParams.get("sort") ?? "name",
+      sortDir: (searchParams.get("dir") as "asc" | "desc") ?? "asc",
+      q: searchParams.get("q") ?? "",
+      status: (searchParams.get("status") ?? "all") as
+        | "all"
+        | "up"
+        | "down"
+        | "unknown"
+        | "disabled",
+      // device_type_name is the legacy deep-link param from device-types page
+      // — keep honoring it so existing links don't break.
+      filterDeviceType:
+        searchParams.get("ftype") ?? searchParams.get("device_type_name") ?? "",
+      filterName: searchParams.get("fname") ?? "",
+      filterAddress: searchParams.get("faddr") ?? "",
+      filterTypeCol: searchParams.get("fcat") ?? "",
+      filterTenant: searchParams.get("ftenant") ?? "",
+      filterGroup: searchParams.get("fgroup") ?? "",
+      filterLabelKey: searchParams.get("flkey") ?? "",
+      filterLabelValue: searchParams.get("flval") ?? "",
+    }),
+    // Only on mount — subsequent URL changes from setSearchParams below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
 
   // ── Table preferences ──────────────────────────────────
   const { pageSize, scrollMode, updatePreferences } = useTablePreferences();
@@ -62,15 +92,15 @@ export function DevicesBetaPage() {
   const [page, setPage] = useState(0);
 
   // ── Sorting ─────────────────────────────────────────────
-  const [sortBy, setSortBy] = useState("name");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [sortBy, setSortBy] = useState(initial.sortBy);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">(initial.sortDir);
 
   // ── Global search + status pill (immediate UI state, debounced fetch) ──
-  const [q, setQ] = useState("");
-  const [debouncedQ, setDebouncedQ] = useState("");
+  const [q, setQ] = useState(initial.q);
+  const [debouncedQ, setDebouncedQ] = useState(initial.q);
   const [statusFilter, setStatusFilter] = useState<
     "all" | "up" | "down" | "unknown" | "disabled"
-  >("all");
+  >(initial.status);
 
   // Active saved view (null when the user has manually edited filters).
   // pickedFilterSig is a JSON snapshot of the filter state at pick time —
@@ -85,6 +115,20 @@ export function DevicesBetaPage() {
     }, 300);
     return () => clearTimeout(t);
   }, [q]);
+
+  // ── Per-column filters (immediate) — hydrated from URL on mount ──────
+  const [filterName, setFilterName] = useState(initial.filterName);
+  const [filterAddress, setFilterAddress] = useState(initial.filterAddress);
+  const [filterType, setFilterType] = useState(initial.filterTypeCol);
+  const [filterDeviceType, setFilterDeviceType] = useState(
+    initial.filterDeviceType,
+  );
+  const [filterTenant, setFilterTenant] = useState(initial.filterTenant);
+  const [filterGroup, setFilterGroup] = useState(initial.filterGroup);
+  const [filterLabelKey, setFilterLabelKey] = useState(initial.filterLabelKey);
+  const [filterLabelValue, setFilterLabelValue] = useState(
+    initial.filterLabelValue,
+  );
 
   // Active-view divergence guard: if any filter state changes after a view is
   // picked, clear the activeViewId so the chip stops appearing as "lit."
@@ -115,17 +159,39 @@ export function DevicesBetaPage() {
     }
   }, [activeViewId, pickedFilterSig, currentFilterSig]);
 
-  // ── Per-column filters (immediate) ──────────────────────
-  const [filterName, setFilterName] = useState("");
-  const [filterAddress, setFilterAddress] = useState("");
-  const [filterType, setFilterType] = useState("");
-  const [filterDeviceType, setFilterDeviceType] = useState(
-    searchParams.get("device_type_name") ?? "",
-  );
-  const [filterTenant, setFilterTenant] = useState("");
-  const [filterGroup, setFilterGroup] = useState("");
-  const [filterLabelKey, setFilterLabelKey] = useState("");
-  const [filterLabelValue, setFilterLabelValue] = useState("");
+  // URL-sync effect: write current filter/sort state back to the URL so a
+  // bookmark or copy-paste of the URL restores the same view. Replace mode
+  // keeps history clean (one entry per real navigation, not per keystroke).
+  useEffect(() => {
+    const next = new URLSearchParams();
+    if (sortBy !== "name") next.set("sort", sortBy);
+    if (sortDir !== "asc") next.set("dir", sortDir);
+    if (statusFilter !== "all") next.set("status", statusFilter);
+    if (q) next.set("q", q);
+    if (filterName) next.set("fname", filterName);
+    if (filterAddress) next.set("faddr", filterAddress);
+    if (filterType) next.set("fcat", filterType);
+    if (filterDeviceType) next.set("ftype", filterDeviceType);
+    if (filterTenant) next.set("ftenant", filterTenant);
+    if (filterGroup) next.set("fgroup", filterGroup);
+    if (filterLabelKey) next.set("flkey", filterLabelKey);
+    if (filterLabelValue) next.set("flval", filterLabelValue);
+    setSearchParams(next, { replace: true });
+  }, [
+    sortBy,
+    sortDir,
+    statusFilter,
+    q,
+    filterName,
+    filterAddress,
+    filterType,
+    filterDeviceType,
+    filterTenant,
+    filterGroup,
+    filterLabelKey,
+    filterLabelValue,
+    setSearchParams,
+  ]);
   const [labelFilterOpen, setLabelFilterOpen] = useState(false);
   const labelFilterRef = useRef<HTMLDivElement>(null);
   const [labelPopoverDeviceId, setLabelPopoverDeviceId] = useState<
