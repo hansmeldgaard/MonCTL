@@ -2,11 +2,13 @@
 
 **Start here in future sessions.** Sequenced from cheapest-most-valuable to largest-strategic. Each item links back to the finding(s) where the file/line details live.
 
-> Last refresh: **2026-05-04**. Items checked off here have been verified
+> Last refresh: **2026-05-05**. Items checked off here have been verified
 > against the current source tree (not just claimed in commit messages).
-> Many waves were silently absorbed during the post-review push; the few
-> that remain are concentrated in Wave 2 (per-collector keys at install
-> time) and the longer-tail documentation/observability buckets.
+> Wave 2 (per-collector keys at install time) closed 2026-05-04; the
+> Wave 4 / 7 / 9 partial-opens at the previous refresh have all shipped
+> in PRs #168, #181–#185, #190, #191. Remaining work is the longer-tail
+> docs bucket plus a handful of MED items (`S-X-003`, `T-WEB-001`
+> remainder, `T-X-006` remainder for PRs #134/#138/#140).
 
 ## How to resume
 
@@ -66,11 +68,11 @@ Central + installer + deploy + docs all shipped 2026-05-04 across PRs
 - [x] **O-CEN-001 / O-CEN-002 / O-CEN-005 / O-CEN-006 / O-CEN-007** — Wired to the new counter helper across scheduler/alerting/audit/auth call sites.
 - [x] **O-CEN-003** — `audit` subsystem in `/v1/system/health`; buffer-overflow drops surface as `audit.dropped_count` counter.
 - [x] **O-CEN-004** — `/health/status` returns `cache_stale: bool` + `age_seconds` so the top-bar can render a stale state.
-- [ ] **O-CEN-008** — Persist drifted connector names to Redis set `monctl:connectors:drifted`; surface in connector list page. — S (open)
+- [x] **O-CEN-008** — Drifted connector names persisted to Redis set `monctl:connectors:drifted`; surfaced via `_check_connectors` system-health subsystem (PR #181, `tests/unit/test_connectors_drift_health.py`).
 - [x] **O-CEN-010** — Sentinel quorum check; degraded at floor.
 - [x] **O-COL-001** — Heartbeat carries forwarder dropped counters; central stores + surfaces.
-- [ ] **O-X-001** — Platform-self alerting on degraded subsystems via synthetic alert_log rows routed through IncidentEngine. — M (open)
-- [ ] **O-INST-001** — `monctl_ctl deploy` writes `/opt/monctl/.deploy-history.jsonl`; optionally POST to central `/v1/installer/deploy-events`. — M (open)
+- [x] **O-X-001** — `_subsystem_health_checks()` shapes every `_check_*` into the existing fire/clear loop; degraded → warning, critical → critical alert_log rows routed through IncidentEngine (PR #190, `tests/unit/test_subsystem_health_alerts.py`).
+- [x] **O-INST-001** — `monctl_ctl deploy` writes `/opt/monctl/.deploy-history.jsonl` per host on every `_apply_project` (PR #184). POST-to-central side intentionally deferred (would need a new endpoint + connected-mode plumbing for marginal value over the JSONL; revisit if customer asks).
 
 ## Wave 5 — Audit completeness
 
@@ -91,8 +93,8 @@ Central + installer + deploy + docs all shipped 2026-05-04 across PRs
 - [x] **T-CEN-011** — `tests/unit/test_ws_auth.py` (PR #174).
 - [x] **T-CEN-012** — `tests/unit/test_collector_api_jobs.py` (PR #177).
 - [x] **T-APP-001** — `tests/unit/test_snmp_connector.py` covers credential-key fallback + walk_multi (PR #178).
-- [ ] **T-WEB-001** — Frontend tests: `useColumnConfig.compact()` regression, FlexTable filter+sort, `usePermissions` hook, DeviceDetailPage tab routing. — M (open)
-- [ ] **T-X-006** — Single regression test for each Wave-2 fix shipped since Review #1 (#134, #138, #140, #141). — M (open)
+- [~] **T-WEB-001** — `usePermissions` hook + `useColumnConfig.compact()` regression tests shipped (PR #183). FlexTable filter+sort and DeviceDetailPage tab-routing tests still open. — S (partial)
+- [x] **T-X-006** — Regression tests for every Wave-2 fix shipped since Review #1 are now in place: PR #134 → `tests/central/test_dsl_equality_literals.py`; PR #138 → `packages/central/tests/unit/test_device_thresholds_post_pr38.py`; PR #140 → `tests/test_compose_sidecar_push_env.py`; PR #141 → `packages/central/tests/unit/test_bucket_step.py`.
 - [x] **S-CEN-010 (executor)** — `test_action_executor.py` pins env-allowlist + format-fix (PR #179).
 
 ## Wave 8 — Performance
@@ -107,14 +109,13 @@ Central + installer + deploy + docs all shipped 2026-05-04 across PRs
 
 ## Wave 9 — DDL idempotence
 
-- [x] **M-CEN-003 / M-CEN-004** — `_apply_on_cluster` helper injects `ON CLUSTER '<name>'` for ALTER statements.
-- [ ] **M-CEN-006** — Drop `try/except: pass` around DDL loops; log at WARNING with full SQL. — XS (open)
-- [ ] **M-CEN-005** — Generic `_ensure_mv_columns` helper for `*_latest` MV drift detection. — M (open)
+- [x] **M-CEN-003 / M-CEN-004 / M-CEN-006** — `_apply_on_cluster` helper injects `ON CLUSTER '<name>'` for ALTERs; the bare `try/except: pass` around DDL loops became per-statement WARNING logs with full SQL in the same PR (#168).
+- [x] **M-CEN-005** — Generic `_ensure_mv_columns` helper rebuilds drifted `*_latest` MVs (PR #182, `tests/unit/test_mv_drift_rebuild.py`).
 
 ## Wave 10 — Documentation cleanup
 
-- [ ] **D-X-002** — Add `docs/env-reference.md` enumerating every `MONCTL_*` env var. — M
-- [ ] **D-CLA-004** — Append remaining new "Known pitfalls" entries from memory. — S
+- [x] **D-X-002** — `docs/env-reference.md` enumerates every `MONCTL_*` env var; refreshed for `MONCTL_REQUIRE_PER_COLLECTOR_AUTH` in PR #191.
+- [x] **D-CLA-004** — Six new pitfalls appended to CLAUDE.md from feedback memory: empty UI as a 500, compose orphan cleanup, httpx 0.28 cookies no-op, deploying off a stale branch rolling back sibling fixes, diffing prod `is_latest` before bumping a connector, re-investigating raw data when a symptom recurs.
 - [ ] **D-CEN-020** — Audit `tags=` on every `@router.*` decorator; document tag taxonomy in CLAUDE.md API Conventions. — S
 - [ ] **D-X-018** — `docs/pack-format.md` — pack JSON schema reference. — M
 - [ ] **D-X-019** — Connector / BasePoller lifecycle section in `app_create.md`. — S
@@ -139,12 +140,19 @@ Central + installer + deploy + docs all shipped 2026-05-04 across PRs
 
 ## Progress
 
-**All 9 HIGH-severity testing findings closed.** All 7 HIGH-severity
-security findings closed (Wave 2 closer 2026-05-04 across #186/#187/#188).
-Reliability + perf + observability essentially closed.
+**All 42 HIGH-severity findings closed.** Wave 2 (per-collector keys
+at install time), Wave 4 (observability), Wave 5 (audit completeness),
+Wave 7 (test coverage), Wave 8 (perf), Wave 9 (DDL idempotence) all
+substantively closed.
 
-Remaining open is the longer-tail docs bucket plus a couple of MED
-operability items (`O-X-001` platform-self alerting, `T-WEB-001`
-broader frontend tests, `T-X-006` regression-per-fix coverage of
-PRs #134/#138/#140, `S-X-003` audit_alert_actions). None are HIGH
-severity.
+Remaining open is concentrated in:
+
+- **Wave 7 long tail** — FlexTable filter+sort + DeviceDetailPage
+  tab-routing frontend tests (`T-WEB-001` partial).
+- **Wave 5 long tail** — `audit_alert_actions` resource for ack /
+  silence / force-clear (`S-X-003`).
+- **Wave 10 docs** — `D-CEN-020`, `D-X-018`, `D-X-019`,
+  `D-X-021`, `D-COL-013`. None HIGH; mostly S–M.
+- **Manual** — AAD binding + ciphertext version prefix on
+  `credentials/crypto.py`; F-X-007 phase 2 (e2e-smoke flake);
+  F-COL-031 hash enforcement; CVE workflow human-routing step.
