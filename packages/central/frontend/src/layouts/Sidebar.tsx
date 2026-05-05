@@ -41,6 +41,7 @@ interface NavItem {
   // Hide this entry when the current user's superset_access tier is 'none'.
   // Used by the Superset BI link so denied users don't even see the menu.
   requiresSupersetAccess?: boolean;
+  beta?: boolean; // render a small "beta" pill next to the label
 }
 
 interface NavGroup {
@@ -63,6 +64,13 @@ const navGroups: NavGroup[] = [
     label: "Monitoring",
     items: [
       { to: "/devices", icon: Monitor, label: "Devices", resource: "device" },
+      {
+        to: "/devices-beta",
+        icon: Monitor,
+        label: "Devices",
+        resource: "device",
+        beta: true,
+      },
       {
         to: "/device-types",
         icon: Search,
@@ -225,6 +233,14 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
                 >
                   <item.icon className="h-4.5 w-4.5 shrink-0" />
                   {!collapsed && <span>{item.label}</span>}
+                  {item.beta && !collapsed && (
+                    <span className="ml-auto flex h-5 items-center rounded-full bg-brand-600/20 px-1.5 text-[10px] font-semibold uppercase tracking-wider text-brand-400">
+                      Beta
+                    </span>
+                  )}
+                  {item.beta && collapsed && (
+                    <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-brand-500" />
+                  )}
                   {item.to === "/upgrades" &&
                     osUpdateCount > 0 &&
                     !collapsed && (
