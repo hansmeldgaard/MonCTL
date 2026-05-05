@@ -118,7 +118,7 @@ packages/
 
 ### App & Pack System
 
-> Authoring a new app? Read [`docs/app-development-guide.md`](docs/app-development-guide.md) — it covers BasePoller, error categories, app-data cache, and the cross-app + delta patterns shipped in PR #151.
+> Authoring a new app? Read [`docs/app-development-guide.md`](docs/app-development-guide.md) — it covers BasePoller, error categories, app-data cache, the cross-app + delta patterns shipped in PR #151, and the per-job engine lifecycle. For the pack JSON format itself (`packs/*.json`), see [`docs/pack-format.md`](docs/pack-format.md).
 
 - **All apps are BasePoller subclasses** with `class Poller(BasePoller)` and `async def poll() -> PollResult`. No legacy script (stdin/stdout) execution.
 - **Built-in packs** (`packs/`) are auto-imported at startup if not already present. Uses "skip" resolution (creates missing apps, never overwrites existing).

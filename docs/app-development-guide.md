@@ -517,7 +517,13 @@ class Poller(BasePoller):
 ## Pack JSON Structure
 
 Apps are delivered inside pack JSON files. Each pack can contain multiple apps.
-File naming: `packs/{pack_uid}-v{version}.json`
+Filenames have no version suffix — `packs/{pack_uid}.json` — the pack JSON's own
+`version` field is the source of truth.
+
+> The full per-section reference (every field, required vs optional, the
+> `is_latest` rules, skip-resolution import order, validation hooks) lives in
+> [`pack-format.md`](pack-format.md). The example below is the apps-only
+> shape an app author needs while writing a single Poller.
 
 ```json
 {
