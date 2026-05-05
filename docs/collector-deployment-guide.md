@@ -1,21 +1,19 @@
-# Collector Deployment Guide
+# Collector Node Reference
 
-> **⚠️ MAINTAINER REFERENCE — partially superseded.**
->
-> Customers and external operators should NOT follow §4 of this doc.
-> Use `monctl_ctl deploy` instead, which renders the collector compose
-> bundle, scp's it to each host, and does the right thing for the
-> inventory in question. See `INSTALL.md` for the supported path.
->
-> §1–§3 (host prerequisites, network requirements, NTP/SSH setup) are
-> still accurate and worth reading before adding a collector host. §4
-> (`./deploy.sh collector` against `worker1-4`) is a maintainer-only
-> workflow against the dev cluster at `10.145.210.31-34`; the IPs and
-> shell paths are not portable.
->
-> Long-term plan: fold §1–§3 into `INSTALL.md` as a "Collector node
-> prereqs" subsection and retire this file. Tracked under review-#2
-> finding D-COL-013.
+This is a per-host reference for collector nodes — what the host needs,
+how to register it with central, what containers run on it, and how to
+debug it. **It is not a deployment runbook**: the actual install/upgrade
+flow runs from your operator laptop via `monctl_ctl deploy`. See
+[`INSTALL.md`](../INSTALL.md) for the platform-wide setup, including
+the `collector` role inventory entries and the per-host key flow.
+
+The sections below assume:
+
+- you've already added the host to your inventory (`monctl_ctl inventory edit`)
+- you've run `monctl_ctl deploy` at least once for this cluster
+
+If either is false, start at `INSTALL.md` and come back here when you
+need to add another collector or troubleshoot one.
 
 ---
 
@@ -66,9 +64,10 @@ docker compose version   # must be v2+
 
 - The host must be able to resolve DNS names (configure `/etc/resolv.conf` or systemd-resolved)
 - If using internal DNS, ensure the central VIP hostname (if any) resolves correctly
-- In air-gapped environments, add central VIP to `/etc/hosts`:
+- In air-gapped environments, add the central VIP to `/etc/hosts` so
+  the collector can resolve it without external DNS:
   ```
-  10.145.210.40  monctl-central
+  <central-vip-ip>  <central-hostname>
   ```
 
 ### NTP / Time Synchronization
@@ -92,13 +91,14 @@ chronyc tracking
 
 The collector needs outbound access to:
 
-| Destination                 | Port | Protocol | Purpose                                |
-| --------------------------- | ---- | -------- | -------------------------------------- |
-| Central VIP (10.145.210.40) | 443  | HTTPS    | API (jobs, results, credentials, apps) |
-| Central VIP (10.145.210.40) | 443  | WSS      | WebSocket command channel              |
-| Monitored devices           | ICMP | —        | Ping checks                            |
-| Monitored devices           | 161  | UDP      | SNMP polling                           |
-| Monitored devices           | \*   | TCP      | Port checks, HTTP checks               |
+| Destination       | Port | Protocol | Purpose                                |
+| ----------------- | ---- | -------- | -------------------------------------- |
+| Central VIP       | 443  | HTTPS    | API (jobs, results, credentials, apps) |
+| Central VIP       | 443  | WSS      | WebSocket command channel              |
+| Monitored devices | ICMP | —        | Ping checks                            |
+| Monitored devices | 161  | UDP      | SNMP polling                           |
+| Monitored devices | 22   | TCP      | SSH-based apps (where applicable)      |
+| Monitored devices | \*   | TCP      | Port checks, HTTP checks               |
 
 No inbound ports need to be open from the internet. Port 50051 (gRPC) is only used internally within each collector's Docker network.
 
@@ -133,66 +133,75 @@ sudo chown monctl:monctl /etc/monctl
 
 ### SSH Access
 
-The build server (or admin workstation) must be able to SSH as `monctl` to the collector node. Set up key-based auth:
+The operator laptop running `monctl_ctl` must be able to SSH as `monctl` to the collector node with key-based auth. The installer doesn't deploy keys for you — set this up before `monctl_ctl preflight`:
 
 ```bash
-# From the build server
+# From the operator laptop
 ssh-copy-id monctl@<collector-ip>
+ssh monctl@<collector-ip> 'docker info'   # smoke-test
 ```
 
 ---
 
 ## 4. Deployment
 
-### 4.1 Environment File
+The actual deploy is a single command from the operator laptop —
+**not** something you run on the collector itself:
 
-Create `/opt/monctl/collector/.env` on the collector node:
+```bash
+monctl_ctl deploy --role collector --host <hostname>
+```
+
+`monctl_ctl deploy` renders `/opt/monctl/collector/docker-compose.yml`
+plus `.env` from your inventory, transfers the image (or pulls it from
+the configured registry), runs `docker compose up -d`, and registers
+the host with central via `register-collectors` post-step (Wave 2C —
+mints a per-host API key and writes it back into `.env`). The full
+end-to-end flow is documented in [`INSTALL.md`](../INSTALL.md) §5;
+don't reproduce it here, the canonical version moves with the CLI.
+
+### What ends up in `.env`
+
+After `monctl_ctl deploy` finishes, `/opt/monctl/collector/.env` looks
+roughly like:
 
 ```env
-NODE_ID=worker1
-CENTRAL_URL=https://10.145.210.40
-CENTRAL_API_KEY=<collector-api-key-from-central>
-VERIFY_SSL=false
-MONCTL_COLLECTOR_ID=<uuid-from-central-after-approval>
+NODE_ID=<host_name from inventory>
+CENTRAL_URL=https://<cluster.cluster_vip from inventory>
+CENTRAL_API_KEY=<per-host key minted by register-collectors>
+VERIFY_SSL=true
+MONCTL_COLLECTOR_ID=<assigned by central on first registration>
+PEER_TOKEN=<derived per-host from cluster.peer_token_seed>
 ```
 
-- `NODE_ID` — unique per collector node (e.g., `worker1`, `worker2`)
-- `CENTRAL_URL` — the central VIP (HAProxy)
-- `CENTRAL_API_KEY` — shared collector API key (from central settings)
-- `VERIFY_SSL` — set `false` for self-signed certificates
-- `MONCTL_COLLECTOR_ID` — set after the collector is registered and approved in central
+A few things to know before editing this file by hand:
 
-### 4.2 Build and Deploy
+- `CENTRAL_API_KEY` is **per-host** as of Wave 2 (PR #186/#187/#188). If
+  you regenerate it without going through `monctl_ctl register-collectors`
+  the collector will be unauthenticated until you re-run that command —
+  preserve it across redeploys.
+- `VERIFY_SSL` defaults to `true`. Only set it to `false` for development
+  clusters with self-signed certs that aren't pinned in
+  `MONCTL_COLLECTOR_CA_BUNDLE`. Production should ship a real CA bundle
+  and leave verify on.
+- `MONCTL_COLLECTOR_ID` is empty on the very first start; central
+  populates it on the first heartbeat and the entrypoint persists it
+  back into `.env`. Don't pre-fill it — let central own that value.
+- `PEER_TOKEN` is derived from `cluster.peer_token_seed` via HMAC-SHA256
+  (M-INST-012). Don't reset it unless you're rotating the cluster seed
+  for every host at once; otherwise cache-node ↔ poll-worker gRPC stops
+  authenticating.
 
-From the MonCTL repo on the build server:
+### Adding a new collector host
 
 ```bash
-./deploy.sh collector              # Build + deploy to all 4 workers
-./deploy.sh collector 31 32        # Deploy to specific nodes (last IP octet)
-./deploy.sh collector --no-build   # Skip build, reuse existing image
+monctl_ctl inventory edit       # add the host under cluster.collectors
+monctl_ctl preflight             # confirms SSH, Docker, ports, time-sync
+monctl_ctl deploy --role collector --host <new-hostname>
 ```
 
-The deploy script:
-
-1. Builds `monctl-collector:latest` from `Dockerfile.collector-v2`
-2. Saves the image to a tar file
-3. Transfers to all worker nodes in parallel via SCP
-4. Loads the image and runs `docker compose up -d` on each node
-
-### 4.3 Manual Deploy (single node)
-
-If deploying to a new node not yet in `deploy.sh`:
-
-```bash
-# Copy compose file
-scp docker/docker-compose.collector-prod.yml monctl@<ip>:/opt/monctl/collector/docker-compose.yml
-
-# Copy image (if built locally)
-docker save monctl-collector:latest | ssh monctl@<ip> 'docker load'
-
-# Start
-ssh monctl@<ip> 'cd /opt/monctl/collector && docker compose up -d'
-```
+Then approve and group-assign from the UI (§5 below). No need to redeploy
+existing hosts.
 
 ---
 
@@ -246,8 +255,8 @@ Poll workers have a known memory growth pattern. The `mem_limit: 1g` in compose 
 ### Collector not appearing in UI
 
 - Check `docker logs cache-node` for registration errors
-- Verify `CENTRAL_URL` and `CENTRAL_API_KEY` in `.env`
-- Ensure the collector can reach central: `curl -k https://10.145.210.40/v1/health`
+- Verify `CENTRAL_URL` and `CENTRAL_API_KEY` in `/opt/monctl/collector/.env`
+- Ensure the collector can reach central: `curl -k "${CENTRAL_URL}/v1/health"` (substituting the value from `.env`; expect a 200 with `{"status":"ok"}`)
 
 ### Jobs not being assigned
 

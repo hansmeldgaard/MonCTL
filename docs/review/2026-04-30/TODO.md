@@ -120,7 +120,7 @@ Central + installer + deploy + docs all shipped 2026-05-04 across PRs
 - [ ] **D-X-018** — `docs/pack-format.md` — pack JSON schema reference. — M
 - [x] **D-X-019** — `docs/app-development-guide.md` now has an "Engine Lifecycle — What Happens Per Job" section: 8 numbered steps (app load → credential resolve → connector instantiate+connect → context build → setup/poll/timeout → error-category guard → connector close → gc.collect + malloc_trim) with the failure-classification mapping per phase, plus the two rules the lifecycle imposes on app authors (never call `connector.connect()`; no module-globals because the engine returns memory each job).
 - [ ] **D-X-021** — `docs/disaster-recovery.md` — Patroni split-brain, ClickHouse replica wipe, central node lost runbooks. — L
-- [ ] **D-COL-013** — Either retire `docs/collector-deployment-guide.md` or rewrite §4 to use `monctl_ctl deploy`. — M
+- [x] **D-COL-013 / D-COL-014** — `docs/collector-deployment-guide.md` reframed as per-host reference rather than a deployment runbook: the maintainer-only "MAINTAINER REFERENCE" banner is gone, §4 now points at `monctl_ctl deploy` + INSTALL.md and explains the rendered `.env` (per-host key, peer-token-seed derivation, `VERIFY_SSL` defaulting to `true`), the prod-IP `10.145.210.40` references in §2 / §8 are removed, and the `VERIFY_SSL=false` example is replaced with a default-true block + a note on when to flip it (closes D-COL-014).
 - [x] **D-X-001 / D-CLA-003 / D-CLA-006 / D-CEN-011 / D-X-017 / D-INST-008 / D-INST-009** — Doc cleanup PR shipped (#169).
 
 ## Security carry-overs (HIGH severity)
