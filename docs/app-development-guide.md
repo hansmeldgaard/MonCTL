@@ -150,6 +150,51 @@ except SomeNetworkError as exc:
 
 ---
 
+## Engine Lifecycle — What Happens Per Job
+
+Each scheduled job runs once through the polling engine
+(`packages/collector/src/monctl_collector/polling/engine.py:_run_job_inner`).
+Knowing the order matters because the failure-classification logic, the
+"don't connect from your app" rule, and the per-job memory release all
+hang off it.
+
+Per job, in order:
+
+1. **App load** — `apps.ensure_app(...)` ensures the app code is downloaded and
+   the venv is built. Failures here classify as `error_category="config"`
+   (missing app version, checksum mismatch, pip resolution).
+2. **Credential resolve** — every name in `job.credential_names` is looked up
+   via the credential cache and merged into a single dict.
+3. **Connector instantiate + connect** — for every connector binding on the
+   assignment, the engine downloads the class, calls `__init__(settings, credential)`,
+   and **awaits `connector.connect(device_host)`**. Failures here classify
+   as `error_category="device"` (target unreachable, auth handshake failed).
+4. **PollContext build** — the engine assembles `PollContext(job, credential,
+node_id, device_host, parameters, connectors, cache)`.
+5. **Poll** — `poller = cls()` → `await poller.setup()` → `await poller.poll(ctx)`,
+   wrapped in `asyncio.wait_for(timeout=job.max_execution_time)`. Timeout
+   classifies as `error_category="device"`. Any other unhandled exception
+   inside `poll()` classifies as `error_category="app"`.
+6. **Error-category guard** — if `result.status != "ok"` and the app forgot
+   to set `error_category`, the engine logs `app_missing_error_category` and
+   force-fills `"app"`. See "Error Categories — Critical Rule" above.
+7. **Connector close** — every connector instance gets `await connector.close()`
+   in a `finally:` block. Exceptions are swallowed (close is best-effort).
+8. **Release memory** — `gc.collect()` + `malloc_trim(0)` on every job. Per
+   CLAUDE.md "Memory management": this is why workers run with
+   `MALLOC_ARENA_MAX=2`, `PYTHONMALLOC=malloc`, `mem_limit: 1g`.
+
+The two rules this lifecycle imposes on app authors:
+
+- **Apps must NEVER call `connector.connect()`.** The engine has already
+  done it before `poll()` runs. There is an idempotent guard inside the
+  built-in connectors so an erroneous call won't leak, but a custom
+  connector may not have one — assume it leaks.
+- **Don't hold long-lived references in module globals.** Each app instance
+  is fresh per job and the engine returns memory to the OS at step 8;
+  caching at module scope defeats both. If you need cross-job state, use
+  `context.cache` (see App Data Cache below).
+
 ## Connector Usage
 
 Connectors (SNMP, SSH, etc.) are instantiated and connected by the engine before
