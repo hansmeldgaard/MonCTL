@@ -22,7 +22,8 @@ export function SavedViewsBar({
   onPickView,
   currentFilter,
 }: SavedViewsBarProps) {
-  const { data: views = [] } = useSavedViews(page);
+  const { data: response } = useSavedViews(page);
+  const views = response?.data ?? [];
   const createView = useCreateSavedView();
   const deleteView = useDeleteSavedView();
   const track = useTelemetry();
